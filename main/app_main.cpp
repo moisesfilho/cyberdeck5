@@ -1,14 +1,14 @@
-#include "cyberdeck_ui.h"
-#include "event_log.h"
+#include "platform/display/cyberdeck_ui.h"
+#include "platform/logging/event_log.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include "nvs_flash.h"
 #include "bsp/esp-bsp.h"
-#include "imu_reader.h"
-#include "screen_off.h"
-#include "tab5_keyboard.h"
-#include "wifi_mgr.h"
-#include "screenshot_server.h"
+#include "platform/sensors/imu_reader.h"
+#include "platform/display/screen_off.h"
+#include "platform/input/tab5_keyboard.h"
+#include "features/wifi/wifi_mgr.h"
+#include "features/screenshot/screenshot_server.h"
 
 static const char *TAG = "cyberdeck5";
 

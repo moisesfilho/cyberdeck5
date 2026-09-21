@@ -1,7 +1,7 @@
 /*
  * Shim de teste HOST para "lvgl.h".
  *
- * O unico simbolo do LVGL usado por components/cyberdeck/src/core/tab5_keyboard_keys.cpp
+ * O unico simbolo do LVGL usado por components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp
  * sao as constantes de teclas (enum lv_key_t), definidas no LVGL real em
  * managed_components/lvgl__lvgl/include/lvgl/core/lv_group.h.
  *

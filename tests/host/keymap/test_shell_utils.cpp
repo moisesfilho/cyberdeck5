@@ -1,6 +1,6 @@
 /*
  * Testes unitarios host-side para a logica pura de shell e traducao SSH/VT100.
- * Cobre components/cyberdeck/src/core/cyberdeck_shell_utils.cpp.
+ * Cobre components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp.
  *
  * Alem das unidades isoladas, inclui testes de pipeline que espelham o fluxo
  * do terminal TUI unificado (menu inicial + tela SSH): parse_command gera o
@@ -24,7 +24,7 @@
  * nao vazias, newline final), a presenca de cada comando e o determinismo
  * entre chamadas.
  */
-#include "cyberdeck_shell_utils.h"
+#include "features/shell/cyberdeck_shell_utils.h"
 #include "lvgl.h"
 
 #include <cstdio>

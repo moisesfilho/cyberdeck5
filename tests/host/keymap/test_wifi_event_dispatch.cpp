@@ -3,7 +3,7 @@
  * The implementation is intentionally absent until the coder consumes this
  * contract. These tests therefore document expected RED failures today.
  */
-#include "cyberdeck_wifi_event_dispatch.h"
+#include "features/wifi/cyberdeck_wifi_event_dispatch.h"
 
 #include <cstdio>
 #include <cstring>

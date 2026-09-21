@@ -11,8 +11,8 @@ terminal direto, sem fileira de botoes; SSH iniciado pelo comando `ssh`;
 digitacao por teclado fisico e virtual, inclusive durante SSH; scroll do
 terminal apenas interno (sem scrollbar externa). Não há tela SSH separada nem
 ação de retorno.
-**Firmware:** `components/cyberdeck/src/core/cyberdeck_ui.cpp`, `src/core/tab5_keyboard_keys.cpp`,
-`src/core/tab5_keyboard.cpp`, `src/core/ssh_client.cpp`, `src/core/cyberdeck_shell_utils.cpp`.  
+**Firmware:** `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp`, `src/platform/input/tab5_keyboard_keys.cpp`,
+`src/platform/input/tab5_keyboard.cpp`, `src/features/ssh/ssh_client.cpp`, `src/features/shell/cyberdeck_shell_utils.cpp`.
 **Duracao estimada:** 60-90 min por execucao.
 
 > Este plano NAO substitui codigo de producao nem altera firmware. Qualquer
@@ -198,10 +198,10 @@ que depende obrigatoriamente deste plano manual.
 
 | Unidade de producao | Funcoes | Teste |
 |---------------------|---------|-------|
-| `components/cyberdeck/src/core/tab5_keyboard_keys.cpp` | `tab5_keymap_lookup` | `tests/host/keymap/test_keymap.cpp` |
-| `components/cyberdeck/src/core/tab5_keyboard_event.cpp` | `tab5_char_event_parse` (modificador, comprimento sem NUL extra, UTF-8 e limites) | `tests/host/keymap/test_keyboard_event.cpp` |
-| `components/cyberdeck/src/core/event_log_recent.cpp` | `event_log_recent_indices` (ordem, wrap-around e limites do ring buffer) | `tests/host/keymap/test_event_log_recent.cpp` |
-| `components/cyberdeck/src/core/cyberdeck_shell_utils.cpp` | `cyberdeck_parse_ssh_target` (validos, invalidos, limites 1..65535 e normalizacao de zeros a esquerda), `cyberdeck_encode_ssh_key` (imprimiveis, controle, Ctrl/Alt, limites 0..0xFF), `cyberdeck_parse_command` (roteamento, separador do verbo `ssh`, trim de bordas, verbo colado), `cyberdeck_help_text` (bloco exato, estrutura, comandos presentes e determinismo) | `tests/host/keymap/test_shell_utils.cpp` |
+| `components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp` | `tab5_keymap_lookup` | `tests/host/keymap/test_keymap.cpp` |
+| `components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp` | `tab5_char_event_parse` (modificador, comprimento sem NUL extra, UTF-8 e limites) | `tests/host/keymap/test_keyboard_event.cpp` |
+| `components/cyberdeck/src/platform/logging/event_log_recent.cpp` | `event_log_recent_indices` (ordem, wrap-around e limites do ring buffer) | `tests/host/keymap/test_event_log_recent.cpp` |
+| `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp` | `cyberdeck_parse_ssh_target` (validos, invalidos, limites 1..65535 e normalizacao de zeros a esquerda), `cyberdeck_encode_ssh_key` (imprimiveis, controle, Ctrl/Alt, limites 0..0xFF), `cyberdeck_parse_command` (roteamento, separador do verbo `ssh`, trim de bordas, verbo colado), `cyberdeck_help_text` (bloco exato, estrutura, comandos presentes e determinismo) | `tests/host/keymap/test_shell_utils.cpp` |
 
 A cobertura host-side lista os cenarios algoritmicos determinísticos (positivos,
 negativos, limites e normalizacao) que independem de LVGL/FreeRTOS/SSH/hardware;
@@ -212,7 +212,7 @@ o restante do comportamento do terminal unificado e exercitado manualmente
 nao divergiu das constantes `LV_KEY_*` do LVGL gerenciado (drift check).
 
 **Limitacao (nao testavel host-side sem instrumentacao):** as funcoes de
-`components/cyberdeck/src/core/cyberdeck_ui.cpp` vivem em namespace anonimo e operam
+`components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` vivem em namespace anonimo e operam
 diretamente sobre widgets LVGL (`s_terminal`, ...),
 `bsp_display_lock`, `ssh_client_*` e `wifi_mgr_*`:
 `show_ssh`, `append_output`, `on_ssh_data/state`, `execute_line`,

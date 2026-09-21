@@ -1,6 +1,6 @@
 /*
  * Testes host-side para a API pura de geracao de BMP 24-bit top-down.
- * Cobre components/cyberdeck/include/screenshot_bmp.h.
+ * Cobre components/cyberdeck/include/features/screenshot/screenshot_bmp.h.
  *
  * Plano aprovado (recorte sob teste):
  *   - cabecalho BMP 24-bit top-down e tamanhos;
@@ -11,12 +11,12 @@
  *
  * A API e pura (sem LVGL/ESP-IDF): o teste inclui apenas
  * screenshot_bmp.h e compila contra a implementacao
- * (components/cyberdeck/src/core/screenshot_bmp.cpp) que o coder
+ * (components/cyberdeck/src/features/screenshot/screenshot_bmp.cpp) que o coder
  * deve criar conforme o contrato abaixo.
  *
  * Build: make test  (veja Makefile; sem dependencias alem de g++/make).
  */
-#include "screenshot_bmp.h"
+#include "features/screenshot/screenshot_bmp.h"
 
 #include <cstdio>
 #include <cstring>

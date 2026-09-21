@@ -11,6 +11,18 @@ necessários para a primeira ferramenta.
 - Não criar extensibilidade antes de existir uma segunda ferramenta real.
 - Preferir buffers limitados e descarte explícito de dados antigos.
 
+## Organização semântica
+
+O componente ESP-IDF único é organizado por contexto, não por componentes
+ESP-IDF adicionais. `src/features/` contém os fluxos de produto (shell, Wi-Fi,
+SSH e screenshot), enquanto `src/platform/` contém as integrações de entrada,
+display, sensores, logging e networking. Os headers espelham essa árvore em
+`include/features/` e `include/platform/`. A lógica pura deve permanecer
+host-testável; `app_main` é o ponto de composição das partes concretas.
+
+`managed_components/`, incluindo `m5stack_tab5` e `sock_utils`, permanece fora
+dessa reorganização e continua sendo gerenciado pelo ESP-IDF.
+
 ## Fluxo de boot
 
 1. Inicializar NVS.

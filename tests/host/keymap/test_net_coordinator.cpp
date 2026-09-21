@@ -1,7 +1,7 @@
 /*
  * Testes de REGRESSAO host-side para o coordenador PURO do teardown
  * Wi-Fi/SSH e gating dos timers (contrato em cyberdeck_net_coordinator.h,
- * implementacao futura em components/cyberdeck/src/core/
+ * implementacao futura em components/cyberdeck/src/
  * cyberdeck_net_coordinator.cpp).
  *
  * Bug aprovado B sob teste:
@@ -24,7 +24,7 @@
  *
  * Build: make test_net_coordinator -> ver Makefile (so g++/make).
  */
-#include "cyberdeck_net_coordinator.h"
+#include "platform/networking/cyberdeck_net_coordinator.h"
 
 #include <array>
 #include <cstdio>

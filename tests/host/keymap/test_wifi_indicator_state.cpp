@@ -21,7 +21,7 @@
  * sem dependencias alem de g++).
  */
 
-#include "cyberdeck_wifi_indicator.h"
+#include "platform/display/cyberdeck_wifi_indicator.h"
 
 #include <cstdio>
 #include <cstring>

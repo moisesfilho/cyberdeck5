@@ -1,6 +1,6 @@
 /*
  * Testes host-side para o parser do shell de entrada (keymap do teclado
- * fisico Tab5). Cobre components/cyberdeck/src/core/tab5_keyboard_keys.cpp.
+ * fisico Tab5). Cobre components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp.
  *
  * A funcao tab5_keymap_lookup mapeia a string UTF-8/ASCII devolvida pelo
  * firmware do teclado (modo Character) para uma acao LVGL. E a porta de
@@ -9,7 +9,7 @@
  *
  * Build: make test  (veja Makefile; sem dependencias alem de g++/make).
  */
-#include "tab5_keyboard_keys.h"
+#include "platform/input/tab5_keyboard_keys.h"
 
 #include <cstdio>
 #include <cstring>

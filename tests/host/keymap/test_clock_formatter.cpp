@@ -56,7 +56,7 @@
  *
  * Build: make test (veja Makefile; sem dependencias alem de g++/make).
  */
-#include "cyberdeck_clock.h"
+#include "platform/display/cyberdeck_clock.h"
 
 #include <algorithm>
 #include <cstdio>

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "cyberdeck_wifi_event_dispatch.h"
-#include "cyberdeck_wifi_persistence_queue.h"
+#include "features/wifi/cyberdeck_wifi_event_dispatch.h"
+#include "features/wifi/cyberdeck_wifi_persistence_queue.h"
 
 namespace cyberdeck_wifi_test {
 

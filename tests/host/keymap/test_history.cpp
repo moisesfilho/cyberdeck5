@@ -1,6 +1,6 @@
 /*
  * Testes unitarios host-side para o historico local do terminal TUI.
- * Cobre components/cyberdeck/src/core/cyberdeck_history.cpp (logica pura extraida
+ * Cobre components/cyberdeck/src/features/shell/cyberdeck_history.cpp (logica pura extraida
  * de cyberdeck_ui.cpp, namespace anonimo, sem dependencia de LVGL).
  *
  * Contrato sob teste (paridade com o TUI):
@@ -15,7 +15,7 @@
  *
  * Build: make test (veja Makefile; sem dependencias alem de g++/make).
  */
-#include "cyberdeck_history.h"
+#include "features/shell/cyberdeck_history.h"
 
 #include <cstdio>
 #include <string>

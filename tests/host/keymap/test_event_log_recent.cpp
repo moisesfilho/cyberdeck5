@@ -33,7 +33,7 @@
  *
  * Build: make test (veja Makefile; sem dependencias alem de g++/make).
  */
-#include "event_log_recent.h"
+#include "platform/logging/event_log_recent.h"
 
 #include <algorithm>
 #include <cstdio>

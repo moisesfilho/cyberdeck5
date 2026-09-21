@@ -1,8 +1,8 @@
 /*
  * Testes de REGRESSAO host-side para a composicao local/remota da linha SSH
- * (contrato em components/cyberdeck/include/cyberdeck_ssh_line_composer.h;
+ * (contrato em components/cyberdeck/include/features/shell/cyberdeck_ssh_line_composer.h;
  * implementacao em
- * components/cyberdeck/src/core/cyberdeck_ssh_line_composer.cpp).
+ * components/cyberdeck/src/features/shell/cyberdeck_ssh_line_composer.cpp).
  *
  * Composicao aprovada sob teste (banda local + eco remoto da linha SSH):
  *   - begin() exibe o comando local SEM o '\n' final; o payload enviado ao
@@ -44,7 +44,7 @@
  *
  * Build: make test_ssh_line_composer -> ver Makefile (so g++/make).
  */
-#include "cyberdeck_ssh_line_composer.h"
+#include "features/shell/cyberdeck_ssh_line_composer.h"
 
 #include <cstdio>
 #include <cstring>

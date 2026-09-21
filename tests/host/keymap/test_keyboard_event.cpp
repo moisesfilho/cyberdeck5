@@ -1,8 +1,8 @@
 /*
  * Testes unitarios host-side para o parser PURO de eventos Character do
  * teclado M5Stack Tab5 (SKU A164). Cobre o contrato provavel exposto em
- * components/cyberdeck/include/tab5_keyboard_event.h, com implementacao
- * futura em components/cyberdeck/src/core/tab5_keyboard_event.cpp (logica
+ * components/cyberdeck/include/platform/input/tab5_keyboard_event.h, com implementacao
+ * futura em components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp (logica
  * extraida de tab5_keyboard.cpp -> drain_events()/emit_event()).
  *
  * CONTRATO SOB TESTE (especificado por este arquivo; a implementacao deve
@@ -35,7 +35,7 @@
  * Logica pura (sem LVGL/FreeRTOS), mesma condicao de build de test_history:
  * apenas g++/make. Build: make test (alvo test_keyboard_event).
  */
-#include "tab5_keyboard_event.h"
+#include "platform/input/tab5_keyboard_event.h"
 
 #include <cstddef>
 #include <cstdint>

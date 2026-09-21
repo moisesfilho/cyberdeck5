@@ -5,7 +5,7 @@
  * deterministic retry scheduler are explicit test doubles for the public
  * interfaces required by the coordinator.
  */
-#include "cyberdeck_wifi_persistence_coordinator.h"
+#include "features/wifi/cyberdeck_wifi_persistence_coordinator.h"
 
 #include <cstdio>
 

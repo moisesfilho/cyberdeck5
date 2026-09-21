@@ -1,7 +1,7 @@
 /* RED contract tests for bounded persistence delivery and retry.
  * The queue must never drop an accepted snapshot when its consumer is busy.
  */
-#include "cyberdeck_wifi_persistence_queue.h"
+#include "features/wifi/cyberdeck_wifi_persistence_queue.h"
 
 #include <cstdio>
 #include <cstring>

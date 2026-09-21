@@ -5,8 +5,9 @@
 # composicao local/remota da linha SSH).
 #
 # Sem dependencias externas alem de g++/make: compila os fontes de producao
-# (components/cyberdeck/src/core/tab5_keyboard_keys.cpp,
-# cyberdeck_shell_utils.cpp, cyberdeck_history.cpp e tab5_keyboard_event.cpp)
+# (components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp,
+# components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp,
+# cyberdeck_history.cpp e components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp)
 # contra um shim da API LVGL (shim/lvgl.h) - exceto historico e parser de
 # eventos, que sao logica pura sem LVGL - e roda as assercoes.
 #
@@ -18,32 +19,32 @@
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O2
 
-KEYMAP_SRC       := ../../../components/cyberdeck/src/core/tab5_keyboard_keys.cpp
-SHELL_UTILS_SRC  := ../../../components/cyberdeck/src/core/cyberdeck_shell_utils.cpp
-HISTORY_SRC      := ../../../components/cyberdeck/src/core/cyberdeck_history.cpp
-KEYBOARD_EVENT_SRC := ../../../components/cyberdeck/src/core/tab5_keyboard_event.cpp
-EVENT_LOG_RECENT_SRC := ../../../components/cyberdeck/src/core/event_log_recent.cpp
-TERMINAL_FILTER_SRC := ../../../components/cyberdeck/src/core/cyberdeck_terminal_filter.cpp
-EDIT_LINE_SRC    := ../../../components/cyberdeck/src/core/cyberdeck_edit_line.cpp
-NET_COORDINATOR_SRC := ../../../components/cyberdeck/src/core/cyberdeck_net_coordinator.cpp
-ECHO_GUARD_SRC   := ../../../components/cyberdeck/src/core/cyberdeck_ssh_echo_guard.cpp
-LINE_COMPOSER_SRC := ../../../components/cyberdeck/src/core/cyberdeck_ssh_line_composer.cpp
-CLOCK_SRC        := ../../../components/cyberdeck/src/core/cyberdeck_clock.cpp
-WIFI_INDICATOR_SRC := ../../../components/cyberdeck/src/core/cyberdeck_wifi_indicator.cpp
-WIFI_ICON_SRC      := ../../../components/cyberdeck/src/core/cyberdeck_wifi_icon.cpp
-WIFI_MENU_SRC      := ../../../components/cyberdeck/src/core/cyberdeck_wifi_menu.cpp
-WIFI_STATE_MACHINE_SRC := ../../../components/cyberdeck/src/core/cyberdeck_wifi_state_machine.cpp
-WIFI_STATE_MACHINE_HDR := ../../../components/cyberdeck/include/cyberdeck_wifi_state_machine.h
-WIFI_EVENT_DISPATCH_SRC := ../../../components/cyberdeck/src/core/cyberdeck_wifi_event_dispatch.cpp
-WIFI_PERSISTENCE_QUEUE_SRC := ../../../components/cyberdeck/src/core/cyberdeck_wifi_persistence_queue.cpp
-WIFI_PERSISTENCE_COORDINATOR_SRC := ../../../components/cyberdeck/src/core/cyberdeck_wifi_persistence_coordinator.cpp
+KEYMAP_SRC       := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp
+SHELL_UTILS_SRC  := ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp
+HISTORY_SRC      := ../../../components/cyberdeck/src/features/shell/cyberdeck_history.cpp
+KEYBOARD_EVENT_SRC := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp
+EVENT_LOG_RECENT_SRC := ../../../components/cyberdeck/src/platform/logging/event_log_recent.cpp
+TERMINAL_FILTER_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_terminal_filter.cpp
+EDIT_LINE_SRC    := ../../../components/cyberdeck/src/features/shell/cyberdeck_edit_line.cpp
+NET_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/networking/cyberdeck_net_coordinator.cpp
+ECHO_GUARD_SRC   := ../../../components/cyberdeck/src/features/shell/cyberdeck_ssh_echo_guard.cpp
+LINE_COMPOSER_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_ssh_line_composer.cpp
+CLOCK_SRC        := ../../../components/cyberdeck/src/platform/display/cyberdeck_clock.cpp
+WIFI_INDICATOR_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp
+WIFI_ICON_SRC      := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp
+WIFI_MENU_SRC      := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_menu.cpp
+WIFI_STATE_MACHINE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_state_machine.cpp
+WIFI_STATE_MACHINE_HDR := ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_state_machine.h
+WIFI_EVENT_DISPATCH_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_event_dispatch.cpp
+WIFI_PERSISTENCE_QUEUE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_queue.cpp
+WIFI_PERSISTENCE_COORDINATOR_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_coordinator.cpp
 INCLUDES        := -Ishim -I../../../components/cyberdeck/include
 
 # LVGL gerenciado pelo ESP-IDF (fonte da verdade p/ valores de LV_KEY_*).
 LVGL_MANAGED := ../../../managed_components/lvgl__lvgl
 LVGL_GROUP_H := $(LVGL_MANAGED)/include/lvgl/core/lv_group.h
 
-SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/core/screenshot_bmp.cpp
+SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/features/screenshot/screenshot_bmp.cpp
 
 BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination
 
@@ -88,20 +89,20 @@ test_shell_utils: test_shell_utils.cpp $(SHELL_UTILS_SRC) shim/lvgl.h
 # Logica pura (sem LVGL): nao precisa de shim.
 # O header entra como dependencia para que mudancas no contrato (ex.: limite)
 # forcem recompilacao e a validacao do static_assert de paridade.
-test_history: test_history.cpp $(HISTORY_SRC) ../../../components/cyberdeck/include/cyberdeck_history.h
+test_history: test_history.cpp $(HISTORY_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_history.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_history.cpp $(HISTORY_SRC) -o test_history
 
 # Logica pura (sem LVGL): nao precisa de shim.
 # O parser e uma unidade pura de producao; o teste fixa o contrato de
 # tab5_char_event_parse sem depender de LVGL, FreeRTOS ou hardware.
-test_keyboard_event: test_keyboard_event.cpp $(KEYBOARD_EVENT_SRC) ../../../components/cyberdeck/include/tab5_keyboard_event.h
+test_keyboard_event: test_keyboard_event.cpp $(KEYBOARD_EVENT_SRC) ../../../components/cyberdeck/include/platform/input/tab5_keyboard_event.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_keyboard_event.cpp $(KEYBOARD_EVENT_SRC) -o test_keyboard_event
 
 # Logica pura extraida de event_log_latest(): selecao de indices do anel
 # "recent" (contrato em event_log_recent.h, sem FreeRTOS/LVGL/SD).
 # A implementacao e compilada junto ao teste para validar o contrato sem
 # depender de FreeRTOS, LVGL ou acesso ao SD.
-test_event_log_recent: test_event_log_recent.cpp $(EVENT_LOG_RECENT_SRC) ../../../components/cyberdeck/include/event_log_recent.h
+test_event_log_recent: test_event_log_recent.cpp $(EVENT_LOG_RECENT_SRC) ../../../components/cyberdeck/include/platform/logging/event_log_recent.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_event_log_recent.cpp $(EVENT_LOG_RECENT_SRC) -o test_event_log_recent
 
 # Logica pura (sem LVGL): indicador de estado do Wi-Fi (contrato em
@@ -110,7 +111,7 @@ test_event_log_recent: test_event_log_recent.cpp $(EVENT_LOG_RECENT_SRC) ../../.
 # estados; o contrato NAO recebe parametro ssid). A implementacao pura e
 # compilada junto ao teste para manter o contrato host-side independente do
 # LVGL.
-test_wifi_indicator_state: test_wifi_indicator_state.cpp $(WIFI_INDICATOR_SRC) ../../../components/cyberdeck/include/cyberdeck_wifi_indicator.h
+test_wifi_indicator_state: test_wifi_indicator_state.cpp $(WIFI_INDICATOR_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_indicator.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_indicator_state.cpp $(WIFI_INDICATOR_SRC) -o test_wifi_indicator_state
 
 # Logica pura (sem LVGL): layout geometrico do icono Wi-Fi no
@@ -123,11 +124,11 @@ test_wifi_indicator_state: test_wifi_indicator_state.cpp $(WIFI_INDICATOR_SRC) .
 # (visible_half_width / determinant_outer_radius), larguras
 # validas/invalidas, determinismo byte a byte, monotonicidade de
 # center_x (largura e margem), margem final ~2px e casos angulares.
-test_wifi_icon_layout: test_wifi_icon_layout.cpp $(WIFI_ICON_SRC) ../../../components/cyberdeck/include/cyberdeck_wifi_icon.h ../../../components/cyberdeck/include/cyberdeck_wifi_indicator.h
+test_wifi_icon_layout: test_wifi_icon_layout.cpp $(WIFI_ICON_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_icon.h ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_indicator.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_icon_layout.cpp $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) -o test_wifi_icon_layout
 
 # Logica pura (sem LVGL): modelo e renderizacao do menu Wi-Fi (scan/saved/deduplicacao/navegacao).
-test_wifi_menu: test_wifi_menu.cpp $(WIFI_MENU_SRC) ../../../components/cyberdeck/include/cyberdeck_wifi_menu.h
+test_wifi_menu: test_wifi_menu.cpp $(WIFI_MENU_SRC) ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_menu.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_menu.cpp $(WIFI_MENU_SRC) -o test_wifi_menu
 
 # Host-side contract coverage for the pure search/saved state machine:
@@ -163,7 +164,7 @@ test_wifi_persistence_coordination: test_wifi_persistence_coordination.cpp $(WIF
 # integracao do relogio na UI. Ate la, este target fica vermelho por design
 # (TDD): o build falha por MODULO AUSENTE, com a mensagem
 # "No rule to make target '.../cyberdeck_clock.cpp'".
-test_clock_formatter: test_clock_formatter.cpp $(CLOCK_SRC) ../../../components/cyberdeck/include/cyberdeck_clock.h
+test_clock_formatter: test_clock_formatter.cpp $(CLOCK_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_clock_formatter.cpp $(CLOCK_SRC) -o test_clock_formatter
 
 # Logica pura (sem LVGL): filtro puro e incremental da saida SSH (contrato em
@@ -173,7 +174,7 @@ test_clock_formatter: test_clock_formatter.cpp $(CLOCK_SRC) ../../../components/
 # no fluxo on_ssh_data()/append_output() do TUI. Ate la, este target fica
 # vermelho por design (TDD): o build falha por MODULO AUSENTE, com a mensagem
 # "No rule to make target '.../cyberdeck_terminal_filter.cpp'".
-test_terminal_filter: test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) ../../../components/cyberdeck/include/cyberdeck_terminal_filter.h
+test_terminal_filter: test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_terminal_filter.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) -o test_terminal_filter
 
 # Logica pura (sem LVGL): modelo da linha de edicao + sessao SSH (contrato em
@@ -185,7 +186,7 @@ test_terminal_filter: test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) ../../../c
 # cyberdeck_enter_result::echo — MENU ecoa "$ cmd\n", CONNECTED/PASSWORD/
 # HOST_KEY nao ecoam) fica vermelha EM RUNTIME ate o coder preencher `echo`
 # na implementacao (TDD; nenhuma implementacao fake e usada).
-test_edit_line: test_edit_line.cpp $(EDIT_LINE_SRC) ../../../components/cyberdeck/include/cyberdeck_edit_line.h
+test_edit_line: test_edit_line.cpp $(EDIT_LINE_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_edit_line.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_edit_line.cpp $(EDIT_LINE_SRC) -o test_edit_line
 
 # Logica pura (sem LVGL): coordenador do teardown Wi-Fi/SSH e do gating dos
@@ -197,7 +198,7 @@ test_edit_line: test_edit_line.cpp $(EDIT_LINE_SRC) ../../../components/cyberdec
 # integracao em wifi_mgr/ssh_client. Ate la, este target fica vermelho por
 # design (TDD): o build falha por MODULO AUSENTE, com a mensagem
 # "No rule to make target '.../cyberdeck_net_coordinator.cpp'".
-test_net_coordinator: test_net_coordinator.cpp $(NET_COORDINATOR_SRC) ../../../components/cyberdeck/include/cyberdeck_net_coordinator.h
+test_net_coordinator: test_net_coordinator.cpp $(NET_COORDINATOR_SRC) ../../../components/cyberdeck/include/platform/networking/cyberdeck_net_coordinator.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_net_coordinator.cpp $(NET_COORDINATOR_SRC) -o test_net_coordinator
 
 # Logica pura (sem LVGL): guarda incremental do eco remoto do SSH (contrato em
@@ -210,7 +211,7 @@ test_net_coordinator: test_net_coordinator.cpp $(NET_COORDINATOR_SRC) ../../../c
 # coder junto com a integracao em on_ssh_data(). Ate la, este target fica
 # vermelho por design (TDD): o build falha por MODULO AUSENTE, com a mensagem
 # "No rule to make target '.../cyberdeck_ssh_echo_guard.cpp'".
-test_ssh_echo_guard: test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) ../../../components/cyberdeck/include/cyberdeck_ssh_echo_guard.h
+test_ssh_echo_guard: test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_ssh_echo_guard.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) -o test_ssh_echo_guard
 
 # Logica pura (sem LVGL): composicao local/remota da linha SSH (contrato em
@@ -225,7 +226,7 @@ test_ssh_echo_guard: test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) ../../../componen
 # (deques); a implementacao atual (cyberdeck_ssh_line_composer.cpp) ainda usa a
 # politica FIFO antiga e por isso NAO compila — este target fica vermelho por
 # design (TDD) ate o coder reimplementar o estado unico previsto no contrato.
-test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../../components/cyberdeck/include/cyberdeck_ssh_line_composer.h
+test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_ssh_line_composer.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) -o test_ssh_line_composer
 
 # Logica pura (sem LVGL): API pura de geracao de BMP 24-bit top-down
@@ -235,7 +236,7 @@ test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../..
 # (screenshot_bmp.cpp) sera criada pelo coder. Ate la, este target
 # fica vermelho por design (TDD): o build falha por MODULO AUSENTE,
 # com a mensagem "No rule to make target '.../screenshot_bmp.cpp'".
-test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../components/cyberdeck/include/screenshot_bmp.h
+test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../components/cyberdeck/include/features/screenshot/screenshot_bmp.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) -o test_screenshot_bmp
 
 test: $(BINS)

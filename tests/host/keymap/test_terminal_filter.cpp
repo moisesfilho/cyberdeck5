@@ -1,7 +1,7 @@
 /*
  * Testes unitarios host-side para o filtro puro e incremental da saida SSH
  * (contrato em cyberdeck_terminal_filter.h, implementacao futura em
- * components/cyberdeck/src/core/cyberdeck_terminal_filter.cpp).
+ * components/cyberdeck/src/features/shell/cyberdeck_terminal_filter.cpp).
  *
  * Plano aprovado (recorte sob teste):
  *   - unidade pura e incremental para limpar o fluxo bruto do canal SSH
@@ -26,7 +26,7 @@
  *
  * Build: make test_terminal_filter (veja Makefile; so g++/make).
  */
-#include "cyberdeck_terminal_filter.h"
+#include "features/shell/cyberdeck_terminal_filter.h"
 
 #include <cstdio>
 #include <cstring>

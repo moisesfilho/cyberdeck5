@@ -1,7 +1,7 @@
 /*
  * Testes de REGRESSAO host-side para o modelo PURO da linha de edicao +
  * sessao SSH (contrato em cyberdeck_edit_line.h, implementacao futura em
- * components/cyberdeck/src/core/cyberdeck_edit_line.cpp).
+ * components/cyberdeck/src/features/shell/cyberdeck_edit_line.cpp).
  *
  * Bug aprovado A sob teste (duplicacao de caracteres na entrada e no Enter):
  *   - caracteres aparecem EXATAMENTE uma vez na linha (fisico e virtual);
@@ -29,7 +29,7 @@
  *
  * Build: make test_edit_line -> ver Makefile (so g++/make).
  */
-#include "cyberdeck_edit_line.h"
+#include "features/shell/cyberdeck_edit_line.h"
 
 #include <cstdio>
 #include <cstring>

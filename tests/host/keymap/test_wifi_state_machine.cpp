@@ -1,7 +1,7 @@
 /* TDD contract tests for the pure Wi-Fi search/saved state machine.
  * No ESP-IDF, LVGL, filesystem, timer, or callback implementation is faked.
  */
-#include "cyberdeck_wifi_state_machine.h"
+#include "features/wifi/cyberdeck_wifi_state_machine.h"
 
 #include <cstdio>
 #include <string>
