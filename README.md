@@ -63,6 +63,35 @@ preserving X, size, gap, colors, and state.
 
 O shell visual do menu também oferece `help`, `wifi` e `clear`.
 
+### Local file shell
+
+The local file shell starts in the virtual root `/sdcard`. Use `pwd` to print the
+current directory and `cd <path>` to change it. Paths may be relative to the
+current directory or absolute under `/sdcard`.
+
+Supported commands are:
+
+```text
+ls [path]       list visible entries
+ls -a [path]    include dot entries
+touch <file>    create an empty file
+mkdir <dir>     create a directory
+rm <path>       remove a file
+rm -r <path>    remove a directory tree recursively
+rmdir <dir>     remove an empty directory
+```
+
+Run `help` (or `help -h` / `help --help`) for the general command list. The
+local file commands also accept `-h` and `--help` (for example, `ls --help`) to
+show their usage.
+
+The file shell is sandboxed: `/sdcard` is the only exposed root, `..` cannot be
+used to escape it, and symbolic links are not allowed. `rm -r` cannot remove
+the virtual root and refuses trees containing symbolic links. It is a small
+local file interface, not a full POSIX shell: command parsing is whitespace-
+based, and unsupported commands are passed through to the active terminal
+context.
+
 ### Wi-Fi
 
 Use `wifi search` to scan networks, ordered by signal strength. In the list,

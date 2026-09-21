@@ -9,11 +9,17 @@
 #include "platform/input/tab5_keyboard.h"
 #include "features/wifi/wifi_mgr.h"
 #include "features/screenshot/screenshot_server.h"
+#include "bsp/m5stack_tab5.h"
 
 static const char *TAG = "cyberdeck5";
 
 extern "C" void app_main(void)
 {
+    /* The terminal's /sdcard namespace is only exposed after the card has
+     * been mounted and its BSP handle has been verified. */
+    ESP_ERROR_CHECK(bsp_sdcard_mount());
+    if (bsp_sdcard_get_handle() == nullptr) return;
+
     ESP_ERROR_CHECK(event_log_init());
 
     esp_err_t err = nvs_flash_init();

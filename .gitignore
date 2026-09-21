@@ -6,3 +6,5 @@ sdkconfig.old
 .cache/
 compile_commands.json
 tests/host/**/test_*
+!tests/host/**/test_local_shell.cpp
+!tests/host/**/test_keyboard_input_contract.py

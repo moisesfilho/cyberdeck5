@@ -64,6 +64,35 @@ relógio e mantendo X, tamanho, gap, cores e estado.
 
 O shell visual do menu também oferece `help`, `wifi` e `clear`.
 
+### Shell local de arquivos
+
+O shell local de arquivos inicia no diretório raiz virtual `/sdcard`. Use
+`pwd` para exibir o diretório atual e `cd <caminho>` para alterá-lo. Os caminhos
+podem ser relativos ao diretório atual ou absolutos dentro de `/sdcard`.
+
+Comandos disponíveis:
+
+```text
+ls [caminho]       lista entradas visíveis
+ls -a [caminho]    inclui entradas ocultas
+touch <arquivo>    cria um arquivo vazio
+mkdir <diretório>  cria um diretório
+rm <caminho>       remove um arquivo
+rm -r <caminho>    remove uma árvore de diretórios recursivamente
+rmdir <diretório>  remove um diretório vazio
+```
+
+Execute `help` (ou `help -h` / `help --help`) para ver a lista geral de
+comandos. Os comandos do shell local também aceitam `-h` e `--help` (por
+exemplo, `ls --help`) para exibir seu uso.
+
+O shell de arquivos é isolado em sandbox: `/sdcard` é a única raiz exposta,
+`..` não pode ser usado para escapar dela e links simbólicos não são permitidos.
+`rm -r` não pode remover a raiz virtual e recusa árvores que contenham links
+simbólicos. Essa é uma interface local de arquivos, não um shell POSIX completo:
+o parsing dos comandos é baseado em espaços, e comandos não suportados são
+encaminhados ao contexto de terminal ativo.
+
 ### Wi-Fi
 
 Use `wifi search` para procurar redes, ordenadas pela intensidade do sinal. Na

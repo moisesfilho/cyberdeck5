@@ -17,6 +17,7 @@
 #   make clean
 
 CXX      ?= g++
+PYTHON   ?= python3
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O2
 
 KEYMAP_SRC       := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp
@@ -45,10 +46,12 @@ LVGL_MANAGED := ../../../managed_components/lvgl__lvgl
 LVGL_GROUP_H := $(LVGL_MANAGED)/include/lvgl/core/lv_group.h
 
 SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/features/screenshot/screenshot_bmp.cpp
+LOCAL_SHELL_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp
+LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/features/shell/cyberdeck_local_shell.h
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination
+BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell
 
-.PHONY: all test verify clean
+.PHONY: all test verify clean test_boot_sequence test_keyboard_input_contract test_ui_resource_contract
 
 all: test
 
@@ -239,6 +242,29 @@ test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../..
 test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../components/cyberdeck/include/features/screenshot/screenshot_bmp.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) -o test_screenshot_bmp
 
+# Host test for the confined /sdcard local shell.  Include the production
+# header directly: a duplicate test-only ABI here can make the test compile
+# while linking a different class layout/API than the implementation.
+test_local_shell: test_local_shell.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_local_shell.cpp $(LOCAL_SHELL_SRC) -Wl,--wrap=opendir -o test_local_shell
+
+# Structural host-side TDD contract for the boot-loop fix.  app_main is not
+# duplicated or linked against ESP-IDF: the test checks the real source order,
+# call cardinality, handle guard, and the existing /sdcard terminal wiring.
+test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) test_boot_sequence.py
+
+# Structural host-side TDD contract for the physical keyboard/UI seam.  The
+# UI is not linkable on host; this test checks the real source and intentionally
+# remains RED until the bounded lv_async_call handoff is implemented.
+test_keyboard_input_contract: test_keyboard_input_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) test_keyboard_input_contract.py
+
+# Structural host-side contract for every partial cyberdeck_ui_init resource
+# allocation path.  It checks complete cleanup and zeroing of all handles.
+test_ui_resource_contract: test_ui_resource_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) test_ui_resource_contract.py
+
 test: $(BINS)
 	@echo "==> Executando testes do keymap do shell de entrada"
 	@./test_keymap
@@ -278,6 +304,14 @@ test: $(BINS)
 	@./test_ssh_line_composer
 	@echo "==> Executando testes da API de geracao de BMP 24-bit"
 	@./test_screenshot_bmp
+	@echo "==> Executando contrato do shell local seguro"
+	@./test_local_shell
+	@echo "==> Executando contrato estrutural da sequencia de boot SD"
+	@$(MAKE) --no-print-directory test_boot_sequence
+	@echo "==> Executando contrato TDD do despacho assincrono do teclado fisico"
+	@$(MAKE) --no-print-directory test_keyboard_input_contract
+	@echo "==> Executando contrato de cleanup parcial da inicializacao da UI"
+	@$(MAKE) --no-print-directory test_ui_resource_contract
 
 clean:
 	rm -f $(BINS)

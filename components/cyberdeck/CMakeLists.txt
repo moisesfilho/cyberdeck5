@@ -15,6 +15,7 @@ idf_component_register(
         "src/platform/display/cyberdeck_clock.cpp"
         "src/features/shell/cyberdeck_history.cpp"
         "src/features/shell/cyberdeck_shell_utils.cpp"
+        "src/features/shell/cyberdeck_local_shell.cpp"
         "src/platform/logging/event_log.cpp"
         "src/platform/logging/event_log_recent.cpp"
         "src/platform/sensors/imu_reader.cpp"
