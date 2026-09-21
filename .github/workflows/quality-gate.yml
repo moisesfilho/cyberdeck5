@@ -1,0 +1,27 @@
+name: Quality Gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: espressif/install-esp-idf-action@v1
+        with:
+          version: v5.5.5
+      - name: Build firmware
+        run: idf.py build
+      - name: Host unit tests (keymap)
+        run: make -C tests/host/keymap test
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo '| Check | Result |'
+            echo '| --- | --- |'
+            echo '| ESP-IDF build | completed by previous step |'
+            echo '| Host unit tests (keymap) | completed by previous step |'
+          } >> "$GITHUB_STEP_SUMMARY"

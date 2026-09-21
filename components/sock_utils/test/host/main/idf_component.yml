@@ -1,0 +1,11 @@
+dependencies:
+  espressif/catch2: "^3.4.0"
+  # O override faz o component manager substituir a dependencia registry
+  # "espressif/sock_utils" (baixada por david-cermak/libssh) pela copia
+  # local components/sock_utils. Mesmo mecanismo do teste oficial
+  # (managed_components/espressif__sock_utils/test/host/main/idf_component.yml).
+  # So resolve apos o componente raiz (CMakeLists.txt + idf_component.yml +
+  # include/getnameinfo.h + src/getnameinfo.c) existir -- ver README.md.
+  sock_utils:
+    version: "*"
+    override_path: "../../../"

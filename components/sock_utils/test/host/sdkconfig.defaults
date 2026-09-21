@@ -1,0 +1,10 @@
+# Configuracao do host test (target linux). Base copiada do padrao oficial
+# (managed_components/espressif__sock_utils/test/host/sdkconfig.defaults,
+# gerada com idf.py save-defconfig) + CONFIG_LWIP_IPV6 para validar o
+# getnameinfo AF_INET6 nativo e IPv4-mapped contra o inet_ntop do lwIP.
+#
+CONFIG_IDF_TARGET="linux"
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+CONFIG_FREERTOS_HZ=1000
+CONFIG_LWIP_ENABLE=y
+CONFIG_LWIP_IPV6=y

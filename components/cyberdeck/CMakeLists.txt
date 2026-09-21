@@ -1,0 +1,51 @@
+idf_component_register(
+    SRCS
+        "src/core/cyberdeck_ui.cpp"
+        "src/core/cyberdeck_edit_line.cpp"
+        "src/core/cyberdeck_net_coordinator.cpp"
+        "src/core/cyberdeck_terminal_filter.cpp"
+        "src/core/cyberdeck_ssh_echo_guard.cpp"
+        # Stateful local/remote compositor; keep it in the firmware target so
+        # cyberdeck_ui and the host-side contract use the same implementation.
+        "src/core/cyberdeck_ssh_line_composer.cpp"
+        "src/core/cyberdeck_wifi_indicator.cpp"
+        "src/core/cyberdeck_wifi_icon.cpp"
+        "src/core/cyberdeck_wifi_menu.cpp"
+        "src/core/cyberdeck_wifi_state_machine.cpp"
+        "src/core/cyberdeck_clock.cpp"
+        "src/core/cyberdeck_history.cpp"
+        "src/core/cyberdeck_shell_utils.cpp"
+        "src/core/event_log.cpp"
+        "src/core/event_log_recent.cpp"
+        "src/core/imu_reader.cpp"
+        "src/core/orientation.cpp"
+        "src/core/screen_off.cpp"
+        "src/core/ssh_client.cpp"
+        "src/core/tab5_keyboard.cpp"
+        "src/core/tab5_keyboard_event.cpp"
+        "src/core/tab5_keyboard_keys.cpp"
+        "src/core/wifi_mgr.cpp"
+        "src/core/cyberdeck_wifi_event_dispatch.cpp"
+        "src/core/cyberdeck_wifi_persistence_queue.cpp"
+        "src/core/cyberdeck_wifi_persistence_coordinator.cpp"
+        "src/core/wifi_storage.cpp"
+        "src/core/screenshot_bmp.cpp"
+        "src/core/screenshot_server.cpp"
+        "src/core/cyberdeck_font.c"
+    INCLUDE_DIRS "include"
+    REQUIRES
+        lvgl
+        m5stack_tab5
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_driver_gpio
+        esp_driver_i2c
+        freertos
+        sensor_hub
+        nvs_flash
+        fatfs
+        sdmmc
+        libssh
+        esp_http_server
+)

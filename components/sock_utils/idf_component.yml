@@ -1,0 +1,9 @@
+dependencies:
+  idf:
+    version: ">=5.0"
+description: The component provides helper implementation of common system/socket utilities
+license: Apache-2.0
+repository: https://github.com/espressif/esp-protocols
+repository_info:
+  path: components/sock_utils
+version: 0.2.2
