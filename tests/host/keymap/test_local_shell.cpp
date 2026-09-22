@@ -39,6 +39,8 @@ struct fixture {
         if (!created) return;
         root = created;
         std::filesystem::create_directory(root / "visible-dir");
+        std::filesystem::create_directories(root / "child" / "nested");
+        std::filesystem::create_directory(root / "nested");
         std::ofstream(root / "visible.txt") << "content";
         std::ofstream(root / ".hidden") << "secret";
         std::filesystem::create_directory(root / ".hidden-dir");
@@ -81,6 +83,61 @@ void test_navigation(fixture &f) {
     CHECK_EQ(shell.cwd(), "/sdcard/visible-dir");
     CHECK_EQ(shell.execute("pwd").output, "/sdcard/visible-dir\n");
     CHECK(shell.execute("cd /sdcard").status == cyberdeck_local_shell_status::handled);
+
+    // Navigation may normalize parent components, but must never leave the
+    // virtual root.  These cases cover both the root boundary and a nested
+    // working directory.
+    CHECK(shell.execute("cd ..").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard");
+    CHECK(shell.execute("cd /sdcard/..").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard");
+    CHECK(shell.execute("cd ../../..").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard");
+
+    CHECK(shell.execute("cd child/nested").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard/child/nested");
+    CHECK(shell.execute("cd ..").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard/child");
+    CHECK(shell.execute("cd ..").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard");
+
+    CHECK(shell.execute("cd child/../nested").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard/nested");
+    CHECK(shell.execute("cd /sdcard").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard");
+    CHECK(shell.execute("cd ./child/../nested").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard/nested");
+    CHECK(shell.execute("cd ../child").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard/child");
+}
+
+void test_invalid_cd_preserves_cwd_and_pwd(fixture &f) {
+    cyberdeck_local_shell shell(f.root.string());
+
+    CHECK(shell.execute("cd child").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/sdcard/child");
+
+    const std::vector<std::string> invalid = {
+        "cd missing", "cd visible.txt", "cd visible-dir/missing", "cd /tmp/outside",
+        "cd --", "cd child/../missing"
+    };
+    for (const auto &command : invalid) {
+        const auto result = execute_without_exception(shell, command);
+        CHECK(result.status == cyberdeck_local_shell_status::rejected);
+        CHECK_EQ(shell.cwd(), "/sdcard/child");
+        CHECK_EQ(shell.execute("pwd").output, "/sdcard/child\n");
+    }
+}
+
+void test_cwd_is_instance_local_and_pwd_is_read_only(fixture &f) {
+    cyberdeck_local_shell first(f.root.string());
+    cyberdeck_local_shell second(f.root.string());
+
+    CHECK(first.execute("cd nested").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(first.execute("pwd").output, "/sdcard/nested\n");
+    CHECK_EQ(second.execute("pwd").output, "/sdcard\n");
+    CHECK(first.execute("pwd extra").status == cyberdeck_local_shell_status::rejected);
+    CHECK_EQ(first.cwd(), "/sdcard/nested");
 }
 
 void test_listing(fixture &f) {
@@ -274,9 +331,10 @@ void test_help_and_options(fixture &f) {
 
 void test_traversal(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
-    const char *attempts[] = {"cd ..", "cd /sdcard/../", "ls ../", "touch ../escape.txt",
+    const char *attempts[] = {"ls ../", "ls /sdcard/../", "ls ../../..", "touch ../escape.txt",
                               "mkdir /sdcard/../../escape-dir", "rm /sdcard/../visible.txt",
-                              "rmdir /sdcard/../../", "touch visible-dir/../../escape.txt"};
+                              "rmdir /sdcard/../../", "touch visible-dir/../../escape.txt",
+                              "mkdir child/../../escape-dir", "rm child/../../escape.txt"};
     for (const char *attempt : attempts)
         CHECK(shell.execute(attempt).status == cyberdeck_local_shell_status::rejected);
     CHECK(!std::filesystem::exists(f.root.parent_path() / "escape.txt"));
@@ -285,11 +343,30 @@ void test_traversal(fixture &f) {
     CHECK_EQ(shell.cwd(), "/sdcard");
 }
 
+void test_absolute_paths_outside_root_are_rejected(fixture &f) {
+    cyberdeck_local_shell shell(f.root.string());
+    const char *outside_paths[] = {
+        "/tmp/cyberdeck-local-shell-outside",
+        "/var/tmp/cyberdeck-local-shell-outside/file"
+    };
+    for (const char *path : outside_paths) {
+        CHECK(shell.execute(std::string("cd ") + path).status == cyberdeck_local_shell_status::rejected);
+        CHECK(shell.execute(std::string("ls ") + path).status == cyberdeck_local_shell_status::rejected);
+        CHECK(shell.execute(std::string("touch ") + path).status == cyberdeck_local_shell_status::rejected);
+        CHECK(shell.execute(std::string("mkdir ") + path).status == cyberdeck_local_shell_status::rejected);
+        CHECK(shell.execute(std::string("rm ") + path).status == cyberdeck_local_shell_status::rejected);
+        CHECK(shell.execute(std::string("rmdir ") + path).status == cyberdeck_local_shell_status::rejected);
+    }
+    CHECK_EQ(shell.cwd(), "/sdcard");
+}
+
 void test_root_and_boundary_protection(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
     const char *root_removals[] = {
         "rm -r /sdcard", "rm -r /sdcard/", "rm -r /sdcard/.",
-        "rm -r .", "rm -r /sdcard//"
+        "rm -r .", "rm -r /sdcard//",
+        "rmdir /sdcard", "rmdir /sdcard/", "rmdir /sdcard/.",
+        "rmdir .", "rmdir /sdcard//"
     };
     for (const char *command : root_removals)
         CHECK(shell.execute(command).status == cyberdeck_local_shell_status::rejected);
@@ -355,6 +432,12 @@ int main() {
     {
         fixture f;
         if (f.root.empty()) return 1;
+        test_invalid_cd_preserves_cwd_and_pwd(f);
+        test_cwd_is_instance_local_and_pwd_is_read_only(f);
+    }
+    {
+        fixture f;
+        if (f.root.empty()) return 1;
         test_listing(f);
     }
     {
@@ -388,6 +471,11 @@ int main() {
         fixture f;
         if (f.root.empty()) return 1;
         test_traversal(f);
+    }
+    {
+        fixture f;
+        if (f.root.empty()) return 1;
+        test_absolute_paths_outside_root_are_rejected(f);
     }
     {
         fixture f;

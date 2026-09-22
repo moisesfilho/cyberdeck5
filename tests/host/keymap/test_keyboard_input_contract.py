@@ -166,6 +166,11 @@ def main() -> int:
             "successful callback must free its dequeued snapshot exactly once")
 
     # Preserve the existing input paths while changing only physical dispatch.
+    require(re.search(r"else\s+if\s*\(\s*event->special_key\s*\)\s*\{\s*local_key\s*\(\s*event->special_key\s*\)\s*;\s*\}", consumer_code) is not None,
+            "special keys in async consumer must be routed through local_key to preserve menu/modal selection")
+    terminal_changed_body = function_body(source, "void terminal_changed(")
+    require("local_key(LV_KEY_ENTER)" in terminal_changed_body,
+            "virtual Enter in terminal_changed must route through local_key(LV_KEY_ENTER)")
     for required in ("virtual_keyboard_changed", "terminal_insert",
                      "terminal_changed", "lv_keyboard_set_textarea",
                      "s_local_shell.execute"):

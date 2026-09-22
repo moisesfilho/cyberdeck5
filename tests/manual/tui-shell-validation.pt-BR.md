@@ -72,6 +72,7 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 | S13 | Cursor permanece na posicao apos edicao | Apos inserir/apagar (Backspace/Del) no meio da linha, o cursor permanece na posicao real (nao pula para o fim); setas seguem refletindo a posicao real |  |  |
 | S14 | Cursor apos historico | Apos Up/Down (historico), o cursor vai para o FIM da linha resgatada (paridade com `move_history`) e a digitacao continua a partir dai |  |  |
 | S15 | Cursor visivel | A barra de cursor (caret) esta visivel na posicao correta da linha de edicao mesmo com o terminal preenchido por saida longa; tocar no terminal posiciona o cursor no ponto tocado, quando aplicavel ao controle |  |  |
+| S16 | Prompt do shell local | Ao iniciar, o prompt mostra `/sdcard$ `. Após `cd` válido mostra o diretório atual (por exemplo, `/sdcard/child$ `); `cd` inválido preserva o diretório e o prompt anteriores |  |  |
 
 ## 3.1 Comandos internos do shell (roteamento do menu)
 

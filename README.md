@@ -65,9 +65,13 @@ O shell visual do menu também oferece `help`, `wifi` e `clear`.
 
 ### Local file shell
 
-The local file shell starts in the virtual root `/sdcard`. Use `pwd` to print the
+The local file shell starts in the virtual root `/sdcard`; its prompt is
+`/sdcard$ `. After a valid `cd`, the prompt shows the new current directory.
+An invalid `cd` leaves both the directory and prompt unchanged. Use `pwd` to print the
 current directory and `cd <path>` to change it. Paths may be relative to the
-current directory or absolute under `/sdcard`.
+current directory or absolute under `/sdcard`. Only `cd` accepts `..`: it
+normalizes `.` and `..` in relative, absolute, and mixed paths, clamping at
+the `/sdcard` virtual root. All other commands reject path components `..`.
 
 Supported commands are:
 
@@ -85,8 +89,9 @@ Run `help` (or `help -h` / `help --help`) for the general command list. The
 local file commands also accept `-h` and `--help` (for example, `ls --help`) to
 show their usage.
 
-The file shell is sandboxed: `/sdcard` is the only exposed root, `..` cannot be
-used to escape it, and symbolic links are not allowed. `rm -r` cannot remove
+The file shell is sandboxed: `/sdcard` is the only exposed root, `cd ..` cannot
+escape it, and symbolic links are not allowed. Other commands reject `..` path
+components. `rm -r` cannot remove
 the virtual root and refuses trees containing symbolic links. It is a small
 local file interface, not a full POSIX shell: command parsing is whitespace-
 based, and unsupported commands are passed through to the active terminal

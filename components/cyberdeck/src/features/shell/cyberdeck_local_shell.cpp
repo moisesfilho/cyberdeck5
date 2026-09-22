@@ -167,21 +167,45 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     auto reject = [](const std::string &text) {
         return cyberdeck_local_shell_result{cyberdeck_local_shell_status::rejected, text + "\n"};
     };
-    auto resolve = [&](const std::string &argument, fs::path &host, std::string &virtual_path) {
+    auto resolve = [&](const std::string &argument, bool allow_parent, fs::path &host,
+                       std::string &virtual_path) {
         if (!valid_virtual_path(argument, virtual_root_)) return false;
         fs::path requested = argument.empty() ? fs::path(cwd_) : fs::path(argument);
-        if (contains_parent_component(requested)) return false;
-        fs::path virtual_fs = requested.is_absolute() ? requested : fs::path(cwd_) / requested;
-        virtual_fs = virtual_fs.lexically_normal();
-        if (virtual_fs != virtual_root_ && virtual_fs.string().rfind(virtual_root_ + "/", 0) != 0)
-            return false;
-        fs::path relative = virtual_fs.lexically_relative(virtual_root_);
-        for (const auto &part : relative) if (part == "..") return false;
-        host = relative.empty() || relative == fs::path(".")
-                   ? fs::path(host_root_)
-                   : fs::path(host_root_) / relative;
-        if (has_symlink_component(fs::path(host_root_), relative)) return false;
-        virtual_path = virtual_fs.string();
+        if (!allow_parent && contains_parent_component(requested)) return false;
+
+        // Normalize component by component so cd clamps at the virtual root.
+        std::vector<std::string> components;
+        if (!requested.is_absolute()) {
+            const fs::path current_relative = fs::path(cwd_).lexically_relative(virtual_root_);
+            for (const auto &part : current_relative)
+                if (part != "." && part != "/") components.push_back(part.string());
+        } else {
+            const std::string raw = argument;
+            if (raw != virtual_root_ && raw.rfind(virtual_root_ + "/", 0) != 0) return false;
+            requested = fs::path(raw.substr(virtual_root_.size()));
+        }
+
+        for (const auto &part : requested) {
+            const std::string component = part.string();
+            if (component.empty() || component == "." || component == "/") continue;
+            if (component == "..") {
+                if (!allow_parent) return false;
+                if (!components.empty()) components.pop_back();
+                continue;
+            }
+            components.push_back(component);
+
+            // Check even components later removed by ".." (e.g. link/..).
+            fs::path traversed;
+            for (const auto &item : components) traversed /= item;
+            if (has_symlink_component(fs::path(host_root_), traversed)) return false;
+        }
+
+        fs::path relative;
+        for (const auto &component : components) relative /= component;
+        host = components.empty() ? fs::path(host_root_) : fs::path(host_root_) / relative;
+        virtual_path = virtual_root_;
+        for (const auto &component : components) virtual_path += "/" + component;
         return true;
     };
 
@@ -193,7 +217,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     if (command == "cd") {
         if (words.size() != 2 || words[1].empty() || words[1][0] == '-') return reject("usage: cd [path]");
         fs::path host; std::string target;
-        if (!resolve(words[1], host, target) || !fs::is_directory(host)) return reject("cd: invalid path");
+        if (!resolve(words[1], true, host, target) || !fs::is_directory(host)) return reject("cd: invalid path");
         cwd_ = target;
         return {cyberdeck_local_shell_status::handled, {}};
     }
@@ -213,7 +237,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         return reject("missing operand");
 
     fs::path host; std::string target;
-    if (!resolve(argument, host, target)) return reject("path escapes /sdcard");
+    if (!resolve(argument, false, host, target)) return reject("path escapes /sdcard");
 
     if (command == "ls") {
         errno = 0;
@@ -262,6 +286,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         return {cyberdeck_local_shell_status::handled, {}};
     }
     if (command == "rmdir") {
+        if (target == virtual_root_) return reject("rmdir: refusing to remove virtual root");
         if (!fs::is_directory(host) || !fs::is_empty(host)) return reject("rmdir: directory is not empty");
         if (!fs::remove(host)) return reject("rmdir: cannot remove directory");
         return {cyberdeck_local_shell_status::handled, {}};

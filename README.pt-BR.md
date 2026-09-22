@@ -66,9 +66,14 @@ O shell visual do menu também oferece `help`, `wifi` e `clear`.
 
 ### Shell local de arquivos
 
-O shell local de arquivos inicia no diretório raiz virtual `/sdcard`. Use
-`pwd` para exibir o diretório atual e `cd <caminho>` para alterá-lo. Os caminhos
+O shell local de arquivos inicia no diretório raiz virtual `/sdcard`, com o prompt
+`/sdcard$ `. Depois de um `cd` válido, o prompt mostra o novo diretório atual;
+um `cd` inválido preserva o diretório e o prompt anteriores. Use `pwd` para
+exibir o diretório atual e `cd <caminho>` para alterá-lo. Os caminhos
 podem ser relativos ao diretório atual ou absolutos dentro de `/sdcard`.
+Somente `cd` aceita `..`: ele normaliza `.` e `..` em caminhos relativos,
+absolutos ou mistos, limitando tentativas de subir acima de `/sdcard` à raiz
+virtual. Os demais comandos rejeitam componentes `..`.
 
 Comandos disponíveis:
 
@@ -87,7 +92,8 @@ comandos. Os comandos do shell local também aceitam `-h` e `--help` (por
 exemplo, `ls --help`) para exibir seu uso.
 
 O shell de arquivos é isolado em sandbox: `/sdcard` é a única raiz exposta,
-`..` não pode ser usado para escapar dela e links simbólicos não são permitidos.
+`cd ..` não pode escapar dela e links simbólicos não são permitidos. Os demais
+comandos rejeitam componentes `..` nos caminhos.
 `rm -r` não pode remover a raiz virtual e recusa árvores que contenham links
 simbólicos. Essa é uma interface local de arquivos, não um shell POSIX completo:
 o parsing dos comandos é baseado em espaços, e comandos não suportados são

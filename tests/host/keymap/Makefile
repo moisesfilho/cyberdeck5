@@ -51,7 +51,7 @@ LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/features/shell/cyberdec
 
 BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell
 
-.PHONY: all test verify clean test_boot_sequence test_keyboard_input_contract test_ui_resource_contract
+.PHONY: all test verify clean test_boot_sequence test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract
 
 all: test
 
@@ -265,6 +265,18 @@ test_keyboard_input_contract: test_keyboard_input_contract.py ../../../component
 test_ui_resource_contract: test_ui_resource_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) test_ui_resource_contract.py
 
+test_local_prompt_contract: local_prompt_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) local_prompt_contract.py
+
+test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) test_prompt_behavior.py
+
+test_wifi_dispatch_contract: test_wifi_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) test_wifi_dispatch_contract.py
+
+wifi_enter_dispatch_contract: wifi_enter_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) wifi_enter_dispatch_contract.py
+
 test: $(BINS)
 	@echo "==> Executando testes do keymap do shell de entrada"
 	@./test_keymap
@@ -312,6 +324,14 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_keyboard_input_contract
 	@echo "==> Executando contrato de cleanup parcial da inicializacao da UI"
 	@$(MAKE) --no-print-directory test_ui_resource_contract
+	@echo "==> Executando contrato do prompt local contextual"
+	@$(MAKE) --no-print-directory test_local_prompt_contract
+	@echo "==> Executando testes comportamentais de prompt, truncamento e cursor"
+	@$(MAKE) --no-print-directory test_prompt_behavior
+	@echo "==> Executando contrato do despacho e menus Wi-Fi"
+	@$(MAKE) --no-print-directory test_wifi_dispatch_contract
+	@echo "==> Executando regressao do Enter no menu Wi-Fi"
+	@$(MAKE) --no-print-directory wifi_enter_dispatch_contract
 
 clean:
 	rm -f $(BINS)

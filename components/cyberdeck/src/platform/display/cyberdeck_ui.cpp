@@ -175,8 +175,7 @@ void process_keyboard_event_async(void *)
             render_terminal();
         }
     } else if (event->special_key) {
-        if (event->special_key == LV_KEY_ENTER) execute_line(false);
-        else local_key(event->special_key);
+        local_key(event->special_key);
     }
     free(event);
 }
@@ -290,6 +289,34 @@ size_t utf8_valid_start_offset(const std::string &str, size_t drop_bytes) {
         drop_bytes++;
     }
     return drop_bytes;
+}
+
+std::string truncate_left_utf8(const std::string &str, size_t max_bytes) {
+    if (str.size() <= max_bytes) return str;
+    if (max_bytes == 0) return {};
+    const size_t drop_bytes = str.size() - max_bytes;
+    return str.substr(utf8_valid_start_offset(str, drop_bytes));
+}
+
+std::string fit_prompt_marker(const std::string &marker) {
+    if (marker.size() <= TERMINAL_LIMIT) return marker;
+
+    /* The local prompt must retain its final directory component and the
+     * shell terminator even when a deeply nested path exceeds the terminal
+     * budget.  The marker is always formed as <cwd> + "$ ". */
+    constexpr size_t prompt_suffix_size = 2;
+    if (marker.size() >= prompt_suffix_size && marker.compare(marker.size() - prompt_suffix_size,
+                                                               prompt_suffix_size, "$ ") == 0) {
+        const size_t cwd_budget = TERMINAL_LIMIT > prompt_suffix_size
+                                ? TERMINAL_LIMIT - prompt_suffix_size : 0;
+        return truncate_left_utf8(marker.substr(0, marker.size() - prompt_suffix_size), cwd_budget) + "$ ";
+    }
+    return truncate_left_utf8(marker, TERMINAL_LIMIT);
+}
+
+std::string fit_visible_line(const std::string &line, size_t marker_bytes) {
+    const size_t budget = TERMINAL_LIMIT > marker_bytes ? TERMINAL_LIMIT - marker_bytes : 0;
+    return truncate_left_utf8(line, budget);
 }
 
 void disable_scrolling(lv_obj_t *obj) {
@@ -484,9 +511,10 @@ std::string get_rendered_output() {
     const bool connected = state == SSH_CLIENT_CONNECTED;
     sync_editor();
     const std::string visible_line = connected ? s_editor.visible_line() : (password ? std::string(s_line.size(), '*') : s_line);
-    const std::string marker = connected ? "" : (password ? "Password: " : (s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_SELECT ? "" : "$ "));
-    const size_t available = TERMINAL_LIMIT > marker.size() + visible_line.size()
-                           ? TERMINAL_LIMIT - marker.size() - visible_line.size() : 0;
+    const std::string marker = connected ? "" : (password ? "Password: " : (s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_CONFIRM ? "" : fit_prompt_marker(s_local_shell.cwd() + "$ ")));
+    const std::string fitted_line = fit_visible_line(visible_line, marker.size());
+    const size_t used = marker.size() + fitted_line.size();
+    const size_t available = TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0;
     std::string output = s_output;
     if (s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT) {
         output += s_wifi_search_menu.render();
@@ -496,11 +524,7 @@ std::string get_rendered_output() {
             output += "Press ENTER again to forget, ESC to keep.\n";
         }
     }
-    if (output.size() > available) {
-        size_t excess = output.size() - available;
-        size_t safe_offset = utf8_valid_start_offset(output, excess);
-        output.erase(0, safe_offset);
-    }
+    if (output.size() > available) output = truncate_left_utf8(output, available);
     return output;
 }
 
@@ -511,10 +535,11 @@ void render_terminal() {
     const bool connected = state == SSH_CLIENT_CONNECTED;
     sync_editor();
     const std::string visible_line = connected ? s_editor.visible_line() : (password ? std::string(s_line.size(), '*') : s_line);
-    const std::string marker = connected ? "" : (password ? "Password: " : (s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_SELECT ? "" : "$ "));
+    const std::string marker = connected ? "" : (password ? "Password: " : (s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_CONFIRM ? "" : fit_prompt_marker(s_local_shell.cwd() + "$ ")));
+    const std::string fitted_line = fit_visible_line(visible_line, marker.size());
 
     std::string output = get_rendered_output();
-    std::string text = output + marker + visible_line;
+    std::string text = output + marker + fitted_line;
 
     RenderGuard guard;
     lv_textarea_set_text(s_terminal, text.c_str());
@@ -524,8 +549,11 @@ void render_terminal() {
      * in every session. */
     size_t cursor_bytes = s_cursor;
     if (cursor_bytes > s_line.size()) cursor_bytes = s_line.size();
+    const size_t line_start = visible_line.size() - fitted_line.size();
+    if (cursor_bytes < line_start) cursor_bytes = line_start;
 
-    uint32_t char_pos = static_cast<uint32_t>(utf8_char_count(output) + utf8_char_count(marker) + utf8_char_count(s_line.substr(0, cursor_bytes)));
+    uint32_t char_pos = static_cast<uint32_t>(utf8_char_count(output) + utf8_char_count(marker) +
+                                              utf8_char_count(visible_line.substr(line_start, cursor_bytes - line_start)));
     lv_textarea_set_cursor_pos(s_terminal, char_pos);
 }
 
@@ -805,7 +833,7 @@ void local_key(uint32_t key) {
                         zero_bytes(saved_pwd, sizeof(saved_pwd));
                     } else {
                         char prompt[160];
-                        snprintf(prompt, sizeof(prompt), "Password for %s: ", ap->ssid);
+                        snprintf(prompt, sizeof(prompt), "Password for %s:\n", ap->ssid);
                         append_line(prompt);
                         s_wifi_ui_state = wifi_ui_state_t::SEARCH_PASSWORD;
                         zero_string(s_line); s_editor.clear(); s_cursor = 0;
@@ -1022,7 +1050,7 @@ void terminal_changed(lv_event_t *) {
     const size_t length = strlen(text);
     if (length > 0 && text[length - 1] == '\n') {
         if (s_virtual_enter_handled) s_virtual_enter_handled = false;
-        else execute_line();
+        else local_key(LV_KEY_ENTER);
     }
     render_terminal();
 }
