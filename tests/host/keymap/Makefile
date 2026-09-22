@@ -39,6 +39,7 @@ WIFI_STATE_MACHINE_HDR := ../../../components/cyberdeck/include/features/wifi/cy
 WIFI_EVENT_DISPATCH_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_event_dispatch.cpp
 WIFI_PERSISTENCE_QUEUE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_queue.cpp
 WIFI_PERSISTENCE_COORDINATOR_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_coordinator.cpp
+ORIENTATION_SRC := ../../../components/cyberdeck/src/platform/sensors/orientation.cpp
 INCLUDES        := -Ishim -I../../../components/cyberdeck/include
 
 # LVGL gerenciado pelo ESP-IDF (fonte da verdade p/ valores de LV_KEY_*).
@@ -49,7 +50,7 @@ SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/features/screenshot/scre
 LOCAL_SHELL_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp
 LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/features/shell/cyberdeck_local_shell.h
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell
+BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_orientation
 
 .PHONY: all test verify clean test_boot_sequence test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract
 
@@ -248,10 +249,14 @@ test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../comp
 test_local_shell: test_local_shell.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_local_shell.cpp $(LOCAL_SHELL_SRC) -Wl,--wrap=opendir -o test_local_shell
 
-# Structural host-side TDD contract for the boot-loop fix.  app_main is not
-# duplicated or linked against ESP-IDF: the test checks the real source order,
-# call cardinality, handle guard, and the existing /sdcard terminal wiring.
-test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+test_orientation: test_orientation.cpp $(ORIENTATION_SRC) ../../../components/cyberdeck/include/platform/sensors/orientation.h shim/lvgl.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_orientation.cpp $(ORIENTATION_SRC) -o test_orientation
+
+# Structural host-side contract for boot and initial IMU orientation. The
+# sources are inspected directly rather than duplicated or linked against
+# ESP-IDF: this checks boot order, safe initial fallback, and the handoff to
+# the later rotation path.
+test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/sensors/imu_reader.cpp
 	$(PYTHON) test_boot_sequence.py
 
 # Structural host-side TDD contract for the physical keyboard/UI seam.  The
@@ -318,6 +323,8 @@ test: $(BINS)
 	@./test_screenshot_bmp
 	@echo "==> Executando contrato do shell local seguro"
 	@./test_local_shell
+	@echo "==> Executando testes de orientacao pura e debounce"
+	@./test_orientation
 	@echo "==> Executando contrato estrutural da sequencia de boot SD"
 	@$(MAKE) --no-print-directory test_boot_sequence
 	@echo "==> Executando contrato TDD do despacho assincrono do teclado fisico"

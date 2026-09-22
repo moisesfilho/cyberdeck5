@@ -37,6 +37,14 @@ typedef enum {
     LV_KEY_END       = 3,   /* 0x03, ETX */
 } lv_key_t;
 
+/* Espelho de lv_display_rotation_t (LVGL 9.x, lv_display.h). */
+typedef enum {
+    LV_DISPLAY_ROTATION_0 = 0,
+    LV_DISPLAY_ROTATION_90,
+    LV_DISPLAY_ROTATION_180,
+    LV_DISPLAY_ROTATION_270
+} lv_display_rotation_t;
+
 #ifdef __cplusplus
 }
 #endif

@@ -115,8 +115,8 @@ IPv6 local e IPv4-mapped em IPv6.
 | `components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp` | mapeamento de teclas | Conversao dos codigos LVGL/Tab5 para eventos da UI. |
 | `components/cyberdeck/src/platform/logging/event_log.cpp` | `event_log_init`, `event_log_write`, `event_log_latest` | Log circular e task de persistencia/consulta. |
 | `components/cyberdeck/src/platform/logging/event_log_recent.cpp` | `event_log_recent_indices` | Selecao pura dos indices recentes sem copiar todos os registros na stack. |
-| `components/cyberdeck/src/platform/sensors/imu_reader.cpp` | `imu_reader_start` | Inicializacao do BMI270 e leitura usada pela orientacao. |
-| `components/cyberdeck/src/platform/sensors/orientation.cpp` | orientacao | Rotacao da tela baseada no sensor. |
+| `components/cyberdeck/src/platform/sensors/imu_reader.cpp` | `imu_reader_start` | Inicializacao do BMI270, amostra inicial limitada por timeout, aplicacao da orientacao antes da UI e leitura posterior para rotacao. |
+| `components/cyberdeck/src/platform/sensors/orientation.cpp` | `orientation_from_accel`, `orientation_update` | Conversao da aceleracao em rotacao e debounce da orientacao posterior. |
 
 ## Dependencias e composicao
 
@@ -170,7 +170,7 @@ HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 | `cyberdeck_net_coordinator.cpp` | `test_net_coordinator.cpp` |
 | `screenshot_bmp.cpp` | `test_screenshot_bmp.cpp` |
 | `cyberdeck_ui.cpp` | `test_boot_sequence.py`, `test_keyboard_input_contract.py`, `test_ui_resource_contract.py`, `test_local_prompt_contract.py`, `test_wifi_enter_routing_contract.py` |
-| `main/app_main.cpp` | `test_boot_sequence.py` |
+| `main/app_main.cpp`, `imu_reader.cpp` | `test_boot_sequence.py` (ordem IMU/UI, orientação inicial somente via callback Sensor Hub, proibição de leitura/HAL IMU genérico, timeout/fallback seguro e continuidade da rotação) |
 
 Os testes host nao substituem a validacao do hardware para LVGL, touch, I2C,
 Wi-Fi real, libssh real ou endpoint HTTP. Os contratos Python inspecionam a

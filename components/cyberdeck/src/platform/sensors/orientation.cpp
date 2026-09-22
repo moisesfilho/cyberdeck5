@@ -11,14 +11,17 @@ lv_display_rotation_t s_current = LV_DISPLAY_ROTATION_0;
 lv_display_rotation_t s_target = LV_DISPLAY_ROTATION_0;
 int s_stable_samples = 0;
 
-lv_display_rotation_t gravity_to_rotation(float gx, float gy)
+} // namespace
+
+lv_display_rotation_t orientation_from_accel(float ax, float ay, float az, lv_display_rotation_t fallback)
 {
-    const float plane = std::sqrt((gx * gx) + (gy * gy));
+    (void)az;
+    const float plane = std::sqrt((ax * ax) + (ay * ay));
     if (plane < FLAT_THRESHOLD) {
-        return s_current;
+        return fallback;
     }
 
-    float angle = std::atan2(gx, gy) * 180.0F / static_cast<float>(M_PI);
+    float angle = std::atan2(ax, ay) * 180.0F / static_cast<float>(M_PI);
     if (angle < 0.0F) {
         angle += 360.0F;
     }
@@ -32,8 +35,6 @@ lv_display_rotation_t gravity_to_rotation(float gx, float gy)
     };
     return rotations[quadrant];
 }
-
-} // namespace
 
 void orientation_reset(void)
 {
@@ -51,8 +52,7 @@ void orientation_set_current(lv_display_rotation_t rotation)
 
 lv_display_rotation_t orientation_update(float ax, float ay, float az)
 {
-    (void)az;
-    const lv_display_rotation_t target = gravity_to_rotation(ax, ay);
+    const lv_display_rotation_t target = orientation_from_accel(ax, ay, az, s_current);
     if (target == s_current) {
         s_stable_samples = 0;
         return s_current;
@@ -60,7 +60,7 @@ lv_display_rotation_t orientation_update(float ax, float ay, float az)
 
     if (target != s_target) {
         s_target = target;
-        s_stable_samples = 0;
+        s_stable_samples = 1;
         return s_current;
     }
 
