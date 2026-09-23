@@ -18,6 +18,7 @@ interativo no terminal.
 - Cliente SSH assíncrono com PTY remoto
 - Autenticação por senha
 - Rotação automática da tela pelo sensor BMI270
+- Ponte manual USB Serial-JTAG NDJSON com CLI host (`tools/cyberdeck_cli.py`)
 - Sem sistema de plugins, apps instaláveis, WASM ou desktop
 
 ## Requisitos
@@ -78,6 +79,7 @@ Supported commands are:
 ```text
 ls [path]       list visible entries
 ls -a [path]    include dot entries
+cat <file>      print a regular file (up to 12288 bytes)
 touch <file>    create an empty file
 mkdir <dir>     create a directory
 rm <path>       remove a file
@@ -97,6 +99,10 @@ local file interface, not a full POSIX shell: command parsing is whitespace-
 based, and unsupported commands are passed through to the active terminal
 context.
 
+`cat` accepts only regular files under `/sdcard`. The size is checked before any
+output, reads use bounded chunks, and file I/O runs in a worker before the
+result is handed back to LVGL through a bounded asynchronous queue.
+
 ### Wi-Fi
 
 Use `wifi search` to scan networks, ordered by signal strength. In the list,
@@ -109,6 +115,10 @@ confirmed.
 Use `wifi saved` to list saved SSIDs without showing passwords. Up/Down
 navigates, Enter starts the forget flow, and Escape exits. A second Enter
 confirms forgetting; Escape cancels the confirmation.
+
+`wifi audit` reports only the current local association (no scan or probe).
+`wifi audit export confirm` queues one bounded, sanitized export confined to
+`/sdcard`; export is never performed without explicit confirmation.
 
 A sessão SSH roda em uma task FreeRTOS dedicada para não bloquear a UI.
 
@@ -124,6 +134,29 @@ curl --fail --output screenshot.bmp http://DEVICE_IP/screenshot
 ```
 
 The server stops automatically when the Wi-Fi address is lost.
+
+## Serial bridge (USB Serial-JTAG NDJSON)
+
+The firmware exposes a manual NDJSON bridge on the USB Serial-JTAG port: one
+JSON object per line, bounded to 4096 bytes and correlated by `rid`
+(`{"rid","ok":true,"result":...}` on success, `{"rid","ok":false,"error",
+"error_code"}` on error). ESP_LOG output interleaves on the same stream and is
+filtered by the client.
+
+Commands: `ping`, `sys.info`, `wifi.status`, `wifi.scan`, `ui.echo`,
+`ui.click X Y`, `ui.tap <target>`, `ui.type <text>`, `ui.dump`, `ui.clear`,
+`screen.shot` (frame metadata) and `screen.dump`, which streams the LVGL
+screen as 1024-byte Base64 BMP chunks with per-chunk and total CRC32.
+
+```bash
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ping
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 sys.info
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.click 120 300
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
+```
+
+`pyserial` is required on the host (`pip install pyserial`). See
+`tests/manual/serial-bridge-validation.pt-BR.md` for the on-device checklist.
 
 ## Estrutura
 

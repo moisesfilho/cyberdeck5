@@ -339,6 +339,16 @@ void test_utf8_preserved()
     CHECK_EQ(transform({"\xC3"}), "\xC3"); /* lead truncado no fim: preservado */
 }
 
+void test_invalid_utf8_and_controls_mixed()
+{
+    /* Invalid UTF-8 is opaque bytes: only C0/DEL are filtered. */
+    const std::string raw = std::string("A\x80\xC0\xAF\xF5\xFF", 6) +
+                            std::string("\x00\x01\x07\x1F\x7F", 5) + "B\tC\n";
+    CHECK_EQ(transform({raw}), std::string("A") + "\x80\xC0\xAF\xF5\xFF" + "B\tC\n");
+    CHECK_EQ(transform({"A\x80\xC0", "\xAF\xF5", "\xFF\x00", "B\x7F"}),
+             std::string("A") + "\x80\xC0\xAF\xF5\xFF" + "B");
+}
+
 void test_escape_abort_on_control_and_utf8()
 {
     /* C0 dentro de sequencia CSI aborta a sequencia; o byte e reprocessado
@@ -523,6 +533,7 @@ int main()
     test_escape_fragmentation();
     test_osc_fragmentation();
     test_utf8_preserved();
+    test_invalid_utf8_and_controls_mixed();
     test_escape_abort_on_control_and_utf8();
     test_flush_pending_discards();
     test_output_capacity_truncation();

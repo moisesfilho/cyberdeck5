@@ -14,8 +14,10 @@
 #include "features/shell/cyberdeck_ssh_line_composer.h"
 #include "features/wifi/cyberdeck_wifi_menu.h"
 #include "features/wifi/cyberdeck_wifi_state_machine.h"
+#include "features/wifi/cyberdeck_wifi_audit.h"
 #include "features/shell/cyberdeck_edit_line.h"
 #include "features/shell/cyberdeck_local_shell.h"
+#include "features/shell/cyberdeck_cat_worker.h"
 
 #include <cstdio>
 #include <cstring>
@@ -42,6 +44,8 @@ enum class wifi_ui_state_t {
 
 constexpr size_t TERMINAL_LIMIT = 12288;
 constexpr UBaseType_t KEYBOARD_EVENT_QUEUE_CAPACITY = 8;
+constexpr UBaseType_t CAT_WORK_QUEUE_CAPACITY = 8;
+static_assert(CAT_WORK_QUEUE_CAPACITY == 8, "cat handoff capacity is bounded");
 const lv_color_t BLACK = lv_color_hex(0x000000);
 const lv_color_t SURFACE = lv_color_hex(0x0A0A0A);
 const lv_color_t BORDER = lv_color_hex(0x2A2A2A);
@@ -65,17 +69,22 @@ bool s_rendering = false;
 bool s_virtual_enter_handled = false;
 std::string s_last_clock_text;
 cyberdeck_local_shell s_local_shell("/sdcard");
+bool s_cat_worker_ready = false;
 wifi_ui_state_t s_wifi_ui_state = wifi_ui_state_t::IDLE;
 cyberdeck_wifi_search_menu s_wifi_search_menu;
 cyberdeck_wifi_saved_menu s_wifi_saved_menu;
 std::string s_selected_ap_ssid;
 cyberdeck_wifi::state_machine s_wifi_model;
+ cyberdeck_wifi_audit::audit_controller s_wifi_audit;
+ std::uint64_t s_wifi_audit_reported_token = 0;
+ cyberdeck_wifi_audit::state s_wifi_audit_reported_state = cyberdeck_wifi_audit::state::unavailable;
 std::uint64_t s_wifi_connection_token = 0;
 std::uint64_t s_wifi_model_connection_token = 0;
 struct wifi_state_update {
     wifi_status_t status;
     bool enabled;
 };
+wifi_status_t s_latest_wifi_status{};
 QueueHandle_t s_wifi_state_queue = nullptr;
 struct wifi_scan_result {
     std::uint64_t generation;
@@ -112,6 +121,7 @@ void discard_keyboard_event_from_queue(keyboard_event_context *event)
 
 void destroy_ui_resource_handles()
 {
+    s_wifi_audit.teardown();
     if (s_wifi_scan_context_mutex != nullptr) {
         vSemaphoreDelete(s_wifi_scan_context_mutex);
         s_wifi_scan_context_mutex = nullptr;
@@ -142,6 +152,67 @@ void sync_line();
 void render_terminal();
 void execute_line(bool line_already_sent);
 void local_key(uint32_t key);
+
+void on_cat_result(const char *output, size_t output_length, bool accepted, void *)
+{
+    auto sanitize_for_lvgl = [](const char *input, size_t input_length) {
+        std::string clean;
+        if (input == nullptr) return clean;
+        constexpr size_t limit = TERMINAL_LIMIT;
+        const unsigned char *bytes = reinterpret_cast<const unsigned char *>(input);
+        const auto replacement = [&clean]() {
+            if (clean.size() + 3 <= TERMINAL_LIMIT) clean.append("\xEF\xBF\xBD");
+        };
+        for (size_t i = 0; i < input_length && clean.size() < limit;) {
+            const unsigned char first = bytes[i];
+            if (first < 0x80) {
+                if (first == '\n' || first == '\r' || first == '\t' || (first >= 0x20 && first != 0x7F))
+                    clean.push_back(static_cast<char>(first));
+                else replacement();
+                ++i;
+                continue;
+            }
+            size_t length = first >= 0xF0 ? 4 : first >= 0xE0 ? 3 : first >= 0xC2 ? 2 : 0;
+            uint32_t codepoint = first & (length == 4 ? 0x07 : length == 3 ? 0x0F : 0x1F);
+            bool valid = length != 0;
+            for (size_t j = 1; valid && j < length; ++j) {
+                if (i + j >= input_length || (bytes[i + j] & 0xC0) != 0x80) valid = false;
+                else codepoint = (codepoint << 6) | (bytes[i + j] & 0x3F);
+            }
+            if (valid && ((length == 2 && codepoint < 0x80) || (length == 3 && codepoint < 0x800) ||
+                          (length == 4 && (codepoint < 0x10000 || codepoint > 0x10FFFF)) ||
+                          (codepoint >= 0xD800 && codepoint <= 0xDFFF))) valid = false;
+            if (!valid) { replacement(); ++i; continue; }
+            if (clean.size() + length > limit) break;
+            clean.append(reinterpret_cast<const char *>(bytes + i), length);
+            i += length;
+        }
+        return clean;
+    };
+    const std::string safe_output = sanitize_for_lvgl(output, output_length);
+    if (accepted) append_line(safe_output);
+    else append_line(output != nullptr && output_length != 0 ? safe_output : "cat: operation rejected\n");
+    render_terminal();
+}
+
+bool is_cat_request(const std::string &line)
+{
+    const size_t first = line.find_first_not_of(" \t");
+    if (first == std::string::npos || line.compare(first, 3, "cat") != 0) return false;
+    return first + 3 == line.size() || line[first + 3] == ' ' || line[first + 3] == '\t';
+}
+
+bool is_cat_help_request(const std::string &line)
+{
+    const size_t first = line.find_first_not_of(" \t");
+    if (first == std::string::npos || line.compare(first, 3, "cat") != 0) return false;
+    size_t option = line.find_first_not_of(" \t", first + 3);
+    if (option == std::string::npos) return false;
+    const size_t end = line.find_first_of(" \t", option);
+    const std::string argument = end == std::string::npos ? line.substr(option) : line.substr(option, end - option);
+    if (argument != "-h" && argument != "--help") return false;
+    return end == std::string::npos || line.find_first_not_of(" \t", end) == std::string::npos;
+}
 
 void process_keyboard_event_async(void *)
 {
@@ -375,6 +446,7 @@ void process_wifi_state(lv_timer_t *) {
 
     const wifi_status_t *status = &update.status;
     const bool enabled = update.enabled;
+    s_latest_wifi_status = *status;
     if (s_wifi_ui_state == wifi_ui_state_t::CONNECTING &&
         s_wifi_model.active_connection_token() == s_wifi_model_connection_token &&
         status->connection_token == s_wifi_connection_token) {
@@ -451,6 +523,22 @@ void process_wifi_scan(lv_timer_t *) {
         render_terminal();
     }
     delete result;
+}
+
+void process_wifi_audit(lv_timer_t *) {
+    const auto value = s_wifi_audit.snapshot_view();
+    if (value.token != 0 && (value.token != s_wifi_audit_reported_token ||
+                             value.status != s_wifi_audit_reported_state)) {
+        s_wifi_audit_reported_token = value.token;
+        s_wifi_audit_reported_state = value.status;
+        if (value.status == cyberdeck_wifi_audit::state::ready) append_line("wifi audit: ready\n");
+        else if (value.status == cyberdeck_wifi_audit::state::error) append_line("wifi audit: unavailable\n");
+        render_terminal();
+    }
+    const auto exported = s_wifi_audit.drain_export();
+    if (exported.ok) append_line("wifi audit export persisted\n");
+    else if (exported.path[0] != '\0') append_line("wifi audit export failed\n");
+    if (exported.ok || exported.path[0] != '\0') render_terminal();
 }
 
 void on_wifi_state(const wifi_status_t *status, bool enabled, void *) {
@@ -691,6 +779,14 @@ void execute_line(bool line_already_sent = false) {
     append_line(entered.echo);
     event_log_write('I', "shell", line.c_str());
     s_history.add(line);
+    /* cat is the only local command whose file I/O is deliberately moved off
+     * the LVGL task.  CAT_WORK_QUEUE_CAPACITY is bounded in the worker. */
+    if (is_cat_request(line) && !is_cat_help_request(line)) {
+        if (!s_cat_worker_ready || !cyberdeck_cat_worker_enqueue(s_local_shell.cwd().c_str(), line.c_str()))
+            append_line("cat: worker queue unavailable\n");
+        render_terminal();
+        return;
+    }
     const cyberdeck_local_shell_result local = s_local_shell.execute(line);
     if (local.status == cyberdeck_local_shell_status::handled) {
         append_line(local.output);
@@ -739,6 +835,19 @@ void execute_line(bool line_already_sent = false) {
             append_line("Failed to start Wi-Fi scan.\n");
             s_wifi_ui_state = wifi_ui_state_t::IDLE;
         }
+        break;
+    }
+    case CYBERDECK_CMD_WIFI_AUDIT: {
+        append_line("wifi audit: collecting\n");
+        if (!s_wifi_audit.initialized()) s_wifi_audit.initialize();
+        (void)s_wifi_audit.begin({false, {}, {}, {}});
+        break;
+    }
+    case CYBERDECK_CMD_WIFI_AUDIT_EXPORT: {
+        if (!cmd.confirmed) { append_line("wifi audit export requires confirmation\n"); break; }
+        const auto value = s_wifi_audit.snapshot_view();
+        if (s_wifi_audit.enqueue_export(value.token, "/sdcard/wifi-audit.txt", true)) append_line("wifi audit export requested\n");
+        else append_line("wifi audit export unavailable\n");
         break;
     }
     case CYBERDECK_CMD_WIFI_SAVED: {
@@ -1095,10 +1204,11 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
         * discard it without allowing it to starve the newer result. */
        s_wifi_scan_queue = xQueueCreate(2, sizeof(wifi_scan_result *));
        s_wifi_scan_context_mutex = xSemaphoreCreateMutex();
-       if (s_wifi_scan_queue == nullptr || s_wifi_scan_context_mutex == nullptr) {
+        if (s_wifi_scan_queue == nullptr || s_wifi_scan_context_mutex == nullptr) {
            destroy_ui_resource_handles();
-           return ESP_ERR_NO_MEM;
-       }
+            return ESP_ERR_NO_MEM;
+        }
+        s_cat_worker_ready = cyberdeck_cat_worker_start("/sdcard", on_cat_result, nullptr);
      s_screen = lv_scr_act(); style_base(s_screen, BLACK, WHITE); lv_obj_set_style_pad_all(s_screen, 12, 0); lv_obj_set_layout(s_screen, LV_LAYOUT_NONE); disable_scrolling(s_screen);
     s_menu = lv_obj_create(s_screen); lv_obj_set_size(s_menu, LV_PCT(100), LV_PCT(100)); style_base(s_menu, BLACK, WHITE); lv_obj_set_style_pad_all(s_menu, 0, 0); lv_obj_set_flex_flow(s_menu, LV_FLEX_FLOW_COLUMN); disable_scrolling(s_menu);
     lv_obj_t *header = lv_obj_create(s_menu); lv_obj_set_size(header, LV_PCT(100), 42); style_base(header, BLACK, WHITE); lv_obj_set_style_pad_all(header, 0, 0); lv_obj_set_style_pad_column(header, 0, 0); lv_obj_set_style_pad_row(header, 0, 0); lv_obj_set_layout(header, LV_LAYOUT_FLEX); lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -1113,8 +1223,9 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
       update_clock(nullptr);
       lv_timer_create(update_clock, 1000, nullptr);
       lv_timer_create(process_wifi_state, 100, nullptr);
-      lv_timer_create(process_wifi_scan, 100, nullptr);
-     s_terminal = lv_textarea_create(s_menu); lv_obj_set_width(s_terminal, LV_PCT(100)); lv_obj_set_flex_grow(s_terminal, 1); style_base(s_terminal, SURFACE, WHITE); lv_obj_set_style_border_width(s_terminal, 1, 0); lv_obj_set_style_border_color(s_terminal, BORDER, 0); lv_obj_set_style_pad_all(s_terminal, 12, 0); lv_obj_set_scroll_dir(s_terminal, LV_DIR_ALL); lv_obj_set_scroll_chain(s_terminal, false); lv_obj_set_scrollbar_mode(s_terminal, LV_SCROLLBAR_MODE_OFF); lv_obj_add_event_cb(s_terminal, focused, LV_EVENT_FOCUSED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_insert, LV_EVENT_INSERT, nullptr); lv_obj_add_event_cb(s_terminal, terminal_changed, LV_EVENT_VALUE_CHANGED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_key, LV_EVENT_KEY, nullptr);
+       lv_timer_create(process_wifi_scan, 100, nullptr);
+       lv_timer_create(process_wifi_audit, 100, nullptr);
+     s_terminal = lv_textarea_create(s_menu); lv_obj_set_width(s_terminal, LV_PCT(100)); lv_obj_set_flex_grow(s_terminal, 1); style_base(s_terminal, SURFACE, WHITE); lv_obj_set_style_border_width(s_terminal, 1, 0); lv_obj_set_style_border_color(s_terminal, BORDER, 0); lv_obj_set_style_pad_all(s_terminal, 12, 0); lv_textarea_set_one_line(s_terminal, false); lv_textarea_set_max_length(s_terminal, TERMINAL_LIMIT); lv_obj_set_scroll_dir(s_terminal, LV_DIR_ALL); lv_obj_set_scroll_chain(s_terminal, false); lv_obj_set_scrollbar_mode(s_terminal, LV_SCROLLBAR_MODE_OFF); lv_obj_add_event_cb(s_terminal, focused, LV_EVENT_FOCUSED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_insert, LV_EVENT_INSERT, nullptr); lv_obj_add_event_cb(s_terminal, terminal_changed, LV_EVENT_VALUE_CHANGED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_key, LV_EVENT_KEY, nullptr);
     reset_ssh_output_filter();
     discard_ssh_line_composer();
     s_output = "CYBERDECK5 READY\n"; render_terminal();
@@ -1122,6 +1233,13 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
      s_keyboard = lv_keyboard_create(s_screen); hidden(s_keyboard, true); lv_keyboard_set_textarea(s_keyboard, s_terminal); lv_obj_add_event_cb(s_keyboard, virtual_keyboard_changed, LV_EVENT_VALUE_CHANGED, nullptr);
     disable_scrolling(s_keyboard);
     return ESP_OK;
+}
+
+extern "C" void cyberdeck_ui_deinit(void)
+{
+    cyberdeck_cat_worker_teardown();
+    s_cat_worker_ready = false;
+    destroy_ui_resource_handles();
 }
 
 extern "C" void cyberdeck_keyboard_input(const char *text, size_t length, uint8_t modifier, uint32_t special_key) {

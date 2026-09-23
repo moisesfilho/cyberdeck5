@@ -18,6 +18,7 @@ interativo no terminal.
 - Cliente SSH assíncrono com PTY remoto
 - Autenticação por senha
 - Rotação automática da tela pelo sensor BMI270
+- Ponte manual USB Serial-JTAG NDJSON com CLI host (`tools/cyberdeck_cli.py`)
 - Sem sistema de plugins, apps instaláveis, WASM ou desktop
 
 ## Requisitos
@@ -126,6 +127,29 @@ curl --fail --output screenshot.bmp http://IP_DO_DISPOSITIVO/screenshot
 ```
 
 O servidor é parado automaticamente quando o Wi-Fi perde o endereço IP.
+
+## Ponte serial (USB Serial-JTAG NDJSON)
+
+O firmware expõe uma ponte manual NDJSON na porta USB Serial-JTAG: um objeto
+JSON por linha, limitado a 4096 bytes e correlacionado por `rid`
+(`{"rid","ok":true,"result":...}` no sucesso, `{"rid","ok":false,"error",
+"error_code"}` no erro). A saída do ESP_LOG chega intercalada no mesmo fluxo
+e é filtrada pelo cliente.
+
+Comandos: `ping`, `sys.info`, `wifi.status`, `wifi.scan`, `ui.echo`,
+`ui.click X Y`, `ui.tap <alvo>`, `ui.type <texto>`, `ui.dump`, `ui.clear`,
+`screen.shot` (metadados do frame) e `screen.dump`, que transmite a tela
+LVGL como chunks BMP de 1024 bytes em Base64 com CRC32 por chunk e total.
+
+```bash
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ping
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 sys.info
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.click 120 300
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
+```
+
+`pyserial` é necessário no host (`pip install pyserial`). Consulte
+`tests/manual/serial-bridge-validation.pt-BR.md` para o roteiro no dispositivo.
 
 ## Estrutura
 

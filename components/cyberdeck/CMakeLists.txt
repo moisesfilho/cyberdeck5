@@ -16,6 +16,7 @@ idf_component_register(
         "src/features/shell/cyberdeck_history.cpp"
         "src/features/shell/cyberdeck_shell_utils.cpp"
         "src/features/shell/cyberdeck_local_shell.cpp"
+        "src/features/shell/cyberdeck_cat_worker.cpp"
         "src/platform/logging/event_log.cpp"
         "src/platform/logging/event_log_recent.cpp"
         "src/platform/sensors/imu_reader.cpp"
@@ -29,9 +30,11 @@ idf_component_register(
         "src/features/wifi/cyberdeck_wifi_event_dispatch.cpp"
         "src/features/wifi/cyberdeck_wifi_persistence_queue.cpp"
         "src/features/wifi/cyberdeck_wifi_persistence_coordinator.cpp"
+        "src/features/wifi/cyberdeck_wifi_audit.cpp"
         "src/features/wifi/wifi_storage.cpp"
         "src/features/screenshot/screenshot_bmp.cpp"
         "src/features/screenshot/screenshot_server.cpp"
+        "src/features/serial/cyberdeck_serial_bridge.cpp"
         "src/platform/display/cyberdeck_font.c"
     INCLUDE_DIRS "include"
     REQUIRES
@@ -42,6 +45,10 @@ idf_component_register(
         esp_event
         esp_driver_gpio
         esp_driver_i2c
+        esp_driver_usb_serial_jtag
+        esp_app_format
+        esp_timer
+        esp_system
         freertos
         sensor_hub
         nvs_flash

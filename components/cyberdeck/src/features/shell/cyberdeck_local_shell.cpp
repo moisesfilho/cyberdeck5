@@ -3,25 +3,52 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <dirent.h>
 #include <filesystem>
+#include <fcntl.h>
 #include <fstream>
-#include <sstream>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
 
 namespace {
 
+constexpr size_t k_shell_max_tokens = 32;
+constexpr size_t k_shell_max_line_bytes = 1024;
+
+bool is_token_separator(const char byte)
+{
+    // Match the command-line whitespace accepted previously, without
+    // consulting the current C++ locale.
+    return byte == ' ' || byte == '\t' || byte == '\n' || byte == '\r' ||
+           byte == '\v' || byte == '\f';
+}
+
 bool split_words(const std::string &line, std::vector<std::string> &words)
 {
-    std::istringstream input(line);
-    std::string word;
-    while (input >> word) words.push_back(word);
-    return !input.bad();
+    // Keep command parsing independent of locale/iostream state.  This runs
+    // on the cat worker, whose stack is deliberately kept small, so both the
+    // input and the number of tokens are bounded before constructing strings.
+    if (line.size() > k_shell_max_line_bytes) return false;
+    words.reserve(k_shell_max_tokens);
+    size_t offset = 0;
+    while (offset < line.size()) {
+        while (offset < line.size() && is_token_separator(line[offset]))
+            ++offset;
+        if (offset == line.size()) break;
+
+        const size_t begin = offset;
+        while (offset < line.size() && !is_token_separator(line[offset]))
+            ++offset;
+        if (words.size() == k_shell_max_tokens) return false;
+        words.emplace_back(line.data() + begin, offset - begin);
+    }
+    return true;
 }
 
 bool is_dot_name(const std::string &name) { return !name.empty() && name[0] == '.'; }
@@ -72,6 +99,137 @@ bool contains_symlink_tree(const fs::path &path)
 constexpr size_t k_ls_max_entries = 128;
 constexpr size_t k_ls_max_name_bytes = 255;
 constexpr size_t k_ls_max_output_bytes = 4096;
+constexpr size_t k_cat_max_output_bytes = 12288;
+constexpr size_t k_cat_read_chunk_bytes = 1024;
+constexpr size_t k_cat_request_bytes = 512;
+
+bool cat_component_safe(const char *component, size_t length)
+{
+    if (length == 0 || length > 255) return false;
+    if ((length == 1 && component[0] == '.') ||
+        (length == 2 && component[0] == '.' && component[1] == '.')) return false;
+    for (size_t i = 0; i < length; ++i)
+        if (component[i] == '/' || component[i] == '\\' || component[i] == '\0') return false;
+    return true;
+}
+
+bool cat_relative_safe(const std::string &relative)
+{
+    size_t begin = 0;
+    while (begin < relative.size()) {
+        size_t end = relative.find('/', begin);
+        if (end == std::string::npos) end = relative.size();
+        if (!cat_component_safe(relative.data() + begin, end - begin)) return false;
+        begin = end + 1;
+    }
+    return !relative.empty();
+}
+
+int cat_open_regular(const char *root, const std::string &relative)
+{
+    if (root == nullptr || *root == '\0' || !cat_relative_safe(relative)) return -1;
+#if defined(ESP_PLATFORM)
+    std::string full(root);
+    if (full.back() != '/') full += '/';
+    full += relative;
+    int flags = O_RDONLY;
+#if defined(O_NOFOLLOW)
+    flags |= O_NOFOLLOW;
+#endif
+    const int descriptor = ::open(full.c_str(), flags);
+    if (descriptor < 0) return -1;
+    struct stat info = {};
+    if (::fstat(descriptor, &info) != 0 || !S_ISREG(info.st_mode)) {
+        ::close(descriptor);
+        return -1;
+    }
+    return descriptor;
+#elif defined(O_NOFOLLOW) && defined(O_DIRECTORY) && defined(AT_FDCWD)
+    int directory = ::open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (directory < 0) return -1;
+    size_t begin = 0;
+    while (begin < relative.size()) {
+        size_t end = relative.find('/', begin);
+        if (end == std::string::npos) end = relative.size();
+        const bool last = end == relative.size();
+        char component[256] = {};
+        const size_t length = end - begin;
+        std::memcpy(component, relative.data() + begin, length);
+        const int next = ::openat(directory, component,
+                                  O_RDONLY | O_NOFOLLOW | (last ? 0 : O_DIRECTORY));
+        ::close(directory);
+        if (next < 0) return -1;
+        if (last) {
+            struct stat info = {};
+            if (::fstat(next, &info) != 0 || !S_ISREG(info.st_mode)) {
+                ::close(next);
+                return -1;
+            }
+            return next;
+        }
+        directory = next;
+        begin = end + 1;
+    }
+    ::close(directory);
+    return -1;
+#else
+    (void)root;
+    (void)relative;
+    return -1;
+#endif
+}
+
+int secure_open_regular(const fs::path &root, const fs::path &path)
+{
+#if defined(ESP_PLATFORM)
+    /* ESP-IDF's VFS exposes open(2)/fstat(2), but does not expose openat(2)
+     * (and O_DIRECTORY is not consistently available).  The SD card VFS is
+     * FATFS, which has no symlink objects; keep the already-normalized,
+     * root-confined path and validate the object through the descriptor.  If
+     * the VFS/newlib provides O_NOFOLLOW, retain that extra protection for
+     * VFSes which do implement links. */
+    const fs::path relative = path.lexically_relative(root);
+    if (relative.empty() || relative.is_absolute() || contains_parent_component(relative)) return -1;
+    int flags = O_RDONLY;
+#if defined(O_NOFOLLOW)
+    flags |= O_NOFOLLOW;
+#endif
+    const int file = ::open(path.c_str(), flags);
+    if (file < 0) return -1;
+    struct stat info = {};
+    if (::fstat(file, &info) != 0 || !S_ISREG(info.st_mode)) {
+        ::close(file);
+        return -1;
+    }
+    return file;
+#elif defined(O_NOFOLLOW) && defined(O_DIRECTORY) && defined(AT_FDCWD)
+    const fs::path relative = path.lexically_relative(root);
+    if (relative.empty() || relative.is_absolute() || contains_parent_component(relative)) return -1;
+    int directory = ::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (directory < 0) return -1;
+    std::vector<std::string> parts;
+    for (const auto &part : relative) {
+        if (part == "." || part.empty()) continue;
+        parts.push_back(part.string());
+    }
+    if (parts.empty()) { ::close(directory); return -1; }
+    for (size_t i = 0; i + 1 < parts.size(); ++i) {
+        const int next = ::openat(directory, parts[i].c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        ::close(directory);
+        if (next < 0) return -1;
+        directory = next;
+    }
+    const int file = ::openat(directory, parts.back().c_str(), O_RDONLY | O_NOFOLLOW);
+    ::close(directory);
+    return file;
+#else
+    /* Without descriptor-relative traversal and without O_NOFOLLOW there is
+     * no race-safe way to prove that a path remains inside root. */
+    (void)root;
+    (void)path;
+    return -1;
+#endif
+}
 
 class directory_handle {
 public:
@@ -108,6 +266,7 @@ std::string help_text()
            "pwd - print working directory\n"
            "cd [path] - change working directory\n"
            "ls [-a] [path] - list directory contents\n"
+           "cat <file> - print a regular file\n"
            "touch <file> - create an empty file\n"
            "mkdir <directory> - create a directory\n"
            "rm [-r] <path> - remove a file or directory\n"
@@ -123,6 +282,7 @@ std::string command_help(const std::string &command)
     if (command == "pwd") return "pwd - print working directory\n";
     if (command == "cd") return "cd [path] - change working directory\n";
     if (command == "ls") return "ls [-a] [path] - list directory contents\n";
+    if (command == "cat") return "cat <file> - print a regular file\n";
     if (command == "touch") return "touch <file> - create an empty file\n";
     if (command == "mkdir") return "mkdir <directory> - create a directory\n";
     if (command == "rm") return "rm [-r] <path> - remove a file or directory\n";
@@ -131,6 +291,81 @@ std::string command_help(const std::string &command)
 }
 
 } // namespace
+
+cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root,
+                                                       const char *cwd,
+                                                       const char *command)
+{
+    constexpr size_t k_cat_max_output_bytes = 12288;
+    constexpr size_t k_cat_read_chunk_bytes = 1024;
+    auto reject_cat = [](const char *message) {
+        return cyberdeck_local_shell_result{cyberdeck_local_shell_status::rejected,
+                                            std::string(message) + "\n"};
+    };
+    if (host_root == nullptr || cwd == nullptr || command == nullptr)
+        return reject_cat("cat: invalid request");
+    if (std::strlen(host_root) > k_cat_request_bytes || std::strlen(cwd) > k_cat_request_bytes ||
+        std::strlen(command) > k_cat_request_bytes)
+        return reject_cat("cat: request too long");
+
+    const std::string line(command);
+    size_t cursor = 0;
+    while (cursor < line.size() && (line[cursor] == ' ' || line[cursor] == '\t')) ++cursor;
+    if (line.compare(cursor, 3, "cat") != 0 ||
+        (cursor + 3 < line.size() && line[cursor + 3] != ' ' && line[cursor + 3] != '\t'))
+        return reject_cat("cat: invalid request");
+    cursor += 3;
+    while (cursor < line.size() && (line[cursor] == ' ' || line[cursor] == '\t')) ++cursor;
+    const size_t argument_begin = cursor;
+    while (cursor < line.size() && line[cursor] != ' ' && line[cursor] != '\t') ++cursor;
+    if (argument_begin == cursor) return reject_cat("cat: missing operand");
+    const std::string argument = line.substr(argument_begin, cursor - argument_begin);
+    while (cursor < line.size() && (line[cursor] == ' ' || line[cursor] == '\t')) ++cursor;
+    if (cursor != line.size() || argument[0] == '-') return reject_cat("cat: invalid operand");
+
+    const std::string virtual_root = "/sdcard";
+    const std::string current(cwd);
+    if (current != virtual_root && current.rfind(virtual_root + "/", 0) != 0)
+        return reject_cat("cat: path escapes /sdcard");
+    std::string virtual_path = argument[0] == '/' ? argument : current + "/" + argument;
+    if (virtual_path != virtual_root && virtual_path.rfind(virtual_root + "/", 0) != 0)
+        return reject_cat("cat: path escapes /sdcard");
+    const std::string relative = virtual_path.substr(virtual_root.size() +
+                                                      (virtual_path.size() > virtual_root.size() ? 1 : 0));
+    if (!cat_relative_safe(relative)) return reject_cat("cat: path escapes /sdcard");
+
+    // cat_open_regular performs descriptor-relative openat traversal with
+    // O_NOFOLLOW (or the conservative ESP VFS equivalent).
+    const int descriptor = cat_open_regular(host_root, relative);
+    if (descriptor < 0) return reject_cat("cat: secure open unavailable");
+    struct stat file_info = {};
+    if (::fstat(descriptor, &file_info) != 0 || !S_ISREG(file_info.st_mode)) {
+        ::close(descriptor);
+        return reject_cat("cat: not a regular file");
+    }
+    if (file_info.st_size < 0 || static_cast<unsigned long long>(file_info.st_size) > k_cat_max_output_bytes) {
+        ::close(descriptor);
+        return reject_cat("cat: file is too large");
+    }
+    std::string output;
+    output.reserve(static_cast<size_t>(file_info.st_size));
+    char chunk[k_cat_read_chunk_bytes];
+    for (;;) {
+        const ssize_t count = ::read(descriptor, chunk, sizeof(chunk));
+        if (count == 0) break;
+        if (count < 0) {
+            ::close(descriptor);
+            return reject_cat("cat: cannot read file");
+        }
+        output.append(chunk, static_cast<size_t>(count));
+        if (output.size() > k_cat_max_output_bytes) {
+            ::close(descriptor);
+            return reject_cat("cat: file is too large");
+        }
+    }
+    ::close(descriptor);
+    return {cyberdeck_local_shell_status::handled, std::move(output)};
+}
 
 cyberdeck_local_shell::cyberdeck_local_shell(const std::string &host_root,
                                               const std::string &virtual_root)
@@ -152,7 +387,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     const std::string &command = words[0];
     const bool local = command == "pwd" || command == "cd" || command == "ls" ||
                        command == "touch" || command == "mkdir" || command == "rm" ||
-                       command == "rmdir" || command == "help";
+                       command == "rmdir" || command == "cat" || command == "help";
     if (!local) return {cyberdeck_local_shell_status::passthrough, {}};
 
     if (words.size() == 2 && (words[1] == "-h" || words[1] == "--help") && command != "help")
@@ -271,6 +506,33 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
             output += name;
             output += '\n';
         }
+        return {cyberdeck_local_shell_status::handled, output};
+    }
+    if (command == "cat") {
+        if (argument.empty()) return reject("missing operand");
+        const int descriptor = secure_open_regular(fs::path(host_root_), host);
+        if (descriptor < 0) return reject("cat: secure open unavailable");
+        struct stat file_info = {};
+        if (::fstat(descriptor, &file_info) != 0 || !S_ISREG(file_info.st_mode)) {
+            ::close(descriptor);
+            return reject("cat: not a regular file");
+        }
+        if (file_info.st_size < 0 || static_cast<unsigned long long>(file_info.st_size) > k_cat_max_output_bytes)
+            { ::close(descriptor); return reject("cat: file is too large"); }
+        std::string output;
+        output.reserve(static_cast<size_t>(file_info.st_size));
+        char chunk[k_cat_read_chunk_bytes];
+        for (;;) {
+            const ssize_t count = ::read(descriptor, chunk, sizeof(chunk));
+            if (count == 0) break;
+            if (count < 0) { ::close(descriptor); return reject("cat: cannot read file"); }
+            output.append(chunk, static_cast<size_t>(count));
+            if (output.size() > k_cat_max_output_bytes) {
+                ::close(descriptor);
+                return reject("cat: file is too large");
+            }
+        }
+        ::close(descriptor);
         return {cyberdeck_local_shell_status::handled, output};
     }
     struct stat info = {};

@@ -39,7 +39,10 @@ WIFI_STATE_MACHINE_HDR := ../../../components/cyberdeck/include/features/wifi/cy
 WIFI_EVENT_DISPATCH_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_event_dispatch.cpp
 WIFI_PERSISTENCE_QUEUE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_queue.cpp
 WIFI_PERSISTENCE_COORDINATOR_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_coordinator.cpp
+WIFI_AUDIT_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit.cpp
 ORIENTATION_SRC := ../../../components/cyberdeck/src/platform/sensors/orientation.cpp
+SERIAL_BRIDGE_SRC := ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp
+SERIAL_BRIDGE_HDR := ../../../components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
 INCLUDES        := -Ishim -I../../../components/cyberdeck/include
 
 # LVGL gerenciado pelo ESP-IDF (fonte da verdade p/ valores de LV_KEY_*).
@@ -49,10 +52,11 @@ LVGL_GROUP_H := $(LVGL_MANAGED)/include/lvgl/core/lv_group.h
 SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/features/screenshot/screenshot_bmp.cpp
 LOCAL_SHELL_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp
 LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/features/shell/cyberdeck_local_shell.h
+CAT_MULTILINE_SRC := test_cat_multiline.cpp
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_orientation
+BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_orientation test_wifi_audit test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch
 
-.PHONY: all test verify clean test_boot_sequence test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract
+.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract
 
 all: test
 
@@ -158,6 +162,9 @@ test_wifi_persistence_queue: test_wifi_persistence_queue.cpp $(WIFI_PERSISTENCE_
 test_wifi_persistence_coordination: test_wifi_persistence_coordination.cpp $(WIFI_PERSISTENCE_COORDINATOR_SRC) $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) contracts/cyberdeck_wifi_persistence_coordinator.h contracts/cyberdeck_wifi_persistence_queue.h contracts/cyberdeck_wifi_event_dispatch.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -Icontracts test_wifi_persistence_coordination.cpp $(WIFI_PERSISTENCE_COORDINATOR_SRC) $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) -o test_wifi_persistence_coordination
 
+test_wifi_audit: test_wifi_audit.cpp $(WIFI_AUDIT_SRC) ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit.h
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_audit.cpp $(WIFI_AUDIT_SRC) -o test_wifi_audit
+
 
 # Logica pura (sem LVGL): formatador do relogio do header (plano aprovado:
 # clock "DD/MM/YYYY HH:MM" em GMT-3 no centro do header, NENHUM status SSH no
@@ -249,6 +256,13 @@ test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../comp
 test_local_shell: test_local_shell.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_local_shell.cpp $(LOCAL_SHELL_SRC) -Wl,--wrap=opendir -o test_local_shell
 
+# Host regression for the dedicated cat API.  This deliberately bypasses the
+# generic shell object so a multiline result is checked at the worker's source
+# seam, including CRLF, tabs, UTF-8, exact 12288-byte output, embedded NUL,
+# and a suffix after the first newline for the UI sanitizer.
+test_cat_multiline: $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) -o test_cat_multiline
+
 test_orientation: test_orientation.cpp $(ORIENTATION_SRC) ../../../components/cyberdeck/include/platform/sensors/orientation.h shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_orientation.cpp $(ORIENTATION_SRC) -o test_orientation
 
@@ -256,8 +270,11 @@ test_orientation: test_orientation.cpp $(ORIENTATION_SRC) ../../../components/cy
 # sources are inspected directly rather than duplicated or linked against
 # ESP-IDF: this checks boot order, safe initial fallback, and the handoff to
 # the later rotation path.
-test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/sensors/imu_reader.cpp
+test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) test_boot_sequence.py
+
+imu_sensor_contract: imu_sensor_contract.py ../../../components/cyberdeck/src/platform/sensors/imu_reader.cpp
+	$(PYTHON) imu_sensor_contract.py
 
 # Structural host-side TDD contract for the physical keyboard/UI seam.  The
 # UI is not linkable on host; this test checks the real source and intentionally
@@ -273,6 +290,30 @@ test_ui_resource_contract: test_ui_resource_contract.py ../../../components/cybe
 test_local_prompt_contract: local_prompt_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) local_prompt_contract.py
 
+test_cat_contract: cat_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h
+	$(PYTHON) cat_contract.py
+
+test_cat_multiline_contract: test_cat_multiline_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp
+	$(PYTHON) test_cat_multiline_contract.py
+
+test_cat_lifecycle_sanitization_contract: test_cat_lifecycle_sanitization_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h
+	$(PYTHON) test_cat_lifecycle_sanitization_contract.py
+
+test_cat_start_teardown_start_contract: test_cat_start_teardown_start_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp
+	$(PYTHON) test_cat_start_teardown_start_contract.py
+
+test_cat_stack_footprint_contract: test_cat_stack_footprint_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp
+	$(PYTHON) test_cat_stack_footprint_contract.py
+
+test_cat_worker_path_safety_contract: test_cat_worker_path_safety_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_local_shell.h
+	$(PYTHON) test_cat_worker_path_safety_contract.py
+
+local_shell_security_contract: local_shell_security_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp
+	$(PYTHON) local_shell_security_contract.py
+
+local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h
+	$(PYTHON) local_shell_tokenizer_contract.py
+
 test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) test_prompt_behavior.py
 
@@ -281,6 +322,35 @@ test_wifi_dispatch_contract: test_wifi_dispatch_contract.py ../../../components/
 
 wifi_enter_dispatch_contract: wifi_enter_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) wifi_enter_dispatch_contract.py
+
+test_wifi_enter_routing_contract: test_wifi_enter_routing_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) test_wifi_enter_routing_contract.py
+
+test_wifi_audit_contract: test_wifi_audit_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_AUDIT_SRC)
+	$(PYTHON) test_wifi_audit_contract.py
+
+# USB Serial-JTAG NDJSON manual bridge (REQ-002/003/005/006/007/008/009) — TDD RED: produção ausente
+test_serial_ndjson_dispatch: test_serial_ndjson_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_serial_ndjson_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_ndjson_dispatch
+
+test_serial_screen_dump: test_serial_screen_dump.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) $(SCREENSHOT_BMP_SRC)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_serial_screen_dump.cpp $(SERIAL_BRIDGE_SRC) $(SCREENSHOT_BMP_SRC) -o test_serial_screen_dump
+
+test_serial_cli_tolerance: test_serial_cli_tolerance.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_serial_cli_tolerance.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_cli_tolerance
+
+test_serial_sysinfo_wifi: test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_sysinfo_wifi
+
+# fs.write seguro (REQ-001..REQ-011) — TDD RED: produção ausente
+test_fs_write_dispatch: test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_fs_write_dispatch
+
+test_fs_write_cli: test_fs_write_cli.py ../../../tools/cyberdeck_cli.py
+	$(PYTHON) test_fs_write_cli.py
+
+test_fs_write_contract: test_fs_write_contract.py $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) ../../../tools/cyberdeck_cli.py
+	$(PYTHON) test_fs_write_contract.py
 
 test: $(BINS)
 	@echo "==> Executando testes do keymap do shell de entrada"
@@ -307,6 +377,8 @@ test: $(BINS)
 	@./test_wifi_persistence_queue
 	@echo "==> Executando contrato TDD da coordenacao da persistencia Wi-Fi"
 	@./test_wifi_persistence_coordination
+	@echo "==> Executando contrato TDD da auditoria Wi-Fi passiva"
+	@./test_wifi_audit
 	@echo "==> Executando testes do formatador do relogio do header (GMT-3)"
 	@./test_clock_formatter
 	@echo "==> Executando testes do filtro de saida SSH"
@@ -323,22 +395,48 @@ test: $(BINS)
 	@./test_screenshot_bmp
 	@echo "==> Executando contrato do shell local seguro"
 	@./test_local_shell
+	@echo "==> Executando regressao host da API cat multiline"
+	@./test_cat_multiline
 	@echo "==> Executando testes de orientacao pura e debounce"
 	@./test_orientation
 	@echo "==> Executando contrato estrutural da sequencia de boot SD"
 	@$(MAKE) --no-print-directory test_boot_sequence
+	@$(MAKE) --no-print-directory imu_sensor_contract
 	@echo "==> Executando contrato TDD do despacho assincrono do teclado fisico"
 	@$(MAKE) --no-print-directory test_keyboard_input_contract
 	@echo "==> Executando contrato de cleanup parcial da inicializacao da UI"
 	@$(MAKE) --no-print-directory test_ui_resource_contract
 	@echo "==> Executando contrato do prompt local contextual"
 	@$(MAKE) --no-print-directory test_local_prompt_contract
+	@echo "==> Executando contrato TDD do cat local confinado e assincrono"
+	@$(MAKE) --no-print-directory test_cat_contract
+	@$(MAKE) --no-print-directory test_cat_multiline_contract
+	@$(MAKE) --no-print-directory test_cat_lifecycle_sanitization_contract
+	@$(MAKE) --no-print-directory test_cat_start_teardown_start_contract
+	@$(MAKE) --no-print-directory test_cat_stack_footprint_contract
+	@$(MAKE) --no-print-directory test_cat_worker_path_safety_contract
+	@$(MAKE) --no-print-directory local_shell_security_contract
+	@$(MAKE) --no-print-directory local_shell_tokenizer_contract
 	@echo "==> Executando testes comportamentais de prompt, truncamento e cursor"
 	@$(MAKE) --no-print-directory test_prompt_behavior
 	@echo "==> Executando contrato do despacho e menus Wi-Fi"
 	@$(MAKE) --no-print-directory test_wifi_dispatch_contract
+	@$(MAKE) --no-print-directory test_wifi_audit_contract
+	@$(MAKE) --no-print-directory test_wifi_enter_routing_contract
 	@echo "==> Executando regressao do Enter no menu Wi-Fi"
 	@$(MAKE) --no-print-directory wifi_enter_dispatch_contract
+	@echo "==> Executando contrato TDD da ponte manual USB Serial-JTAG NDJSON (REQ-002/003/005)"
+	@$(MAKE) --no-print-directory test_serial_ndjson_dispatch
+	@echo "==> Executando contrato TDD do screen.dump byte-identical com chunks/CRC/end (REQ-006/007)"
+	@$(MAKE) --no-print-directory test_serial_screen_dump
+	@echo "==> Executando contrato TDD da CLI tolerante a logs/leitura fragmentada (REQ-007/008)"
+	@$(MAKE) --no-print-directory test_serial_cli_tolerance
+	@echo "==> Executando contrato TDD de sys.info/wifi sem hardware (REQ-008/009)"
+	@$(MAKE) --no-print-directory test_serial_sysinfo_wifi
+	@echo "==> Executando contrato TDD do fs.write seguro (REQ-001..REQ-011)"
+	@$(MAKE) --no-print-directory test_fs_write_dispatch
+	@$(MAKE) --no-print-directory test_fs_write_cli
+	@$(MAKE) --no-print-directory test_fs_write_contract
 
 clean:
 	rm -f $(BINS)

@@ -15,6 +15,8 @@ enum cyberdeck_cmd_type_t {
     CYBERDECK_CMD_WIFI,
     CYBERDECK_CMD_WIFI_SEARCH,
     CYBERDECK_CMD_WIFI_SAVED,
+    CYBERDECK_CMD_WIFI_AUDIT,
+    CYBERDECK_CMD_WIFI_AUDIT_EXPORT,
     CYBERDECK_CMD_LOG,
     CYBERDECK_CMD_SSH,
     CYBERDECK_CMD_UNKNOWN
@@ -27,6 +29,7 @@ enum cyberdeck_cmd_type_t {
 struct cyberdeck_cmd_t {
     cyberdeck_cmd_type_t type;
     std::string args;
+    bool confirmed = false;
 };
 
 /**

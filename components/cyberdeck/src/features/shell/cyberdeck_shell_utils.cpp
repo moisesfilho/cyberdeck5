@@ -260,6 +260,13 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
         cmd.type = CYBERDECK_CMD_WIFI_SEARCH;
     } else if (command == "wifi saved") {
         cmd.type = CYBERDECK_CMD_WIFI_SAVED;
+    } else if (command == "wifi audit") {
+        cmd.type = CYBERDECK_CMD_WIFI_AUDIT;
+    } else if (command == "wifi audit export") {
+        cmd.type = CYBERDECK_CMD_WIFI_AUDIT_EXPORT;
+    } else if (command == "wifi audit export confirm" || command == "wifi audit export --confirm") {
+        cmd.type = CYBERDECK_CMD_WIFI_AUDIT_EXPORT;
+        cmd.confirmed = true;
     } else if (command == "log") {
         cmd.type = CYBERDECK_CMD_LOG;
     } else if (command.rfind("ssh", 0) == 0 && (command.size() == 3 || command[3] == ' ' || command[3] == '\t')) {
@@ -281,7 +288,7 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
 std::string cyberdeck_help_text()
 {
     return "help - show this help\n"
-           "wifi [search|saved] - show status or manage Wi-Fi\n"
+           "wifi [search|saved|audit] - show status, manage Wi-Fi, or audit\n"
            "log - show recent events\n"
            "clear - clear the terminal\n"
            "ssh [user@]host[:port] - start an SSH session\n";

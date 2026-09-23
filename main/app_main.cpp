@@ -9,6 +9,7 @@
 #include "platform/input/tab5_keyboard.h"
 #include "features/wifi/wifi_mgr.h"
 #include "features/screenshot/screenshot_server.h"
+#include "features/serial/cyberdeck_serial_bridge.h"
 #include "bsp/m5stack_tab5.h"
 
 static const char *TAG = "cyberdeck5";
@@ -47,5 +48,11 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(screenshot_server_init());
     ESP_ERROR_CHECK(wifi_mgr_add_state_callback(screenshot_server_wifi_state, nullptr));
     ESP_ERROR_CHECK(wifi_mgr_start());
+
+    /* Ponte manual USB Serial-JTAG NDJSON (REQ-002..009): task propria,
+     * fora da stack do LVGL; falha aqui nao derruba o boot. */
+    if (!cyberdeck_serial::bridge_start()) {
+        ESP_LOGW(TAG, "Ponte USB Serial-JTAG nao iniciada");
+    }
     ESP_LOGI(TAG, "CYBERDECK5 iniciado");
 }

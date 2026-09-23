@@ -15,7 +15,7 @@
  * comando e descricao, newline final):
  *
  *     help - show this help
- *     wifi [search|saved] - show status or manage Wi-Fi
+ *     wifi [search|saved|audit] - show status, manage Wi-Fi, or audit
  *     log - show recent events
  *     clear - clear the terminal
  *     ssh [user@]host[:port] - start an SSH session
@@ -676,13 +676,13 @@ void test_help_text_exact_block()
     // deve devolver esta string byte a byte (igualdade exata):
     //
     //     help - show this help
-    //     wifi [search|saved] - show status or manage Wi-Fi
+    //     wifi [search|saved|audit] - show status, manage Wi-Fi, or audit
     //     log - show recent events
     //     clear - clear the terminal
     //     ssh [user@]host[:port] - start an SSH session
     const std::string k_expected_help =
         "help - show this help\n"
-        "wifi [search|saved] - show status or manage Wi-Fi\n"
+        "wifi [search|saved|audit] - show status, manage Wi-Fi, or audit\n"
         "log - show recent events\n"
         "clear - clear the terminal\n"
         "ssh [user@]host[:port] - start an SSH session\n";
@@ -739,7 +739,7 @@ void test_help_text_commands_present()
     // Assert
     CHECK(text.find("help") != std::string::npos);
     CHECK(text.find("wifi") != std::string::npos);
-    CHECK(text.find("wifi [search|saved]") != std::string::npos);
+    CHECK(text.find("wifi [search|saved|audit]") != std::string::npos);
     CHECK(text.find("log") != std::string::npos);
     CHECK(text.find("clear") != std::string::npos);
     CHECK(text.find("ssh") != std::string::npos);

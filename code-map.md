@@ -37,7 +37,7 @@ Ordem relevante de inicializacao:
 
 | Arquivo | Simbolos/funcao | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_keyboard_input`, callbacks de SSH/Wi-Fi | Compoe a TUI, roteia Enter por estado, atualiza LVGL sob lock e integra shell, SSH, Wi-Fi e log. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, callbacks de SSH/Wi-Fi/cat | Compoe a TUI multilinear, roteia Enter por estado, sanitiza dados de `cat` antes do LVGL, aplica limite explicito ao textarea, atualiza sob lock e integra shell, SSH, Wi-Fi e log. |
 | `components/cyberdeck/include/platform/display/cyberdeck_ui.h` | API publica da UI | Contrato usado por `app_main` e pelo driver de teclado. |
 | `components/cyberdeck/src/platform/display/cyberdeck_font.c` | Fonte monoespaciada | Recurso visual do terminal/header. |
 | `components/cyberdeck/src/platform/display/cyberdeck_clock.cpp` | `cyberdeck_clock_from_utc`, `cyberdeck_format_clock` | Conversao/formato do relogio GMT-3. |
@@ -53,14 +53,19 @@ obtido pelo comando `wifi`.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp` | classe `cyberdeck_local_shell` | Shell confinado ao root virtual `/sdcard`; implementa `pwd`, `cd`, `ls`, `touch`, `mkdir`, `rm`, `rmdir` e ajuda. |
+| `components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp` | classe `cyberdeck_local_shell`; `cyberdeck_local_shell_cat` | Shell confinado ao root virtual `/sdcard`; tokenizer manual byte-a-byte bounded para espacos/tabs; implementa `pwd`, `cd`, `ls`, `cat`, `touch`, `mkdir`, `rm`, `rmdir` e ajuda. A API cat-specific usa apenas strings bounded e descritores confinados, retorna output heap-backed, limita arquivos a 12288 bytes e chunks de 1024, e e usada pelo worker sem construir o shell geral. |
+| `components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp`, `components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h` | `cyberdeck_cat_worker_start`, `cyberdeck_cat_worker_enqueue`, `cyberdeck_cat_worker_teardown` | Worker FreeRTOS com fila bounded para I/O de `cat`, stack explícita de 6144 bytes; o worker deve chamar uma API cat-specific heap/bounded, sem construir/usar o shell genérico, `fs::path` ou `vector` no caminho específico. O contrato estrutural permite os identificadores `cyberdeck_local_shell_*` da API dedicada e rejeita apenas a construção/uso genérico. Cada start drena a sinalização de parada e cria uma geração nova, e teardown sinaliza/aguarda o retorno do worker antes de liberar fila, root e callback, invalidando callbacks LVGL tardios. |
 | `components/cyberdeck/include/features/shell/cyberdeck_local_shell.h` | API do shell local | Contrato usado pela UI e testes. |
-| `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp` | `cyberdeck_help_text`, `parse_ssh_target` | Ajuda comum e parser de `ssh [user@]host[:port]`. |
+| `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp` | `cyberdeck_help_text`, `parse_ssh_target`, `cyberdeck_parse_command` | Ajuda comum, parser de `ssh [user@]host[:port]` e comandos `wifi`, incluindo auditoria/exportação confirmada. |
 | `components/cyberdeck/src/features/shell/cyberdeck_history.cpp` | classe `cyberdeck_history` | Historico limitado a 64 linhas, com navegacao e duplicatas preservadas. |
 | `components/cyberdeck/src/features/shell/cyberdeck_edit_line.cpp` | classe `cyberdeck_edit_line` | Linha UTF-8, cursor, backspace, Enter e comportamento por sessao. |
 
 O shell local aceita `..` somente em `cd`, faz clamp no `/sdcard`, rejeita
-traversal nos demais comandos e protege contra symlinks. `ls` e `ls -a` usam a
+traversal nos demais comandos e protege contra symlinks. `cat` abre por
+descritores confinados, com `O_NOFOLLOW`/`openat` quando disponíveis, `fstat` e
+leitura do mesmo descritor; no ESP-IDF usa abertura direta do caminho confinado
+compatível com o VFS FATFS (sem objetos symlink), preservando `O_NOFOLLOW` quando
+exposto, e rejeita conservadoramente plataformas host sem essas garantias. `ls` e `ls -a` usam a
 raiz fisica do SD sem adicionar `/.`; limites de entradas, nome e saida sao
 bounded.
 
@@ -89,6 +94,7 @@ de familia usa `inet_pton`; hostnames continuam usando `ANY`. O overlay local de
 | `components/cyberdeck/src/features/wifi/cyberdeck_wifi_event_dispatch.cpp` | `event_dispatch` | Snapshots bounded de `GOT_IP`/`LOST_IP`, tokens, ack, retry e invalidacao. |
 | `components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_queue.cpp` | `persistence_queue` | Fila bounded com ownership, retry, acknowledge, wipe e teardown. |
 | `components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_coordinator.cpp` | coordinator | Worker que serializa persistencia e efeitos derivados fora de `sys_evt`. |
+| `components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit.cpp`, `components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit.h` | `cyberdeck_wifi_audit::audit_controller` | Worker FreeRTOS com fila bounded para auditoria passiva da associação/interface local, snapshot versionado, token sob mutex, teardown por sinalização/join, sanitização central e exportação confirmada atômica no SD fora da UI; falhas de entrega por fila cheia usam um slot de fallback bounded. |
 | `components/cyberdeck/src/platform/networking/cyberdeck_net_coordinator.cpp` | `cyberdeck_net_coordinator` | Gating de timers e teardown idempotente de Wi-Fi/SSH. |
 
 O callback de `GOT_IP` somente publica snapshot. Trabalho pesado, SNTP,
@@ -103,8 +109,28 @@ monotônicos impedem callbacks atrasados de alterar uma tentativa nova.
 | `components/cyberdeck/src/features/screenshot/screenshot_bmp.cpp` | geracao de BMP | Converte framebuffer RGB565 em BMP 24-bit bottom-up com stride/padding. |
 
 O endpoint serializa requisicoes, usa lock de display somente durante o
-snapshot e aceita apenas peers locais: loopback, RFC1918, link-local, ULA,
+snapshot e aceita apenas peers locais: loopback, 10/8, link-local, ULA,
 IPv6 local e IPv4-mapped em IPv6.
+
+### Ponte manual USB Serial-JTAG NDJSON (REQ-002/003/005/006/007/008/009)
+
+| Arquivo | Simbolos/contrato | Papel |
+| --- | --- | --- |
+| `components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h` | `cyberdeck_serial::k_max_ndjson_line=4096`, `k_max_rid_len=64`, `k_screen_chunk_bytes=1024`, `k_fs_write_max_bytes=2048`, `dispatch_error`, `request/response/dispatch_result`, `SysInfo/WifiNet`, `LineAssembler`, `crc32/screen_bmp_size/screen_chunk_bounds/screen_dump_*`, `sys_info_* / wifi_scan_* / handle_* / dispatch_one / build_envelope`, `bridge_start` (`#ifdef ESP_PLATFORM`) | Contrato NDJSON bounded: parse limitado, envelopes com `rid` ecoado, erros tipados, comandos UI/sys/wifi e chunk/CRC da captura; `fs.write` seguro com path confinado, 2048 decoded, Base64 canonico, commit por temp unico no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename (replace atomico no host; no-clobber no ESP/FATFS) e NDJSON errors. Header puro (sem `esp_err.h`). |
+| `components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp` | parser JSON proprio (`parse_value` classifica e decodifica cada valor numa unica passada: string vira `kind::string` com `s` decodido e `raw` literal com aspas), dispatch, sessao BMP/CRC, LineAssembler; `fs.write` (campos `path/data_b64/size` no `k_request_fields`, tipo conhecido `fs.write`, validacao rid/type/path/data_b64/size, path safety traversal/symlink/directory/parent, 2048, Base64 strict canonico `b64_decode_canonical`, temp unico `.fswrite.<sequencia>.tmp` no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename sem unlink do destino, CRC; no ESP exige `O_NOFOLLOW` e limita `/sdcard` ao VFS FATFS sem symlink/openat, valida parents e o descriptor temporario, rejeita overwrite existente porque nao ha garantia de replace atomico, e preserva o destino em falha de rename; no host a raiz logica `/sdcard` e reancorada em sandbox `/tmp/cyberdeck5_sd` via `CYBERDECK_SD_ROOT`); device: task `serial_brg`, driver USB Serial-JTAG, `esp_log_set_vprintf` com mutex, hooks UI/wifi/screen/fs | Dispatch NDJSON sem alocacao >4096, validacao UTF-8/rid/type, `screen.dump` byte-identical em chunks 1024 com CRC IEEE e flag `end`, feeder tolerante a logs/fragmentacao, `sys.info`/`wifi`; `fs.write` com validacao completa, commit seguro e erros tipados `invalid_path`/`invalid_payload`/`io_error`. Autocontido em relacao a `screenshot_bmp_*` fora de `ESP_PLATFORM`: os tres testes que nao linkam `screenshot_bmp.cpp` nao veem undefined de funcoes externas (stride/size/header/conv sao espelhados localmente com formulas identicas). |
+| `tools/cyberdeck_cli.py` | `CyberdeckSession`, `open_session/connect`, `exchange`, comandos `ping/sys.info/wifi.status/wifi.scan/ui.click/ui.tap/ui.type/ui.dump/ui.clear/screen.shot/screen.dump/fs.write`, `build_request` com `--data/--data-b64/--input/--stdin/--size/stdin`, `validate_fs_write_path`, `decode_b64_canonical`, `read_fs_write_input`, `FS_WRITE_MAX_BYTES=2048`, encoding Base64 canonico | Cliente NDJSON host: correlacao por `rid` (sem campo `action`), descarte de logs/frames nao-JSON, validacao de dump (contiguidade, Base64 canonico, `size`/`chunks`/`crc32` do `start`); `fs.write` com CLI seguro (build_request, input/stdin, 2048, strict canonical, recusa eager de path invalido); pyserial opcional com mensagem clara. |
+| `main/app_main.cpp` | `cyberdeck_serial::bridge_start()` | Inicia a ponte ao fim do boot, apos `wifi_mgr_start()`; falha loga aviso sem abortar o boot (ordem do `test_boot_sequence.py` preservada). |
+| `components/cyberdeck/CMakeLists.txt` | SRCS + REQUIRES `esp_driver_usb_serial_jtag`, `esp_app_format`, `esp_timer`, `esp_system` | Composicao do componente. |
+
+Os quatro alvos `test_serial_*` + `test_fs_write_*` do `tests/host/keymap/Makefile` cobrem a
+camada host-testavel: `screen_bmp_size` tem paridade com
+`screenshot_bmp_calc_size`; `crc32` IEEE `0xEDB88320`; chunks sem
+gaps/sobreposicao com `is_last` no fim e reconstituicao byte-identical ao
+BMP da `screenshot_bmp` pura; `LineAssembler` entrega 5 linhas do stream
+intercalado e descarta linha >4096 sem ficar presa entre feeds; `fs.write` cobre protocolo rid/type/path/data_b64/size, limite 2048, path safety, strict canonical base64, atomic unique-temp/O_EXCL+rename e CRC response. A parte
+device exclusiva de `#ifdef ESP_PLATFORM` (task/driver/LVGL/Wi-Fi real) nao
+e coberta pelos testes host: validar com `idf.py build` e o roteiro
+`tests/manual/serial-bridge-validation.pt-BR.md`.
 
 ### Input, sensores e logging
 
@@ -142,6 +168,10 @@ HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 - SSH: task dedicada e callbacks coordenados com a UI.
 - Wi-Fi: callbacks de eventos publicam snapshots; workers/coordinators executam I/O.
 - Screenshot: mutex de requisicao e lock de display apenas durante captura.
+- Ponte serial: task `serial_brg` fora da stack do LVGL; frames e logs
+  compartilham mutex de escrita no driver USB Serial-JTAG; `ui.*` usa
+  `bsp_display_lock` + `lv_async_call`, e a injecao de teclado respeita a fila
+  bounded de 8 com delay entre eventos.
 - Log: ring buffer e processamento incremental para evitar overflow de stack.
 
 ## Matriz producao -> testes host
@@ -153,7 +183,7 @@ HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 | `cyberdeck_shell_utils.cpp` | `test_shell_utils.cpp` |
 | `cyberdeck_history.cpp` | `test_history.cpp` |
 | `cyberdeck_edit_line.cpp` | `test_edit_line.cpp`, `test_prompt_behavior.py` |
-| `cyberdeck_local_shell.cpp` | `test_local_shell.cpp`, `test_prompt_behavior.py`, `test_local_prompt_contract.py` |
+| `cyberdeck_local_shell.cpp`, `cyberdeck_cat_worker.cpp` | `test_local_shell.cpp`, `test_cat_multiline.cpp` (API dedicada: LF/CRLF/tabs/UTF-8, marcador final, bytes inválidos, limite exato de 12288, NUL embutido e sufixo após newline preservados para sanitização), `cat_contract.py`, `test_cat_multiline_contract.py` (contrato estrutural de ponteiro+tamanho explícito, textarea multiline/max-length, limite UTF-8 e payload completo até append), `test_cat_lifecycle_sanitization_contract.py` (ramos sem task vs. com task, drain/join/ack, reset sincronizado, callback/generation e sanitizacao), `test_cat_start_teardown_start_contract.py` (restart e invalidacao stale), `test_cat_stack_footprint_contract.py` (regressao do stack minimo do worker), `test_cat_worker_path_safety_contract.py` (proibe o caminho worker->shell/resolve/path/vector e exige API cat-specific heap/bounded), `local_shell_security_contract.py`, `local_shell_tokenizer_contract.py`, `test_prompt_behavior.py`, `test_local_prompt_contract.py` |
 | `event_log_recent.cpp` | `test_event_log_recent.cpp` |
 | `cyberdeck_clock.cpp` | `test_clock_formatter.cpp` |
 | `cyberdeck_wifi_indicator.cpp` | `test_wifi_indicator_state.cpp` |
@@ -168,9 +198,13 @@ HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 | `cyberdeck_ssh_echo_guard.cpp` | `test_ssh_echo_guard.cpp` |
 | `cyberdeck_ssh_line_composer.cpp` | `test_ssh_line_composer.cpp` |
 | `cyberdeck_net_coordinator.cpp` | `test_net_coordinator.cpp` |
+| `cyberdeck_wifi_audit.cpp` (worker passivo/local e exportação confinada; separação de operações, gate lifecycle/token antes de hardware e descarte de stale/cancelado/teardown) | `test_wifi_audit.cpp`, `test_wifi_audit_contract.py` (header de produção e contrato estrutural do worker) |
 | `screenshot_bmp.cpp` | `test_screenshot_bmp.cpp` |
 | `cyberdeck_ui.cpp` | `test_boot_sequence.py`, `test_keyboard_input_contract.py`, `test_ui_resource_contract.py`, `test_local_prompt_contract.py`, `test_wifi_enter_routing_contract.py` |
-| `main/app_main.cpp`, `imu_reader.cpp` | `test_boot_sequence.py` (ordem IMU/UI, orientação inicial somente via callback Sensor Hub, proibição de leitura/HAL IMU genérico, timeout/fallback seguro e continuidade da rotação) |
+| `main/app_main.cpp`, `cyberdeck_ui.cpp` | `test_boot_sequence.py` (ordem SD/UI e shell local `/sdcard`) |
+| `imu_reader.cpp` | `imu_sensor_contract.py` (callback Sensor Hub, proibição de leitura/HAL IMU genérico, timeout/fallback seguro e continuidade da rotação) |
+| `cyberdeck_serial_bridge.cpp` (REQ-002/003/005/006/007/008/009) — ponte NDJSON bounded, rid/envelopes, UI/sys/wifi, screen.dump chunks/CRC/end, feeder tolerante a logs/fragmentacao; `cyberdeck_cli.py` | `test_serial_ndjson_dispatch.cpp` (bounded/erros/rid/envelopes/UI), `test_serial_screen_dump.cpp` (byte-identical chunks/CRC/end), `test_serial_cli_tolerance.cpp` (logs/leitura fragmentada), `test_serial_sysinfo_wifi.cpp` (sys.info/wifi contratos) — todos host-only, sem pyserial/hardware; GREEN com a producao criada |
+| `cyberdeck_serial_bridge.cpp` `fs.write` (REQ-001..REQ-011) — protocolo rid/type/path/data_b64/size, limite 2048, path safety, strict canonical base64, commit por temp unico/O_EXCL+rename (substituicao atomica no host/no-clobber no ESP/FATFS; nunca remove candidato preexistente), CRC response, NDJSON errors; `cyberdeck_cli.py` `fs.write` (`build_request`, encoding, input/stdin, 2048, strict canonical) | `test_fs_write_dispatch.cpp` (dispatch/validacao/path/size/base64/CRC/preservacao; colisao de temp preexistente/no-clobber), `test_fs_write_cli.py` (parser/build_request/encoding/stdin/limite), `test_fs_write_contract.py` (estrutural: disco/path/atomic/CRC/CLI/Makefile/code-map) — todos host-only, RED antes da producao |
 
 Os testes host nao substituem a validacao do hardware para LVGL, touch, I2C,
 Wi-Fi real, libssh real ou endpoint HTTP. Os contratos Python inspecionam a
@@ -183,6 +217,17 @@ fonte real quando a UI nao e linkavel no host.
 ```bash
 make -C tests/host/keymap clean test
 make -C tests/host/keymap verify
+make -C tests/host/keymap test_wifi_audit test_wifi_audit_contract test_imu_sensor_contract
+make -C tests/host/keymap test_wifi_enter_routing_contract
+make -C tests/host/keymap test_cat_contract
+make -C tests/host/keymap test_cat_multiline test_cat_multiline_contract
+make -C tests/host/keymap test_cat_lifecycle_sanitization_contract
+make -C tests/host/keymap test_cat_start_teardown_start_contract
+make -C tests/host/keymap test_cat_stack_footprint_contract
+make -C tests/host/keymap test_cat_worker_path_safety_contract
+make -C tests/host/keymap local_shell_tokenizer_contract
+make -C tests/host/keymap test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi
+make -C tests/host/keymap test_fs_write_dispatch test_fs_write_cli test_fs_write_contract
 ```
 
 `verify` compara os valores `LV_KEY_*` do shim com o LVGL gerenciado. Para uma
@@ -206,6 +251,8 @@ idf.py -p /dev/ttyACM0 flash monitor
 ### Validacao manual
 
 O roteiro TUI esta em `tests/manual/tui-shell-validation.pt-BR.md`.
+O roteiro da ponte serial esta em
+`tests/manual/serial-bridge-validation.pt-BR.md`.
 
 ## Limites e cuidados de manutencao
 
@@ -226,8 +273,12 @@ O roteiro TUI esta em `tests/manual/tui-shell-validation.pt-BR.md`.
 
 - `AGENTS.md`: instrucoes obrigatorias para agentes consultarem e manterem este
   mapa, incluindo a politica de busca progressiva.
-- `README.md`: recursos, uso do shell, Wi-Fi, SSH e screenshot.
-- `docs/ARCHITECTURE.md`: principios, boot, concorrencia Wi-Fi, screenshot e UI.
+- `README.md`: recursos, uso do shell, Wi-Fi, SSH, screenshot e ponte serial.
+- `docs/ARCHITECTURE.md`: principios, boot, concorrencia Wi-Fi, screenshot,
+  ponte serial e UI.
 - `tests/manual/tui-shell-validation.pt-BR.md`: validacao no dispositivo.
+- `tests/manual/serial-bridge-validation.pt-BR.md`: validacao da ponte
+  USB Serial-JTAG no dispositivo.
+- `tools/cyberdeck_cli.py`: cliente NDJSON host da ponte serial.
 - `components/cyberdeck/CMakeLists.txt`: lista definitiva dos fontes compilados.
 - `tests/host/keymap/Makefile`: lista definitiva dos testes e fontes puros.

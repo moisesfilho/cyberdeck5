@@ -34,6 +34,8 @@ desta reorganização e continua sendo gerenciado pelo ESP-IDF.
    habilitado, conectado e possui IP, e escuro nos demais estados. O SSID não
    é renderizado no header.
 5. Aguardar conexão SSH iniciada pelo usuário.
+6. Iniciar a ponte manual USB Serial-JTAG (`bridge_start`): task própria,
+   iniciada por último; falha aqui registra aviso e não derruba o boot.
 
 ## Wi-Fi: dispatch e persistência
 
@@ -76,6 +78,40 @@ Para salvar a captura a partir de um host na mesma LAN:
 ```bash
 curl --fail --output screenshot.bmp http://IP_DO_DISPOSITIVO/screenshot
 ```
+
+## Ponte manual USB Serial-JTAG NDJSON
+
+A ponte roda na task `serial_brg` (prio 3, 8192 bytes de stack), fora da
+stack do LVGL, iniciada por `bridge_start()` ao fim de `app_main`. O driver
+USB Serial-JTAG só é instalado se ainda não estiver ativo — o console
+`ESP_LOG` compartilha a mesma porta —; frames e logs são serializados por um
+mutex de escrita, e `esp_log_set_vprintf` redireciona o log para a mesma
+porta com conversão `\n` → `\r\n` (o driver direto não passa pela conversão
+do VFS).
+
+O protocolo é NDJSON com uma linha por mensagem, limite de 4096 bytes e
+correlação por `rid`. O parser JSON é próprio (sem cJSON), valida UTF-8
+estrito, escapes `\uXXXX` com pares sintéticos e object/alvo de campos de
+topo (`rid`, `type`, `text`, `x`, `y`, `target`, `symbol`). Sob
+`bsp_display_lock`, `ui.click`/`ui.tap` resolvem o alvo (hit-test por
+coordenada, ou texto visível no ancestral clicável mais próximo) e agendam
+`LV_EVENT_CLICKED` com `lv_async_call`; `ui.type`/`ui.clear` injetam eventos
+na fila bounded do teclado (capacidade 8) com 30 ms entre eventos;
+`wifi.scan` usa o scan assíncrono do `wifi_mgr` com semáforo estático e
+timeout de 8 s (cancelamento no timeout); `screen.dump` captura RGB565 por
+`lv_snapshot_take`, monta o BMP 24-bit e transmite chunks de 1024 bytes com
+CRC IEEE nos frames `start`/`chunk`/`end`.
+
+`fs.write` grava bytes Base64 no `/sdcard` para testes e automação. O payload
+decodificado é limitado a 2048 bytes, o caminho é confinado ao cartão e a
+escrita usa temporário exclusivo. O CLI aceita `--input`, `--stdin` ou
+`--data` e retorna tamanho e CRC32.
+
+A lógica pura (parse/envelopes/BMP/CRC/`LineAssembler`) é host-testável e
+autocontida: fora de `ESP_PLATFORM` ela não referencia funções de
+`screenshot_bmp_*` — stride/size/header/conversão são espelhados localmente
+com fórmulas idênticas — porque três dos quatro testes host linkam apenas a
+ponte.
 
 ## SSH
 
