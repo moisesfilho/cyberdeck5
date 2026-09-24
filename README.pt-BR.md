@@ -13,8 +13,8 @@ interativo no terminal.
 - Interface LVGL simples, com touch e teclado virtual
 - Tela TUI única, com header `CYBERDECK5` e shell visual (`help`, `wifi`, `log`, `clear` e `ssh`)
 - Wi-Fi com reconexão e persistência no cartão SD
-- Header com apenas um ícone Wi-Fi, claro somente quando o Wi-Fi está habilitado,
-  conectado e possui IP; escuro nos demais estados
+- Header com status/percentual de bateria e um ícone Wi-Fi, claro somente quando
+  o Wi-Fi está habilitado, conectado e possui IP; escuro nos demais estados
 - Cliente SSH assíncrono com PTY remoto
 - Autenticação por senha
 - Rotação automática da tela pelo sensor BMI270
@@ -41,15 +41,20 @@ idf.py -p /dev/ttyACM0 flash monitor
 
 ### Indicadores do header
 
-O header possui um único ícone Wi-Fi desenhado com primitivas LVGL. Ele fica claro somente
-quando o Wi-Fi está habilitado, conectado e possui endereço IP; fica escuro em
-todos os demais estados. O SSID nunca é renderizado no header. Estados e erros
-de SSH são exibidos no terminal e registrados no log de eventos. Use o comando
-`wifi` do shell para diagnóstico da rede; esses detalhes permanecem fora do
-header. O header mantém uma grade 30/40/30 (título/relógio/Wi-Fi), e o ícone é
-alinhado dinamicamente à direita da terceira célula, com os pixels visíveis a
-aproximadamente 2 px da borda. A posição é recalculada em
-`LV_EVENT_SIZE_CHANGED`.
+O header mantém a grade direta 30/40/30 (título/relógio/célula direita). Dentro
+da célula direita, o ícone Wi-Fi é renderizado primeiro e o grupo de bateria vem
+depois. O ícone usa primitivas LVGL e fica claro somente quando o Wi-Fi está
+habilitado, conectado e possui endereço IP; fica escuro nos demais estados. O
+SSID nunca é renderizado no header. Estados e erros de SSH são exibidos no
+terminal e registrados no log de eventos. Use o comando `wifi` para diagnóstico.
+
+O grupo de bateria consome snapshots INA226 sincronizados sem executar I2C na
+UI. O percentual satura na faixa aprovada de 6000..8400 mV; corrente positiva ou
+zero representa consumo e corrente negativa representa carga. Símbolos LVGL de
+nível, carga e plus acompanham o percentual numérico. O grupo inteiro fica
+oculto enquanto o sensor ou a leitura mais recente estiver indisponível. O Wi-Fi
+permanece alinhado dinamicamente dentro de sua parte alocada na célula direita e
+recalcula em `LV_EVENT_SIZE_CHANGED`.
 
 O limite inferior visual dos arcos superiores é `center_y - outer_radius * (1 -
 sin(45°))`; o ponto fica 1,5 px abaixo desse limite (faixa aceita: 1–2 px).

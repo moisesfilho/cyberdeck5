@@ -6,17 +6,19 @@ Mapa de navegacao do firmware monolitico ESP-IDF para o M5Stack Tab5
 ## Visao geral
 
 - Plataforma: ESP-IDF 5.5.5, LVGL 9.x, BSP `m5stack_tab5`.
-- Aplicacao: uma unica tela TUI LVGL, com header, relogio, indicador Wi-Fi e terminal.
+- Aplicacao: uma unica tela TUI LVGL, com header, relogio, indicador Wi-Fi, bateria e terminal.
 - Organizacao: `components/cyberdeck/src/features/` contem fluxos de produto;
   `components/cyberdeck/src/platform/` contem integracoes de hardware e runtime.
 - A logica pura e extraida para testes host; `main/app_main.cpp` faz a composicao
   das implementacoes dependentes do ESP-IDF.
+- A inicializacao da bateria e um fluxo nao fatal: o reader INA226 publica
+  snapshots a partir de task dedicada e a UI apenas os consome.
 
 ## Pontos de entrada e fluxo de boot
 
 | Ponto | Arquivo | Responsabilidade |
 | --- | --- | --- |
-| `app_main()` | `main/app_main.cpp` | Monta SD, valida o handle, inicia log/NVS, display/LVGL, IMU, UI, protecao de tela, teclado, brilho, servidor de screenshot e Wi-Fi. |
+| `app_main()` | `main/app_main.cpp` | Monta SD, valida o handle, inicia log/NVS, display/LVGL, IMU, UI, protecao de tela, reader INA226 nao fatal, teclado, brilho, servidor de screenshot e Wi-Fi. |
 | `cyberdeck_ui_init()` | `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | Cria a tela TUI, header, terminal, callbacks e estado de entrada. |
 | `wifi_mgr_start()` | `components/cyberdeck/src/features/wifi/wifi_mgr.cpp` | Inicia o gerenciamento de Wi-Fi e reconexao. |
 | `screenshot_server_init()` | `components/cyberdeck/src/features/screenshot/screenshot_server.cpp` | Prepara o servidor HTTP; a disponibilidade depende do estado Wi-Fi. |
@@ -28,8 +30,9 @@ Ordem relevante de inicializacao:
 2. `event_log_init()` e `nvs_flash_init()`.
 3. `bsp_display_start()`.
 4. Sob lock do display: `imu_reader_start()`, `cyberdeck_ui_init()` e `screen_off_init()`.
-5. Callback do teclado, `tab5_keyboard_init()` e brilho.
-6. `screenshot_server_init()`, callback de estado do screenshot e `wifi_mgr_start()`.
+5. Apos liberar o display: `ina226_reader_start()`; erro apenas gera log.
+6. Callback do teclado, `tab5_keyboard_init()` e brilho.
+7. `screenshot_server_init()`, callback de estado do screenshot e `wifi_mgr_start()`.
 
 ## Funcionalidades
 
@@ -37,17 +40,23 @@ Ordem relevante de inicializacao:
 
 | Arquivo | Simbolos/funcao | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, callbacks de SSH/Wi-Fi/cat | Compoe a TUI multilinear, roteia Enter por estado, sanitiza dados de `cat` antes do LVGL, aplica limite explicito ao textarea, atualiza sob lock e integra shell, SSH, Wi-Fi, auditoria local com gate de estado no timer (sem publicar `collecting`) e o hand-off não bloqueante de `wifi audit save` com ACK/path pós-publicação. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, callbacks de SSH/Wi-Fi/cat, `refresh_battery_status` | Compoe a TUI multilinear, roteia Enter por estado, sanitiza dados de `cat` antes do LVGL, aplica limite explicito ao textarea, atualiza sob lock e integra shell, SSH, Wi-Fi, auditoria local com gate de estado no timer (sem publicar `collecting`), o hand-off não bloqueante de `wifi audit save` com ACK/path pós-publicação e o snapshot de bateria no terceiro filho do header. |
 | `components/cyberdeck/include/platform/display/cyberdeck_ui.h` | API publica da UI | Contrato usado por `app_main` e pelo driver de teclado. |
-| `components/cyberdeck/src/platform/display/cyberdeck_font.c` | Fonte monoespaciada | Recurso visual do terminal/header. |
+| `components/cyberdeck/src/platform/display/cyberdeck_font.c` | Fonte monoespaciada | Recurso visual do terminal/header, incluindo os simbolos LVGL de Wi-Fi, nivel, carga e plus; o include LVGL permanece condicionado por `LV_LVGL_H_INCLUDE_SIMPLE` e usa `"lvgl.h"` em ambos os ramos. |
 | `components/cyberdeck/src/platform/display/cyberdeck_clock.cpp` | `cyberdeck_clock_from_utc`, `cyberdeck_format_clock` | Conversao/formato do relogio GMT-3. |
 | `components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp` | `cyberdeck_wifi_indicator_is_lit` | Regra pura: claro somente com `enabled && connected && has_ip`. |
 | `components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp` | layout, criacao, resize e cor do icone | Desenha tres arcos e ponto; recalcula posicao em resize. |
 | `components/cyberdeck/src/platform/display/screen_off.cpp` | `screen_off_init` | Timeout de 120 s e duplo toque para religar a tela. |
 
-O header usa grade 30/40/30 para titulo, relogio e Wi-Fi. Nao exibe SSID nem
-estado SSH. Estados SSH vao para o terminal e event log; diagnostico Wi-Fi e
-obtido pelo comando `wifi` e pela auditoria local.
+O header usa grade direta 30/40/30 para titulo, relogio e celula direita. A
+celula direita renderiza Wi-Fi antes da bateria; a bateria mostra simbolos LVGL
+e percentual e fica oculta quando indisponivel. O filho Wi-Fi ocupa a largura
+compacta derivada de `CYBERDECK_WIFI_ICON_RADIUS_2` e
+`CYBERDECK_WIFI_ICON_DEFAULT_THICKNESS` (`2 * (raio + espessura)`, ~34 px), a
+bateria usa `LV_SIZE_CONTENT`, ambos definem `flex_grow=0` e a celula usa
+`LV_FLEX_ALIGN_END` com gaps pequenos (0–4 px). Nao exibe SSID nem estado
+SSH. Estados SSH vao para o terminal e event log; diagnostico Wi-Fi e obtido
+pelo comando `wifi` e pela auditoria local.
 
 ### Shell local
 
@@ -144,14 +153,17 @@ e coberta pelos testes host: validar com `idf.py build` e o roteiro
 | `components/cyberdeck/src/platform/logging/event_log_recent.cpp` | `event_log_recent_indices` | Selecao pura dos indices recentes sem copiar todos os registros na stack. |
 | `components/cyberdeck/src/platform/sensors/imu_reader.cpp` | `imu_reader_start`, `sensor_handle_t`, `bsp_sensor_init` | Inicializacao do BMI270 via Sensor Hub; `sensor_handle_t` e o handle obrigatorio usado por `bsp_sensor_init`; amostra inicial limitada por timeout, aplicacao da orientacao antes da UI e leitura posterior para rotacao. O contrato proibe somente a leitura direta `imu_acquire_acce(`, preservando o fluxo do Sensor Hub. |
 | `components/cyberdeck/src/platform/sensors/orientation.cpp` | `orientation_from_accel`, `orientation_update` | Conversao da aceleracao em rotacao e debounce da orientacao posterior. |
+| `components/cyberdeck/src/platform/sensors/battery_status.cpp`, `components/cyberdeck/include/platform/sensors/battery_status.h` | `percentage_from_capacity_mah`, `classify_current_ma`, `classify_sample` | Modulo puro host-testavel: o `.cpp` inclui o contrato pelo caminho publico `platform/sensors/battery_status.h`; satura a escala aprovada `6000..8400` em `0..100`; corrente positiva/zero consumindo, negativa carregando; ausencia ou leitura invalida produz indisponivel. O reader preserva o nome do campo do contrato host e fornece a tensao INA226 em mV. |
+| `components/cyberdeck/src/platform/sensors/ina226_reader.cpp`, `components/cyberdeck/include/platform/sensors/ina226_reader.h` | `ina226_reader_start`, `ina226_reader_get_snapshot` | Reader INA226 no barramento BSP e endereco I2C `0x41`: configuracao `0x4527`, calibracao `0x0D55`, identificacao, tarefa dedicada a cada 1 s e snapshot protegido por mutex, sem I2C/LVGL no timer. Nao usa `CHG_EN`, `CHG_STAT`, NVS ou politica de protecao; o startup e nao fatal. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `refresh_battery_status` e integracao do snapshot no header | Mantem a grade direta 30/40/30, Wi-Fi antes da bateria dentro da celula direita, simbolos LVGL, percentual e oculta todo o grupo quando a leitura falha. |
 
 ## Dependencias e composicao
 
 ### ESP-IDF e componentes
 
 `components/cyberdeck/CMakeLists.txt` registra todos os fontes de producao e
-declara dependencias de LVGL, BSP, Wi-Fi, rede, FreeRTOS, SD/FATFS, libssh e
-HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
+declara dependencias de LVGL, BSP, I2C master, Wi-Fi, rede, FreeRTOS, SD/FATFS,
+libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 `esp_hosted`, `esp_wifi_remote`, libssh e o override local de `sock_utils`. `sdkconfig.defaults` habilita `CONFIG_FATFS_FS_LOCK=5` (protege os cinco VFS FAT slots contra rename/unlink de <PII type="CASE_ID" id="198"/> abertos) e `CONFIG_FATFS_TIMEOUT_MS=1000`; a task `wifi_audit_io` ainda impõe deadline próprio de 2 s para chamadas SD/VFS.
 
 ### Overlay local
@@ -167,6 +179,7 @@ HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 - UI/LVGL: atualizacoes protegidas por `bsp_display_lock`.
 - Teclado fisico: fila FIFO bounded de 8 e despacho por `lv_async_call`.
 - SSH: task dedicada e callbacks coordenados com a UI.
+- Bateria: task `ina226` faz I2C a cada 1 s e publica sob mutex; a UI apenas copia o snapshot e altera LVGL no contexto do display.
 - Wi-Fi: callbacks de eventos publicam snapshots; workers/coordinators executam I/O. A auditoria usa `wifi_audit` para snapshot/hand-off e `wifi_audit_io` para a transação FatFs com timeout bounded e ownership do adapter/sink.
 - Screenshot: mutex de requisicao e lock de display apenas durante captura.
 - Ponte serial: task `serial_brg` fora da stack do LVGL; frames e logs
@@ -206,12 +219,20 @@ HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 | `cyberdeck_ui.cpp` | `test_boot_sequence.py`, `test_keyboard_input_contract.py`, `test_ui_resource_contract.py`, `test_local_prompt_contract.py`, `test_wifi_enter_routing_contract.py` |
 | `main/app_main.cpp`, `cyberdeck_ui.cpp` | `test_boot_sequence.py` (ordem SD/UI e shell local `/sdcard`) |
 | `imu_reader.cpp` | `imu_sensor_contract.py` (callback Sensor Hub, `sensor_handle_t` obrigatorio para `bsp_sensor_init`, proibicao especifica da leitura direta `imu_acquire_acce(`, timeout/fallback seguro e continuidade da rotacao) |
+| `battery_status.cpp` + `ina226_reader.cpp` + contrato puro `contracts/cyberdeck_battery.h` | `test_battery_contract.cpp` (escala 6000/8400, saturacao, sinal da corrente e ausencia/indisponibilidade; o reader INA226 alimenta a escala com mV), `test_battery_reader_contract.py` (`0x41`, `0x4527`/`0x0D55`, task 1 s, snapshot, exclusoes e nao-fatal) |
+| `cyberdeck_ui.cpp` + `cyberdeck_wifi_icon.cpp` + `app_main.cpp` | `test_battery_ui_contract.py` (grade direta 30/40/30, ordem Wi-Fi/bateria, largura Wi-Fi compacta derivada de `CYBERDECK_WIFI_ICON_RADIUS_2`/`CYBERDECK_WIFI_ICON_DEFAULT_THICKNESS` sem `216` ou 30%, `flex_grow=0`, `header_right` com `LV_FLEX_ALIGN_END`, bateria `LV_SIZE_CONTENT`, gaps pequenos, `update_layout`, callback de estado e resize `LV_EVENT_SIZE_CHANGED`, simbolos LVGL, percentual, ocultacao em falha e boot nao fatal) |
 | `cyberdeck_serial_bridge.cpp` (REQ-002/003/005/006/007/008/009) — ponte NDJSON bounded, rid/envelopes, UI/sys/wifi, screen.dump chunks/CRC/end, feeder tolerante a logs/fragmentacao; `cyberdeck_cli.py` | `test_serial_ndjson_dispatch.cpp` (bounded/erros/rid/envelopes/UI), `test_serial_screen_dump.cpp` (byte-identical chunks/CRC/end), `test_serial_cli_tolerance.cpp` (logs/leitura fragmentada), `test_serial_sysinfo_wifi.cpp` (sys.info/wifi contratos) — todos host-only, sem pyserial/hardware; GREEN com a producao criada |
 | `cyberdeck_serial_bridge.cpp` `fs.write` (REQ-001..REQ-011) — protocolo rid/type/path/data_b64/size, limite 2048, path safety, strict canonical base64, commit por temp unico/O_EXCL+rename (substituicao atomica no host/no-clobber no ESP/FATFS; nunca remove candidato preexistente), CRC response, NDJSON errors; `cyberdeck_cli.py` `fs.write` (`build_request`, encoding, input/stdin, 2048, strict canonical) | `test_fs_write_dispatch.cpp` (dispatch/validacao/path/size/base64/CRC/preservacao; colisao de temp preexistente/no-clobber), `test_fs_write_cli.py` (parser/build_request/encoding/stdin/limite), `test_fs_write_contract.py` (estrutural: disco/path/atomic/CRC/CLI/Makefile/code-map) — todos host-only, RED antes da producao |
 
 Os testes host nao substituem a validacao do hardware para LVGL, touch, I2C,
 Wi-Fi real, libssh real ou endpoint HTTP. Os contratos Python inspecionam a
-fonte real quando a UI nao e linkavel no host.
+fonte real quando a UI nao e linkavel no host. O alvo puro de bateria linka
+`battery_status.cpp`; os contratos estruturais verificam reader, integracao LVGL,
+boot nao fatal e a regressão RED de espaçamento do header. O alvo puro compila o
+contrato host junto da implementacao de producao e inclui explicitamente a
+arvore de headers do componente; o contrato do reader aceita os nomes de token
+de calibracao INA226 usados na producao sem depender de limites de palavra e
+segue o header compartilhado para validar os campos do snapshot.
 
 ## Comandos de validacao
 
@@ -233,9 +254,12 @@ make -C tests/host/keymap test_cat_worker_path_safety_contract
 make -C tests/host/keymap local_shell_tokenizer_contract
 make -C tests/host/keymap test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi
 make -C tests/host/keymap test_fs_write_dispatch test_fs_write_cli test_fs_write_contract
+make -C tests/host/keymap test_battery_contract test_battery_reader_contract test_battery_ui_contract
 ```
 
-`verify` compara os valores `LV_KEY_*` do shim com o LVGL gerenciado. Os targets
+`verify` compara os valores `LV_KEY_*` do shim com o LVGL gerenciado. O target
+`test_battery_ui_contract` inspeciona a fonte real do header e valida a
+regressão de espaçamento do layout interno de `header_right`. Os targets
 `test_wifi_audit_contract`, `test_wifi_audit_persistence` e
 `test_wifi_audit_persistence_contract` inspecionam/exercitam a implementação real
 da seam injetável e permanecem registrados no Makefile; `test` executa o binário
@@ -243,7 +267,7 @@ comportamental (não apenas a compilação). O contrato
 IMU continua como alvo separado e, quando falha, é identificado no final como
 falha preexistente isolada, sem misturá-la com os testes desta transação.
 
-`test_wifi_audit_save` é um contrato comportamental do fluxo novo: ele
+`test_wifi_audit_save` e um contrato comportamental do fluxo novo: ele
 exercita os seams reais de auditoria/persistência e o parser/renderizador
 host-testáveis, sem ESP-IDF ou hardware. A regressão de estado exige que
 `collecting` não produza snapshot/campos, que `ready` seja renderizado uma

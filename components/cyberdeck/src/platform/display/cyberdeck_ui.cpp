@@ -10,6 +10,7 @@
 #include "platform/display/cyberdeck_wifi_indicator.h"
 #include "platform/display/cyberdeck_wifi_icon.h"
 #include "platform/display/cyberdeck_clock.h"
+#include "platform/sensors/ina226_reader.h"
 #include "features/shell/cyberdeck_terminal_filter.h"
 #include "features/shell/cyberdeck_ssh_line_composer.h"
 #include "features/wifi/cyberdeck_wifi_menu.h"
@@ -57,6 +58,9 @@ lv_obj_t *s_menu = nullptr;
 lv_obj_t *s_terminal = nullptr;
 lv_obj_t *s_clock_status = nullptr;
 lv_obj_t *s_wifi_status = nullptr;
+lv_obj_t *s_battery_status = nullptr;
+lv_obj_t *s_battery_symbol = nullptr;
+lv_obj_t *s_battery_percentage = nullptr;
 lv_obj_t *s_keyboard = nullptr;
 std::string s_output;
 std::string s_line;
@@ -405,7 +409,47 @@ void style_base(lv_obj_t *obj, lv_color_t bg, lv_color_t text) {
 }
 void hidden(lv_obj_t *obj, bool value) { if (obj) lv_obj_set_hidden(obj, value); }
 
+const char *battery_level_symbol(const std::int32_t percentage)
+{
+    if (percentage >= 100) return LV_SYMBOL_BATTERY_FULL;
+    if (percentage >= 75) return LV_SYMBOL_BATTERY_3;
+    if (percentage >= 50) return LV_SYMBOL_BATTERY_2;
+    if (percentage >= 25) return LV_SYMBOL_BATTERY_1;
+    return LV_SYMBOL_BATTERY_EMPTY;
+}
+
+void refresh_battery_status()
+{
+    if (s_battery_status == nullptr || s_battery_symbol == nullptr ||
+        s_battery_percentage == nullptr) {
+        return;
+    }
+
+    cyberdeck_battery::snapshot value{};
+    const bool reader_started = ina226_reader_started();
+    const bool battery_available = reader_started &&
+        ina226_reader_get_snapshot(&value) && value.available;
+    if (!battery_available) {
+        lv_obj_add_flag(s_battery_status, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    const std::int32_t percentage = value.percentage < 0
+        ? 0 : value.percentage > 100 ? 100 : value.percentage;
+    if (value.charge == cyberdeck_battery::charge_class::charging) {
+        lv_label_set_text(s_battery_symbol, LV_SYMBOL_CHARGE " " LV_SYMBOL_PLUS);
+    } else {
+        lv_label_set_text(s_battery_symbol, battery_level_symbol(percentage));
+    }
+
+    char percentage_text[8] = {};
+    snprintf(percentage_text, sizeof(percentage_text), "%d%%", static_cast<int>(percentage));
+    lv_label_set_text(s_battery_percentage, percentage_text);
+    lv_obj_clear_flag(s_battery_status, LV_OBJ_FLAG_HIDDEN);
+}
+
 void update_clock(lv_timer_t *) {
+    refresh_battery_status();
     if (!s_clock_status) return;
 
     std::string text;
@@ -1271,16 +1315,77 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
         s_cat_worker_ready = cyberdeck_cat_worker_start("/sdcard", on_cat_result, nullptr);
      s_screen = lv_scr_act(); style_base(s_screen, BLACK, WHITE); lv_obj_set_style_pad_all(s_screen, 12, 0); lv_obj_set_layout(s_screen, LV_LAYOUT_NONE); disable_scrolling(s_screen);
     s_menu = lv_obj_create(s_screen); lv_obj_set_size(s_menu, LV_PCT(100), LV_PCT(100)); style_base(s_menu, BLACK, WHITE); lv_obj_set_style_pad_all(s_menu, 0, 0); lv_obj_set_flex_flow(s_menu, LV_FLEX_FLOW_COLUMN); disable_scrolling(s_menu);
-    lv_obj_t *header = lv_obj_create(s_menu); lv_obj_set_size(header, LV_PCT(100), 42); style_base(header, BLACK, WHITE); lv_obj_set_style_pad_all(header, 0, 0); lv_obj_set_style_pad_column(header, 0, 0); lv_obj_set_style_pad_row(header, 0, 0); lv_obj_set_layout(header, LV_LAYOUT_FLEX); lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t *header = lv_obj_create(s_menu);
+    lv_obj_set_size(header, lv_pct(100), 42);
+    style_base(header, BLACK, WHITE);
+    lv_obj_set_style_pad_all(header, 0, 0);
+    lv_obj_set_style_pad_column(header, 0, 0);
+    lv_obj_set_style_pad_row(header, 0, 0);
+    lv_obj_set_layout(header, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
     disable_scrolling(header);
-     lv_obj_t *title = lv_label_create(header); lv_label_set_text(title, "CYBERDECK5"); lv_obj_set_width(title, LV_PCT(30)); style_base(title, BLACK, WHITE);
-     s_clock_status = lv_label_create(header); lv_label_set_text(s_clock_status, ""); lv_obj_set_width(s_clock_status, LV_PCT(40)); lv_obj_set_style_text_align(s_clock_status, LV_TEXT_ALIGN_CENTER, 0); lv_label_set_long_mode(s_clock_status, LV_LABEL_LONG_CLIP); style_base(s_clock_status, BLACK, MUTED);
-        s_wifi_status = cyberdeck_wifi_icon_create(header); lv_obj_set_width(s_wifi_status, LV_PCT(30));
-        lv_obj_update_layout(header);
-        cyberdeck_wifi_icon_update_layout(s_wifi_status, lv_obj_get_width(s_wifi_status));
-      wifi_mgr_set_state_callback(on_wifi_state, nullptr);
-      s_last_clock_text.clear();
-      update_clock(nullptr);
+
+    lv_obj_t *title = lv_label_create(header);
+    lv_label_set_text(title, "CYBERDECK5");
+    lv_obj_set_width(title, LV_PCT(30));
+    style_base(title, BLACK, WHITE);
+
+    s_clock_status = lv_label_create(header);
+    lv_label_set_text(s_clock_status, "");
+    lv_obj_set_width(s_clock_status, LV_PCT(40));
+    lv_obj_set_style_text_align(s_clock_status, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(s_clock_status, LV_LABEL_LONG_CLIP);
+    style_base(s_clock_status, BLACK, MUTED);
+
+    lv_obj_t *header_right = lv_obj_create(header);
+    lv_obj_set_width(header_right, LV_PCT(30));
+    lv_obj_set_height(header_right, 42);
+    style_base(header_right, BLACK, WHITE);
+    lv_obj_set_style_pad_all(header_right, 0, 0);
+    lv_obj_set_style_pad_column(header_right, 2, 0);
+    lv_obj_set_style_pad_row(header_right, 0, 0);
+    lv_obj_set_flex_flow(header_right, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header_right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    disable_scrolling(header_right);
+
+    s_wifi_status = cyberdeck_wifi_icon_create(header_right);
+    lv_obj_set_width(
+        s_wifi_status,
+        static_cast<int32_t>((CYBERDECK_WIFI_ICON_RADIUS_2 +
+                              CYBERDECK_WIFI_ICON_DEFAULT_THICKNESS) * 2.0f));
+    lv_obj_set_flex_grow(s_wifi_status, 0);
+
+    s_battery_status = lv_obj_create(header_right);
+    lv_obj_set_size(s_battery_status, LV_SIZE_CONTENT, 42);
+    lv_obj_set_flex_grow(s_battery_status, 0);
+    style_base(s_battery_status, BLACK, WHITE);
+    lv_obj_set_style_bg_opa(s_battery_status, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(s_battery_status, 0, 0);
+    lv_obj_set_style_pad_left(s_battery_status, 4, 0);
+    lv_obj_set_flex_flow(s_battery_status, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_battery_status, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    disable_scrolling(s_battery_status);
+
+    s_battery_symbol = lv_label_create(s_battery_status);
+    lv_label_set_text(s_battery_symbol, "");
+    style_base(s_battery_symbol, BLACK, MUTED);
+    s_battery_percentage = lv_label_create(s_battery_status);
+    lv_label_set_text(s_battery_percentage, "");
+    lv_obj_set_style_pad_column(s_battery_status, 3, 0);
+    style_base(s_battery_percentage, BLACK, WHITE);
+    lv_obj_add_flag(s_battery_status, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_update_layout(header);
+    lv_obj_update_layout(header_right);
+    cyberdeck_wifi_icon_update_layout(s_wifi_status,
+                                       lv_obj_get_width(s_wifi_status));
+    wifi_mgr_set_state_callback(on_wifi_state, nullptr);
+    s_last_clock_text.clear();
+    update_clock(nullptr);
       lv_timer_create(update_clock, 1000, nullptr);
       lv_timer_create(process_wifi_state, 100, nullptr);
        lv_timer_create(process_wifi_scan, 100, nullptr);

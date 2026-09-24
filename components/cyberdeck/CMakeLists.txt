@@ -21,6 +21,8 @@ idf_component_register(
         "src/platform/logging/event_log_recent.cpp"
         "src/platform/sensors/imu_reader.cpp"
         "src/platform/sensors/orientation.cpp"
+        "src/platform/sensors/battery_status.cpp"
+        "src/platform/sensors/ina226_reader.cpp"
         "src/platform/display/screen_off.cpp"
         "src/features/ssh/ssh_client.cpp"
         "src/platform/input/tab5_keyboard.cpp"

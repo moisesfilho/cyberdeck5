@@ -13,8 +13,8 @@ interativo no terminal.
 - Interface LVGL simples, com touch e teclado virtual
 - Tela TUI única, com header `CYBERDECK5` e shell visual (`help`, `wifi`, `log`, `clear` e `ssh`)
 - Wi-Fi com reconexão e persistência no cartão SD
-- Header com apenas um ícone Wi-Fi, claro somente quando o Wi-Fi está habilitado,
-  conectado e possui IP; escuro nos demais estados
+- Header com status/percentual de bateria e um ícone Wi-Fi, claro somente quando
+  o Wi-Fi está habilitado, conectado e possui IP; escuro nos demais estados
 - Cliente SSH assíncrono com PTY remoto
 - Autenticação por senha
 - Rotação automática da tela pelo sensor BMI270
@@ -41,14 +41,20 @@ idf.py -p /dev/ttyACM0 flash monitor
 
 ### Indicadores do header
 
-The header contains one Wi-Fi icon drawn with LVGL primitives. It is light only when
-Wi-Fi is enabled, connected, and has an IP address; it is muted in every other
-state. The SSID is never rendered in the header. SSH state and errors are shown
-in the terminal and recorded in the event log. Use the `wifi` shell command for
-network diagnostics; those details remain outside the header. The header keeps a
-30/40/30 grid (title/clock/Wi-Fi), and the icon is dynamically right-aligned in
-the third cell, with visible pixels approximately 2 px from the edge. Its
-position is recalculated on `LV_EVENT_SIZE_CHANGED`.
+The header keeps a direct 30/40/30 grid (title/clock/right cell). Inside the
+right cell, the Wi-Fi icon is rendered first and the battery group follows. The
+Wi-Fi icon uses LVGL primitives and is light only when Wi-Fi is enabled,
+connected, and has an IP address; it is muted in every other state. The SSID is
+never rendered in the header. SSH state and errors are shown in the terminal
+and recorded in the event log. Use the `wifi` shell command for diagnostics.
+
+The battery group consumes synchronized INA226 snapshots without performing
+I2C in the UI. Its percentage saturates across the approved 6000..8400 mV
+window; positive and zero current are consuming, while negative current is
+charging. LVGL battery-level, charge, and plus symbols accompany the numeric
+percentage. The entire group stays hidden while the sensor or its latest read
+is unavailable. Wi-Fi remains dynamically aligned within its allocated part
+of the right cell and recalculates on `LV_EVENT_SIZE_CHANGED`.
 
 The lower visual limit of the upper arcs is `center_y - outer_radius * (1 -
 sin(45°))`; the dot is placed 1.5 px below that limit (accepted range: 1–2 px).

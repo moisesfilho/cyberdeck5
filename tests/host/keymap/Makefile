@@ -15,6 +15,8 @@
 #   make test   -> verifica paridade com o LVGL real e executa os testes
 #   make verify -> compara shim/lvgl.h com o LVGL gerenciado (drift check)
 #   make clean
+#   make test_battery_contract test_battery_reader_contract test_battery_ui_contract
+#                 -> contratos TDD RED; a producao correspondente ainda e ausente
 
 CXX      ?= g++
 PYTHON   ?= python3
@@ -33,6 +35,7 @@ LINE_COMPOSER_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_
 CLOCK_SRC        := ../../../components/cyberdeck/src/platform/display/cyberdeck_clock.cpp
 WIFI_INDICATOR_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp
 WIFI_ICON_SRC      := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp
+WIFI_ICON_HDR      := ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_icon.h
 WIFI_MENU_SRC      := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_menu.cpp
 WIFI_STATE_MACHINE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_state_machine.cpp
 WIFI_STATE_MACHINE_HDR := ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_state_machine.h
@@ -46,6 +49,11 @@ WIFI_AUDIT_PERSISTENCE_SRC := ../../../components/cyberdeck/src/features/wifi/cy
 WIFI_AUDIT_PERSISTENCE_HDR := ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit_persistence.h
 WIFI_AUDIT_PERSISTENCE_CONTRACT_HDR := contracts/cyberdeck_wifi_audit_persistence.h
 ORIENTATION_SRC := ../../../components/cyberdeck/src/platform/sensors/orientation.cpp
+BATTERY_PURE_SRC := ../../../components/cyberdeck/src/platform/sensors/battery_status.cpp
+BATTERY_PURE_HDR := ../../../components/cyberdeck/include/platform/sensors/battery_status.h
+BATTERY_CONTRACT_HDR := contracts/cyberdeck_battery.h
+BATTERY_READER_SRC := ../../../components/cyberdeck/src/platform/sensors/ina226_reader.cpp
+BATTERY_READER_HDR := ../../../components/cyberdeck/include/platform/sensors/ina226_reader.h
 SERIAL_BRIDGE_SRC := ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp
 SERIAL_BRIDGE_HDR := ../../../components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
 INCLUDES        := -Ishim -I../../../components/cyberdeck/include
@@ -61,7 +69,7 @@ CAT_MULTILINE_SRC := test_cat_multiline.cpp
 
 BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch
 
-.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract
+.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract
 
 all: test
 
@@ -288,6 +296,22 @@ test_cat_multiline: $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 test_orientation: test_orientation.cpp $(ORIENTATION_SRC) ../../../components/cyberdeck/include/platform/sensors/orientation.h shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_orientation.cpp $(ORIENTATION_SRC) -o test_orientation
 
+# TDD RED: contrato puro de bateria. A implementacao de producao e a fonte
+# esperada do contrato; o header de testes fixa a ABI sem ESP-IDF/hardware.
+test_battery_contract: test_battery_contract.cpp $(BATTERY_PURE_SRC) $(BATTERY_PURE_HDR) $(BATTERY_CONTRACT_HDR)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_battery_contract.cpp $(BATTERY_PURE_SRC) -o test_battery_contract
+
+# TDD RED: contrato estrutural do reader INA226, sem I2C/simulador/hardware.
+test_battery_reader_contract: test_battery_reader_contract.py $(BATTERY_READER_SRC) $(BATTERY_READER_HDR) $(BATTERY_PURE_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md
+	$(PYTHON) test_battery_reader_contract.py
+
+# TDD RED: contrato estrutural do header/UI, incluindo boot nao fatal e a
+# regressão de espaçamento (largura Wi-Fi compacta, flex grow zero, alinhamento
+# final e gaps pequenos). A implementação de produção ainda deve satisfazer
+# estas asserções; o alvo deve permanecer vermelho até a correção do coder.
+test_battery_ui_contract: test_battery_ui_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_ICON_SRC) $(WIFI_ICON_HDR) ../../../main/app_main.cpp ../../../code-map.md
+	$(PYTHON) test_battery_ui_contract.py
+
 # Structural host-side contract for boot and initial IMU orientation. The
 # sources are inspected directly rather than duplicated or linked against
 # ESP-IDF: this checks boot order, safe initial fallback, and the handoff to
@@ -466,6 +490,8 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_fs_write_dispatch
 	@$(MAKE) --no-print-directory test_fs_write_cli
 	@$(MAKE) --no-print-directory test_fs_write_contract
+	@echo "==> Executando contrato estrutural do header/bateria e regressão de espaçamento"
+	@$(MAKE) --no-print-directory test_battery_ui_contract
 	# Keep the known IMU contract last so unrelated task tests run first;
 	# it remains a separate, non-masked gate.
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"

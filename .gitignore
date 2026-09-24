@@ -22,3 +22,6 @@ tests/host/**/test_*
 !tests/host/keymap/test_fs_write_dispatch.cpp
 !tests/host/keymap/test_fs_write_cli.py
 !tests/host/keymap/test_fs_write_contract.py
+!tests/host/keymap/test_battery_contract.cpp
+!tests/host/keymap/test_battery_reader_contract.py
+!tests/host/keymap/test_battery_ui_contract.py

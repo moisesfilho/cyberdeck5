@@ -33,13 +33,31 @@ dessa reorganização e continua sendo gerenciado pelo ESP-IDF.
 1. Inicializar NVS.
 2. Inicializar display e LVGL pelo BSP do Tab5.
 3. Criar a tela TUI monocromática.
-4. Inicializar Wi-Fi e reconexão a partir do SD; o header recebe estados de
+4. Iniciar o reader INA226; falha de inicialização ou ausência do sensor registra
+   log, publica indisponibilidade e não aborta o restante do boot.
+5. Inicializar Wi-Fi e reconexão a partir do SD; o header recebe estados de
    Wi-Fi por callback e atualiza somente o ícone: claro quando Wi-Fi está
    habilitado, conectado e possui IP, e escuro nos demais estados. O SSID não
    é renderizado no header.
-5. Aguardar conexão SSH iniciada pelo usuário.
-6. Iniciar a ponte manual USB Serial-JTAG (`bridge_start`): task própria,
+6. Aguardar conexão SSH iniciada pelo usuário.
+7. Iniciar a ponte manual USB Serial-JTAG (`bridge_start`): task própria,
    iniciada por último; falha aqui registra aviso e não derruba o boot.
+
+## Bateria
+
+`battery_status.cpp` concentra a lógica pura: satura a entrada `6000..8400`
+em `0..100`, trata corrente positiva e zero como consumo, corrente negativa
+como carga e produz indisponibilidade quando presença ou validade faltam. O
+módulo não depende de ESP-IDF, FreeRTOS, I2C ou LVGL.
+
+`ina226_reader.cpp` é a integração separada de hardware. Ela usa o barramento
+I2C do BSP no endereço `0x41`, grava configuração `0x4527` e calibração
+`0x0D55`, e executa as leituras de tensão e corrente numa task FreeRTOS a cada
+1000 ms. Um mutex protege o snapshot copiado consultado pela UI. Falha de
+probe, identificação, leitura ou startup publica o estado indisponível; em
+`app_main` a falha é apenas registrada. O fluxo não persiste estado de carga e
+não implementa controle ou proteção de bateria. Nenhuma transação I2C ocorre na
+UI, e o reader não registra timer LVGL.
 
 ## Wi-Fi: dispatch e persistência
 
@@ -126,15 +144,20 @@ para que widgets LVGL não sejam alterados concorrentemente.
 
 ## Header de estado
 
-The header contains one Wi-Fi icon drawn with LVGL primitives. The icon is light only
-when Wi-Fi is enabled, connected, and has an IP address; it is muted otherwise.
-The SSID is never rendered. Wi-Fi-driven LVGL updates hold the BSP display
-lock. SSH state and errors are rendered in the terminal and written to the
-event log. Network diagnostics remain available through the `wifi` shell
-command, outside the header. The header uses a 30/40/30 title/clock/Wi-Fi grid;
-the icon is dynamically right-aligned within the third cell, leaving its visible
-pixels approximately 2 px from the edge. The layout responds to
-`LV_EVENT_SIZE_CHANGED` so the alignment follows the actual header size.
+The header uses a direct 30/40/30 title/clock/right grid. The right cell owns
+two children in order: the Wi-Fi icon and then the battery group. The Wi-Fi icon
+is drawn with LVGL primitives and is light only when Wi-Fi is enabled,
+connected, and has an IP address; it is muted otherwise. The SSID is never
+rendered. Wi-Fi-driven LVGL updates hold the BSP display lock. SSH state and
+errors are rendered in the terminal and written to the event log. Network
+diagnostics remain available through the `wifi` shell command, outside the
+header.
+
+The battery group displays an LVGL level/charge/plus symbol and the clamped
+percentage. It is refreshed from the reader's synchronized snapshot and is
+hidden as a whole for an absent sensor or failed read. The Wi-Fi layout responds
+to `LV_EVENT_SIZE_CHANGED` within its allocated portion of the right cell, with
+visible pixels approximately 2 px from that subcell's edge.
 
 ### Wi-Fi icon geometry
 
