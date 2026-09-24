@@ -4,6 +4,7 @@ dependencies.lock
 sdkconfig
 sdkconfig.old
 .cache/
+**/__pycache__/
 compile_commands.json
 tests/host/**/test_*
 !tests/host/**/test_local_shell.cpp
