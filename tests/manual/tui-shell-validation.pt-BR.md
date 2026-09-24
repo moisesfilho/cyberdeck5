@@ -31,6 +31,7 @@ ação de retorno.
 | P4 | Sem teclado fisico | Teclado virtual LVGL deve aparecer ao focar o terminal, inclusive durante SSH |
 | P5 | WLAN | Rede salva no SD (persistencia) ou roteador aberto p/ teste de reconexao |
 | P6 | Rotacao | Sensor BMI270 habilitado; virar a tela deve girar a UI |
+| P7 | Protecao de tela | O comportamento de timeout e o overlay preto sao verificados nas secoes 3.1 e 3.2; o estado e persistido via NVS |  |  |
 
 Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 `ssid`, `host_ssh`, `observador`.
@@ -82,7 +83,7 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
-| CMD1 | Digitar `help` + `Enter` | Ecoa `$ help`; imprime exatamente `help - show this help`<br>`wifi - show network status`<br>`log - show recent events`<br>`clear - clear the terminal`<br>`ssh [user@]host[:port] - start an SSH session` (com newline final); permanece no menu |  |  |
+| CMD1 | Digitar `help` + `Enter` | Ecoa `$ help`; imprime exatamente `help - show this help`<br>`wifi [search|saved|audit] - show status, manage Wi-Fi, or audit`<br>`log - show recent events`<br>`clear - clear the terminal`<br>`screen [on|off|timeout <0-1440>] - control screen protection`<br>`ssh [user@]host[:port] - start an SSH session` (com newline final); permanece no menu |  |  |
 | CMD2 | Digitar `clear` + `Enter` | Limpa o texto de saida do terminal unificado |  |  |
 | CMD3 | Digitar `wifi` + `Enter` | Imprime `wifi: enabled connected <ip>` / `wifi: enabled disconnected` / `wifi: disabled disconnected`, ou `wifi: unavailable` se `wifi_mgr_get_status` falhar; sem crash |  |  |
 | CMD3a | Digitar `log` + `Enter` repetidamente | Imprime os eventos recentes, ou `(nenhum evento disponivel)`, sem reiniciar o dispositivo nem gerar panic |  |  |
@@ -94,8 +95,32 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 | CMD9 | `Enter` com linha vazia ou apenas espacos | Nada e impresso (sem `$ `); linha permanece vazia |  |  |
 | CMD10 | Digitar `HELP` (maiusculas) + `Enter` | Desconhecido (case-sensitive): `unknown command; type help` |  |  |
 | CMD11 | Gerar saida do shell > 12 KiB (ex. repetir `help` varias vezes) | Buffer do shell sofre rollover para 12288 bytes (mantem a cauda); UI continua responsiva, sem estouro de memoria |  |  |
+| CMD12 | Digitar `screen on` + `Enter` | Imprime `screen on`; o display eh religado (preto -> tela normal); o estado e persistente via NVS |  |  |
+| CMD13 | Digitar `screen off` + `Enter` | Imprime `screen off`; o display eh coberto por overlay preto; o estado e persistente via NVS |  |  |
+| CMD14 | Digitar `screen timeout 5` + `Enter` | Imprime `screen timeout set to 5 minutes`; proximo boot restaura o timeout; o timer reinicia com o novo valor |  |  |
+| CMD15 | Digitar `screen timeout 0` + `Enter` | Imprime `screen timeout disabled (0 minutes)`; timer desabilitado sem apagar a tela |  |  |
+| CMD16 | Digitar `screen timeout 1441` + `Enter` | Imprime `screen timeout: expected an integer from 0 to 1440`; estado inalterado |  |  |
 
-## 4. Roteamento / navegacao (TUI)
+## 3.2 Proteção de tela (comportamento no dispositivo)
+
+> Pre-condição: tela TUI única visível, terminal no foco, sem sessão SSH ativa.
+> Estes itens exercitam o overlay preto LVGL, o timer de inatividade
+> e o duplo toque para religar. Não são testáveis host-side
+> (ver seção 10).
+
+| ID | Ação | Resultado esperado | Pass/Fail | Obs |
+|----|------|--------------------|-----------|-----|
+| SP1 | Boot com timeout padrão (2 min) | Após 2 minutos de inatividade, o display apaga (overlay preto LVGL); o touch na tela preta não reage imediatamente |  |  |
+| SP2 | Duplo toque na tela apagada | Toque duas vezes em 400 ms: o display religa com o conteúdo anterior; o brilho restaura o valor anterior (20%) |  |  |
+| SP3 | Toque único na tela apagada | Nenhuma reação; o display permanece apagado (o primeiro toque inicia a janela de 400 ms) |  |  |
+| SP4 | `screen on` após tela apagada | Display religa imediatamente; sem necessidade de duplo toque |  |  |
+| SP5 | `screen off` com display ligado | Display apaga imediatamente com overlay preto |  |  |
+| SP6 | `screen timeout 0` após tela apagada | Timer desabilitado; o display não apaga mais automaticamente; `screen on` ainda funciona |  |  |
+| SP7 | `screen timeout 5` seguido de `screen off` | Timer reinicia com 5 min; após `screen off`, a inatividade de 5 min desliga o display |  |  |
+| SP8 | Boot após `screen off` | O display inicia apagado (último estado persistido); `screen on` religa normalmente |  |  |
+| SP9 | `screen timeout 1440` (máximo) | Timer aceita 1440 min (24h); sem crash ou mensagem de erro |  |  |
+
+## 4. Roteiro / navegacao (TUI)
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
@@ -202,12 +227,14 @@ que depende obrigatoriamente deste plano manual.
 | `components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp` | `tab5_keymap_lookup` | `tests/host/keymap/test_keymap.cpp` |
 | `components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp` | `tab5_char_event_parse` (modificador, comprimento sem NUL extra, UTF-8 e limites) | `tests/host/keymap/test_keyboard_event.cpp` |
 | `components/cyberdeck/src/platform/logging/event_log_recent.cpp` | `event_log_recent_indices` (ordem, wrap-around e limites do ring buffer) | `tests/host/keymap/test_event_log_recent.cpp` |
-| `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp` | `cyberdeck_parse_ssh_target` (validos, invalidos, limites 1..65535 e normalizacao de zeros a esquerda), `cyberdeck_encode_ssh_key` (imprimiveis, controle, Ctrl/Alt, limites 0..0xFF), `cyberdeck_parse_command` (roteamento, separador do verbo `ssh`, trim de bordas, verbo colado), `cyberdeck_help_text` (bloco exato, estrutura, comandos presentes e determinismo) | `tests/host/keymap/test_shell_utils.cpp` |
+| `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp` | `cyberdeck_parse_ssh_target` (validos, invalidos, limites 1..65535 e normalizacao de zeros a esquerda), `cyberdeck_encode_ssh_key` (imprimiveis, controle, Ctrl/Alt, limites 0..0xFF), `cyberdeck_parse_command` (roteamento, separador do verbo `ssh`, trim de bordas, verbo colado, `screen on|off|timeout <0-1440>`), `cyberdeck_help_text` (bloco exato, estrutura, comandos presentes e determinismo) | `tests/host/keymap/test_shell_utils.cpp` |
+| `components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp` | `state`, `parse_timeout_minutes`, `persisted_timeout`, `evaluate_inactivity`, `turn_on`, `turn_off` | `tests/host/keymap/test_screen_protection.cpp` + `test_screen_protection_contract.py` |
+| `components/cyberdeck/src/platform/display/screen_off.cpp` | `screen_off_init`, `screen_off_turn_on`, `screen_off_turn_off`, `screen_off_set_timeout_minutes`, duplo toque, NVS restauracao | `tests/host/keymap/test_screen_protection_contract.py` |
 
 A cobertura host-side lista os cenarios algoritmicos determinísticos (positivos,
 negativos, limites e normalizacao) que independem de LVGL/FreeRTOS/SSH/hardware;
 o restante do comportamento do terminal unificado e exercitado manualmente
-(secoes 2, 3, 3.1, 4, 5, 6 e 7 - T/S/R/CMD/C/K/U).
+(secoes 2, 3, 3.1, 3.2, 4, 5, 6 e 7 - T/S/R/CMD/C/K/U).
 
 `make -C tests/host/keymap verify` garante que o shim `tests/host/keymap/shim/lvgl.h`
 nao divergiu das constantes `LV_KEY_*` do LVGL gerenciado (drift check).
@@ -229,20 +256,21 @@ das duas opcoes foi adotada: os testes host nao devem alterar producao nem
 congelar comportamento de UI com mocks.
 
 **Consequencia:** a logica de UI acima e validada pelos itens manuais das
-secoes 2, 3, 3.1, 4, 5, 6 e 7 (T/S/R/CMD/C/K/U). A parte pura ja extraida
-(`cyberdeck_parse_ssh_target`, `cyberdeck_encode_ssh_key`, `cyberdeck_parse_command`)
+secoes 2, 3, 3.1, 3.2, 4, 5, 6 e 7 (T/S/R/CMD/C/K/U). A parte pura ja extraida
+(`cyberdeck_parse_ssh_target`, `cyberdeck_encode_ssh_key`, `cyberdeck_parse_command`,
+`cyberdeck_screen_protection::parse_timeout_minutes`, `state`)
 tem cobertura host-side correspondente nessas secoes, incluindo o pipeline
-`parse_command -> parse_ssh_target` usado para iniciar a conexao (CMD4-CMD7).
+`parse_command -> screen_on/off/timeout` usado para controle da protecao de tela.
 
-**Estado atual vs cobertura:** o terminal direto, a digitacao fisico/virtual e
-o scroll apenas interno não extraem nem alteram logica pura testavel host-side — residem
-inteiramente em `cyberdeck_ui.cpp` (namespace anonimo + widgets LVGL). O parser
-do protocolo Character foi extraido e possui cobertura host-side; a integracao
-I2C/IRQ continua dependente do dispositivo.
-Os itens novos deste
-roteiro sao manuais: T1a (header compacto: titulo/relogio/Wi-Fi, sem status
-SSH), T8 (ausencia do botao), S12-S15 (cursor/edicao), C11-C14
-(teclado virtual durante SSH) e U9-U11 (scroll interno do terminal).
+**Estado atual vs cobertura:** o terminal direto, a digitacao fisico/virtual,
+o scroll apenas interno e a protecao de tela (overlay, timer, duplo toque)
+nao extraem nem alteram logica pura testavel host-side — residem
+inteiramente em `cyberdeck_ui.cpp` e `screen_off.cpp` (namespace anonimo + widgets LVGL).
+O parser do protocolo Character e a politica de protecao de tela foram extraidos
+e possuem cobertura host-side; a integracao I2C/IRQ e o LVGL continuam dependentes
+do dispositivo. Os itens novos deste roteiro sao manuais: T1a (header compacto:
+titulo/relogio/Wi-Fi, sem status SSH), T8 (ausencia do botao), S12-S15 (cursor/edicao),
+C11-C14 (teclado virtual durante SSH), SP1-SP9 (protecao de tela) e U9-U11 (scroll interno do terminal).
 
 **Recomendacao ao developer (nao aplicada pelo tester):** extrair para
 `cyberdeck_shell_utils` (unidade host-testavel) qualquer nova logica pura hoje

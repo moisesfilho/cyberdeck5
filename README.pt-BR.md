@@ -68,17 +68,17 @@ relógio e mantendo X, tamanho, gap, cores e estado.
 2. Informe a senha e confirme a chave do host quando solicitado.
 3. Digite comandos no mesmo terminal e pressione Enter. Não há tela SSH separada nem botão de conexão.
 
-O shell visual do menu também oferece `help`, `wifi` e `clear`.
+O shell visual do menu também oferece `help`, `wifi`, `clear`, `screen` e `ssh`.
 
 ### Shell local de arquivos
 
-O shell local de arquivos inicia no diretório raiz virtual `/sdcard`, com o prompt
-`/sdcard$ `. Depois de um `cd` válido, o prompt mostra o novo diretório atual;
+O shell local de arquivos inicia na raiz virtual `/`, com o prompt
+`/$ `. Depois de um `cd` válido, o prompt mostra o novo diretório atual;
 um `cd` inválido preserva o diretório e o prompt anteriores. Use `pwd` para
 exibir o diretório atual e `cd <caminho>` para alterá-lo. Os caminhos
-podem ser relativos ao diretório atual ou absolutos dentro de `/sdcard`.
+podem ser relativos ao diretório atual ou absolutos dentro de `/`.
 Somente `cd` aceita `..`: ele normaliza `.` e `..` em caminhos relativos,
-absolutos ou mistos, limitando tentativas de subir acima de `/sdcard` à raiz
+absolutos ou mistos, limitando tentativas de subir acima de `/` à raiz
 virtual. Os demais comandos rejeitam componentes `..`.
 
 Comandos disponíveis:
@@ -97,13 +97,36 @@ Execute `help` (ou `help -h` / `help --help`) para ver a lista geral de
 comandos. Os comandos do shell local também aceitam `-h` e `--help` (por
 exemplo, `ls --help`) para exibir seu uso.
 
-O shell de arquivos é isolado em sandbox: `/sdcard` é a única raiz exposta,
-`cd ..` não pode escapar dela e links simbólicos não são permitidos. Os demais
+O shell de arquivos é isolado em sandbox: `/` é a única raiz virtual exposta
+e corresponde ao cartão SD físico montado em `/sdcard`. `cd ..` não pode
+escapar dela e links simbólicos não são permitidos. O caminho físico
+`/sdcard` não é um alias aceito pelo shell virtual. Os demais
 comandos rejeitam componentes `..` nos caminhos.
 `rm -r` não pode remover a raiz virtual e recusa árvores que contenham links
 simbólicos. Essa é uma interface local de arquivos, não um shell POSIX completo:
 o parsing dos comandos é baseado em espaços, e comandos não suportados são
 encaminhados ao contexto de terminal ativo.
+
+### Proteção de Tela
+
+O firmware desliga o display após um tempo configurável de inatividade
+(padrao: 2 minutos) para economizar energia. Enquanto a tela estiver
+desligada, uma sobreposição preta LVGL cobre o display; tocar duas
+vezes em 400 ms a religa. O tempo de inatividade persiste entre reinicializações via NVS.
+
+No terminal:
+
+```text
+screen on            # religar o display imediatamente
+screen off           # desligar o display imediatamente
+screen timeout 0     # desabilitar o timer de desligamento automatico
+screen timeout 5     # definir o timeout para 5 minutos (0..1440)
+```
+
+`screen timeout <minutos>` aceita um inteiro de 0 a 1440. Definir 0
+desabilita o desligamento automático sem apagar a tela imediatamente.
+O último valor positivo é preservado quando o timeout é desabilitado e
+restaurado no próximo boot.
 
 ### Wi-Fi
 

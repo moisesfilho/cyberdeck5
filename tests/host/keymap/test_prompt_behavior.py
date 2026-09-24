@@ -117,9 +117,9 @@ std::string marker_for(bool connected, bool password, wifi_ui_state_t state,
     return {expression};
 }}
 int main() {{
-    assert(marker_for(false, false, wifi_ui_state_t::IDLE, "/sdcard") == "/sdcard$ ");
-    assert(marker_for(true, false, wifi_ui_state_t::IDLE, "/sdcard") == "");
-    assert(marker_for(false, true, wifi_ui_state_t::IDLE, "/sdcard") == "Password: ");
+    assert(marker_for(false, false, wifi_ui_state_t::IDLE, "/") == "/$ ");
+    assert(marker_for(true, false, wifi_ui_state_t::IDLE, "/") == "");
+    assert(marker_for(false, true, wifi_ui_state_t::IDLE, "/") == "Password: ");
     assert(marker_for(false, false, wifi_ui_state_t::SEARCH_SELECT, "/secret") == "");
     assert(marker_for(false, false, wifi_ui_state_t::SAVED_SELECT, "/secret") == "");
     assert(marker_for(false, false, wifi_ui_state_t::SAVED_CONFIRM, "/secret") == "");
@@ -163,8 +163,8 @@ int main(int argc, char **argv) {
     assert(shell.execute("cd deep").status == cyberdeck_local_shell_status::handled);
     for (const char *command : {"cd missing", "cd /tmp/outside", "cd deep/absent"}) {
         assert(shell.execute(command).status == cyberdeck_local_shell_status::rejected);
-        assert(shell.cwd() == "/sdcard/deep");
-        assert(shell.execute("pwd").output == "/sdcard/deep\n");
+        assert(shell.cwd() == "/deep");
+        assert(shell.execute("pwd").output == "/deep\n");
     }
 }
 '''

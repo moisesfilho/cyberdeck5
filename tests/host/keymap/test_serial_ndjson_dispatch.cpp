@@ -193,6 +193,34 @@ void test_ui_commands_dispatch() {
         CHECK(req.type == "ui.clear");
     }
     {
+        const char* commands[] = {
+            "screen on",
+            "screen off",
+            "screen timeout 0",
+            "screen timeout 1440",
+        };
+        for (std::size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
+            const std::string rid = "screen-" + std::to_string(i);
+            const std::string json = "{\"rid\":\"" + rid +
+                                     "\",\"type\":\"ui.type\",\"text\":\"" +
+                                     commands[i] + "\"}";
+            cyberdeck_serial::request screen_request;
+            cyberdeck_serial::dispatch_error screen_error;
+            CHECK(cyberdeck_serial::parse_ndjson_line(
+                json.data(), json.size(), screen_request, screen_error));
+            CHECK(screen_error == cyberdeck_serial::dispatch_error::none);
+            CHECK(screen_request.type == "ui.type");
+
+            const auto screen_result =
+                cyberdeck_serial::dispatch_one(json.data(), json.size());
+            CHECK(screen_result.ok);
+            CHECK(screen_result.envelope_json.find(
+                      "\"rid\":\"" + rid + "\"") != std::string::npos);
+            CHECK(screen_result.envelope_json.find("\"ok\":true") !=
+                  std::string::npos);
+        }
+    }
+    {
         const char* s = "{\"rid\":\"u3\",\"type\":\"ui.echo\",\"text\":\"hello\"}";
         auto res = cyberdeck_serial::dispatch_one(s, std::strlen(s));
         CHECK(res.ok);

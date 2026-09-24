@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp"
 WORKER = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp"
 HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h"
+LOCAL_SHELL_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_local_shell.h"
 
 
 def require(condition: bool, message: str) -> None:
@@ -15,10 +16,27 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def function_body(source: str, signature: str) -> str:
+    start = source.find(signature)
+    require(start >= 0, f"missing tokenizer function: {signature}")
+    opening = source.find("{", start)
+    require(opening >= 0, f"missing tokenizer body: {signature}")
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening + 1:index]
+    raise AssertionError(f"unterminated tokenizer function: {signature}")
+
+
 def main() -> int:
     shell = SHELL.read_text(encoding="utf-8")
     worker = WORKER.read_text(encoding="utf-8")
     header = HEADER.read_text(encoding="utf-8")
+    local_shell_header = LOCAL_SHELL_HEADER.read_text(encoding="utf-8")
 
     # The execute path must not pull locale/stringstream machinery onto the
     # bounded worker stack.  This is intentionally source-level and strict.
@@ -30,6 +48,18 @@ def main() -> int:
             "tokenizer must explicitly recognize spaces/tabs as separators")
     require("std::vector<std::string>" in shell,
             "tokenizer must preserve command/option/argument token boundaries")
+    separator_body = function_body(shell, "bool is_token_separator(")
+    require("byte == '/'" not in separator_body and 'byte == "/"' not in separator_body,
+            "the virtual root slash must remain part of an absolute operand")
+    require(re.search(r'virtual_root\s*=\s*"/"', local_shell_header) is not None,
+            "the public shell contract must expose / as the default virtual root")
+    cat_start = shell.find("cyberdeck_local_shell_result cyberdeck_local_shell_cat")
+    cat_end = shell.find("cyberdeck_local_shell::cyberdeck_local_shell", cat_start)
+    require(cat_start >= 0 and cat_end > cat_start,
+            "dedicated cat API seam must remain inspectable")
+    cat_body = shell[cat_start:cat_end]
+    require(re.search(r'virtual_root\s*=\s*"/sdcard"', cat_body) is None,
+            "dedicated cat must not retain /sdcard as its virtual namespace")
 
     # Keep the regression guard attached to the real worker and require the
     # approved auditable 6144-byte stack constant at the creation site.

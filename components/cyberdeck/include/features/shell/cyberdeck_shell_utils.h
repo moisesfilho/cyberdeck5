@@ -1,5 +1,7 @@
 #pragma once
 
+#include "features/shell/cyberdeck_shell_help.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -18,6 +20,9 @@ enum cyberdeck_cmd_type_t {
     CYBERDECK_CMD_WIFI_AUDIT,
     CYBERDECK_CMD_WIFI_AUDIT_SAVE,
     CYBERDECK_CMD_LOG,
+    CYBERDECK_CMD_SCREEN_ON,
+    CYBERDECK_CMD_SCREEN_OFF,
+    CYBERDECK_CMD_SCREEN_TIMEOUT,
     CYBERDECK_CMD_SSH,
     CYBERDECK_CMD_UNKNOWN
 };
@@ -49,6 +54,11 @@ std::string cyberdeck_encode_ssh_key(uint32_t key, uint8_t modifier);
 cyberdeck_cmd_t cyberdeck_parse_command(const char *input);
 
 /**
- * Retorna o texto de ajuda do shell.
+ * Retorna o texto de ajuda do shell a partir do catalogo compartilhado.
  */
 std::string cyberdeck_help_text();
+
+/**
+ * Retorna a linha de ajuda de um comando local a partir do mesmo catalogo.
+ */
+std::string cyberdeck_command_help_text(const char *command);

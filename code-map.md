@@ -46,7 +46,8 @@ Ordem relevante de inicializacao:
 | `components/cyberdeck/src/platform/display/cyberdeck_clock.cpp` | `cyberdeck_clock_from_utc`, `cyberdeck_format_clock` | Conversao/formato do relogio GMT-3. |
 | `components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp` | `cyberdeck_wifi_indicator_is_lit` | Regra pura: claro somente com `enabled && connected && has_ip`. |
 | `components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp` | layout, criacao, resize e cor do icone | Desenha tres arcos e ponto; recalcula posicao em resize. |
-| `components/cyberdeck/src/platform/display/screen_off.cpp` | `screen_off_init` | Timeout de 120 s e duplo toque para religar a tela. |
+| `components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_screen_protection.h` | `parse_timeout_minutes`, `state`, `persisted_timeout` | Politica pura host-testavel: timeout padrao de 2 min, faixa inclusiva 0..1440, zero desabilitando sem perder o ultimo valor positivo, restauracao dos dois campos e transicao on/off no limite exato de inatividade. |
+| `components/cyberdeck/src/platform/display/screen_off.cpp`, `components/cyberdeck/include/platform/display/screen_off.h` | `screen_off_init`, `screen_off_turn_on`, `screen_off_turn_off`, `screen_off_set_timeout_minutes` | Adaptador LVGL/BSP da protecao de tela: timer de 1 s, duplo toque para religar, comandos `screen on|off|timeout`, restauracao NVS antes do timer e persistencia enfileirada para uma task dedicada (fora da task LVGL) do timeout efetivo e do ultimo valor positivo, com zero pausando/desabilitando o timer. |
 
 O header usa grade direta 30/40/30 para titulo, relogio e celula direita. A
 celula direita renderiza Wi-Fi antes da bateria; a bateria mostra simbolos LVGL
@@ -62,15 +63,20 @@ pelo comando `wifi` e pela auditoria local.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp` | classe `cyberdeck_local_shell`; `cyberdeck_local_shell_cat` | Shell confinado ao root virtual `/sdcard`; tokenizer manual byte-a-byte bounded para espacos/tabs; implementa `pwd`, `cd`, `ls`, `cat`, `touch`, `mkdir`, `rm`, `rmdir` e ajuda. A API cat-specific usa apenas strings bounded e descritores confinados, retorna output heap-backed, limita arquivos a 12288 bytes e chunks de 1024, e e usada pelo worker sem construir o shell geral. |
+| `components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp` | classe `cyberdeck_local_shell`; `cyberdeck_local_shell_cat` | Shell confinado ao root virtual `/`; `host_root` continua sendo o ponto fisico do SD (montado em `/sdcard`), e `/sdcard` e descendentes sao rejeitados no namespace virtual. Tokenizer manual byte-a-byte bounded para espacos/tabs; implementa `pwd`, `cd`, `ls`, `cat`, `touch`, `mkdir`, `rm`, `rmdir` e ajuda. A ajuda e as opcoes `-h`/`--help` consomem o catalogo compartilhado sem listas literais locais. A API cat-specific usa as mesmas regras de cwd/caminho, apenas strings bounded e descritores confinados, retorna output heap-backed, limita arquivos a 12288 bytes e chunks de 1024, e e usada pelo worker sem construir o shell geral. |
 | `components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp`, `components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h` | `cyberdeck_cat_worker_start`, `cyberdeck_cat_worker_enqueue`, `cyberdeck_cat_worker_teardown` | Worker FreeRTOS com fila bounded para I/O de `cat`, stack explícita de 6144 bytes; o worker deve chamar uma API cat-specific heap/bounded, sem construir/usar o shell genérico, `fs::path` ou `vector` no caminho específico. O contrato estrutural permite os identificadores `cyberdeck_local_shell_*` da API dedicada e rejeita apenas a construção/uso genérico. Cada start drena a sinalização de parada e cria uma geração nova, e teardown sinaliza/aguarda o retorno do worker antes de liberar fila, root e callback, invalidando callbacks LVGL tardios. |
 | `components/cyberdeck/include/features/shell/cyberdeck_local_shell.h` | API do shell local | Contrato usado pela UI e testes. |
-| `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp`, `components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h` | `cyberdeck_help_text`, `parse_ssh_target`, `cyberdeck_parse_command`, `CYBERDECK_CMD_WIFI_AUDIT_SAVE` | Ajuda comum, parser de `ssh [user@]host[:port]` e comandos `wifi`, incluindo auditoria local e `wifi audit save` explícito; a grafia de exportação legada é rejeitada. |
+| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` | `cyberdeck_shell_help::kCatalog`, `cyberdeck_shell_help::text`, `cyberdeck_shell_help::command_text` | Modulo header-only puro STL com a unica tabela ordenada de 14 entradas e formatadores deterministicos; nao depende de LVGL, UI ou ESP-IDF. |
+| `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp`, `components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h` | `cyberdeck_help_text`, `cyberdeck_command_help_text`, `parse_ssh_target`, `cyberdeck_parse_command`, `CYBERDECK_CMD_WIFI_AUDIT_SAVE`, `CYBERDECK_CMD_SCREEN_ON/OFF/TIMEOUT` | Adapters publicos para o catalogo compartilhado, parser de `ssh [user@]host[:port]`, comandos `wifi` (incluindo auditoria local e `wifi audit save` explicito; a grafia de exportacao legada e rejeitada) e roteamento de `screen on`, `screen off` e `screen timeout <0-1440>` para a politica pura. |
+| `tests/host/keymap/contracts/cyberdeck_help.h` | `kUnifiedHelpText` | Fixture de teste com o catalogo unificado esperado; nao e uma implementacao de producao. |
+| `tests/host/keymap/test_help_unification.cpp` | paridade de `help`, `help -h` e `help --help`; catalogo unico | Teste comportamental host que liga `cyberdeck_shell_utils.cpp` e `cyberdeck_local_shell.cpp`, sem hardware. |
+| `tests/host/keymap/help_unification_contract.py` | contrato estrutural do catalogo | Impede listas literais independentes em `cyberdeck_shell_utils.cpp`, `cyberdeck_local_shell.cpp` e `cyberdeck_ui.cpp`. |
 | `components/cyberdeck/src/features/shell/cyberdeck_history.cpp` | classe `cyberdeck_history` | Historico limitado a 64 linhas, com navegacao e duplicatas preservadas. |
 | `components/cyberdeck/src/features/shell/cyberdeck_edit_line.cpp` | classe `cyberdeck_edit_line` | Linha UTF-8, cursor, backspace, Enter e comportamento por sessao. |
 
-O shell local aceita `..` somente em `cd`, faz clamp no `/sdcard`, rejeita
-traversal nos demais comandos e protege contra symlinks. `cat` abre por
+O shell local aceita `..` somente em `cd`, faz clamp na raiz virtual `/`, rejeita
+traversal nos demais comandos e protege contra symlinks. A montagem física
+continua em `/sdcard`, mas esse nome não é alias válido no namespace virtual. `cat` abre por
 descritores confinados, com `O_NOFOLLOW`/`openat` quando disponíveis, `fstat` e
 leitura do mesmo descritor; no ESP-IDF usa abertura direta do caminho confinado
 compatível com o VFS FATFS (sem objetos symlink), preservando `O_NOFOLLOW` quando
@@ -180,6 +186,7 @@ libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 - Teclado fisico: fila FIFO bounded de 8 e despacho por `lv_async_call`.
 - SSH: task dedicada e callbacks coordenados com a UI.
 - Bateria: task `ina226` faz I2C a cada 1 s e publica sob mutex; a UI apenas copia o snapshot e altera LVGL no contexto do display.
+- Protecao de tela: a restauracao ocorre no boot antes do timer; a UI apenas enfileira snapshots e a task `screen_nvs` executa a escrita NVS fora da task LVGL.
 - Wi-Fi: callbacks de eventos publicam snapshots; workers/coordinators executam I/O. A auditoria usa `wifi_audit` para snapshot/hand-off e `wifi_audit_io` para a transação FatFs com timeout bounded e ownership do adapter/sink.
 - Screenshot: mutex de requisicao e lock de display apenas durante captura.
 - Ponte serial: task `serial_brg` fora da stack do LVGL; frames e logs
@@ -194,10 +201,13 @@ libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 | --- | --- |
 | `tab5_keyboard_keys.cpp` | `test_keymap.cpp` |
 | `tab5_keyboard_event.cpp` | `test_keyboard_event.cpp` |
-| `cyberdeck_shell_utils.cpp` | `test_shell_utils.cpp` (inclui o parser de `wifi audit` e `wifi audit save`) |
+| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` + `cyberdeck_shell_utils.cpp` | `test_shell_utils.cpp` (inclui os parsers de `wifi audit`/`wifi audit save` e `screen on|off|timeout <0-1440>`) |
+| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` + `cyberdeck_shell_utils.cpp` + `cyberdeck_local_shell.cpp` + `cyberdeck_ui.cpp` | `test_help_unification.cpp` (igualdade exata de `cyberdeck_help_text()` e `execute("help")`/`help -h`/`help --help`; catalogo com comandos comuns e locais uma vez cada) e `help_unification_contract.py` (fonte unica e ausencia de listas literais independentes) |
+| `cyberdeck_screen_protection.cpp` + contrato puro `contracts/cyberdeck_screen_protection.h` | `test_screen_protection.cpp` (default 2 min, limites 0/1/2/120/1440, parsing decimal estrito, zero desabilitando com preservacao do ultimo positivo, reject 1441 sem mutacao, restore/snapshot NVS, transicoes exatas do timer e independencia de power on/off) |
+| `screen_off.cpp` + `cyberdeck_ui.cpp` + `cyberdeck_shell_utils.cpp` + `cyberdeck_serial_bridge.cpp` + `app_main.cpp` | `test_screen_protection_contract.py` (rotas de comando, timer LVGL, persistencia/restauracao NVS, default seguro, init NVS antes do adapter, duplo toque e caminho transitivo `ui.type` -> `inject_text_segmented`/`inject_enter` -> `cyberdeck_keyboard_input`) |
 | `cyberdeck_history.cpp` | `test_history.cpp` |
 | `cyberdeck_edit_line.cpp` | `test_edit_line.cpp`, `test_prompt_behavior.py` |
-| `cyberdeck_local_shell.cpp`, `cyberdeck_cat_worker.cpp` | `test_local_shell.cpp`, `test_cat_multiline.cpp` (API dedicada: LF/CRLF/tabs/UTF-8, marcador final, bytes inválidos, limite exato de 12288, NUL embutido e sufixo após newline preservados para sanitização), `cat_contract.py`, `test_cat_multiline_contract.py` (contrato estrutural de ponteiro+tamanho explícito, textarea multiline/max-length, limite UTF-8 e payload completo até append), `test_cat_lifecycle_sanitization_contract.py` (ramos sem task vs. com task, drain/join/ack, reset sincronizado, callback/generation e sanitizacao), `test_cat_start_teardown_start_contract.py` (restart e invalidacao stale), `test_cat_stack_footprint_contract.py` (regressao do stack minimo do worker), `test_cat_worker_path_safety_contract.py` (proibe o caminho worker->shell/resolve/path/vector e exige API cat-specific heap/bounded), `local_shell_security_contract.py`, `local_shell_tokenizer_contract.py`, `test_prompt_behavior.py`, `test_local_prompt_contract.py` |
+| `cyberdeck_local_shell.cpp`, `cyberdeck_cat_worker.cpp` | `test_local_shell.cpp` (raiz virtual `/`, caminhos relativos/absolutos, rejeição do alias `/sdcard`, confinamento, operações e regressões de segurança), `test_cat_multiline.cpp` (API dedicada com cwd `/` e alias físico rejeitado, LF/CRLF/tabs/UTF-8, marcador final, bytes inválidos, limite exato de 12288, NUL embutido e sufixo após newline preservados para sanitização), `cat_contract.py`, `test_cat_multiline_contract.py` (contrato estrutural de ponteiro+tamanho explícito, textarea multiline/max-length, limite UTF-8 e payload completo até append), `test_cat_lifecycle_sanitization_contract.py` (ramos sem task vs. com task, drain/join/ack, reset sincronizado, callback/generation e sanitizacao), `test_cat_start_teardown_start_contract.py` (restart e invalidacao stale), `test_cat_stack_footprint_contract.py` (regressao do stack minimo do worker), `test_cat_worker_path_safety_contract.py` (proibe o caminho worker->shell/resolve/path/vector e exige API cat-specific heap/bounded), `local_shell_security_contract.py`, `local_shell_tokenizer_contract.py` (tokenização e contrato estrutural do root `/`), `test_prompt_behavior.py`, `test_local_prompt_contract.py` |
 | `event_log_recent.cpp` | `test_event_log_recent.cpp` |
 | `cyberdeck_clock.cpp` | `test_clock_formatter.cpp` |
 | `cyberdeck_wifi_indicator.cpp` | `test_wifi_indicator_state.cpp` |
@@ -217,11 +227,11 @@ libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 | `cyberdeck_ui.cpp` + `cyberdeck_shell_utils.cpp` + `cyberdeck_wifi_audit.cpp` + `cyberdeck_wifi_audit_persistence.cpp` (contrato TDD do fluxo `wifi audit`/`wifi audit save`) | `test_wifi_audit_save.cpp` (comportamental host: renderização silenciosa em `collecting`, linha terminal exata em `ready`/`error`, `<missing>` somente no snapshot final, diretório, timestamp, colisão, sidecars, falhas, rollback e ACK; exercita a implementação de produção) e `test_wifi_audit_save_contract.py` (contrato estrutural de parser/UI, gate de `process_wifi_audit`, renderização once-only, GMT-3 e compatibilidade serial transitiva `exec_ui_type` -> `inject_text_segmented`/`inject_enter` -> `cyberdeck_keyboard_input`, sem hardware) |
 | `screenshot_bmp.cpp` | `test_screenshot_bmp.cpp` |
 | `cyberdeck_ui.cpp` | `test_boot_sequence.py`, `test_keyboard_input_contract.py`, `test_ui_resource_contract.py`, `test_local_prompt_contract.py`, `test_wifi_enter_routing_contract.py` |
-| `main/app_main.cpp`, `cyberdeck_ui.cpp` | `test_boot_sequence.py` (ordem SD/UI e shell local `/sdcard`) |
+| `main/app_main.cpp`, `cyberdeck_ui.cpp` | `test_boot_sequence.py` (ordem SD/UI, montagem física `/sdcard` e root virtual `/`) |
 | `imu_reader.cpp` | `imu_sensor_contract.py` (callback Sensor Hub, `sensor_handle_t` obrigatorio para `bsp_sensor_init`, proibicao especifica da leitura direta `imu_acquire_acce(`, timeout/fallback seguro e continuidade da rotacao) |
 | `battery_status.cpp` + `ina226_reader.cpp` + contrato puro `contracts/cyberdeck_battery.h` | `test_battery_contract.cpp` (escala 6000/8400, saturacao, sinal da corrente e ausencia/indisponibilidade; o reader INA226 alimenta a escala com mV), `test_battery_reader_contract.py` (`0x41`, `0x4527`/`0x0D55`, task 1 s, snapshot, exclusoes e nao-fatal) |
 | `cyberdeck_ui.cpp` + `cyberdeck_wifi_icon.cpp` + `app_main.cpp` | `test_battery_ui_contract.py` (grade direta 30/40/30, ordem Wi-Fi/bateria, largura Wi-Fi compacta derivada de `CYBERDECK_WIFI_ICON_RADIUS_2`/`CYBERDECK_WIFI_ICON_DEFAULT_THICKNESS` sem `216` ou 30%, `flex_grow=0`, `header_right` com `LV_FLEX_ALIGN_END`, bateria `LV_SIZE_CONTENT`, gaps pequenos, `update_layout`, callback de estado e resize `LV_EVENT_SIZE_CHANGED`, simbolos LVGL, percentual, ocultacao em falha e boot nao fatal) |
-| `cyberdeck_serial_bridge.cpp` (REQ-002/003/005/006/007/008/009) — ponte NDJSON bounded, rid/envelopes, UI/sys/wifi, screen.dump chunks/CRC/end, feeder tolerante a logs/fragmentacao; `cyberdeck_cli.py` | `test_serial_ndjson_dispatch.cpp` (bounded/erros/rid/envelopes/UI), `test_serial_screen_dump.cpp` (byte-identical chunks/CRC/end), `test_serial_cli_tolerance.cpp` (logs/leitura fragmentada), `test_serial_sysinfo_wifi.cpp` (sys.info/wifi contratos) — todos host-only, sem pyserial/hardware; GREEN com a producao criada |
+| `cyberdeck_serial_bridge.cpp` (REQ-002/003/005/006/007/008/009) — ponte NDJSON bounded, rid/envelopes, UI/sys/wifi, screen.dump chunks/CRC/end, feeder tolerante a logs/fragmentacao; `cyberdeck_cli.py` | `test_serial_ndjson_dispatch.cpp` (bounded/erros/rid/envelopes/UI, inclusive `ui.type` para `screen on|off|timeout`), `test_serial_screen_dump.cpp` (byte-identical chunks/CRC/end), `test_serial_cli_tolerance.cpp` (logs/leitura fragmentada), `test_serial_sysinfo_wifi.cpp` (sys.info/wifi contratos) — todos host-only, sem pyserial/hardware; GREEN com a producao criada |
 | `cyberdeck_serial_bridge.cpp` `fs.write` (REQ-001..REQ-011) — protocolo rid/type/path/data_b64/size, limite 2048, path safety, strict canonical base64, commit por temp unico/O_EXCL+rename (substituicao atomica no host/no-clobber no ESP/FATFS; nunca remove candidato preexistente), CRC response, NDJSON errors; `cyberdeck_cli.py` `fs.write` (`build_request`, encoding, input/stdin, 2048, strict canonical) | `test_fs_write_dispatch.cpp` (dispatch/validacao/path/size/base64/CRC/preservacao; colisao de temp preexistente/no-clobber), `test_fs_write_cli.py` (parser/build_request/encoding/stdin/limite), `test_fs_write_contract.py` (estrutural: disco/path/atomic/CRC/CLI/Makefile/code-map) — todos host-only, RED antes da producao |
 
 Os testes host nao substituem a validacao do hardware para LVGL, touch, I2C,
@@ -243,6 +253,8 @@ make -C tests/host/keymap clean test
 make -C tests/host/keymap verify
 make -C tests/host/keymap test_wifi_audit test_wifi_audit_contract imu_sensor_contract
 make -C tests/host/keymap test_wifi_audit_save test_wifi_audit_save_contract test_shell_utils
+make -C tests/host/keymap test_help_unification help_unification_contract
+make -C tests/host/keymap test_screen_protection test_screen_protection_contract test_shell_utils test_local_shell test_serial_ndjson_dispatch
 make -C tests/host/keymap test_wifi_audit_persistence test_wifi_audit_persistence_contract
 make -C tests/host/keymap test_wifi_enter_routing_contract
 make -C tests/host/keymap test_cat_contract
@@ -252,6 +264,7 @@ make -C tests/host/keymap test_cat_start_teardown_start_contract
 make -C tests/host/keymap test_cat_stack_footprint_contract
 make -C tests/host/keymap test_cat_worker_path_safety_contract
 make -C tests/host/keymap local_shell_tokenizer_contract
+make -C tests/host/keymap test_local_shell test_cat_multiline test_prompt_behavior test_boot_sequence
 make -C tests/host/keymap test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi
 make -C tests/host/keymap test_fs_write_dispatch test_fs_write_cli test_fs_write_contract
 make -C tests/host/keymap test_battery_contract test_battery_reader_contract test_battery_ui_contract
@@ -279,6 +292,14 @@ estado/renderização, criação do diretório, GMT-3, ACK e compatibilidade do
 bridge serial). `test_shell_utils` agora chama explicitamente a asserção do
 parser `wifi audit save`; sua execução é parte dos testes diretamente
 relacionados.
+
+`test_screen_protection` é o contrato comportamental do seam puro: ele fixa
+default/range, zero desabilitando com retenção do último positivo, round-trip
+dos dois campos NVS e o limite exato do timer. `test_screen_protection_contract`
+inspeciona o adaptador LVGL/BSP/NVS, o roteamento da UI, a ordem de boot e a
+compatibilidade transitiva via `ui.type`, sem abrir hardware. A implementação
+de produção fornece o seam puro, o adaptador LVGL/NVS e o roteamento shell;
+esses contratos aguardam apenas a validação do reviewer.
 
 ### Build ESP-IDF
 

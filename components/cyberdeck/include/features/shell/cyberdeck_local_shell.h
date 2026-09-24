@@ -18,7 +18,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root,
 class cyberdeck_local_shell {
 public:
     cyberdeck_local_shell(const std::string &host_root,
-                          const std::string &virtual_root = "/sdcard");
+                          const std::string &virtual_root = "/");
     cyberdeck_local_shell_result execute(const std::string &line);
     std::string cwd() const;
 

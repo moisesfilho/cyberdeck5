@@ -1,3 +1,4 @@
+#include "features/shell/cyberdeck_shell_help.h"
 #include "features/shell/cyberdeck_shell_utils.h"
 #include "lvgl.h"
 
@@ -250,6 +251,26 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
         command.pop_back();
     }
 
+    /* The screen verb accepts the same horizontal separators as the other
+     * shell verbs; keep the normalized spelling local to this command. */
+    std::string screen_command;
+    screen_command.reserve(command.size());
+    bool separator = false;
+    for (char value : command) {
+        if (value == '\t' || value == '\v' || value == '\f') {
+            value = ' ';
+        }
+        if (value == ' ') {
+            if (!separator) {
+                screen_command.push_back(' ');
+            }
+            separator = true;
+        } else {
+            screen_command.push_back(value);
+            separator = false;
+        }
+    }
+
     if (command == "help") {
         cmd.type = CYBERDECK_CMD_HELP;
     } else if (command == "clear") {
@@ -266,6 +287,26 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
         cmd.type = CYBERDECK_CMD_WIFI_AUDIT_SAVE;
     } else if (command == "log") {
         cmd.type = CYBERDECK_CMD_LOG;
+    } else if (command == "screen on" || screen_command == "screen on") {
+        cmd.type = CYBERDECK_CMD_SCREEN_ON;
+    } else if (command == "screen off" || screen_command == "screen off") {
+        cmd.type = CYBERDECK_CMD_SCREEN_OFF;
+    } else if (command == "screen timeout" ||
+               screen_command == "screen timeout" ||
+               (screen_command.rfind("screen timeout", 0) == 0 &&
+                screen_command.size() > 14 &&
+                screen_command[14] == ' ')) {
+        cmd.type = CYBERDECK_CMD_SCREEN_TIMEOUT;
+        const size_t first = screen_command.find_first_not_of(" \t", 14);
+        if (first != std::string::npos) {
+            const size_t last = screen_command.find_last_not_of(" \t");
+            const std::string args = screen_command.substr(first, last - first + 1);
+            if (args.find_first_of(" \t\r\n") == std::string::npos) {
+                cmd.args = args;
+            } else {
+                cmd.type = CYBERDECK_CMD_UNKNOWN;
+            }
+        }
     } else if (command.rfind("ssh", 0) == 0 && (command.size() == 3 || command[3] == ' ' || command[3] == '\t')) {
         cmd.type = CYBERDECK_CMD_SSH;
         if (command.size() > 3) {
@@ -282,11 +323,42 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
     return cmd;
 }
 
+namespace {
+
+// The runtime catalog is owned by the pure header.  These compile-time
+// checks keep the public shell adapter's approved descriptions visible and
+// fail the build if the shared table drifts, without creating a second
+// renderable help list in this translation unit.
+constexpr bool help_catalog_descriptions_match_contract()
+{
+    const auto &catalog = cyberdeck_shell_help::kCatalog;
+    return catalog[0].description == "show this help" &&
+           catalog[1].description == "show status, manage Wi-Fi, or audit" &&
+           catalog[2].description == "show recent events" &&
+           catalog[3].description == "clear the terminal" &&
+           catalog[4].description == "control screen protection" &&
+           catalog[5].description == "start an SSH session" &&
+           catalog[6].description == "print working directory" &&
+           catalog[7].description == "change working directory" &&
+           catalog[8].description == "list directory contents" &&
+           catalog[9].description == "print a regular file" &&
+           catalog[10].description == "create an empty file" &&
+           catalog[11].description == "create a directory" &&
+           catalog[12].description == "remove a file or directory" &&
+           catalog[13].description == "remove an empty directory";
+}
+
+static_assert(help_catalog_descriptions_match_contract(),
+              "cyberdeck shell help catalog descriptions drifted");
+
+} // namespace
+
 std::string cyberdeck_help_text()
 {
-    return "help - show this help\n"
-           "wifi [search|saved|audit] - show status, manage Wi-Fi, or audit\n"
-           "log - show recent events\n"
-           "clear - clear the terminal\n"
-           "ssh [user@]host[:port] - start an SSH session\n";
+    return cyberdeck_shell_help::text();
+}
+
+std::string cyberdeck_command_help_text(const char *command)
+{
+    return cyberdeck_shell_help::command_text(command);
 }

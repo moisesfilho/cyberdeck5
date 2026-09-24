@@ -17,8 +17,8 @@ static const char *TAG = "cyberdeck5";
 
 extern "C" void app_main(void)
 {
-    /* The terminal's /sdcard namespace is only exposed after the card has
-     * been mounted and its BSP handle has been verified. */
+    /* The terminal exposes its virtual root / only after the physical /sdcard
+     * mount has completed and its BSP handle has been verified. */
     ESP_ERROR_CHECK(bsp_sdcard_mount());
     if (bsp_sdcard_get_handle() == nullptr) return;
 

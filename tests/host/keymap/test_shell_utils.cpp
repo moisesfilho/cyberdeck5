@@ -10,21 +10,15 @@
  *
  * Estruturado segundo o padrao AAA (Arrange, Act, Assert) e principios F.I.R.S.T.
  *
- * cyberdeck_help_text(): funcao pura que fornece o bloco de ajuda do shell.
- * Os testes abaixo fixam o bloco aprovado, byte a byte (separador "-" entre
- * comando e descricao, newline final):
- *
- *     help - show this help
- *     wifi [search|saved|audit] - show status, manage Wi-Fi, or audit
- *     log - show recent events
- *     clear - clear the terminal
- *     ssh [user@]host[:port] - start an SSH session
- *
- * Alem da igualdade exata, os testes fixam a estrutura (5 newlines, 5 linhas
- * nao vazias, newline final), a presenca de cada comando e o determinismo
- * entre chamadas.
+ * cyberdeck_help_text(): funcao pura que fornece o catalogo unico de ajuda do
+ * shell. O teste fixa o catalogo completo, incluindo os comandos comuns e os
+ * comandos locais, byte a byte (separador "-" entre comando e descricao,
+ * newline final). Alem da igualdade exata, os testes fixam a estrutura
+ * (14 newlines, 14 linhas nao vazias, newline final), a presenca de cada
+ * comando e o determinismo entre chamadas.
  */
 #include "features/shell/cyberdeck_shell_utils.h"
+#include "contracts/cyberdeck_help.h"
 #include "lvgl.h"
 
 #include <cstdio>
@@ -588,6 +582,46 @@ void test_parse_wifi_audit_save_command()
           CYBERDECK_CMD_UNKNOWN);
 }
 
+void test_parse_screen_commands()
+{
+    cyberdeck_cmd_t on = cyberdeck_parse_command("screen on");
+    CHECK(on.type == CYBERDECK_CMD_SCREEN_ON);
+    CHECK(on.args.empty());
+
+    cyberdeck_cmd_t off = cyberdeck_parse_command(" screen\toff\r\n");
+    CHECK(off.type == CYBERDECK_CMD_SCREEN_OFF);
+    CHECK(off.args.empty());
+
+    cyberdeck_cmd_t timeout = cyberdeck_parse_command("screen timeout 0");
+    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
+    CHECK_EQ(timeout.args, "0");
+
+    timeout = cyberdeck_parse_command("  screen\t timeout \t 1440  ");
+    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
+    CHECK_EQ(timeout.args, "1440");
+
+    // Missing/invalid operands remain routed to the timeout command so the UI
+    // can return one deterministic usage/range error via the pure parser.
+    timeout = cyberdeck_parse_command("screen timeout");
+    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
+    CHECK(timeout.args.empty());
+    timeout = cyberdeck_parse_command("screen timeout -1");
+    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
+    CHECK_EQ(timeout.args, "-1");
+    timeout = cyberdeck_parse_command("screen timeout 1441");
+    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
+    CHECK_EQ(timeout.args, "1441");
+    timeout = cyberdeck_parse_command("screen timeout abc");
+    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
+    CHECK_EQ(timeout.args, "abc");
+
+    CHECK(cyberdeck_parse_command("screen").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("screen on now").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("screen off now").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("screen timeout 1 2").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("Screen on").type == CYBERDECK_CMD_UNKNOWN);
+}
+
 void test_parse_command_ssh_verb_contract()
 {
     // "ssh" como prefixo exige separador; o verbo sozinho e SSH sem args.
@@ -692,21 +726,9 @@ void test_parse_command_to_ssh_target_pipeline()
 void test_help_text_exact_block()
 {
     // Arrange
-    // Bloco aprovado no plano, reproduzido abaixo (separador "-" entre
-    // comando e descricao, terminado com newline final). cyberdeck_help_text()
-    // deve devolver esta string byte a byte (igualdade exata):
-    //
-    //     help - show this help
-    //     wifi [search|saved|audit] - show status, manage Wi-Fi, or audit
-    //     log - show recent events
-    //     clear - clear the terminal
-    //     ssh [user@]host[:port] - start an SSH session
-    const std::string k_expected_help =
-        "help - show this help\n"
-        "wifi [search|saved|audit] - show status, manage Wi-Fi, or audit\n"
-        "log - show recent events\n"
-        "clear - clear the terminal\n"
-        "ssh [user@]host[:port] - start an SSH session\n";
+    // Catalogo unico aprovado no plano, terminado com newline final.
+    // cyberdeck_help_text() deve devolver esta string byte a byte.
+    const std::string k_expected_help(cyberdeck_help_test::kUnifiedHelpText);
 
     // Act
     const std::string text = cyberdeck_help_text();
@@ -718,8 +740,8 @@ void test_help_text_exact_block()
 void test_help_text_structure()
 {
     // Arrange & Act
-    // Estrutura do bloco aprovado: exatamente 5 newlines (um por linha) e
-    // 5 linhas nao vazias; o texto termina obrigatoriamente em newline.
+    // Estrutura do catalogo unificado: exatamente 14 newlines (um por linha) e
+    // 14 linhas nao vazias; o texto termina obrigatoriamente em newline.
     const std::string text = cyberdeck_help_text();
 
     // Assert
@@ -732,7 +754,7 @@ void test_help_text_structure()
             ++newlines;
         }
     }
-    CHECK(newlines == 5);
+    CHECK(newlines == 14);
 
     // Split por '\n': linhas nao vazias entre quebras. Uma linha vazia
     // (start == i, sem caracteres) nao conta; a cauda apos o ultimo '\n'
@@ -747,24 +769,36 @@ void test_help_text_structure()
             line_start = i + 1;
         }
     }
-    CHECK(non_empty_lines == 5);
+    CHECK(non_empty_lines == 14);
 }
 
 void test_help_text_commands_present()
 {
     // Arrange & Act
-    // Cada comando do shell deve aparecer no bloco de ajuda, incluindo o
-    // formato de uso do ssh.
+    // Cada comando comum e local deve aparecer no catalogo unico, incluindo
+    // os formatos completos de uso.
     const std::string text = cyberdeck_help_text();
 
     // Assert
-    CHECK(text.find("help") != std::string::npos);
-    CHECK(text.find("wifi") != std::string::npos);
-    CHECK(text.find("wifi [search|saved|audit]") != std::string::npos);
-    CHECK(text.find("log") != std::string::npos);
-    CHECK(text.find("clear") != std::string::npos);
-    CHECK(text.find("ssh") != std::string::npos);
-    CHECK(text.find("[user@]host[:port]") != std::string::npos);
+    const char *entries[] = {
+        "help - show this help",
+        "pwd - print working directory",
+        "cd [path] - change working directory",
+        "ls [-a] [path] - list directory contents",
+        "cat <file> - print a regular file",
+        "touch <file> - create an empty file",
+        "mkdir <directory> - create a directory",
+        "rm [-r] <path> - remove a file or directory",
+        "rmdir <directory> - remove an empty directory",
+        "wifi [search|saved|audit] - show status, manage Wi-Fi, or audit",
+        "log - show recent events",
+        "clear - clear the terminal",
+        "screen [on|off|timeout <0-1440>] - control screen protection",
+        "ssh [user@]host[:port] - start an SSH session",
+    };
+    for (const char *entry : entries) {
+        CHECK(text.find(entry) != std::string::npos);
+    }
 }
 
 void test_help_text_stable()
@@ -795,6 +829,7 @@ int main()
     test_parse_command_routing();
     test_parse_command_whitespace_and_exact_match();
     test_parse_wifi_audit_save_command();
+    test_parse_screen_commands();
     test_parse_command_ssh_verb_contract();
     test_parse_command_to_ssh_target_pipeline();
     test_help_text_exact_block();

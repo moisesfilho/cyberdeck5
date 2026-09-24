@@ -19,6 +19,8 @@
 #include "features/shell/cyberdeck_edit_line.h"
 #include "features/shell/cyberdeck_local_shell.h"
 #include "features/shell/cyberdeck_cat_worker.h"
+#include "platform/display/cyberdeck_screen_protection.h"
+#include "platform/display/screen_off.h"
 
 #include <cstdio>
 #include <cstring>
@@ -72,7 +74,7 @@ size_t s_cursor = 0;
 bool s_rendering = false;
 bool s_virtual_enter_handled = false;
 std::string s_last_clock_text;
-cyberdeck_local_shell s_local_shell("/sdcard");
+cyberdeck_local_shell s_local_shell("/sdcard", "/");
 bool s_cat_worker_ready = false;
 wifi_ui_state_t s_wifi_ui_state = wifi_ui_state_t::IDLE;
 cyberdeck_wifi_search_menu s_wifi_search_menu;
@@ -904,6 +906,36 @@ void execute_line(bool line_already_sent = false) {
     switch (cmd.type) {
     case CYBERDECK_CMD_HELP: append_line(cyberdeck_help_text()); break;
         case CYBERDECK_CMD_CLEAR: s_output.clear(); reset_ssh_output_filter(); discard_ssh_line_composer(); break;
+    case CYBERDECK_CMD_SCREEN_ON:
+        screen_off_turn_on();
+        append_line("screen on\n");
+        break;
+    case CYBERDECK_CMD_SCREEN_OFF:
+        screen_off_turn_off();
+        append_line("screen off\n");
+        break;
+    case CYBERDECK_CMD_SCREEN_TIMEOUT: {
+        std::uint16_t minutes = 0;
+        const auto parse_result = cyberdeck_screen_protection::parse_timeout_minutes(
+            cmd.args.c_str(), minutes);
+        if (parse_result != cyberdeck_screen_protection::timeout_parse_result::ok) {
+            append_line("screen timeout: expected an integer from 0 to 1440\n");
+            break;
+        }
+        if (screen_off_set_timeout_minutes(minutes) != ESP_OK) {
+            append_line("screen timeout: unable to persist setting\n");
+            break;
+        }
+        if (minutes == 0) {
+            append_line("screen timeout disabled (0 minutes)\n");
+        } else {
+            char message[64];
+            snprintf(message, sizeof(message), "screen timeout set to %u minutes\n",
+                     static_cast<unsigned>(minutes));
+            append_line(message);
+        }
+        break;
+    }
     case CYBERDECK_CMD_WIFI: {
         wifi_status_t st = {};
         if (wifi_mgr_get_status(&st) == ESP_OK) {

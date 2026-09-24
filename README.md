@@ -68,7 +68,7 @@ preserving X, size, gap, colors, and state.
 2. Informe a senha e confirme a chave do host quando solicitado.
 3. Digite comandos no mesmo terminal e pressione Enter. Não há tela SSH separada nem botão de conexão.
 
-O shell visual do menu também oferece `help`, `wifi` e `clear`.
+O shell visual do menu também oferece `help`, `wifi`, `clear`, `screen` e `ssh`.
 
 ### Local file shell
 
@@ -109,7 +109,26 @@ context.
 output, reads use bounded chunks, and file I/O runs in a worker before the
 result is handed back to LVGL through a bounded asynchronous queue.
 
-### Wi-Fi
+### Screen Protection
+
+The firmware turns the display off after a configurable idle timeout
+(default 2 minutes) to save power. While the screen is off, a black
+LVGL overlay covers the display; tapping it twice within 400 ms turns
+the display back on. The timeout persists across reboots via NVS.
+
+From the terminal:
+
+```text
+screen on            # turn the display back on immediately
+screen off           # turn the display off immediately
+screen timeout 0     # disable the auto-off timer
+screen timeout 5     # set the timeout to 5 minutes (0..1440)
+```
+
+`screen timeout <minutes>` accepts an integer from 0 to 1440. Setting
+0 disables the auto-off without turning the screen off immediately.
+The last positive value is preserved when the timeout is disabled and
+restored on the next boot.
 
 Use `wifi search` to scan networks, ordered by signal strength. In the list,
 Up/Down navigates, Enter selects, and Escape cancels. Open networks connect

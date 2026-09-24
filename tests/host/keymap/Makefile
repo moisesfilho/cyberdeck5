@@ -33,6 +33,11 @@ NET_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/networking/cyb
 ECHO_GUARD_SRC   := ../../../components/cyberdeck/src/features/shell/cyberdeck_ssh_echo_guard.cpp
 LINE_COMPOSER_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_ssh_line_composer.cpp
 CLOCK_SRC        := ../../../components/cyberdeck/src/platform/display/cyberdeck_clock.cpp
+SCREEN_PROTECTION_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp
+SCREEN_PROTECTION_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_screen_protection.h
+SCREEN_PROTECTION_CONTRACT_HDR := contracts/cyberdeck_screen_protection.h
+SCREEN_PROTECTION_TEST := test_screen_protection.cpp
+SCREEN_PROTECTION_CONTRACT := test_screen_protection_contract.py
 WIFI_INDICATOR_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp
 WIFI_ICON_SRC      := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp
 WIFI_ICON_HDR      := ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_icon.h
@@ -66,10 +71,12 @@ SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/features/screenshot/scre
 LOCAL_SHELL_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp
 LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/features/shell/cyberdeck_local_shell.h
 CAT_MULTILINE_SRC := test_cat_multiline.cpp
+HELP_UNIFICATION_TEST := test_help_unification.cpp
+HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch
+BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch
 
-.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract
+.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_screen_protection test_screen_protection_contract
 
 all: test
 
@@ -104,7 +111,7 @@ verify:
 test_keymap: test_keymap.cpp $(KEYMAP_SRC) shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_keymap.cpp $(KEYMAP_SRC) -o test_keymap
 
-test_shell_utils: test_shell_utils.cpp $(SHELL_UTILS_SRC) shim/lvgl.h
+test_shell_utils: test_shell_utils.cpp contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_shell_utils.cpp $(SHELL_UTILS_SRC) -o test_shell_utils
 
 # Logica pura (sem LVGL): nao precisa de shim.
@@ -208,6 +215,19 @@ test_wifi_audit_save_contract: $(WIFI_AUDIT_SAVE_CONTRACT) ../../../components/c
 test_clock_formatter: test_clock_formatter.cpp $(CLOCK_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_clock_formatter.cpp $(CLOCK_SRC) -o test_clock_formatter
 
+# TDD RED: politica/estado puro da protecao de tela. O contrato fixa o default
+# de 2 min, a faixa 0..1440, zero desabilitando sem perder o ultimo valor
+# positivo, snapshots NVS e as transicoes exatas do timer. A implementacao de
+# producao esperada e cyberdeck_screen_protection.cpp; ate o coder cria-la, o
+# alvo falha por fonte ausente sem tocar em LVGL/BSP/NVS/hardware.
+test_screen_protection: $(SCREEN_PROTECTION_TEST) $(SCREEN_PROTECTION_SRC) $(SCREEN_PROTECTION_HDR) $(SCREEN_PROTECTION_CONTRACT_HDR)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include $(SCREEN_PROTECTION_TEST) $(SCREEN_PROTECTION_SRC) -o test_screen_protection
+
+# TDD RED: contrato estrutural para comando/UI, timer, NVS e ui.type. Nao
+# executa display, Serial Automation Bridge, simulador ou power-cycle.
+test_screen_protection_contract: $(SCREEN_PROTECTION_CONTRACT) $(SCREEN_PROTECTION_SRC) $(SCREEN_PROTECTION_HDR) ../../../components/cyberdeck/src/platform/display/screen_off.cpp ../../../components/cyberdeck/include/platform/display/screen_off.h ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../.gitignore
+	$(PYTHON) $(SCREEN_PROTECTION_CONTRACT)
+
 # Logica pura (sem LVGL): filtro puro e incremental da saida SSH (contrato em
 # cyberdeck_terminal_filter.h; plano aprovado: remover ANSI/CSI/OSC, normalizar
 # CR/LF, preservar UTF-8/texto e suportar fragmentacao). A implementacao
@@ -293,6 +313,17 @@ test_local_shell: test_local_shell.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 test_cat_multiline: $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) -o test_cat_multiline
 
+# RED: the menu and local shell must render one shared help catalog.  The
+# target links both real production implementations; no production edit is
+# implied by this test registration.
+test_help_unification: $(HELP_UNIFICATION_TEST) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) shim/lvgl.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(HELP_UNIFICATION_TEST) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) -o test_help_unification
+
+# RED structural companion: rejects private literal help lists in the two
+# shells and in the non-linkable LVGL UI.  It performs source inspection only.
+help_unification_contract: $(HELP_UNIFICATION_CONTRACT) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../code-map.md
+	$(PYTHON) $(HELP_UNIFICATION_CONTRACT)
+
 test_orientation: test_orientation.cpp $(ORIENTATION_SRC) ../../../components/cyberdeck/include/platform/sensors/orientation.h shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_orientation.cpp $(ORIENTATION_SRC) -o test_orientation
 
@@ -316,7 +347,7 @@ test_battery_ui_contract: test_battery_ui_contract.py ../../../components/cyberd
 # sources are inspected directly rather than duplicated or linked against
 # ESP-IDF: this checks boot order, safe initial fallback, and the handoff to
 # the later rotation path.
-test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_HDR)
 	$(PYTHON) test_boot_sequence.py
 
 imu_sensor_contract: imu_sensor_contract.py ../../../components/cyberdeck/src/platform/sensors/imu_reader.cpp
@@ -357,10 +388,10 @@ test_cat_worker_path_safety_contract: test_cat_worker_path_safety_contract.py ..
 local_shell_security_contract: local_shell_security_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp
 	$(PYTHON) local_shell_security_contract.py
 
-local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h
+local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h $(LOCAL_SHELL_HDR)
 	$(PYTHON) local_shell_tokenizer_contract.py
 
-test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 	$(PYTHON) test_prompt_behavior.py
 
 test_wifi_dispatch_contract: test_wifi_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
@@ -435,6 +466,10 @@ test: $(BINS)
 	@./test_wifi_audit_persistence
 	@echo "==> Executando testes do formatador do relogio do header (GMT-3)"
 	@./test_clock_formatter
+	@echo "==> Executando contrato puro de politica/estado da protecao de tela"
+	@./test_screen_protection
+	@echo "==> Executando contrato estrutural da protecao de tela/NVS/ui.type"
+	@$(MAKE) --no-print-directory test_screen_protection_contract
 	@echo "==> Executando testes do filtro de saida SSH"
 	@./test_terminal_filter
 	@echo "==> Executando testes do modelo da linha de edicao/sessao SSH"
@@ -449,6 +484,9 @@ test: $(BINS)
 	@./test_screenshot_bmp
 	@echo "==> Executando contrato do shell local seguro"
 	@./test_local_shell
+	@echo "==> Executando contrato de unificacao do help"
+	@./test_help_unification
+	@$(MAKE) --no-print-directory help_unification_contract
 	@echo "==> Executando regressao host da API cat multiline"
 	@./test_cat_multiline
 	@echo "==> Executando testes de orientacao pura e debounce"

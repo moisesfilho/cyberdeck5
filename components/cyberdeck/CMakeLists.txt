@@ -13,6 +13,7 @@ idf_component_register(
         "src/features/wifi/cyberdeck_wifi_menu.cpp"
         "src/features/wifi/cyberdeck_wifi_state_machine.cpp"
         "src/platform/display/cyberdeck_clock.cpp"
+        "src/platform/display/cyberdeck_screen_protection.cpp"
         "src/features/shell/cyberdeck_history.cpp"
         "src/features/shell/cyberdeck_shell_utils.cpp"
         "src/features/shell/cyberdeck_local_shell.cpp"

@@ -56,7 +56,7 @@ void test_lf_crlf_tabs_utf8_and_final_marker(fixture &f) {
     file.write(expected.data(), static_cast<std::streamsize>(expected.size()));
     file.close();
 
-    const auto result = cyberdeck_local_shell_cat(f.root.c_str(), "/sdcard", "cat multiline.txt");
+    const auto result = cyberdeck_local_shell_cat(f.root.c_str(), "/", "cat multiline.txt");
     CHECK(result.status == cyberdeck_local_shell_status::handled);
     CHECK_EQ(result.output.size(), expected.size());
     CHECK_EQ(result.output, expected);
@@ -71,7 +71,7 @@ void test_dedicated_api_preserves_invalid_bytes_for_ui_sanitization(fixture &f) 
     file.write(expected.data(), static_cast<std::streamsize>(expected.size()));
     file.close();
 
-    const auto result = cyberdeck_local_shell_cat(f.root.c_str(), "/sdcard", "cat invalid.txt");
+    const auto result = cyberdeck_local_shell_cat(f.root.c_str(), "/", "cat invalid.txt");
     CHECK(result.status == cyberdeck_local_shell_status::handled);
     CHECK_EQ(result.output.size(), expected.size());
     CHECK_EQ(result.output, expected);
@@ -91,7 +91,7 @@ void test_exact_limit_preserves_multiline_nul_and_utf8_boundary(fixture &f) {
     file.write(expected.data(), static_cast<std::streamsize>(expected.size()));
     file.close();
 
-    const auto result = cyberdeck_local_shell_cat(f.root.c_str(), "/sdcard", "cat limit.bin");
+    const auto result = cyberdeck_local_shell_cat(f.root.c_str(), "/", "cat limit.bin");
     CHECK(result.status == cyberdeck_local_shell_status::handled);
     CHECK_EQ(result.output.size(), static_cast<size_t>(12288));
     CHECK_EQ(result.output, expected);
@@ -100,6 +100,42 @@ void test_exact_limit_preserves_multiline_nul_and_utf8_boundary(fixture &f) {
     CHECK(result.output.find("suffix-after-newline") != std::string::npos);
     CHECK(result.output.find("\xC3\n") != std::string::npos);
 }
+void test_virtual_root_paths_and_physical_alias_rejection(fixture &f) {
+    fs::create_directories(f.root / "visible-dir");
+    std::ofstream(f.root / "visible.txt") << "content";
+    std::ofstream(f.root / "visible-dir" / "nested.txt") << "nested";
+
+    auto result = cyberdeck_local_shell_cat(f.root.c_str(), "/", "cat /visible.txt");
+    CHECK(result.status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(result.output, "content");
+
+    result = cyberdeck_local_shell_cat(f.root.c_str(), "/", "cat visible.txt");
+    CHECK(result.status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(result.output, "content");
+
+    result = cyberdeck_local_shell_cat(f.root.c_str(), "/visible-dir", "cat nested.txt");
+    CHECK(result.status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(result.output, "nested");
+
+    result = cyberdeck_local_shell_cat(f.root.c_str(), "/visible-dir", "cat /visible.txt");
+    CHECK(result.status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(result.output, "content");
+
+    // `/sdcard` is a physical VFS path only.  Neither an absolute alias nor
+    // a cwd carrying that alias may enter the dedicated virtual namespace.
+    const char *rejected[] = {
+        "cat /sdcard", "cat /sdcard/visible.txt", "cat /sdcard/../visible.txt"
+    };
+    for (const char *command : rejected) {
+        result = cyberdeck_local_shell_cat(f.root.c_str(), "/", command);
+        CHECK(result.status == cyberdeck_local_shell_status::rejected);
+        CHECK(result.output.find("content") == std::string::npos);
+    }
+    result = cyberdeck_local_shell_cat(f.root.c_str(), "/sdcard", "cat visible.txt");
+    CHECK(result.status == cyberdeck_local_shell_status::rejected);
+    CHECK(result.output.find("content") == std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -108,6 +144,7 @@ int main() {
     test_lf_crlf_tabs_utf8_and_final_marker(f);
     test_dedicated_api_preserves_invalid_bytes_for_ui_sanitization(f);
     test_exact_limit_preserves_multiline_nul_and_utf8_boundary(f);
+    test_virtual_root_paths_and_physical_alias_rejection(f);
     std::printf("%s: %d checks\n", failures == 0 ? "PASS" : "FAIL", checks);
     return failures == 0 ? 0 : 1;
 }

@@ -29,15 +29,11 @@ desta reorganização e continua sendo gerenciado pelo ESP-IDF.
 1. Inicializar NVS.
 2. Inicializar display e LVGL pelo BSP do Tab5.
 3. Criar a tela TUI monocromática.
-4. Iniciar o reader INA226; falha de inicialização ou ausência do sensor registra
-   log, publica indisponibilidade e não aborta o restante do boot.
-5. Inicializar Wi-Fi e reconexão a partir do SD; o header recebe estados de
-   Wi-Fi por callback e atualiza somente o ícone: claro quando Wi-Fi está
-   habilitado, conectado e possui IP, e escuro nos demais estados. O SSID não
-   é renderizado no header.
-6. Aguardar conexão SSH iniciada pelo usuário.
-7. Iniciar a ponte manual USB Serial-JTAG (`bridge_start`): task própria,
-   iniciada por último; falha aqui registra aviso e não derruba o boot.
+4. Sob lock do display: iniciar o reader INA226, criar a UI e inicializar a protecao de tela (`screen_off_init` com timeout padrao de 2 minutos e brilho 20%); restaurar o timeout persistido do NVS antes de iniciar o timer.
+5. Iniciar o reader INA226; falha de inicializacao ou ausencia do sensor registra log, publica indisponibilidade e nao aborta o restante do boot.
+6. Inicializar Wi-Fi e reconexao a partir do SD; o header recebe estados de Wi-Fi por callback e atualiza somente o icone: claro quando Wi-Fi esta habilitado, conectado e possui IP, e escuro nos demais estados. O SSID nao e renderizado no header.
+7. Aguardar conexao SSH iniciada pelo usuario.
+8. Iniciar a ponte manual USB Serial-JTAG (`bridge_start`): task propria, iniciada por ultimo; falha aqui registra aviso e nao derruba o boot.
 
 ## Bateria
 
@@ -54,6 +50,38 @@ probe, identificação, leitura ou startup publica o estado indisponível; em
 `app_main` a falha é apenas registrada. O fluxo não persiste estado de carga e
 não implementa controle ou proteção de bateria. Nenhuma transação I2C ocorre na
 UI, e o reader não registra timer LVGL.
+
+## Proteção de Tela
+
+O firmware protege o display contra burn-in e economiza energia
+desligando-o após um tempo de inatividade (padrao: 2 minutos,
+configuravel de 0 a 1440). A implementacao tem duas camadas:
+
+- `cyberdeck_screen_protection`: politica/estado puro, testavel no
+  host. Gerencia o valor do timeout, o estado on/off e a persistencia
+  NVS de `effective_minutes` e `last_positive_minutes`. Definir o
+  timeout como 0 desabilita o desligamento automatico sem perder o
+  ultimo valor positivo.
+- `screen_off`: adaptador LVGL/BSP. Cria um objeto LVGL preto que
+  cobre toda a tela, pausa/retoma um timer de inatividade de 1 segundo
+  e trata o duplo toque (janela de 400 ms) para religar o display.
+  Uma task dedicada FreeRTOS (`screen_nvs`) escreve o timeout no NVS
+  fora da task LVGL. A ordem de boot restaura o timeout persistido
+  antes do timer iniciar.
+
+Os comandos `screen` do shell roteiam para essa camada:
+
+- `screen on` — chama `screen_off_turn_on()` (restaura a tela e o
+  brilho anteriores).
+- `screen off` — chama `screen_off_turn_off()` (carrega a sobreposicao
+  preta).
+- `screen timeout <0-1440>` — chama `screen_off_set_timeout_minutes()`
+  e persiste o valor; 0 desabilita o timer.
+
+A tela tambem e desligada/ligada por transicoes de estado do Wi-Fi e
+pelo ciclo de vida da sessao SSH. O endpoint de screenshot funciona
+enquanto a tela esta desligada porque captura o framebuffer LVGL
+diretamente.
 
 ## Wi-Fi: dispatch e persistência
 

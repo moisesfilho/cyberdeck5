@@ -1,4 +1,6 @@
 #include "features/shell/cyberdeck_local_shell.h"
+#include "features/shell/cyberdeck_shell_help.h"
+#include "features/shell/cyberdeck_shell_utils.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -254,40 +256,40 @@ private:
     DIR *directory_;
 };
 
+bool absolute_path_uses_physical_sdcard(const std::string &path)
+{
+    if (path.empty() || path[0] != '/') return false;
+
+    // /sdcard is reserved for the physical VFS mount.  Reject it before
+    // lexical normalization so spellings such as /./sdcard or /../sdcard
+    // cannot turn a virtual path into the physical alias.
+    size_t offset = 1;
+    size_t depth = 0;
+    while (offset <= path.size()) {
+        size_t end = path.find('/', offset);
+        if (end == std::string::npos) end = path.size();
+        const size_t length = end - offset;
+        if (length == 0 || (length == 1 && path[offset] == '.')) {
+            // Empty components and "." do not change the root-relative depth.
+        } else if (length == 2 && path[offset] == '.' && path[offset + 1] == '.') {
+            if (depth != 0) --depth;
+        } else {
+            if (depth == 0 && length == 6 && path.compare(offset, length, "sdcard") == 0)
+                return true;
+            ++depth;
+        }
+        if (end == path.size()) break;
+        offset = end + 1;
+    }
+    return false;
+}
+
 bool valid_virtual_path(const std::string &path, const std::string &virtual_root)
 {
     if (path.empty() || path[0] != '/') return true;
+    if (absolute_path_uses_physical_sdcard(path)) return false;
+    if (virtual_root == "/") return true;
     return path == virtual_root || path.rfind(virtual_root + "/", 0) == 0;
-}
-
-std::string help_text()
-{
-    return "help - show this help\n"
-           "pwd - print working directory\n"
-           "cd [path] - change working directory\n"
-           "ls [-a] [path] - list directory contents\n"
-           "cat <file> - print a regular file\n"
-           "touch <file> - create an empty file\n"
-           "mkdir <directory> - create a directory\n"
-           "rm [-r] <path> - remove a file or directory\n"
-           "rmdir <directory> - remove an empty directory\n"
-           "wifi - show network status\n"
-           "log - show recent events\n"
-           "clear - clear the terminal\n"
-           "ssh [user@]host[:port] - start an SSH session\n";
-}
-
-std::string command_help(const std::string &command)
-{
-    if (command == "pwd") return "pwd - print working directory\n";
-    if (command == "cd") return "cd [path] - change working directory\n";
-    if (command == "ls") return "ls [-a] [path] - list directory contents\n";
-    if (command == "cat") return "cat <file> - print a regular file\n";
-    if (command == "touch") return "touch <file> - create an empty file\n";
-    if (command == "mkdir") return "mkdir <directory> - create a directory\n";
-    if (command == "rm") return "rm [-r] <path> - remove a file or directory\n";
-    if (command == "rmdir") return "rmdir <directory> - remove an empty directory\n";
-    return {};
 }
 
 } // namespace
@@ -323,16 +325,21 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root,
     while (cursor < line.size() && (line[cursor] == ' ' || line[cursor] == '\t')) ++cursor;
     if (cursor != line.size() || argument[0] == '-') return reject_cat("cat: invalid operand");
 
-    const std::string virtual_root = "/sdcard";
+    const std::string virtual_root = "/";
     const std::string current(cwd);
-    if (current != virtual_root && current.rfind(virtual_root + "/", 0) != 0)
-        return reject_cat("cat: path escapes /sdcard");
-    std::string virtual_path = argument[0] == '/' ? argument : current + "/" + argument;
-    if (virtual_path != virtual_root && virtual_path.rfind(virtual_root + "/", 0) != 0)
-        return reject_cat("cat: path escapes /sdcard");
-    const std::string relative = virtual_path.substr(virtual_root.size() +
-                                                      (virtual_path.size() > virtual_root.size() ? 1 : 0));
-    if (!cat_relative_safe(relative)) return reject_cat("cat: path escapes /sdcard");
+    if (current.empty() || current[0] != '/' || !valid_virtual_path(current, virtual_root))
+        return reject_cat("cat: path escapes /");
+    std::string virtual_path = argument[0] == '/'
+        ? argument
+        : (current == virtual_root ? "/" + argument : current + "/" + argument);
+    if (!valid_virtual_path(virtual_path, virtual_root))
+        return reject_cat("cat: path escapes /");
+    const std::string relative = virtual_path.size() > virtual_root.size()
+        ? virtual_path.substr(virtual_root.size() == 1 ? 1 : virtual_root.size() + 1)
+        : std::string{};
+    if (!cat_relative_safe(relative) || relative == "sdcard" ||
+        relative.rfind("sdcard/", 0) == 0)
+        return reject_cat("cat: path escapes /");
 
     // cat_open_regular performs descriptor-relative openat traversal with
     // O_NOFOLLOW (or the conservative ESP VFS equivalent).
@@ -370,7 +377,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root,
 cyberdeck_local_shell::cyberdeck_local_shell(const std::string &host_root,
                                               const std::string &virtual_root)
     : host_root_(fs::path(host_root).lexically_normal().string()),
-      virtual_root_(fs::path(virtual_root.empty() ? "/sdcard" : virtual_root)
+      virtual_root_(fs::path(virtual_root.empty() ? "/" : virtual_root)
                         .lexically_normal().string()),
       cwd_(virtual_root_)
 {
@@ -391,12 +398,13 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     if (!local) return {cyberdeck_local_shell_status::passthrough, {}};
 
     if (words.size() == 2 && (words[1] == "-h" || words[1] == "--help") && command != "help")
-        return {cyberdeck_local_shell_status::handled, command_help(command)};
+        return {cyberdeck_local_shell_status::handled,
+                cyberdeck_shell_help::cyberdeck_command_help_text(command.c_str())};
     if (command == "help") {
         if (words.size() == 2 && (words[1] == "-h" || words[1] == "--help"))
-            return {cyberdeck_local_shell_status::handled, help_text()};
+            return {cyberdeck_local_shell_status::handled, cyberdeck_shell_help::cyberdeck_help_text()};
         if (words.size() != 1) return {cyberdeck_local_shell_status::rejected, "usage: help\n"};
-        return {cyberdeck_local_shell_status::handled, help_text()};
+        return {cyberdeck_local_shell_status::handled, cyberdeck_shell_help::cyberdeck_help_text()};
     }
 
     auto reject = [](const std::string &text) {
@@ -415,8 +423,8 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
             for (const auto &part : current_relative)
                 if (part != "." && part != "/") components.push_back(part.string());
         } else {
-            const std::string raw = argument;
-            if (raw != virtual_root_ && raw.rfind(virtual_root_ + "/", 0) != 0) return false;
+            const std::string raw = argument.empty() ? cwd_ : argument;
+            if (!valid_virtual_path(raw, virtual_root_)) return false;
             requested = fs::path(raw.substr(virtual_root_.size()));
         }
 
@@ -436,11 +444,16 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
             if (has_symlink_component(fs::path(host_root_), traversed)) return false;
         }
 
+        if (!components.empty() && components.front() == "sdcard") return false;
+
         fs::path relative;
         for (const auto &component : components) relative /= component;
         host = components.empty() ? fs::path(host_root_) : fs::path(host_root_) / relative;
         virtual_path = virtual_root_;
-        for (const auto &component : components) virtual_path += "/" + component;
+        for (const auto &component : components) {
+            if (virtual_path.empty() || virtual_path.back() != '/') virtual_path += '/';
+            virtual_path += component;
+        }
         return true;
     };
 
@@ -452,7 +465,9 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     if (command == "cd") {
         if (words.size() != 2 || words[1].empty() || words[1][0] == '-') return reject("usage: cd [path]");
         fs::path host; std::string target;
-        if (!resolve(words[1], true, host, target) || !fs::is_directory(host)) return reject("cd: invalid path");
+        if (!resolve(words[1], true, host, target)) return reject("cd: invalid path");
+        std::error_code error;
+        if (!fs::is_directory(host, error) || error) return reject("cd: invalid path");
         cwd_ = target;
         return {cyberdeck_local_shell_status::handled, {}};
     }
@@ -472,7 +487,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         return reject("missing operand");
 
     fs::path host; std::string target;
-    if (!resolve(argument, false, host, target)) return reject("path escapes /sdcard");
+    if (!resolve(argument, false, host, target)) return reject("path escapes /");
 
     if (command == "ls") {
         errno = 0;
@@ -536,32 +551,39 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         return {cyberdeck_local_shell_status::handled, output};
     }
     struct stat info = {};
-    if (lstat_path(host, info) && S_ISLNK(info.st_mode)) return reject("symbolic links are not allowed");
+    const bool path_exists = lstat_path(host, info);
+    if (path_exists && S_ISLNK(info.st_mode)) return reject("symbolic links are not allowed");
     if (command == "touch") {
-        if (fs::exists(host) && !fs::is_regular_file(host)) return reject("touch: not a file");
+        if (path_exists && !S_ISREG(info.st_mode)) return reject("touch: not a file");
         std::ofstream file(host, std::ios::app);
         if (!file) return reject("touch: cannot create file");
         return {cyberdeck_local_shell_status::handled, {}};
     }
     if (command == "mkdir") {
-        if (!fs::create_directory(host)) return reject("mkdir: cannot create directory");
+        std::error_code error;
+        if (!fs::create_directory(host, error) || error) return reject("mkdir: cannot create directory");
         return {cyberdeck_local_shell_status::handled, {}};
     }
     if (command == "rmdir") {
         if (target == virtual_root_) return reject("rmdir: refusing to remove virtual root");
-        if (!fs::is_directory(host) || !fs::is_empty(host)) return reject("rmdir: directory is not empty");
-        if (!fs::remove(host)) return reject("rmdir: cannot remove directory");
+        std::error_code error;
+        if (!fs::is_directory(host, error) || error) return reject("rmdir: directory is not empty");
+        if (!fs::is_empty(host, error) || error) return reject("rmdir: directory is not empty");
+        if (!fs::remove(host, error) || error) return reject("rmdir: cannot remove directory");
         return {cyberdeck_local_shell_status::handled, {}};
     }
     if (command == "rm") {
-        if (!fs::exists(host)) return reject("rm: path does not exist");
-        if (fs::is_directory(host) && !recursive) return reject("rm: is a directory");
+        std::error_code error;
+        const bool already_exists = fs::exists(host, error);
+        if (!already_exists || error) return reject("rm: path does not exist");
+        const bool directory = fs::is_directory(host, error);
+        if (error) return reject("rm: cannot remove path");
+        if (directory && !recursive) return reject("rm: is a directory");
         if (recursive && target == virtual_root_)
             return reject("rm: refusing to remove virtual root");
         if (recursive && contains_symlink_tree(host)) return reject("symbolic links are not allowed");
-        std::error_code error;
-        if (recursive) fs::remove_all(host, error); else fs::remove(host, error);
-        if (error) return reject("rm: cannot remove path");
+        const bool removed = recursive ? fs::remove_all(host, error) : fs::remove(host, error);
+        if (!removed || error) return reject("rm: cannot remove path");
         return {cyberdeck_local_shell_status::handled, {}};
     }
     return {cyberdeck_local_shell_status::rejected, "unknown command\n"};
