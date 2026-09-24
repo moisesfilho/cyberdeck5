@@ -262,11 +262,8 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
         cmd.type = CYBERDECK_CMD_WIFI_SAVED;
     } else if (command == "wifi audit") {
         cmd.type = CYBERDECK_CMD_WIFI_AUDIT;
-    } else if (command == "wifi audit export") {
-        cmd.type = CYBERDECK_CMD_WIFI_AUDIT_EXPORT;
-    } else if (command == "wifi audit export confirm" || command == "wifi audit export --confirm") {
-        cmd.type = CYBERDECK_CMD_WIFI_AUDIT_EXPORT;
-        cmd.confirmed = true;
+    } else if (command == "wifi audit save") {
+        cmd.type = CYBERDECK_CMD_WIFI_AUDIT_SAVE;
     } else if (command == "log") {
         cmd.type = CYBERDECK_CMD_LOG;
     } else if (command.rfind("ssh", 0) == 0 && (command.size() == 3 || command[3] == ' ' || command[3] == '\t')) {

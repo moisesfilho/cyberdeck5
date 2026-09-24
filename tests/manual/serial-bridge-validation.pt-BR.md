@@ -93,6 +93,35 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 | W4 | `wifi.scan` com Wi-Fi desabilitado | Lista vazia `[]` ou erro tipado; resposta dentro do timeout (8 s) |  |  |
 | W5 | `wifi.scan` repetido rapido | Nenhum resultado vazio/corrompido (semaforo drenado); o dispositivo aceita o proximo scan normalmente |  |  |
 
+### 5.1. Auditoria Wi-Fi no terminal (`wifi audit`)
+
+> Pre-condicao: a tela TUI esta visivel e o terminal local esta no menu, sem
+> sessao SSH ativa. O comando pode ser digitado no TUI ou enviado pela ponte
+> com `ui.type "wifi audit"` seguido de Enter. O eco da linha digitada pode
+> aparecer, mas nao conta como resultado da auditoria. Aguarde a coleta antes
+> de iniciar o salvamento.
+
+| ID | Acao | Resultado esperado | Pass/Fail | Obs |
+|----|------|--------------------|-----------|-----|
+| A1 | Executar `wifi audit` e observar o intervalo de coleta | Enquanto o estado interno for `collecting`, o terminal nao exibe nenhuma linha de snapshot nem campos intermediarios: nao aparece `status=collecting`, `ssid`, `bssid`, `ip` ou `<missing>` |  |  |
+| A2 | Aguardar a conclusao da auditoria | No estado `ready`, o snapshot aparece uma unica vez para aquela solicitacao, mesmo que o timer continue executando; cada campo aparece uma vez e valores indisponiveis sao marcados como `<missing>` |  |  |
+| A3 | Observar uma auditoria que termine em erro | No estado `error`, a unica linha de resultado exibida e `wifi audit: status=error`; nao sao exibidos `ssid`, `bssid`, `ip`, `<missing>`, dados antigos nem caminho de salvamento |  |  |
+
+A saida de A2 deve ter esta forma (os valores sao os da associacao atual):
+
+```text
+wifi audit: status=ready
+ssid: <valor>
+bssid: <valor>
+ip: <valor>
+```
+
+#### Roteiro `wifi audit save`
+
+| ID | Acao | Resultado esperado | Pass/Fail | Obs |
+|----|------|--------------------|-----------|-----|
+| A4 | Depois de A2, executar `wifi audit save` e aguardar a resposta do worker | O comando exibe `wifi audit save requested`; apos a publicacao duravel, exibe uma unica vez `wifi audit saved: /sdcard/wifi-audit/wifi-audit-YYYYMMDD-HHMMSS.txt`. O nome usa data e hora GMT-3, fica dentro de `/sdcard/wifi-audit/` e nao substitui um arquivo existente. Se a transacao falhar, o terminal mostra `wifi audit save failed` e nenhum caminho de sucesso |  |  |
+
 ## 6. screen.shot / screen.dump
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
@@ -116,8 +145,10 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 
 ## 8. Criterios de aceite do plano
 
-- P10-P20, L1-L4, U1-U12, W1-W5, D1-D6, B1-B5: **todos Pass** em pelo menos
-  uma execucao com monitor serial ativo (L-series obrigatorio).
+- P10-P20, L1-L4, U1-U12, W1-W5, A1-A4, D1-D6, B1-B5: **todos Pass** em pelo menos
+  uma execucao com monitor serial ativo (L-series obrigatorio). A1-A3 validam o
+  gate de estado do `wifi audit`; A4 valida o caminho timestampado do
+  `wifi audit save`.
 - `make -C tests/host/keymap test_serial_ndjson_dispatch test_serial_screen_dump
   test_serial_cli_tolerance test_serial_sysinfo_wifi`: todos Pass antes do
   roteiro manual (camada pura).

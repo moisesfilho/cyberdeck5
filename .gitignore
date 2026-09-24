@@ -11,6 +11,10 @@ tests/host/**/test_*
 !tests/host/**/test_prompt_behavior.py
 !tests/host/keymap/test_wifi_audit.cpp
 !tests/host/keymap/test_wifi_audit_contract.py
+!tests/host/keymap/test_wifi_audit_persistence.cpp
+!tests/host/keymap/test_wifi_audit_persistence_contract.py
+!tests/host/keymap/test_wifi_audit_save.cpp
+!tests/host/keymap/test_wifi_audit_save_contract.py
 !tests/host/keymap/test_cat_multiline.cpp
 !tests/host/keymap/test_cat_multiline_contract.py
 !tests/host/keymap/test_serial_*.cpp

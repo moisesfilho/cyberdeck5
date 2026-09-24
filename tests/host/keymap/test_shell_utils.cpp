@@ -567,6 +567,27 @@ void test_parse_command_whitespace_and_exact_match()
     CHECK_EQ(cmd.args, "foo bar");
 }
 
+void test_parse_wifi_audit_save_command()
+{
+    // wifi audit is display-only; persistence is opted into with the separate
+    // save verb and no retired export confirmation syntax.
+    cyberdeck_cmd_t standard = cyberdeck_parse_command("wifi audit");
+    CHECK(standard.type == CYBERDECK_CMD_WIFI_AUDIT);
+    CHECK(!standard.confirmed);
+
+    cyberdeck_cmd_t save = cyberdeck_parse_command("wifi audit save");
+    CHECK(save.type != CYBERDECK_CMD_EMPTY);
+    CHECK(save.type != CYBERDECK_CMD_UNKNOWN);
+    CHECK(save.type != CYBERDECK_CMD_WIFI_AUDIT);
+    CHECK(!save.confirmed);
+
+    CHECK(cyberdeck_parse_command("wifi audit export").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("wifi audit export confirm").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("wifi audit save confirm").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("wifi audit save /sdcard/wifi-audit.txt").type ==
+          CYBERDECK_CMD_UNKNOWN);
+}
+
 void test_parse_command_ssh_verb_contract()
 {
     // "ssh" como prefixo exige separador; o verbo sozinho e SSH sem args.
@@ -773,6 +794,7 @@ int main()
     test_encode_ssh_key_modifier_scope_and_bounds();
     test_parse_command_routing();
     test_parse_command_whitespace_and_exact_match();
+    test_parse_wifi_audit_save_command();
     test_parse_command_ssh_verb_contract();
     test_parse_command_to_ssh_target_pipeline();
     test_help_text_exact_block();

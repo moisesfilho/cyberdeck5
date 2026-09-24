@@ -31,6 +31,7 @@ idf_component_register(
         "src/features/wifi/cyberdeck_wifi_persistence_queue.cpp"
         "src/features/wifi/cyberdeck_wifi_persistence_coordinator.cpp"
         "src/features/wifi/cyberdeck_wifi_audit.cpp"
+        "src/features/wifi/cyberdeck_wifi_audit_persistence.cpp"
         "src/features/wifi/wifi_storage.cpp"
         "src/features/screenshot/screenshot_bmp.cpp"
         "src/features/screenshot/screenshot_server.cpp"

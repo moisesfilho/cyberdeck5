@@ -525,20 +525,78 @@ void process_wifi_scan(lv_timer_t *) {
     delete result;
 }
 
+std::string wifi_audit_save_path()
+{
+    constexpr char kTimeFormat[] = "%H%M%S";
+    const time_t now = time(nullptr);
+    if (now < static_cast<time_t>(1577836800)) return {};
+
+    struct tm utc = {};
+    if (gmtime_r(&now, &utc) == nullptr) return {};
+    const cyberdeck_clock_time_t utc_time = {
+        static_cast<int16_t>(utc.tm_year + 1900),
+        static_cast<uint8_t>(utc.tm_mon + 1),
+        static_cast<uint8_t>(utc.tm_mday),
+        static_cast<uint8_t>(utc.tm_hour),
+        static_cast<uint8_t>(utc.tm_min)};
+    cyberdeck_clock_time_t local = {};
+    if (!cyberdeck_clock_from_utc(&utc_time,
+                                   CYBERDECK_CLOCK_GMT_MINUS_3_OFFSET_MIN,
+                                   &local)) {
+        return {};
+    }
+
+    struct tm local_tm = {};
+    local_tm.tm_year = local.year - 1900;
+    local_tm.tm_mon = local.month - 1;
+    local_tm.tm_mday = local.day;
+    local_tm.tm_hour = local.hour;
+    local_tm.tm_min = local.minute;
+    local_tm.tm_sec = utc.tm_sec;
+    local_tm.tm_isdst = 0;
+    char hhmmss[sizeof("HHMMSS")] = {};
+    if (strftime(hhmmss, sizeof(hhmmss), kTimeFormat, &local_tm) !=
+        sizeof(hhmmss) - 1) {
+        return {};
+    }
+
+    char filename[64] = {};
+    const int written = snprintf(filename, sizeof(filename),
+                                 "wifi-audit-%04d%02u%02u-%s.txt",
+                                 static_cast<int>(local.year),
+                                 static_cast<unsigned>(local.month),
+                                 static_cast<unsigned>(local.day),
+                                 hhmmss);
+    if (written <= 0 || static_cast<std::size_t>(written) >= sizeof(filename)) {
+        return {};
+    }
+    return std::string("/sdcard/wifi-audit/") + filename;
+}
+
 void process_wifi_audit(lv_timer_t *) {
     const auto value = s_wifi_audit.snapshot_view();
-    if (value.token != 0 && (value.token != s_wifi_audit_reported_token ||
-                             value.status != s_wifi_audit_reported_state)) {
+    if (value.token != 0 &&
+        (value.status == cyberdeck_wifi_audit::state::ready ||
+         value.status == cyberdeck_wifi_audit::state::error) &&
+        (value.token != s_wifi_audit_reported_token ||
+         value.status != s_wifi_audit_reported_state)) {
         s_wifi_audit_reported_token = value.token;
         s_wifi_audit_reported_state = value.status;
-        if (value.status == cyberdeck_wifi_audit::state::ready) append_line("wifi audit: ready\n");
-        else if (value.status == cyberdeck_wifi_audit::state::error) append_line("wifi audit: unavailable\n");
+        append_line(cyberdeck_wifi_audit::render_ui(value));
         render_terminal();
     }
-    const auto exported = s_wifi_audit.drain_export();
-    if (exported.ok) append_line("wifi audit export persisted\n");
-    else if (exported.path[0] != '\0') append_line("wifi audit export failed\n");
-    if (exported.ok || exported.path[0] != '\0') render_terminal();
+
+    const auto result = s_wifi_audit.drain_save();
+    if (result.ok) {
+        std::string line = "wifi audit saved: ";
+        line.append(result.path);
+        line += '\n';
+        append_line(line);
+        render_terminal();
+    } else if (result.path[0] != '\0') {
+        append_line("wifi audit save failed\n");
+        render_terminal();
+    }
 }
 
 void on_wifi_state(const wifi_status_t *status, bool enabled, void *) {
@@ -838,16 +896,18 @@ void execute_line(bool line_already_sent = false) {
         break;
     }
     case CYBERDECK_CMD_WIFI_AUDIT: {
-        append_line("wifi audit: collecting\n");
         if (!s_wifi_audit.initialized()) s_wifi_audit.initialize();
         (void)s_wifi_audit.begin({false, {}, {}, {}});
         break;
     }
-    case CYBERDECK_CMD_WIFI_AUDIT_EXPORT: {
-        if (!cmd.confirmed) { append_line("wifi audit export requires confirmation\n"); break; }
+    case CYBERDECK_CMD_WIFI_AUDIT_SAVE: {
         const auto value = s_wifi_audit.snapshot_view();
-        if (s_wifi_audit.enqueue_export(value.token, "/sdcard/wifi-audit.txt", true)) append_line("wifi audit export requested\n");
-        else append_line("wifi audit export unavailable\n");
+        const std::string path = wifi_audit_save_path();
+        if (!path.empty() && s_wifi_audit.enqueue_save(value.token, path)) {
+            append_line("wifi audit save requested\n");
+        } else {
+            append_line("wifi audit save unavailable\n");
+        }
         break;
     }
     case CYBERDECK_CMD_WIFI_SAVED: {

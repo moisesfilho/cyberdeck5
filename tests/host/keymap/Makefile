@@ -40,6 +40,11 @@ WIFI_EVENT_DISPATCH_SRC := ../../../components/cyberdeck/src/features/wifi/cyber
 WIFI_PERSISTENCE_QUEUE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_queue.cpp
 WIFI_PERSISTENCE_COORDINATOR_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_coordinator.cpp
 WIFI_AUDIT_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit.cpp
+WIFI_AUDIT_SAVE_TEST := test_wifi_audit_save.cpp
+WIFI_AUDIT_SAVE_CONTRACT := test_wifi_audit_save_contract.py
+WIFI_AUDIT_PERSISTENCE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit_persistence.cpp
+WIFI_AUDIT_PERSISTENCE_HDR := ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit_persistence.h
+WIFI_AUDIT_PERSISTENCE_CONTRACT_HDR := contracts/cyberdeck_wifi_audit_persistence.h
 ORIENTATION_SRC := ../../../components/cyberdeck/src/platform/sensors/orientation.cpp
 SERIAL_BRIDGE_SRC := ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp
 SERIAL_BRIDGE_HDR := ../../../components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
@@ -54,9 +59,9 @@ LOCAL_SHELL_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_lo
 LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/features/shell/cyberdeck_local_shell.h
 CAT_MULTILINE_SRC := test_cat_multiline.cpp
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_orientation test_wifi_audit test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch
+BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch
 
-.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract
+.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract
 
 all: test
 
@@ -162,8 +167,25 @@ test_wifi_persistence_queue: test_wifi_persistence_queue.cpp $(WIFI_PERSISTENCE_
 test_wifi_persistence_coordination: test_wifi_persistence_coordination.cpp $(WIFI_PERSISTENCE_COORDINATOR_SRC) $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) contracts/cyberdeck_wifi_persistence_coordinator.h contracts/cyberdeck_wifi_persistence_queue.h contracts/cyberdeck_wifi_event_dispatch.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -Icontracts test_wifi_persistence_coordination.cpp $(WIFI_PERSISTENCE_COORDINATOR_SRC) $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) -o test_wifi_persistence_coordination
 
-test_wifi_audit: test_wifi_audit.cpp $(WIFI_AUDIT_SRC) ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit.h
+test_wifi_audit: test_wifi_audit.cpp $(WIFI_AUDIT_SRC) ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit.h $(WIFI_AUDIT_PERSISTENCE_HDR)
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_audit.cpp $(WIFI_AUDIT_SRC) -o test_wifi_audit
+
+# Host contract for the injectable Wi-Fi audit persistence transaction.
+# The target links the real production header/source and exercises every
+# behavioral fault, recovery, ACK, and concurrency case.
+test_wifi_audit_persistence: test_wifi_audit_persistence.cpp $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) $(WIFI_AUDIT_PERSISTENCE_CONTRACT_HDR)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_audit_persistence.cpp $(WIFI_AUDIT_PERSISTENCE_SRC) -pthread -o test_wifi_audit_persistence
+
+test_wifi_audit_persistence_contract: test_wifi_audit_persistence_contract.py $(WIFI_AUDIT_PERSISTENCE_CONTRACT_HDR)
+	$(PYTHON) test_wifi_audit_persistence_contract.py
+
+# Simplified Wi-Fi audit save contract: the ordinary audit is display-only;
+# the explicit save path owns directory/timestamp/collision behavior.
+test_wifi_audit_save: $(WIFI_AUDIT_SAVE_TEST) $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(CLOCK_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_AUDIT_SAVE_TEST) $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(CLOCK_SRC) -pthread -o test_wifi_audit_save
+
+test_wifi_audit_save_contract: $(WIFI_AUDIT_SAVE_CONTRACT) ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp ../../../code-map.md ../../../.gitignore
+	$(PYTHON) $(WIFI_AUDIT_SAVE_CONTRACT)
 
 
 # Logica pura (sem LVGL): formatador do relogio do header (plano aprovado:
@@ -326,7 +348,7 @@ wifi_enter_dispatch_contract: wifi_enter_dispatch_contract.py ../../../component
 test_wifi_enter_routing_contract: test_wifi_enter_routing_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) test_wifi_enter_routing_contract.py
 
-test_wifi_audit_contract: test_wifi_audit_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_AUDIT_SRC)
+test_wifi_audit_contract: test_wifi_audit_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) $(WIFI_AUDIT_PERSISTENCE_CONTRACT_HDR) ../../../sdkconfig.defaults ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md
 	$(PYTHON) test_wifi_audit_contract.py
 
 # USB Serial-JTAG NDJSON manual bridge (REQ-002/003/005/006/007/008/009) — TDD RED: produção ausente
@@ -379,6 +401,14 @@ test: $(BINS)
 	@./test_wifi_persistence_coordination
 	@echo "==> Executando contrato TDD da auditoria Wi-Fi passiva"
 	@./test_wifi_audit
+	@echo "==> Executando contrato TDD do fluxo simplificado de salvamento da auditoria Wi-Fi"
+	@./test_wifi_audit_save
+	@echo "==> Executando contrato estrutural do salvamento da auditoria Wi-Fi"
+	@$(MAKE) --no-print-directory test_wifi_audit_save_contract
+	@echo "==> Executando contrato TDD da persistencia injetavel da auditoria Wi-Fi"
+	@$(MAKE) --no-print-directory test_wifi_audit_persistence_contract
+	@echo "==> Executando binario comportamental da persistencia da auditoria Wi-Fi"
+	@./test_wifi_audit_persistence
 	@echo "==> Executando testes do formatador do relogio do header (GMT-3)"
 	@./test_clock_formatter
 	@echo "==> Executando testes do filtro de saida SSH"
@@ -401,7 +431,6 @@ test: $(BINS)
 	@./test_orientation
 	@echo "==> Executando contrato estrutural da sequencia de boot SD"
 	@$(MAKE) --no-print-directory test_boot_sequence
-	@$(MAKE) --no-print-directory imu_sensor_contract
 	@echo "==> Executando contrato TDD do despacho assincrono do teclado fisico"
 	@$(MAKE) --no-print-directory test_keyboard_input_contract
 	@echo "==> Executando contrato de cleanup parcial da inicializacao da UI"
@@ -437,6 +466,10 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_fs_write_dispatch
 	@$(MAKE) --no-print-directory test_fs_write_cli
 	@$(MAKE) --no-print-directory test_fs_write_contract
+	# Keep the known IMU contract last so unrelated task tests run first;
+	# it remains a separate, non-masked gate.
+	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
+	@$(MAKE) --no-print-directory imu_sensor_contract
 
 clean:
 	rm -f $(BINS)

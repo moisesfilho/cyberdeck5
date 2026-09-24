@@ -116,9 +116,13 @@ Use `wifi saved` to list saved SSIDs without showing passwords. Up/Down
 navigates, Enter starts the forget flow, and Escape exits. A second Enter
 confirms forgetting; Escape cancels the confirmation.
 
-`wifi audit` reports only the current local association (no scan or probe).
-`wifi audit export confirm` queues one bounded, sanitized export confined to
-`/sdcard`; export is never performed without explicit confirmation.
+`wifi audit` reports only the current local association (no scan or probe) and
+prints status, SSID, BSSID and IP directly in the terminal. It does not write a
+file. `wifi audit save` is the explicit persistence command; after its real
+completion ACK, the timestamped file is under `/sdcard/wifi-audit/` as
+`wifi-audit-YYYYMMDD-HHMMSS.txt`. The directory is created
+automatically, existing files are never overwritten, and the retired export
+spelling is rejected.
 
 A sessão SSH roda em uma task FreeRTOS dedicada para não bloquear a UI.
 

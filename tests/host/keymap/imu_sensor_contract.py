@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Regression contract for the Sensor Hub based initial IMU sample.
 
-Kept separate from boot ordering so a pre-existing HAL type failure cannot be
-misreported as an SD/UI boot-order failure.
+Kept separate from boot ordering so IMU sensor-source assertions cannot be
+misreported as an SD/UI boot-order failure. The Sensor Hub handle is retained:
+`sensor_handle_t` is required by `bsp_sensor_init`.
 """
 from pathlib import Path
 import re
@@ -22,8 +23,6 @@ def main() -> int:
     failures: list[str] = []
     require("imu_acquire_acce(" not in source,
             "IMU startup must not use the generic direct-read path", failures)
-    require("sensor_handle_t" not in source,
-            "IMU startup must not use the generic sensor_handle_t HAL", failures)
     require(re.search(r"void\s+sensor_event_handler\s*\(", source) is not None,
             "startup must define a Sensor Hub callback", failures)
     require("SENSOR_ACCE_DATA_READY" in source,
