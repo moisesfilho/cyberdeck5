@@ -18,7 +18,7 @@ Mapa de navegacao do firmware monolitico ESP-IDF para o M5Stack Tab5
 
 | Ponto | Arquivo | Responsabilidade |
 | --- | --- | --- |
-| `app_main()` | `main/app_main.cpp` | Monta SD, valida o handle, inicia log/NVS, display/LVGL, IMU, UI, protecao de tela, reader INA226 nao fatal, teclado, brilho, servidor de screenshot e Wi-Fi. |
+| `app_main()` | `main/app_main.cpp` | Monta SD, valida o handle, inicia log/NVS, display/LVGL, IMU, UI, protecao de tela, adaptador de protecao de bateria (que inicializa o reader INA226 sensor-only), teclado, brilho, servidor de screenshot e Wi-Fi. |
 | `cyberdeck_ui_init()` | `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | Cria a tela TUI, header, terminal, callbacks e estado de entrada. |
 | `wifi_mgr_start()` | `components/cyberdeck/src/features/wifi/wifi_mgr.cpp` | Inicia o gerenciamento de Wi-Fi e reconexao. |
 | `screenshot_server_init()` | `components/cyberdeck/src/features/screenshot/screenshot_server.cpp` | Prepara o servidor HTTP; a disponibilidade depende do estado Wi-Fi. |
@@ -30,7 +30,7 @@ Ordem relevante de inicializacao:
 2. `event_log_init()` e `nvs_flash_init()`.
 3. `bsp_display_start()`.
 4. Sob lock do display: `imu_reader_start()`, `cyberdeck_ui_init()` e `screen_off_init()`.
-5. Apos liberar o display: `ina226_reader_start()`; erro apenas gera log.
+5. Apos liberar o display: `battery_protection_start()`; o adaptador inicializa o reader INA226 sensor-only e falha apenas gera log.
 6. Callback do teclado, `tab5_keyboard_init()` e brilho.
 7. `screenshot_server_init()`, callback de estado do screenshot e `wifi_mgr_start()`.
 
@@ -40,9 +40,9 @@ Ordem relevante de inicializacao:
 
 | Arquivo | Simbolos/funcao | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, callbacks de SSH/Wi-Fi/cat, `refresh_battery_status` | Compoe a TUI multilinear, roteia Enter por estado, sanitiza dados de `cat` antes do LVGL, aplica limite explicito ao textarea, atualiza sob lock e integra shell, SSH, Wi-Fi, auditoria local com gate de estado no timer (sem publicar `collecting`), o hand-off não bloqueante de `wifi audit save` com ACK/path pós-publicação e o snapshot de bateria no terceiro filho do header. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, callbacks de SSH/Wi-Fi/cat, `refresh_battery_status` | Compoe a TUI multilinear, roteia Enter por estado, sanitiza dados de `cat` antes do LVGL, aplica limite explicito ao textarea, atualiza sob lock e integra shell, SSH, Wi-Fi, auditoria local com gate de estado no timer (sem publicar `collecting`), o hand-off não bloqueante de `wifi audit save` com ACK/path pós-publicação e o snapshot de bateria no terceiro filho do header com percentual e um único ícone semântico. |
 | `components/cyberdeck/include/platform/display/cyberdeck_ui.h` | API publica da UI | Contrato usado por `app_main` e pelo driver de teclado. |
-| `components/cyberdeck/src/platform/display/cyberdeck_font.c` | Fonte monoespaciada | Recurso visual do terminal/header, incluindo os simbolos LVGL de Wi-Fi, nivel, carga e plus; o include LVGL permanece condicionado por `LV_LVGL_H_INCLUDE_SIMPLE` e usa `"lvgl.h"` em ambos os ramos. |
+| `components/cyberdeck/src/platform/display/cyberdeck_font.c` | Fonte monoespaciada | Recurso visual do terminal/header, incluindo os simbolos LVGL de Wi-Fi, menos e carga; o include LVGL permanece condicionado por `LV_LVGL_H_INCLUDE_SIMPLE` e usa `"lvgl.h"` em ambos os ramos. |
 | `components/cyberdeck/src/platform/display/cyberdeck_clock.cpp` | `cyberdeck_clock_from_utc`, `cyberdeck_format_clock` | Conversao/formato do relogio GMT-3. |
 | `components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp` | `cyberdeck_wifi_indicator_is_lit` | Regra pura: claro somente com `enabled && connected && has_ip`. |
 | `components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp` | layout, criacao, resize e cor do icone | Desenha tres arcos e ponto; recalcula posicao em resize. |
@@ -50,9 +50,11 @@ Ordem relevante de inicializacao:
 | `components/cyberdeck/src/platform/display/screen_off.cpp`, `components/cyberdeck/include/platform/display/screen_off.h` | `screen_off_init`, `screen_off_turn_on`, `screen_off_turn_off`, `screen_off_set_timeout_minutes` | Adaptador LVGL/BSP da protecao de tela: timer de 1 s, duplo toque para religar, comandos `screen on|off|timeout`, restauracao NVS antes do timer e persistencia enfileirada para uma task dedicada (fora da task LVGL) do timeout efetivo e do ultimo valor positivo, com zero pausando/desabilitando o timer. |
 
 O header usa grade direta 30/40/30 para titulo, relogio e celula direita. A
-celula direita renderiza Wi-Fi antes da bateria; a bateria mostra simbolos LVGL
-e percentual e fica oculta quando indisponivel. O filho Wi-Fi ocupa a largura
-compacta derivada de `CYBERDECK_WIFI_ICON_RADIUS_2` e
+celula direita renderiza Wi-Fi antes da bateria; a bateria mostra um único
+ícone semântico de estado (`LV_SYMBOL_MINUS` para descarga e `LV_SYMBOL_CHARGE`
+para carga) e percentual numérico, sem glyph de nível, e fica oculta quando
+ausente ou indisponível. O filho Wi-Fi ocupa a largura compacta derivada de
+`CYBERDECK_WIFI_ICON_RADIUS_2` e
 `CYBERDECK_WIFI_ICON_DEFAULT_THICKNESS` (`2 * (raio + espessura)`, ~34 px), a
 bateria usa `LV_SIZE_CONTENT`, ambos definem `flex_grow=0` e a celula usa
 `LV_FLEX_ALIGN_END` com gaps pequenos (0–4 px). Nao exibe SSID nem estado
@@ -159,9 +161,11 @@ e coberta pelos testes host: validar com `idf.py build` e o roteiro
 | `components/cyberdeck/src/platform/logging/event_log_recent.cpp` | `event_log_recent_indices` | Selecao pura dos indices recentes sem copiar todos os registros na stack. |
 | `components/cyberdeck/src/platform/sensors/imu_reader.cpp` | `imu_reader_start`, `sensor_handle_t`, `bsp_sensor_init` | Inicializacao do BMI270 via Sensor Hub; `sensor_handle_t` e o handle obrigatorio usado por `bsp_sensor_init`; amostra inicial limitada por timeout, aplicacao da orientacao antes da UI e leitura posterior para rotacao. O contrato proibe somente a leitura direta `imu_acquire_acce(`, preservando o fluxo do Sensor Hub. |
 | `components/cyberdeck/src/platform/sensors/orientation.cpp` | `orientation_from_accel`, `orientation_update` | Conversao da aceleracao em rotacao e debounce da orientacao posterior. |
-| `components/cyberdeck/src/platform/sensors/battery_status.cpp`, `components/cyberdeck/include/platform/sensors/battery_status.h` | `percentage_from_capacity_mah`, `classify_current_ma`, `classify_sample` | Modulo puro host-testavel: o `.cpp` inclui o contrato pelo caminho publico `platform/sensors/battery_status.h`; satura a escala aprovada `6000..8400` em `0..100`; corrente positiva/zero consumindo, negativa carregando; ausencia ou leitura invalida produz indisponivel. O reader preserva o nome do campo do contrato host e fornece a tensao INA226 em mV. |
-| `components/cyberdeck/src/platform/sensors/ina226_reader.cpp`, `components/cyberdeck/include/platform/sensors/ina226_reader.h` | `ina226_reader_start`, `ina226_reader_get_snapshot` | Reader INA226 no barramento BSP e endereco I2C `0x41`: configuracao `0x4527`, calibracao `0x0D55`, identificacao, tarefa dedicada a cada 1 s e snapshot protegido por mutex, sem I2C/LVGL no timer. Nao usa `CHG_EN`, `CHG_STAT`, NVS ou politica de protecao; o startup e nao fatal. |
-| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `refresh_battery_status` e integracao do snapshot no header | Mantem a grade direta 30/40/30, Wi-Fi antes da bateria dentro da celula direita, simbolos LVGL, percentual e oculta todo o grupo quando a leitura falha. |
+| `components/cyberdeck/src/platform/sensors/battery_status.cpp`, `components/cyberdeck/include/platform/sensors/battery_status.h` | `percentage_from_bus_voltage_mv`, `classify_current_ma`, `classify_sample` | Logica pura recebe `bus_voltage_mv`, satura a janela validada `6000..8230` mV em `0..100` e classifica corrente positiva como descarregando, negativa como carregando e zero/indeterminada como neutral; ausencia so ocorre com presenca explicita e leitura invalida fica indisponivel sem fabricar percentual. |
+| `components/cyberdeck/src/platform/sensors/ina226_reader.cpp`, `components/cyberdeck/include/platform/sensors/ina226_reader.h` | `ina226_reader_start`, `ina226_reader_get_snapshot` | Reader INA226 no barramento BSP e endereco I2C `0x41`: registra de tensao `0x02` convertido em mV, configuracao `0x4527`, calibracao `0x0D55`, identificacao, tarefa dedicada a cada 1 s e snapshot protegido por mutex; falhas de leitura apos startup sao publicadas como indisponiveis. Nao usa `CHG_EN`, `CHG_STAT`, NVS ou politica de protecao; o startup e nao fatal. |
+| `components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp`, `components/cyberdeck/include/platform/sensors/cyberdeck_battery_protection.h` | `decode_chg_stat`, `state::observe`, `state::snapshot`, `state::set_protection_enabled`, `state::charger_enabled`, `current_uncertainty_ma`, `external_voltage_mv`, `absent_voltage_mv`, `state_vote_count`, `protection_enter_percentage`, `protection_enter_voltage_mv`, `protection_exit_percentage`, `default_protection_enabled` | Politica pura host-testavel: estados battery/external/charging/absent/unknown, threshold corrente ±15 mA, external >=7900 mV, absent >=8330 mV com 5 votos, protecao so em charging + percentual >=90 + tensao >=8200, histerese retoma <=85, opcao enabled persistida no NVS (default true), falhas nao desligam CHG_EN nem perdem ultimo estado seguro. Nao usa ESP-IDF, FreeRTOS, I2C, NVS, LVGL ou BSP. |
+| `components/cyberdeck/src/platform/sensors/battery_protection.cpp`, `components/cyberdeck/include/platform/sensors/battery_protection.h` | `battery_protection_init`, `battery_protection_start`, `battery_protection_get_snapshot`, `battery_protection_set_enabled`, `battery_protection_is_enabled`, `battery_protection_is_active`, `battery_protection_charger_enabled` | Adaptador exclusivo para hardware: Expander B via `bsp_io_expander1_init()` (0x44), CHG_STAT pin 6 active-low input/pull-up, CHG_EN pin 7 output push-pull, CHG_EN=1 por default. Integra reader INA226 (sensor-only), politica pura, NVS para opcao enabled, timer UI 1 s. Falhas de I2C/NVS/CHG logadas sem desligar CHG_EN nem perder estado seguro. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `refresh_battery_status`, `process_battery_protection`, `execute_line` (battery protection on/off/status), timer LVGL 1 s | Mantem a grade direta 30/40/30, Wi-Fi antes da bateria dentro da celula direita, percentual numerico e um unico icone semantico (`LV_SYMBOL_MINUS`/`LV_SYMBOL_CHARGE`) nos estados ativo; neutral conserva percentual sem glyph/texto de estado, sem glyph de nivel ou seletor por porcentagem; oculta o grupo em sensor ausente ou leitura indisponivel. Timer LVGL 1 s consome snapshot do adaptador; comandos shell `battery protection on/off/status` roteados para adaptador; `ui.type` transita via bridge serial. |
 
 ## Dependencias e composicao
 
@@ -229,20 +233,48 @@ libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 | `cyberdeck_ui.cpp` | `test_boot_sequence.py`, `test_keyboard_input_contract.py`, `test_ui_resource_contract.py`, `test_local_prompt_contract.py`, `test_wifi_enter_routing_contract.py` |
 | `main/app_main.cpp`, `cyberdeck_ui.cpp` | `test_boot_sequence.py` (ordem SD/UI, montagem física `/sdcard` e root virtual `/`) |
 | `imu_reader.cpp` | `imu_sensor_contract.py` (callback Sensor Hub, `sensor_handle_t` obrigatorio para `bsp_sensor_init`, proibicao especifica da leitura direta `imu_acquire_acce(`, timeout/fallback seguro e continuidade da rotacao) |
-| `battery_status.cpp` + `ina226_reader.cpp` + contrato puro `contracts/cyberdeck_battery.h` | `test_battery_contract.cpp` (escala 6000/8400, saturacao, sinal da corrente e ausencia/indisponibilidade; o reader INA226 alimenta a escala com mV), `test_battery_reader_contract.py` (`0x41`, `0x4527`/`0x0D55`, task 1 s, snapshot, exclusoes e nao-fatal) |
-| `cyberdeck_ui.cpp` + `cyberdeck_wifi_icon.cpp` + `app_main.cpp` | `test_battery_ui_contract.py` (grade direta 30/40/30, ordem Wi-Fi/bateria, largura Wi-Fi compacta derivada de `CYBERDECK_WIFI_ICON_RADIUS_2`/`CYBERDECK_WIFI_ICON_DEFAULT_THICKNESS` sem `216` ou 30%, `flex_grow=0`, `header_right` com `LV_FLEX_ALIGN_END`, bateria `LV_SIZE_CONTENT`, gaps pequenos, `update_layout`, callback de estado e resize `LV_EVENT_SIZE_CHANGED`, simbolos LVGL, percentual, ocultacao em falha e boot nao fatal) |
+| `battery_status.cpp` + `ina226_reader.cpp` + `battery_protection.cpp` + contrato puro `contracts/cyberdeck_battery.h` | `test_battery_contract.cpp` (REQ-BAT-001/002: tensao `bus_voltage_mv`, janela `6000..8230`, saturacao, estados charging/discharging/neutral, zero/indeterminado e ausencia explicita), `test_battery_reader_contract.py` (REQ-BAT-001/002/004/005/006: `0x41`, `0x4527`/`0x0D55`, conversao do registro de tensao, task 1 s, mutex/snapshot, exclusoes, sensor-only, composicao pelo adaptador e nao-fatal), `test_battery_protection.cpp` + `test_battery_protection_contract.py` (politica e adaptador reais, sem hardware) |
+| `cyberdeck_ui.cpp` + `cyberdeck_wifi_icon.cpp` + `battery_protection.cpp` + `app_main.cpp` | `test_battery_ui_contract.py` (REQ-BAT-002/003/004/006/010: grade direta 30/40/30, ordem Wi-Fi/bateria, layout compacto, percentual numerico, exatamente um icone semantico nos estados ativos, neutral sem glyph/texto, proibicao de glyph de nivel, ocultacao em falha, timer/snapshot do adaptador sem dependencia direta do reader, continuacao do boot e rastreabilidade) |
 | `cyberdeck_serial_bridge.cpp` (REQ-002/003/005/006/007/008/009) — ponte NDJSON bounded, rid/envelopes, UI/sys/wifi, screen.dump chunks/CRC/end, feeder tolerante a logs/fragmentacao; `cyberdeck_cli.py` | `test_serial_ndjson_dispatch.cpp` (bounded/erros/rid/envelopes/UI, inclusive `ui.type` para `screen on|off|timeout`), `test_serial_screen_dump.cpp` (byte-identical chunks/CRC/end), `test_serial_cli_tolerance.cpp` (logs/leitura fragmentada), `test_serial_sysinfo_wifi.cpp` (sys.info/wifi contratos) — todos host-only, sem pyserial/hardware; GREEN com a producao criada |
 | `cyberdeck_serial_bridge.cpp` `fs.write` (REQ-001..REQ-011) — protocolo rid/type/path/data_b64/size, limite 2048, path safety, strict canonical base64, commit por temp unico/O_EXCL+rename (substituicao atomica no host/no-clobber no ESP/FATFS; nunca remove candidato preexistente), CRC response, NDJSON errors; `cyberdeck_cli.py` `fs.write` (`build_request`, encoding, input/stdin, 2048, strict canonical) | `test_fs_write_dispatch.cpp` (dispatch/validacao/path/size/base64/CRC/preservacao; colisao de temp preexistente/no-clobber), `test_fs_write_cli.py` (parser/build_request/encoding/stdin/limite), `test_fs_write_contract.py` (estrutural: disco/path/atomic/CRC/CLI/Makefile/code-map) — todos host-only, RED antes da producao |
+
+### Bateria: rastreabilidade REQ -> TEST
+
+| Requisito | Testes host/contratos |
+| --- | --- |
+| `REQ-BAT-001` — percentual por tensao real `bus_voltage_mv`, janela `6000..8230` mV saturado | `test_battery_contract.cpp`, `test_battery_reader_contract.py` |
+| `REQ-BAT-002` — estados charging/discharging/neutral; corrente zero/indeterminada e neutral, nunca absent; ausencia somente por presenca explicita | `test_battery_contract.cpp`, `test_battery_reader_contract.py`, `test_battery_ui_contract.py` |
+| `REQ-BAT-003` — neutral mantem percentual sem glyph/texto de estado; estados ativos usam um icone semantico, sem icone de nivel | `test_battery_ui_contract.py` |
+| `REQ-BAT-004` — boot nao fatal e nenhum controle de carregador inventado | `test_battery_reader_contract.py`, `test_battery_ui_contract.py` |
+| `REQ-BAT-005` — INA226 `0x41` e integracao task dedicada, mutex e cadencia de 1 s preservados | `test_battery_reader_contract.py` |
+| `REQ-BAT-006` — documentacao e `code-map.md` rastreiam os seis requisitos e os contratos host | `test_battery_reader_contract.py`, `test_battery_ui_contract.py`, `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE.pt-BR.md` |
+| `REQ-BAT-007` — expander-B pin6 CHG_STAT active-low e pin7 CHG_EN | `test_battery_protection.cpp`, `test_battery_protection_contract.py` |
+| `REQ-BAT-008` — battery/external/charging/absent/unknown thresholds e votos | `test_battery_protection.cpp`, `test_battery_protection_contract.py` |
+| `REQ-BAT-009` — 90/85 protection hysteresis e fail-safe state | `test_battery_protection.cpp`, `test_battery_protection_contract.py` |
+| `REQ-BAT-010` — NVS default/option, UI timer/snapshot, shell e ui.type | `test_battery_protection_contract.py` |
+
+Os cinco alvos de bateria agora exercitam a implementacao de producao: o reader
+continua sendo o unico proprietario da aquisicao I2C, mas app_main inicia o
+adaptador de protecao e a UI consome exclusivamente o snapshot copiado desse
+adaptador. O contrato puro exige neutral para corrente zero/indeterminada e
+preserva percentual sem estado visual; os contratos estruturais verificam a
+integracao INA226, a composicao adapter->UI sem dependencia direta do reader,
+o boot nao fatal, a ausencia de controle de carregador no reader e a
+rastreabilidade em documentacao/mapa. A protecao de carregamento adiciona
+politica pura host-testavel, adaptador expander-B/INA226/NVS, timer UI 1 s,
+comandos shell `battery protection on/off/status` e compatibilidade serial
+transitiva via `ui.type`. A validacao final dos alvos fica a cargo
+do reviewer.
 
 Os testes host nao substituem a validacao do hardware para LVGL, touch, I2C,
 Wi-Fi real, libssh real ou endpoint HTTP. Os contratos Python inspecionam a
 fonte real quando a UI nao e linkavel no host. O alvo puro de bateria linka
-`battery_status.cpp`; os contratos estruturais verificam reader, integracao LVGL,
-boot nao fatal e a regressão RED de espaçamento do header. O alvo puro compila o
-contrato host junto da implementacao de producao e inclui explicitamente a
-arvore de headers do componente; o contrato do reader aceita os nomes de token
-de calibracao INA226 usados na producao sem depender de limites de palavra e
-segue o header compartilhado para validar os campos do snapshot.
+`battery_status.cpp` com o contrato de tensao real, enquanto os contratos
+estruturais verificam o registro INA226, os estados, a integracao LVGL sem
+glyph de nivel, a composicao do adaptador de protecao, o boot nao fatal e a
+ausencia de controle de carregador no reader. O Makefile mantem os cinco
+alvos registrados e separa o executavel `test_battery_protection_bin` do
+alvo publico `test_battery_protection`; a execucao fica a cargo do reviewer.
 
 ## Comandos de validacao
 
@@ -267,12 +299,17 @@ make -C tests/host/keymap local_shell_tokenizer_contract
 make -C tests/host/keymap test_local_shell test_cat_multiline test_prompt_behavior test_boot_sequence
 make -C tests/host/keymap test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi
 make -C tests/host/keymap test_fs_write_dispatch test_fs_write_cli test_fs_write_contract
-make -C tests/host/keymap test_battery_contract test_battery_reader_contract test_battery_ui_contract
+make -C tests/host/keymap test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract
 ```
 
-`verify` compara os valores `LV_KEY_*` do shim com o LVGL gerenciado. O target
-`test_battery_ui_contract` inspeciona a fonte real do header e valida a
-regressão de espaçamento do layout interno de `header_right`. Os targets
+`verify` compara os valores `LV_KEY_*` do shim com o LVGL gerenciado. Os
+`test_battery_*` sao os contratos desta correcao: o alvo puro exercita a
+percentual por tensao e os estados, enquanto os dois alvos Python inspecionam a
+fonte real para leitura INA226, icone semantico unico, boot nao fatal e
+ausencia de controle de carregador. `test_battery_protection` e
+`test_battery_protection_contract` exercitam a politica pura de estados e
+protecao de carregamento, o adaptador expander-B/INA226/NVS, o timer UI 1 s,
+os comandos shell e a compatibilidade serial transitiva. Os targets
 `test_wifi_audit_contract`, `test_wifi_audit_persistence` e
 `test_wifi_audit_persistence_contract` inspecionam/exercitam a implementação real
 da seam injetável e permanecem registrados no Makefile; `test` executa o binário
@@ -342,9 +379,9 @@ O roteiro da ponte serial esta em
 
 - `AGENTS.md`: instrucoes obrigatorias para agentes consultarem e manterem este
   mapa, incluindo a politica de busca progressiva.
-- `README.md`: recursos, uso do shell, Wi-Fi, SSH, screenshot e ponte serial.
-- `docs/ARCHITECTURE.md`: principios, boot, concorrencia Wi-Fi, screenshot,
-  ponte serial e UI.
+- `README.md` e `README.pt-BR.md`: recursos, uso do shell, Wi-Fi, SSH, screenshot e ponte serial.
+- `docs/ARCHITECTURE.md` e `docs/ARCHITECTURE.pt-BR.md`: principios, boot, concorrencia Wi-Fi, screenshot,
+  ponte serial, bateria e UI.
 - `tests/manual/tui-shell-validation.pt-BR.md`: validacao no dispositivo.
 - `docs/WIFI.md`: fluxos Wi-Fi, incluindo auditoria local e salvamento explícito
   da rede conectada.

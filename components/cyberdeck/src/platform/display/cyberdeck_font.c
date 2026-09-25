@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 18 px
  * Bpp: 4
- * Opts: --font /usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf --size 18 --bpp 4 --no-compress --no-prefilter -r 0x20-0x7e,0xa0-0xff --no-kerning --force-fast-kern-format --font /usr/share/fonts/opentype/font-awesome/FontAwesome.otf -r 0xF067,0xF0E7,0xF1EB,0xF240-0xF244 --format lvgl --lv-font-name cyberdeck_font -o components/cyberdeck/src/platform/display/cyberdeck_font.c
+ * Opts: --font /usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf --size 18 --bpp 4 --no-compress --no-prefilter -r 0x20-0x7e,0xa0-0xff --no-kerning --force-fast-kern-format --font /usr/share/fonts/opentype/font-awesome/FontAwesome.otf -r 0xF067,0xF068,0xF0E7,0xF1EB,0xF240-0xF244 --format lvgl --lv-font-name cyberdeck_font -o components/cyberdeck/src/platform/display/cyberdeck_font.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
@@ -1861,6 +1861,12 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
     0x0, 0x0, 0x0, 0x9, 0xff, 0xb0, 0x0, 0x0,
     0x0,
 
+    /* U+F068 "" */
+    0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfd, 0xf,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf2, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x29, 0xdd,
+    0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xb0,
+
     /* U+F0E7 "" */
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff,
     0xff, 0x10, 0x0, 0x0, 0x4f, 0xff, 0xd0, 0x0,
@@ -2208,13 +2214,14 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 10670, .adv_w = 173, .box_w = 9, .box_h = 18, .ofs_x = 1, .ofs_y = -4},
     {.bitmap_index = 10751, .adv_w = 173, .box_w = 10, .box_h = 17, .ofs_x = 0, .ofs_y = -4},
     {.bitmap_index = 10836, .adv_w = 226, .box_w = 15, .box_h = 15, .ofs_x = 0, .ofs_y = 0},
-    {.bitmap_index = 10949, .adv_w = 144, .box_w = 11, .box_h = 18, .ofs_x = -1, .ofs_y = -3},
-    {.bitmap_index = 11048, .adv_w = 329, .box_w = 21, .box_h = 15, .ofs_x = 0, .ofs_y = 0},
-    {.bitmap_index = 11206, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0},
-    {.bitmap_index = 11362, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0},
-    {.bitmap_index = 11518, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0},
-    {.bitmap_index = 11674, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0},
-    {.bitmap_index = 11830, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0}
+    {.bitmap_index = 10949, .adv_w = 226, .box_w = 15, .box_h = 4, .ofs_x = 0, .ofs_y = 5},
+    {.bitmap_index = 10979, .adv_w = 144, .box_w = 11, .box_h = 18, .ofs_x = -1, .ofs_y = -3},
+    {.bitmap_index = 11078, .adv_w = 329, .box_w = 21, .box_h = 15, .ofs_x = 0, .ofs_y = 0},
+    {.bitmap_index = 11236, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0},
+    {.bitmap_index = 11392, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0},
+    {.bitmap_index = 11548, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0},
+    {.bitmap_index = 11704, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0},
+    {.bitmap_index = 11860, .adv_w = 370, .box_w = 24, .box_h = 13, .ofs_x = 0, .ofs_y = 0}
 };
 
 /*---------------------
@@ -2222,7 +2229,7 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
  *--------------------*/
 
 static const uint16_t unicode_list_2[] = {
-    0x0, 0x80, 0x184, 0x1d9, 0x1da, 0x1db, 0x1dc, 0x1dd
+    0x0, 0x1, 0x80, 0x184, 0x1d9, 0x1da, 0x1db, 0x1dc, 0x1dd
 };
 
 /*Collect the unicode lists and glyph_id offsets*/
@@ -2238,7 +2245,7 @@ static const lv_font_fmt_txt_cmap_t cmaps[] =
     },
     {
         .range_start = 61543, .range_length = 478, .glyph_id_start = 192,
-        .unicode_list = unicode_list_2, .glyph_id_ofs_list = NULL, .list_length = 8, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
+        .unicode_list = unicode_list_2, .glyph_id_ofs_list = NULL, .list_length = 9, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
     }
 };
 

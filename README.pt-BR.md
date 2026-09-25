@@ -49,12 +49,17 @@ SSID nunca é renderizado no header. Estados e erros de SSH são exibidos no
 terminal e registrados no log de eventos. Use o comando `wifi` para diagnóstico.
 
 O grupo de bateria consome snapshots INA226 sincronizados sem executar I2C na
-UI. O percentual satura na faixa aprovada de 6000..8400 mV; corrente positiva ou
-zero representa consumo e corrente negativa representa carga. Símbolos LVGL de
-nível, carga e plus acompanham o percentual numérico. O grupo inteiro fica
-oculto enquanto o sensor ou a leitura mais recente estiver indisponível. O Wi-Fi
-permanece alinhado dinamicamente dentro de sua parte alocada na célula direita e
-recalcula em `LV_EVENT_SIZE_CHANGED`.
+UI. O percentual deriva da tensão medida no barramento e satura na faixa
+aprovada de 6000..8230 mV; corrente positiva representa descarga, negativa
+representa carga e corrente zero ou indeterminada representa neutral. No estado
+neutral o percentual numérico permanece visível, sem glyph ou texto de estado.
+Um único ícone semântico indica carga ou descarga, sem glyph de nível de bateria.
+O grupo inteiro fica oculto enquanto o sensor está ausente ou a leitura mais
+recente está indisponível. O fluxo é somente leitura e não expõe controle do
+carregador. O Wi-Fi permanece alinhado dinamicamente dentro de sua parte alocada
+na célula direita e recalcula em `LV_EVENT_SIZE_CHANGED`. O mapeamento completo
+de requisitos para testes é mantido em `code-map.md`, de REQ-BAT-001 a
+REQ-BAT-006.
 
 O limite inferior visual dos arcos superiores é `center_y - outer_radius * (1 -
 sin(45°))`; o ponto fica 1,5 px abaixo desse limite (faixa aceita: 1–2 px).
@@ -127,6 +132,36 @@ screen timeout 5     # definir o timeout para 5 minutos (0..1440)
 desabilita o desligamento automático sem apagar a tela imediatamente.
 O último valor positivo é preservado quando o timeout é desabilitado e
 restaurado no próximo boot.
+
+### Proteção de Carga da Bateria
+
+O firmware implementa proteção de carga para prolongar a vida útil da
+bateria. Ele lê `CHG_STAT` (active-low, Expander B pin 6) e controla
+`CHG_EN` (Expander B pin 7). A política de proteção é pura e testável no
+host, separada do reader INA226 do sensor.
+
+A proteção ativa somente quando as três condições são atendidas:
+- Estado é `charging` (via `CHG_STAT` em nível baixo ou corrente < -15 mA)
+- Percentual da bateria >= 90%
+- Tensão do barramento >= 8200 mV
+
+Uma vez ativa, a proteção permanece travada pela histerese e libera
+apenas quando o percentual cai para <= 85% (ou quando a carga para).
+A única opção persistida no NVS é `protection_enabled` (default `true`).
+Desabilitá-la religa o carregador imediatamente; reativar exige ação
+explícita. Falhas de leitura nunca desligam `CHG_EN` nem perdem o último
+estado seguro.
+
+No terminal:
+
+```text
+battery protection on      # habilita proteção de carga
+battery protection off     # desabilita proteção de carga
+battery protection status  # mostra estado da proteção
+```
+
+Os comandos também são alcançáveis via bridge serial `ui.type`
+transitivamente (ex.: `ui.type "battery protection off"`).
 
 ### Wi-Fi
 

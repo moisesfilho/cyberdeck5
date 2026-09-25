@@ -14,7 +14,7 @@
  * shell. O teste fixa o catalogo completo, incluindo os comandos comuns e os
  * comandos locais, byte a byte (separador "-" entre comando e descricao,
  * newline final). Alem da igualdade exata, os testes fixam a estrutura
- * (14 newlines, 14 linhas nao vazias, newline final), a presenca de cada
+ * (15 newlines, 15 linhas nao vazias, newline final), a presenca de cada
  * comando e o determinismo entre chamadas.
  */
 #include "features/shell/cyberdeck_shell_utils.h"
@@ -622,6 +622,27 @@ void test_parse_screen_commands()
     CHECK(cyberdeck_parse_command("Screen on").type == CYBERDECK_CMD_UNKNOWN);
 }
 
+void test_parse_battery_protection_commands()
+{
+    const cyberdeck_cmd_t on = cyberdeck_parse_command("battery protection on");
+    CHECK(on.type == CYBERDECK_CMD_BATTERY_PROTECTION_ON);
+    CHECK(on.args.empty());
+
+    const cyberdeck_cmd_t off = cyberdeck_parse_command("  battery\t protection \t off\r\n");
+    CHECK(off.type == CYBERDECK_CMD_BATTERY_PROTECTION_OFF);
+    CHECK(off.args.empty());
+
+    const cyberdeck_cmd_t status = cyberdeck_parse_command("battery protection status");
+    CHECK(status.type == CYBERDECK_CMD_BATTERY_PROTECTION_STATUS);
+    CHECK(status.args.empty());
+
+    CHECK(cyberdeck_parse_command("battery").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("battery protection").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("battery protection maybe").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("battery protection on now").type == CYBERDECK_CMD_UNKNOWN);
+    CHECK(cyberdeck_parse_command("Battery protection on").type == CYBERDECK_CMD_UNKNOWN);
+}
+
 void test_parse_command_ssh_verb_contract()
 {
     // "ssh" como prefixo exige separador; o verbo sozinho e SSH sem args.
@@ -740,8 +761,8 @@ void test_help_text_exact_block()
 void test_help_text_structure()
 {
     // Arrange & Act
-    // Estrutura do catalogo unificado: exatamente 14 newlines (um por linha) e
-    // 14 linhas nao vazias; o texto termina obrigatoriamente em newline.
+    // Estrutura do catalogo unificado: exatamente 15 newlines (um por linha) e
+    // 15 linhas nao vazias; o texto termina obrigatoriamente em newline.
     const std::string text = cyberdeck_help_text();
 
     // Assert
@@ -754,7 +775,7 @@ void test_help_text_structure()
             ++newlines;
         }
     }
-    CHECK(newlines == 14);
+    CHECK(newlines == 15);
 
     // Split por '\n': linhas nao vazias entre quebras. Uma linha vazia
     // (start == i, sem caracteres) nao conta; a cauda apos o ultimo '\n'
@@ -769,7 +790,7 @@ void test_help_text_structure()
             line_start = i + 1;
         }
     }
-    CHECK(non_empty_lines == 14);
+    CHECK(non_empty_lines == 15);
 }
 
 void test_help_text_commands_present()
@@ -794,6 +815,7 @@ void test_help_text_commands_present()
         "log - show recent events",
         "clear - clear the terminal",
         "screen [on|off|timeout <0-1440>] - control screen protection",
+        "battery [protection on|off|status] - show or control battery protection",
         "ssh [user@]host[:port] - start an SSH session",
     };
     for (const char *entry : entries) {
@@ -830,6 +852,7 @@ int main()
     test_parse_command_whitespace_and_exact_match();
     test_parse_wifi_audit_save_command();
     test_parse_screen_commands();
+    test_parse_battery_protection_commands();
     test_parse_command_ssh_verb_contract();
     test_parse_command_to_ssh_target_pipeline();
     test_help_text_exact_block();

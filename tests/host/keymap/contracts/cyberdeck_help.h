@@ -14,6 +14,7 @@ inline constexpr std::string_view kUnifiedHelpText =
     "log - show recent events\n"
     "clear - clear the terminal\n"
     "screen [on|off|timeout <0-1440>] - control screen protection\n"
+    "battery [protection on|off|status] - show or control battery protection\n"
     "ssh [user@]host[:port] - start an SSH session\n"
     "pwd - print working directory\n"
     "cd [path] - change working directory\n"

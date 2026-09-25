@@ -158,8 +158,8 @@ void test_catalog_is_complete_and_unique()
 
     const std::vector<std::string> actual_lines = split_lines(actual);
     const std::vector<std::string> expected_lines = split_lines(expected);
-    CHECK(actual_lines.size() == 14);
-    CHECK(expected_lines.size() == 14);
+    CHECK(actual_lines.size() == 15);
+    CHECK(expected_lines.size() == 15);
 
     std::vector<std::string> first_tokens;
     for (const std::string &line : actual_lines) {

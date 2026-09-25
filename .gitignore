@@ -25,6 +25,8 @@ tests/host/**/test_*
 !tests/host/keymap/test_battery_contract.cpp
 !tests/host/keymap/test_battery_reader_contract.py
 !tests/host/keymap/test_battery_ui_contract.py
+!tests/host/keymap/test_battery_protection.cpp
+!tests/host/keymap/test_battery_protection_contract.py
 !tests/host/keymap/test_screen_protection.cpp
 !tests/host/keymap/test_screen_protection_contract.py
 !tests/host/keymap/test_help_unification.cpp

@@ -271,6 +271,25 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
         }
     }
 
+    /* Same normalization for battery protection verb. */
+    std::string battery_command;
+    battery_command.reserve(command.size());
+    separator = false;
+    for (char value : command) {
+        if (value == '\t' || value == '\v' || value == '\f') {
+            value = ' ';
+        }
+        if (value == ' ') {
+            if (!separator) {
+                battery_command.push_back(' ');
+            }
+            separator = true;
+        } else {
+            battery_command.push_back(value);
+            separator = false;
+        }
+    }
+
     if (command == "help") {
         cmd.type = CYBERDECK_CMD_HELP;
     } else if (command == "clear") {
@@ -307,6 +326,12 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
                 cmd.type = CYBERDECK_CMD_UNKNOWN;
             }
         }
+    } else if (command == "battery protection on" || battery_command == "battery protection on") {
+        cmd.type = CYBERDECK_CMD_BATTERY_PROTECTION_ON;
+    } else if (command == "battery protection off" || battery_command == "battery protection off") {
+        cmd.type = CYBERDECK_CMD_BATTERY_PROTECTION_OFF;
+    } else if (command == "battery protection status" || battery_command == "battery protection status") {
+        cmd.type = CYBERDECK_CMD_BATTERY_PROTECTION_STATUS;
     } else if (command.rfind("ssh", 0) == 0 && (command.size() == 3 || command[3] == ' ' || command[3] == '\t')) {
         cmd.type = CYBERDECK_CMD_SSH;
         if (command.size() > 3) {
@@ -337,15 +362,16 @@ constexpr bool help_catalog_descriptions_match_contract()
            catalog[2].description == "show recent events" &&
            catalog[3].description == "clear the terminal" &&
            catalog[4].description == "control screen protection" &&
-           catalog[5].description == "start an SSH session" &&
-           catalog[6].description == "print working directory" &&
-           catalog[7].description == "change working directory" &&
-           catalog[8].description == "list directory contents" &&
-           catalog[9].description == "print a regular file" &&
-           catalog[10].description == "create an empty file" &&
-           catalog[11].description == "create a directory" &&
-           catalog[12].description == "remove a file or directory" &&
-           catalog[13].description == "remove an empty directory";
+           catalog[5].description == "show or control battery protection" &&
+           catalog[6].description == "start an SSH session" &&
+           catalog[7].description == "print working directory" &&
+           catalog[8].description == "change working directory" &&
+           catalog[9].description == "list directory contents" &&
+           catalog[10].description == "print a regular file" &&
+           catalog[11].description == "create an empty file" &&
+           catalog[12].description == "create a directory" &&
+           catalog[13].description == "remove a file or directory" &&
+           catalog[14].description == "remove an empty directory";
 }
 
 static_assert(help_catalog_descriptions_match_contract(),

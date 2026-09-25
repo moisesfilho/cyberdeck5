@@ -197,8 +197,11 @@ void test_ui_commands_dispatch() {
             "screen on",
             "screen off",
             "screen timeout 0",
-            "screen timeout 1440",
-        };
+             "screen timeout 1440",
+             "battery protection on",
+             "battery protection off",
+             "battery protection status",
+         };
         for (std::size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
             const std::string rid = "screen-" + std::to_string(i);
             const std::string json = "{\"rid\":\"" + rid +

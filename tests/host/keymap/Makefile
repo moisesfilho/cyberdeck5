@@ -16,7 +16,8 @@
 #   make verify -> compara shim/lvgl.h com o LVGL gerenciado (drift check)
 #   make clean
 #   make test_battery_contract test_battery_reader_contract test_battery_ui_contract
-#                 -> contratos TDD RED; a producao correspondente ainda e ausente
+#                 -> contratos host para tensao real/estados neutros/UI e
+#                    rastreabilidade; devem falhar ate a correcao do coder
 
 CXX      ?= g++
 PYTHON   ?= python3
@@ -24,6 +25,7 @@ CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O2
 
 KEYMAP_SRC       := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp
 SHELL_UTILS_SRC  := ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp
+SHELL_HELP_HDR   := ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_help.h
 HISTORY_SRC      := ../../../components/cyberdeck/src/features/shell/cyberdeck_history.cpp
 KEYBOARD_EVENT_SRC := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp
 EVENT_LOG_RECENT_SRC := ../../../components/cyberdeck/src/platform/logging/event_log_recent.cpp
@@ -59,6 +61,14 @@ BATTERY_PURE_HDR := ../../../components/cyberdeck/include/platform/sensors/batte
 BATTERY_CONTRACT_HDR := contracts/cyberdeck_battery.h
 BATTERY_READER_SRC := ../../../components/cyberdeck/src/platform/sensors/ina226_reader.cpp
 BATTERY_READER_HDR := ../../../components/cyberdeck/include/platform/sensors/ina226_reader.h
+BATTERY_ADAPTER_SRC := ../../../components/cyberdeck/src/platform/sensors/battery_protection.cpp
+BATTERY_ADAPTER_HDR := ../../../components/cyberdeck/include/platform/sensors/battery_protection.h
+BATTERY_PROTECTION_SRC := ../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp
+BATTERY_PROTECTION_HDR := ../../../components/cyberdeck/include/platform/sensors/cyberdeck_battery_protection.h
+BATTERY_PROTECTION_CONTRACT_HDR := contracts/cyberdeck_battery_protection.h
+BATTERY_PROTECTION_BIN := test_battery_protection_bin
+BATTERY_PROTECTION_CONTRACT := test_battery_protection_contract.py
+BATTERY_BIN       := test_battery_contract
 SERIAL_BRIDGE_SRC := ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp
 SERIAL_BRIDGE_HDR := ../../../components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
 INCLUDES        := -Ishim -I../../../components/cyberdeck/include
@@ -74,9 +84,9 @@ CAT_MULTILINE_SRC := test_cat_multiline.cpp
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch
+BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN)
 
-.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_screen_protection test_screen_protection_contract
+.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_screen_protection test_screen_protection_contract
 
 all: test
 
@@ -316,32 +326,53 @@ test_cat_multiline: $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 # RED: the menu and local shell must render one shared help catalog.  The
 # target links both real production implementations; no production edit is
 # implied by this test registration.
-test_help_unification: $(HELP_UNIFICATION_TEST) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) shim/lvgl.h
+test_help_unification: $(HELP_UNIFICATION_TEST) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(HELP_UNIFICATION_TEST) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) -o test_help_unification
 
 # RED structural companion: rejects private literal help lists in the two
 # shells and in the non-linkable LVGL UI.  It performs source inspection only.
-help_unification_contract: $(HELP_UNIFICATION_CONTRACT) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../code-map.md
+help_unification_contract: $(HELP_UNIFICATION_CONTRACT) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) $(LOCAL_SHELL_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../code-map.md Makefile
 	$(PYTHON) $(HELP_UNIFICATION_CONTRACT)
 
 test_orientation: test_orientation.cpp $(ORIENTATION_SRC) ../../../components/cyberdeck/include/platform/sensors/orientation.h shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_orientation.cpp $(ORIENTATION_SRC) -o test_orientation
 
-# TDD RED: contrato puro de bateria. A implementacao de producao e a fonte
-# esperada do contrato; o header de testes fixa a ABI sem ESP-IDF/hardware.
+# TDD RED: contrato puro de bateria. A API de teste exige tensao real
+# (bus_voltage_mv, 6000..8230 mV), estados charging/discharging/neutral,
+# zero/indeterminado como neutral e ausencia somente por presenca explicita;
+# a producao correspondente ainda precisa da correcao do coder.
 test_battery_contract: test_battery_contract.cpp $(BATTERY_PURE_SRC) $(BATTERY_PURE_HDR) $(BATTERY_CONTRACT_HDR)
-	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_battery_contract.cpp $(BATTERY_PURE_SRC) -o test_battery_contract
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_battery_contract.cpp $(BATTERY_PURE_SRC) -o $(BATTERY_BIN)
+	@./$(BATTERY_BIN)
 
-# TDD RED: contrato estrutural do reader INA226, sem I2C/simulador/hardware.
-test_battery_reader_contract: test_battery_reader_contract.py $(BATTERY_READER_SRC) $(BATTERY_READER_HDR) $(BATTERY_PURE_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md
+# TDD RED: contrato estrutural do reader INA226, sem I2C/simulador/hardware;
+# tambem verifica o estado neutral, boot nao fatal, ausencia explicita,
+# integracao 0x41 e a rastreabilidade REQ-BAT-006.
+test_battery_reader_contract: test_battery_reader_contract.py $(BATTERY_READER_SRC) $(BATTERY_READER_HDR) $(BATTERY_ADAPTER_SRC) $(BATTERY_ADAPTER_HDR) $(BATTERY_PURE_SRC) $(BATTERY_PURE_HDR) $(BATTERY_CONTRACT_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md Makefile
 	$(PYTHON) test_battery_reader_contract.py
 
-# TDD RED: contrato estrutural do header/UI, incluindo boot nao fatal e a
-# regressão de espaçamento (largura Wi-Fi compacta, flex grow zero, alinhamento
-# final e gaps pequenos). A implementação de produção ainda deve satisfazer
-# estas asserções; o alvo deve permanecer vermelho até a correção do coder.
-test_battery_ui_contract: test_battery_ui_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_ICON_SRC) $(WIFI_ICON_HDR) ../../../main/app_main.cpp ../../../code-map.md
+# TDD RED: contrato estrutural do header/UI, incluindo neutral sem glyph/texto,
+# boot nao fatal, ausencia explicita e a regressão de espaçamento (largura Wi-Fi
+# compacta, flex grow zero, alinhamento final e gaps pequenos). A UI deve
+# mostrar percentual numerico e um unico icone semantico nos estados ativos,
+# sem qualquer icone de nivel.
+test_battery_ui_contract: test_battery_ui_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_ICON_SRC) $(WIFI_ICON_HDR) ../../../components/cyberdeck/include/platform/sensors/battery_status.h $(BATTERY_CONTRACT_HDR) ../../../main/app_main.cpp ../../../code-map.md ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md Makefile
 	$(PYTHON) test_battery_ui_contract.py
+
+# Pure host contract for battery state/protection policy.  It links the real
+# production policy and keeps the public target separate from its executable
+# name, avoiding a circular make dependency while remaining hardware-free.
+test_battery_protection: $(BATTERY_PROTECTION_BIN)
+	@./$(BATTERY_PROTECTION_BIN)
+
+$(BATTERY_PROTECTION_BIN): test_battery_protection.cpp $(BATTERY_PROTECTION_CONTRACT_HDR) $(BATTERY_PROTECTION_SRC) $(BATTERY_PROTECTION_HDR)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_battery_protection.cpp $(BATTERY_PROTECTION_SRC) -o $@
+
+# Structural companion for expander-B, NVS, UI timer/snapshot, shell and
+# ui.type.  It reads production source and fails closed when the feature is
+# absent; it never opens hardware or a simulator.
+test_battery_protection_contract: $(BATTERY_PROTECTION_CONTRACT) $(BATTERY_PROTECTION_CONTRACT_HDR) $(BATTERY_ADAPTER_SRC) $(BATTERY_ADAPTER_HDR) ../../../components/cyberdeck/CMakeLists.txt ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp ../../../tests/host/keymap/test_serial_ndjson_dispatch.cpp ../../../code-map.md ../../../.gitignore ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md Makefile
+	$(PYTHON) $(BATTERY_PROTECTION_CONTRACT)
 
 # Structural host-side contract for boot and initial IMU orientation. The
 # sources are inspected directly rather than duplicated or linked against
@@ -528,12 +559,17 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_fs_write_dispatch
 	@$(MAKE) --no-print-directory test_fs_write_cli
 	@$(MAKE) --no-print-directory test_fs_write_contract
-	@echo "==> Executando contrato estrutural do header/bateria e regressão de espaçamento"
+	@echo "==> Executando contratos de bateria (tensao/estados/UI)"
+	@./$(BATTERY_BIN)
+	@$(MAKE) --no-print-directory test_battery_reader_contract
 	@$(MAKE) --no-print-directory test_battery_ui_contract
+	@echo "==> Executando contrato TDD de estados/protecao de bateria"
+	@$(MAKE) --no-print-directory test_battery_protection
+	@$(MAKE) --no-print-directory test_battery_protection_contract
 	# Keep the known IMU contract last so unrelated task tests run first;
 	# it remains a separate, non-masked gate.
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
 	@$(MAKE) --no-print-directory imu_sensor_contract
 
 clean:
-	rm -f $(BINS)
+	rm -f $(BINS) test_battery_protection

@@ -5,7 +5,7 @@
 #include "nvs_flash.h"
 #include "bsp/esp-bsp.h"
 #include "platform/sensors/imu_reader.h"
-#include "platform/sensors/ina226_reader.h"
+#include "platform/sensors/battery_protection.h"
 #include "platform/display/screen_off.h"
 #include "platform/input/tab5_keyboard.h"
 #include "features/wifi/wifi_mgr.h"
@@ -43,9 +43,9 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(screen_off_init(display, 20));
     bsp_display_unlock();
 
-    const esp_err_t battery_err = ina226_reader_start();
+    const esp_err_t battery_err = battery_protection_start();
     if (battery_err != ESP_OK) {
-        ESP_LOGW(TAG, "Leitor INA226 indisponivel: %s", esp_err_to_name(battery_err));
+        ESP_LOGW(TAG, "Battery protection unavailable: %s", esp_err_to_name(battery_err));
     }
 
     tab5_keyboard_set_callback(cyberdeck_keyboard_input);

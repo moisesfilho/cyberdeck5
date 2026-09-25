@@ -16,12 +16,13 @@ struct entry {
     std::string_view description;
 };
 
-inline constexpr std::array<entry, 14> kCatalog = {{
+inline constexpr std::array<entry, 15> kCatalog = {{
     {"help", "help", "show this help"},
     {"wifi", "wifi [search|saved|audit]", "show status, manage Wi-Fi, or audit"},
     {"log", "log", "show recent events"},
     {"clear", "clear", "clear the terminal"},
     {"screen", "screen [on|off|timeout <0-1440>]", "control screen protection"},
+    {"battery", "battery [protection on|off|status]", "show or control battery protection"},
     {"ssh", "ssh [user@]host[:port]", "start an SSH session"},
     {"pwd", "pwd", "print working directory"},
     {"cd", "cd [path]", "change working directory"},

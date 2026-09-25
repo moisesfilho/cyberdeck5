@@ -17,6 +17,8 @@ LOCAL_SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_local_sh
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 CODE_MAP = ROOT / "code-map.md"
+SHELL_HELP = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_help.h"
+HELP_FIXTURE = ROOT / "tests/host/keymap/contracts/cyberdeck_help.h"
 
 # These descriptions are the observable entries of the approved catalog.  A
 # description is deliberately used instead of a raw command token: command
@@ -36,11 +38,12 @@ CATALOG_DESCRIPTIONS = (
     "show recent events",
     "clear the terminal",
     "control screen protection",
+    "show or control battery protection",
     "start an SSH session",
 )
 
 COMMAND_NAMES = (
-    "help", "wifi", "log", "clear", "screen", "ssh",
+    "help", "wifi", "log", "clear", "screen", "battery", "ssh",
     "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm", "rmdir",
 )
 
@@ -71,12 +74,28 @@ def main() -> int:
         ui_source = strip_comments(UI.read_text(encoding="utf-8"))
         makefile = MAKEFILE.read_text(encoding="utf-8")
         code_map = CODE_MAP.read_text(encoding="utf-8")
+        shell_help = strip_comments(SHELL_HELP.read_text(encoding="utf-8"))
+        help_fixture = strip_comments(HELP_FIXTURE.read_text(encoding="utf-8"))
     except (OSError, UnicodeError) as error:
         print(f"FAIL: cannot read help unification contract inputs: {error}")
         return 2
 
-    # The canonical catalog is owned by cyberdeck_shell_utils.cpp.  Each entry
-    # is present exactly once there, and none of the phrases is repeated as a
+    # The ordered production catalog and the host fixture must carry the same
+    # approved battery row.  This keeps a stale executable/fixture from being
+    # mistaken for a passing help contract after a rebuild.
+    require("kCatalog" in shell_help and
+            re.search(r"std::array\s*<\s*entry\s*,\s*15\s*>\s+kCatalog", shell_help) is not None,
+            "production help header must retain the 15-entry ordered catalog")
+    require(re.search(
+        r'\{"battery"\s*,\s*"battery \[protection on\|off\|status\]"\s*,\s*'
+        r'"show or control battery protection"\}', shell_help) is not None,
+        "production help catalog must contain the approved battery protection row")
+    require("battery [protection on|off|status] - show or control battery protection" in help_fixture,
+            "host help fixture must contain the approved battery protection row")
+
+    # The canonical catalog is owned by cyberdeck_shell_help.h and exposed
+    # through cyberdeck_shell_utils.cpp.  Each description is present exactly
+    # once in the adapter contract, and none of the phrases is repeated as a
     # private help list in the local shell or UI.
     for description in CATALOG_DESCRIPTIONS:
         require(
@@ -142,6 +161,8 @@ def main() -> int:
             "Makefile must register test_help_unification")
     require("help_unification_contract" in makefile,
             "Makefile must register help_unification_contract")
+    require("SHELL_HELP_HDR" in makefile and "cyberdeck_shell_help.h" in makefile,
+            "Makefile help targets must depend on the production catalog header")
     require("test_help_unification.cpp" in code_map,
             "code-map.md must map test_help_unification.cpp")
     require("help_unification_contract.py" in code_map,

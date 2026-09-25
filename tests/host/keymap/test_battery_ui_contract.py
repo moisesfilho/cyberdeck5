@@ -4,8 +4,16 @@
 The UI is ESP-IDF/LVGL code and cannot be linked on the host.  This test checks
 the actual UI, Wi-Fi icon, and boot sources, preserving the approved header
 contract: 30/40/30 direct grid, Wi-Fi before battery, compact non-growing
-children, right-aligned content, LVGL symbols, percentage label, failure hiding,
-resize/state callbacks, and non-fatal boot composition.
+children, right-aligned content, numeric percentage plus exactly one semantic
+state icon, no battery-level glyph, failure hiding, resize/state callbacks,
+non-fatal boot composition, and a snapshot-only UI timer with no direct
+I2C/NVS/expander access.
+
+Traceability:
+  REQ-BAT-002 -> absent/unavailable data must not become a fabricated zero.
+  REQ-BAT-003 -> numeric percentage + one semantic state icon, no level icon.
+  REQ-BAT-004 -> boot remains non-fatal and the UI has no raw charger I/O.
+  REQ-BAT-006 -> docs and code-map retain the battery test traceability.
 """
 import re
 from pathlib import Path
@@ -17,6 +25,13 @@ WIFI_ICON_HDR = ROOT / "components/cyberdeck/include/platform/display/cyberdeck_
 APP = ROOT / "main/app_main.cpp"
 MAKEFILE_PATH = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
+
+TRACEABILITY = (
+    "REQ-BAT-002 -> test_battery_ui_contract.py",
+    "REQ-BAT-003 -> test_battery_ui_contract.py",
+    "REQ-BAT-004 -> test_battery_ui_contract.py",
+    "REQ-BAT-006 -> test_battery_ui_contract.py + code-map.md",
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -127,6 +142,42 @@ def calls_for_object(source: str, function: str, object_name: str):
 def is_zero_literal(expression: str) -> bool:
     compact = re.sub(r"\s+", "", expression)
     return re.fullmatch(r"[+-]?0+(?:[uUlL]+)?", compact) is not None
+
+
+def state_window(source: str, state: str) -> str:
+    """Return the balanced source block associated with one state branch."""
+    marker = f"charge_class::{state}"
+    start = source.find(marker)
+    require(start >= 0, f"battery UI must branch on {state}")
+
+    # The current seam uses if/else-if blocks.  Prefer the balanced block after
+    # the condition so a following default branch cannot be counted as part of
+    # the selected state's icon.
+    opening = source.find("{", start)
+    if opening >= 0 and opening - start <= 800:
+        depth = 0
+        for index in range(opening, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[opening:index + 1]
+
+    # Also support a switch/case or a compact one-line branch.
+    following = [
+        position for position in
+         (source.find(f"charge_class::{candidate}", start + len(marker))
+          for candidate in ("charging", "discharging", "neutral", "absent", "unavailable"))
+
+        if position >= 0
+    ]
+    end = min(following) if following else len(source)
+    return source[start:end]
+
+
+def symbol_tokens(source: str) -> list[str]:
+    return re.findall(r"\bLV_SYMBOL_[A-Z0-9_]+\b", source)
 
 
 def small_style_value(arguments: list[str], description: str, maximum: int = 4) -> None:
@@ -287,53 +338,136 @@ def main() -> int:
             "cyberdeck_wifi_icon_update_layout" in wifi_icon,
             "Wi-Fi resize callback must invoke update_layout")
 
-    # The visual contract is LVGL symbols, not a custom ASCII battery glyph.
-    require(re.search(r"LV_SYMBOL_(?:BATTERY|USB|WIFI)", ui),
-            "battery/header must use LVGL symbols")
-    require(re.search(r"LV_SYMBOL_BATTERY", ui),
-            "header must use an LVGL battery symbol")
+    # REQ-BAT-003: the visual contract is one semantic state icon plus the
+    # numeric percentage.  Battery-level glyphs and multi-glyph charge text
+    # are explicitly forbidden.
+    refresh = function_body(ui, "refresh_battery_status")
+    require("battery_level_symbol" not in ui,
+            "battery UI must not select a glyph from percentage level")
+    require(re.search(r"\bLV_SYMBOL_BATTERY(?:_[A-Z0-9_]+)?\b", ui) is None,
+            "battery UI must not render an LV_SYMBOL_BATTERY level icon")
+
+    battery_label_updates = re.findall(
+        r"lv_label_set_text(?:_fmt)?\s*\(\s*(s_battery_[A-Za-z0-9_]+)",
+        refresh)
+    require(len(battery_label_updates) >= 2,
+            "battery refresh must update one icon label and one percentage label")
+    icon_updates = [handle for handle in battery_label_updates
+                    if "percentage" not in handle.lower()]
+    percentage_updates = [handle for handle in battery_label_updates
+                          if "percentage" in handle.lower()]
+    require(len(icon_updates) == 1,
+            "battery refresh must update exactly one semantic icon label")
+    require(percentage_updates,
+            "battery refresh must update a dedicated numeric percentage label")
+
+    for state in ("charging", "discharging"):
+        branch = state_window(refresh + "\n", state)
+        icons = symbol_tokens(branch)
+        require(len(icons) == 1,
+                f"{state} state must select exactly one semantic LVGL icon")
+        require(all(not icon.startswith("LV_SYMBOL_BATTERY") for icon in icons),
+                f"{state} state must not select a battery-level icon")
+    require(re.search(r"charge_class::discharging", refresh) is not None,
+            "battery UI must distinguish discharging from charging")
+    require(re.search(r"charge_class::charging", refresh) is not None,
+            "battery UI must retain the charging state branch")
+    require(re.search(r"charge_class::neutral", refresh) is not None,
+            "battery UI must retain an explicit neutral state branch")
+    neutral_branch = state_window(refresh + "\n", "neutral")
+    neutral_icons = symbol_tokens(neutral_branch)
+    require(len(neutral_icons) == 0,
+            "neutral state must not render a battery/state glyph")
+    require(re.search(r"LV_OBJ_FLAG_HIDDEN|lv_obj_add_flag|lv_obj_set_hidden",
+                      neutral_branch) is None,
+            "neutral state must keep the battery group visible")
     require(re.search(r"LV_SYMBOL_WIFI", ui) or "cyberdeck_wifi_icon" in ui,
             "header must retain the LVGL Wi-Fi indicator")
+    battery_label_creates = re.findall(
+        r"lv_label_create\s*\(\s*s_battery_status\s*\)", init)
+    require(len(battery_label_creates) == 2,
+            "battery group must contain only one icon label and one percentage label")
 
-    # A percentage label is required, with a real render/update path.
-    require(re.search(r"battery.*percent|percent.*battery|percentage", ui, re.IGNORECASE),
+    # A percentage label is required, with a real numeric render/update path;
+    # no state word is rendered as a third textual element.
+    require(re.search(r"battery.*percent|percent.*battery|percentage", ui,
+                      re.IGNORECASE),
             "header battery path must include percentage state")
-    require(re.search(r"lv_label_set_text(?:_fmt)?\s*\(", ui),
-            "header must render battery text with an LVGL label")
-    require(re.search(r"snprintf\s*\([^;]*%|%[0-9]*d", ui),
-            "header must format the battery percentage")
+    require(re.search(r"snprintf\s*\([^;]*%|%[0-9]*d", refresh),
+            "header must format a numeric battery percentage")
+    for state_word in ("charging", "discharging", "neutral", "unavailable", "absent"):
+        require(f'"{state_word}"' not in refresh and
+                f"'{state_word}'" not in refresh,
+                f"battery UI must not render the textual state {state_word!r}")
 
-    # A failed read must hide the battery indicator, not display a stale or
-    # fabricated zero.  A subsequent valid snapshot may reveal it again.
+    # A failed read/absent battery must hide the group, not display stale or
+    # fabricated zero data.  A subsequent valid snapshot may reveal it again.
     require(re.search(r"(?:battery|charge)[^;]*(?:hidden|hide)|lv_obj_(?:add_flag|set_hidden)[^;]*battery",
                       ui, re.IGNORECASE | re.DOTALL),
             "battery failure path must hide the battery indicator")
-    require(re.search(r"(?:battery|charge)[^;]*(?:available|valid|read|error|fail)", ui, re.IGNORECASE),
-            "UI must branch on battery availability/validity")
+    require(re.search(r"value\.available|charge_class::(?:absent|unavailable)",
+                      refresh),
+            "UI must branch on battery availability/validity/state")
     require(re.search(r"lv_obj_add_flag\s*\([^;]*LV_OBJ_FLAG_HIDDEN|lv_obj_set_hidden\s*\([^;]*true",
                       ui, re.DOTALL),
             "failure must use an explicit LVGL hidden state")
 
-    # The reader is composed separately and failure is non-fatal: app_main must
-    # not wrap startup in ESP_ERROR_CHECK, and must continue to the rest of boot.
-    require("ina226_reader" in ui or "battery_reader" in ui,
-            "UI must consume the reader snapshot")
-    require("ina226_reader" in app or "battery_reader" in app,
-            "app_main must compose reader startup")
-    start = next((m for m in re.finditer(r"(?:ina226|battery)_reader_(?:start|init)\s*\(", app)), None)
-    require(start is not None, "app_main must contain battery reader startup")
+    # The reader is composed separately and remains sensor-only.  app_main
+    # starts the protection adapter, while the UI consumes only the adapter's
+    # synchronized snapshot; a direct reader dependency must not be required
+    # (or reintroduced) in the LVGL layer.
+    require(re.search(r"\bbattery_protection_get_snapshot\s*\(", ui) is not None,
+            "UI must consume the battery-protection snapshot")
+    require(re.search(r"\bbattery_protection_started\s*\(", ui) is not None,
+            "UI must use the adapter's started state")
+    require(re.search(r"\bina226_reader_(?:get_snapshot|get_raw_sample|started|start|init)\s*\(", ui) is None,
+            "UI must not call the INA226 reader directly")
+    app_main = function_body(app, "app_main")
+    start = re.search(r"\bbattery_protection_(?:start|init)\s*\(", app_main)
+    require(start is not None, "app_main must contain battery protection startup")
     if start is not None:
-        tail = app[start.start():]
-        require(not re.search(r"ESP_ERROR_CHECK\s*\(\s*(?:ina226|battery)_reader_", tail),
-                "battery reader failure must not abort app_main")
+        tail = app_main[start.end():]
+        require(not re.search(r"ESP_ERROR_CHECK\s*\(\s*battery_protection_", tail),
+                "battery protection startup must not abort app_main")
         require(re.search(r"ESP_LOG[EWI]\s*\(", tail),
-                "battery reader failure must be logged")
+                "battery protection startup failure must be logged")
+        require(re.search(r"(?:tab5_keyboard|screenshot|wifi_mgr|bridge_start)", tail),
+                "boot must continue after a non-fatal protection startup failure")
+        require(not re.search(r"\bina226_reader_(?:start|init)\s*\(", app_main),
+                "app_main must start the reader through the protection adapter")
+
+    # REQ-BAT-004/REQ-BAT-010: the LVGL layer consumes a copied battery
+    # protection snapshot.  It may route the shell commands to the adapter,
+    # but it must not own raw INA226 I2C, expander GPIO, or NVS persistence.
+    # app_main is allowed to initialize the system NVS before composing the
+    # adapter; the battery startup path itself must remain free of NVS calls.
+    for pattern in (r"\bi2c_master_", r"\bbsp_i2c_", r"\besp_io_expander",
+                    r"\bbsp_io_expander"):
+        require(re.search(pattern, "\n".join((ui, app_main)), re.IGNORECASE) is None,
+                f"battery UI/boot flow must not perform {pattern} directly")
+    require(re.search(r"\bnvs_", ui, re.IGNORECASE) is None,
+            "battery UI must not perform NVS directly")
+    require(start is not None and re.search(r"\bnvs_", tail, re.IGNORECASE) is None,
+            "battery protection startup path must not perform NVS directly")
+    require(re.search(r"\bbattery_protection_get_snapshot\s*\(", ui) is not None,
+            "UI must consume the synchronized battery protection snapshot")
+    require("lv_timer_create" in ui and re.search(
+        r"lv_timer_create\s*\([^;]{0,500}1000", ui, re.S) is not None,
+        "UI must refresh the battery snapshot from a one-second LVGL timer")
 
     require("test_battery_ui_contract" in makefile,
             "Makefile must register the battery UI structural target")
     require("battery" in codemap.lower() and "ina226" in codemap.lower(),
             "code-map.md must document the battery UI/reader seam")
+    for requirement in ("REQ-BAT-001", "REQ-BAT-002", "REQ-BAT-003",
+                        "REQ-BAT-004", "REQ-BAT-005", "REQ-BAT-006"):
+        require(requirement in codemap,
+                f"code-map.md must document {requirement} traceability")
+    require("neutral" in codemap.lower(),
+            "code-map.md must document the neutral battery state")
 
+    for line in TRACEABILITY:
+        print(f"TRACE {line}")
     print("PASS: battery UI/header structural contract")
     return 0
 

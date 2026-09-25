@@ -36,12 +36,14 @@ i2c_master_dev_handle_t s_device = nullptr;
 std::atomic<bool> s_started{false};
 std::mutex s_snapshot_mutex;
 cyberdeck_battery::snapshot s_snapshot{};
+cyberdeck_battery::sample s_raw_sample{};
 
 void publish_sample(const cyberdeck_battery::sample &value)
 {
     const cyberdeck_battery::snapshot next = cyberdeck_battery::classify_sample(value);
     std::lock_guard<std::mutex> lock(s_snapshot_mutex);
     s_snapshot = next;
+    s_raw_sample = value;
 }
 
 esp_err_t read_register(const uint8_t reg, uint8_t *out, const size_t length)
@@ -93,6 +95,8 @@ bool read_sample(cyberdeck_battery::sample *out)
         return false;
     }
 
+    /* INA226 bus-voltage LSB is 1.25 mV (5/4); register 0x02 therefore
+     * provides the measured mV value used by the pure battery seam. */
     const std::int32_t bus_voltage_mv = static_cast<std::int32_t>(bus_voltage_raw * 5U / 4U);
     const std::int32_t signed_current_raw =
         current_raw_unsigned >= 0x8000U
@@ -106,9 +110,8 @@ bool read_sample(cyberdeck_battery::sample *out)
         current_ma = scaled_current < 0 ? -1 : 1;
     }
 
-    /* The host contract retains its capacity_mah field name.  The INA226
-     * supplies the approved 6000..8400 bus-voltage window in mV on that
-     * numeric input, so the same saturating percentage rule is used. */
+    /* The INA226 bus-voltage register is the source of the percentage input;
+     * the pure battery seam owns the approved 6000..8230 mV window. */
     *out = {true, true, bus_voltage_mv, current_ma};
     return true;
 }
@@ -118,8 +121,14 @@ void ina226_reader_task(void *arg)
     (void)arg;
     while (true) {
         cyberdeck_battery::sample value{};
-        publish_sample(read_sample(&value) ? value
-                                           : cyberdeck_battery::sample{false, false, 0, 0});
+        if (read_sample(&value)) {
+            publish_sample(value);
+        } else {
+            /* The sensor was present during startup, but this sample could not
+             * be read.  Keep presence separate from read validity so the UI
+             * can report unavailable rather than fabricating a percentage. */
+            publish_sample(cyberdeck_battery::sample{true, false, 0, 0});
+        }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     vTaskDelete(nullptr);
@@ -221,6 +230,19 @@ extern "C" bool ina226_reader_get_snapshot(cyberdeck_battery::snapshot *out_snap
     {
         std::lock_guard<std::mutex> lock(s_snapshot_mutex);
         *out_snapshot = s_snapshot;
+    }
+    return ina226_reader_started();
+}
+
+extern "C" bool ina226_reader_get_raw_sample(cyberdeck_battery::sample *out_sample)
+{
+    if (out_sample == nullptr) {
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(s_snapshot_mutex);
+        *out_sample = s_raw_sample;
     }
     return ina226_reader_started();
 }

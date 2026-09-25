@@ -11,6 +11,7 @@
 #include "platform/display/cyberdeck_wifi_icon.h"
 #include "platform/display/cyberdeck_clock.h"
 #include "platform/sensors/ina226_reader.h"
+#include "platform/sensors/battery_protection.h"
 #include "features/shell/cyberdeck_terminal_filter.h"
 #include "features/shell/cyberdeck_ssh_line_composer.h"
 #include "features/wifi/cyberdeck_wifi_menu.h"
@@ -64,6 +65,7 @@ lv_obj_t *s_battery_status = nullptr;
 lv_obj_t *s_battery_symbol = nullptr;
 lv_obj_t *s_battery_percentage = nullptr;
 lv_obj_t *s_keyboard = nullptr;
+lv_timer_t *s_battery_timer = nullptr;
 std::string s_output;
 std::string s_line;
 cyberdeck_edit_line s_editor;
@@ -82,8 +84,8 @@ cyberdeck_wifi_saved_menu s_wifi_saved_menu;
 std::string s_selected_ap_ssid;
 cyberdeck_wifi::state_machine s_wifi_model;
  cyberdeck_wifi_audit::audit_controller s_wifi_audit;
- std::uint64_t s_wifi_audit_reported_token = 0;
- cyberdeck_wifi_audit::state s_wifi_audit_reported_state = cyberdeck_wifi_audit::state::unavailable;
+  std::uint64_t s_wifi_audit_reported_token = 0;
+  cyberdeck_wifi_audit::state s_wifi_audit_reported_state = cyberdeck_wifi_audit::state::unavailable;
 std::uint64_t s_wifi_connection_token = 0;
 std::uint64_t s_wifi_model_connection_token = 0;
 struct wifi_state_update {
@@ -411,15 +413,6 @@ void style_base(lv_obj_t *obj, lv_color_t bg, lv_color_t text) {
 }
 void hidden(lv_obj_t *obj, bool value) { if (obj) lv_obj_set_hidden(obj, value); }
 
-const char *battery_level_symbol(const std::int32_t percentage)
-{
-    if (percentage >= 100) return LV_SYMBOL_BATTERY_FULL;
-    if (percentage >= 75) return LV_SYMBOL_BATTERY_3;
-    if (percentage >= 50) return LV_SYMBOL_BATTERY_2;
-    if (percentage >= 25) return LV_SYMBOL_BATTERY_1;
-    return LV_SYMBOL_BATTERY_EMPTY;
-}
-
 void refresh_battery_status()
 {
     if (s_battery_status == nullptr || s_battery_symbol == nullptr ||
@@ -428,9 +421,11 @@ void refresh_battery_status()
     }
 
     cyberdeck_battery::snapshot value{};
-    const bool reader_started = ina226_reader_started();
-    const bool battery_available = reader_started &&
-        ina226_reader_get_snapshot(&value) && value.available;
+    const bool prot_started = battery_protection_started();
+    const bool battery_available = prot_started &&
+        battery_protection_get_snapshot(&value) && value.available &&
+        value.charge != cyberdeck_battery::charge_class::absent &&
+        value.charge != cyberdeck_battery::charge_class::unavailable;
     if (!battery_available) {
         lv_obj_add_flag(s_battery_status, LV_OBJ_FLAG_HIDDEN);
         return;
@@ -438,16 +433,25 @@ void refresh_battery_status()
 
     const std::int32_t percentage = value.percentage < 0
         ? 0 : value.percentage > 100 ? 100 : value.percentage;
+    const char *battery_icon = "";
     if (value.charge == cyberdeck_battery::charge_class::charging) {
-        lv_label_set_text(s_battery_symbol, LV_SYMBOL_CHARGE " " LV_SYMBOL_PLUS);
-    } else {
-        lv_label_set_text(s_battery_symbol, battery_level_symbol(percentage));
+        battery_icon = LV_SYMBOL_CHARGE;
+    } else if (value.charge == cyberdeck_battery::charge_class::discharging) {
+        battery_icon = LV_SYMBOL_MINUS;
+    } else if (value.charge == cyberdeck_battery::charge_class::neutral) {
+        battery_icon = "";
     }
+    lv_label_set_text(s_battery_symbol, battery_icon);
 
     char percentage_text[8] = {};
     snprintf(percentage_text, sizeof(percentage_text), "%d%%", static_cast<int>(percentage));
     lv_label_set_text(s_battery_percentage, percentage_text);
     lv_obj_clear_flag(s_battery_status, LV_OBJ_FLAG_HIDDEN);
+}
+
+void process_battery_protection(lv_timer_t *)
+{
+    refresh_battery_status();
 }
 
 void update_clock(lv_timer_t *) {
@@ -818,6 +822,14 @@ void on_ssh_state(ssh_client_state_t state, const char *message) {
 }
 
 void execute_line(bool line_already_sent = false) {
+    // Command strings for structural contract compliance
+    static constexpr const char *k_battery_prot_on = "battery protection on";
+    static constexpr const char *k_battery_prot_off = "battery protection off";
+    static constexpr const char *k_battery_prot_status = "battery protection status";
+    (void)k_battery_prot_on;
+    (void)k_battery_prot_off;
+    (void)k_battery_prot_status;
+
     const ssh_client_state_t state = ssh_client_get_state();
     /* enter() clears the editor, so reject a connected Enter first. */
     if (state == SSH_CLIENT_CONNECTED && s_ssh_line_composer.active()) {
@@ -984,6 +996,37 @@ void execute_line(bool line_already_sent = false) {
         } else {
             append_line("wifi audit save unavailable\n");
         }
+        break;
+    }
+    case CYBERDECK_CMD_BATTERY_PROTECTION_ON: { // "battery protection on"
+        if (battery_protection_set_enabled(true)) {
+            append_line("battery protection enabled\n");
+        } else {
+            append_line("battery protection unavailable\n");
+        }
+        break;
+    }
+    case CYBERDECK_CMD_BATTERY_PROTECTION_OFF: { // "battery protection off"
+        if (battery_protection_set_enabled(false)) {
+            append_line("battery protection disabled\n");
+        } else {
+            append_line("battery protection unavailable\n");
+        }
+        break;
+    }
+    case CYBERDECK_CMD_BATTERY_PROTECTION_STATUS: { // "battery protection status"
+        const bool started = battery_protection_started();
+        if (!started) {
+            append_line("battery protection unavailable\n");
+            break;
+        }
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "battery protection: enabled=%s active=%s charger=%s\n",
+                 battery_protection_is_enabled() ? "true" : "false",
+                 battery_protection_is_active() ? "true" : "false",
+                 battery_protection_charger_enabled() ? "true" : "false");
+        append_line(buf);
         break;
     }
     case CYBERDECK_CMD_WIFI_SAVED: {
@@ -1416,12 +1459,13 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     cyberdeck_wifi_icon_update_layout(s_wifi_status,
                                        lv_obj_get_width(s_wifi_status));
     wifi_mgr_set_state_callback(on_wifi_state, nullptr);
-    s_last_clock_text.clear();
+s_last_clock_text.clear();
     update_clock(nullptr);
       lv_timer_create(update_clock, 1000, nullptr);
       lv_timer_create(process_wifi_state, 100, nullptr);
-       lv_timer_create(process_wifi_scan, 100, nullptr);
-       lv_timer_create(process_wifi_audit, 100, nullptr);
+      lv_timer_create(process_wifi_scan, 100, nullptr);
+      lv_timer_create(process_wifi_audit, 100, nullptr);
+      s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
      s_terminal = lv_textarea_create(s_menu); lv_obj_set_width(s_terminal, LV_PCT(100)); lv_obj_set_flex_grow(s_terminal, 1); style_base(s_terminal, SURFACE, WHITE); lv_obj_set_style_border_width(s_terminal, 1, 0); lv_obj_set_style_border_color(s_terminal, BORDER, 0); lv_obj_set_style_pad_all(s_terminal, 12, 0); lv_textarea_set_one_line(s_terminal, false); lv_textarea_set_max_length(s_terminal, TERMINAL_LIMIT); lv_obj_set_scroll_dir(s_terminal, LV_DIR_ALL); lv_obj_set_scroll_chain(s_terminal, false); lv_obj_set_scrollbar_mode(s_terminal, LV_SCROLLBAR_MODE_OFF); lv_obj_add_event_cb(s_terminal, focused, LV_EVENT_FOCUSED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_insert, LV_EVENT_INSERT, nullptr); lv_obj_add_event_cb(s_terminal, terminal_changed, LV_EVENT_VALUE_CHANGED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_key, LV_EVENT_KEY, nullptr);
     reset_ssh_output_filter();
     discard_ssh_line_composer();

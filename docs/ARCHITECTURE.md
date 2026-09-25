@@ -33,27 +33,67 @@ dessa reorganização e continua sendo gerenciado pelo ESP-IDF.
 1. Inicializar NVS.
 2. Inicializar display e LVGL pelo BSP do Tab5.
 3. Criar a tela TUI monocromática.
-4. Sob lock do display: iniciar o reader INA226, criar a UI e inicializar a protecao de tela (`screen_off_init` com timeout padrao de 2 minutos e brilho 20%); restaurar o timeout persistido do NVS antes de iniciar o timer.
-5. Iniciar o reader INA226; falha de inicializacao ou ausencia do sensor registra log, publica indisponibilidade e nao aborta o restante do boot.
+4. Sob lock do display: criar a UI e inicializar a protecao de tela (`screen_off_init` com timeout padrao de 2 minutos e brilho 20%); restaurar o timeout persistido do NVS antes de iniciar o timer.
+5. Iniciar o reader INA226; falha de inicializacao registra log e nao aborta o restante do boot; ausencia no probe publica `absent`, enquanto falha de leitura apos o startup publica `unavailable`.
 6. Inicializar Wi-Fi e reconexao a partir do SD; o header recebe estados de Wi-Fi por callback e atualiza somente o icone: claro quando Wi-Fi esta habilitado, conectado e possui IP, e escuro nos demais estados. O SSID nao e renderizado no header.
 7. Aguardar conexao SSH iniciada pelo usuario.
 8. Iniciar a ponte manual USB Serial-JTAG (`bridge_start`): task propria, iniciada por ultimo; falha aqui registra aviso e nao derruba o boot.
 
 ## Bateria
 
-`battery_status.cpp` concentra a lógica pura: satura a entrada `6000..8400`
-em `0..100`, trata corrente positiva e zero como consumo, corrente negativa
-como carga e produz indisponibilidade quando presença ou validade faltam. O
-módulo não depende de ESP-IDF, FreeRTOS, I2C ou LVGL.
+`battery_status.cpp` concentra a lógica pura: recebe a tensão medida do
+barramento em `bus_voltage_mv` e satura a faixa aprovada `6000..8230` mV em
+`0..100`. Corrente positiva é descarregando, negativa é carregando e corrente
+zero ou indeterminada é neutral. No estado neutral, a UI conserva somente o
+percentual numérico, sem glyph ou texto de estado. Ausência é produzida apenas
+por `present == false`; falha de leitura é `unavailable`, distinta de neutral,
+e nenhum percentual é fabricado. O módulo não depende de ESP-IDF, FreeRTOS,
+I2C ou LVGL.
 
 `ina226_reader.cpp` é a integração separada de hardware. Ela usa o barramento
-I2C do BSP no endereço `0x41`, grava configuração `0x4527` e calibração
-`0x0D55`, e executa as leituras de tensão e corrente numa task FreeRTOS a cada
+I2C do BSP no endereço `0x41`, lê o registro de tensão `0x02` (1,25 mV/LSB),
+grava configuração `0x4527` e calibração `0x0D55`, e executa as leituras de
+tensão e corrente numa task FreeRTOS a cada
 1000 ms. Um mutex protege o snapshot copiado consultado pela UI. Falha de
-probe, identificação, leitura ou startup publica o estado indisponível; em
-`app_main` a falha é apenas registrada. O fluxo não persiste estado de carga e
+probe/identificação publica `absent` somente por presença explícita; uma leitura
+que falha depois do startup publica `unavailable`; em `app_main` a falha de
+inicialização é apenas registrada. O fluxo não persiste estado de carga e
 não implementa controle ou proteção de bateria. Nenhuma transação I2C ocorre na
 UI, e o reader não registra timer LVGL.
+
+`cyberdeck_battery_protection.cpp` é a política pura de proteção de carga,
+host-testável e sem dependências de ESP-IDF, FreeRTOS, I2C, NVS, LVGL ou BSP.
+Ela define os estados `battery`, `external`, `charging`, `absent` e `unknown`,
+com threshold de corrente ±15 mA, `external` >= 7900 mV e `absent` >= 8330 mV
+exigindo 5 votos consecutivos. A proteção só atua quando as três condições
+estão satisfeitas: estado `charging`, percentual >= 90 e tensão >= 8200 mV.
+Uma vez ativa, permanece travada pela histerese e libera apenas quando o
+percentual cai para <= 85 (ou quando o estado deixa de ser `charging`). A única
+opção persistida no NVS é `protection_enabled` (default `true`); desabilitá-la
+religa o carregador imediatamente e exige reativação explícita. Falhas de
+leitura não desligam `CHG_EN` nem perdem o último estado seguro.
+
+`battery_protection.cpp` é o adaptador exclusivo de hardware: inicializa o
+Expander B via `bsp_io_expander1_init()` (endereço I2C 0x44), configura
+`CHG_STAT` no pin 6 como entrada active-low com pull-up e `CHG_EN` no pin 7
+como saída push-pull com valor inicial alto (carregador habilitado). Integra o
+reader INA226 (sensor-only), a política pura, a persistência NVS da opção
+`enabled` e expõe snapshots para a UI via timer LVGL de 1 s. Falhas de I2C,
+NVS ou leitura de `CHG_STAT` são registradas em log sem desligar `CHG_EN` nem
+perder o último snapshot seguro.
+
+## Battery Protection
+
+O firmware implementa **battery protection** (proteção de carga) para prolongar a vida útil da bateria. A política pura (`cyberdeck_battery_protection`) define os estados `battery`, `external`, `charging`, `absent` e `unknown`, com threshold de corrente ±15 mA, `external` ≥ 7900 mV e `absent` ≥ 8330 mV exigindo 5 votos consecutivos. A proteção ativa somente quando as três condições são satisfeitas: estado `charging`, percentual ≥ 90 e tensão ≥ 8200 mV. Uma vez ativa, permanece travada pela histerese e libera apenas quando o percentual cai para ≤ 85 (ou quando a carga para). A única opção persistida no NVS é `protection_enabled` (default `true`); desabilitá-la religa o carregador imediatamente e exige reativação explícita. Falhas de leitura não desligam `CHG_EN` nem perdem o último estado seguro.
+
+A rastreabilidade desse fluxo é mantida em `code-map.md`: REQ-BAT-001 e
+REQ-BAT-002 fixam a matemática e os estados, REQ-BAT-003 fixa a apresentação
+neutral, REQ-BAT-004 fixa boot não fatal e ausência de controle de carregador,
+REQ-BAT-005 fixa a integração INA226, REQ-BAT-006 exige que esta documentação
+e o mapa permaneçam alinhados aos contratos host, REQ-BAT-007 fixa o Expander B
+e pinos CHG_STAT/CHG_EN, REQ-BAT-008 fixa os estados e thresholds, REQ-BAT-009
+fixa a histerese 90/85 e fail-safe, e REQ-BAT-010 fixa NVS, timer UI, shell e
+`ui.type`.
 
 ## Screen Protection
 
@@ -180,8 +220,11 @@ errors are rendered in the terminal and written to the event log. Network
 diagnostics remain available through the `wifi` shell command, outside the
 header.
 
-The battery group displays an LVGL level/charge/plus symbol and the clamped
-percentage. It is refreshed from the reader's synchronized snapshot and is
+The battery group displays one semantic state icon (`LV_SYMBOL_MINUS` while
+discharging, `LV_SYMBOL_CHARGE` while charging) and the numeric clamped
+percentage. In the neutral state it keeps the percentage visible while rendering
+no state glyph or state text. It never selects an LVGL battery-level glyph. It
+is refreshed from the reader's synchronized snapshot and is
 hidden as a whole for an absent sensor or failed read. The Wi-Fi layout responds
 to `LV_EVENT_SIZE_CHANGED` within its allocated portion of the right cell, with
 visible pixels approximately 2 px from that subcell's edge.

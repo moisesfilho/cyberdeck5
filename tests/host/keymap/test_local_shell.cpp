@@ -575,7 +575,9 @@ void test_existing_commands_are_passthrough(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
     const char *commands[] = {"wifi", "wifi search", "wifi saved", "log", "clear",
                               "screen on", "screen off", "screen timeout 0",
-                              "screen timeout 1440", "ssh host", "ssh user@host:22"};
+                              "screen timeout 1440", "battery protection on",
+                              "battery protection off", "battery protection status",
+                              "ssh host", "ssh user@host:22"};
     for (const char *command : commands) {
         auto r = shell.execute(command);
         CHECK(r.status == cyberdeck_local_shell_status::passthrough);
