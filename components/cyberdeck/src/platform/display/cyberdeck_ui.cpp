@@ -857,7 +857,7 @@ std::string get_rendered_output() {
     const bool connected = state == SSH_CLIENT_CONNECTED;
     sync_editor();
     const std::string visible_line = connected ? s_editor.visible_line() : (password ? std::string(s_line.size(), '*') : s_line);
-    const std::string marker = connected ? "" : (password ? "Password: " : (s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_CONFIRM ? "" : fit_prompt_marker(s_local_shell.cwd() + "$ ")));
+    const std::string marker = connected ? "" : (password ? "Password: " : (s_ble_model.owns_input() || s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_CONFIRM ? "" : fit_prompt_marker(s_local_shell.cwd() + "$ ")));
     const std::string fitted_line = fit_visible_line(visible_line, marker.size());
     const size_t used = marker.size() + fitted_line.size();
     const size_t available = TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0;
@@ -881,7 +881,7 @@ void render_terminal() {
     const bool connected = state == SSH_CLIENT_CONNECTED;
     sync_editor();
     const std::string visible_line = connected ? s_editor.visible_line() : (password ? std::string(s_line.size(), '*') : s_line);
-    const std::string marker = connected ? "" : (password ? "Password: " : (s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_CONFIRM ? "" : fit_prompt_marker(s_local_shell.cwd() + "$ ")));
+    const std::string marker = connected ? "" : (password ? "Password: " : (s_ble_model.owns_input() || s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_SELECT || s_wifi_ui_state == wifi_ui_state_t::SAVED_CONFIRM ? "" : fit_prompt_marker(s_local_shell.cwd() + "$ ")));
     const std::string fitted_line = fit_visible_line(visible_line, marker.size());
 
     std::string output = get_rendered_output();

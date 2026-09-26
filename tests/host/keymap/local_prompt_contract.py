@@ -44,10 +44,14 @@ def function_body(source: str, signature: str) -> str:
 
 
 def marker_contract(source: str) -> None:
-    render = function_body(source, "std::string get_rendered_output()")
-    marker = re.search(r"const std::string marker\s*=\s*(?P<expr>.*?);", render, re.S)
-    require(marker is not None, "rendered output must define one prompt marker")
-    expression = marker.group("expr") if marker else ""
+    expressions = []
+    for signature in ("std::string get_rendered_output()", "void render_terminal()"):
+        render = function_body(source, signature)
+        marker = re.search(r"const std::string marker\s*=\s*(?P<expr>.*?);", render, re.S)
+        require(marker is not None, f"{signature} must define one prompt marker")
+        expressions.append(marker.group("expr") if marker else "")
+
+    expression = expressions[0]
 
     # cwd is contextual local-shell data, never an SSH or password prompt.
     require("s_local_shell.cwd()" in expression,
@@ -66,6 +70,9 @@ def marker_contract(source: str) -> None:
             "cwd may be read exactly once when composing the local marker")
     require("SEARCH_SELECT" in expression and "SAVED_SELECT" in expression and "SAVED_CONFIRM" in expression,
             "selection and confirmation screens must retain their prompt-free marker behavior")
+    for index, route_expression in enumerate(expressions, start=1):
+        require("s_ble_model.owns_input()" in route_expression,
+                f"render route {index} must suppress the local prompt while BLE owns input")
 
 
 def preservation_contract(source: str) -> None:

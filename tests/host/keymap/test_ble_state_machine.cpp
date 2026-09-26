@@ -273,6 +273,35 @@ void test_input_ownership_is_derived_from_visible_model_state()
     CHECK(timed_out.take_actions().empty());
 }
 
+void test_scan_ownership_covers_active_empty_and_nonempty_paths()
+{
+    state_machine machine;
+    machine.begin_search();
+    const std::uint64_t token = machine.active_scan_token();
+    CHECK(machine.owns_input());
+
+    machine.scan_finished(token, {});
+    CHECK(machine.current_screen() == screen::results);
+    CHECK_EQ(machine.devices().size(), std::size_t(0));
+    CHECK(!machine.owns_input());
+
+    machine.begin_search();
+    const std::uint64_t second_token = machine.active_scan_token();
+    CHECK(machine.owns_input());
+    machine.scan_finished(second_token, {
+        make_device("AA:BB:CC:DD:EE:10", "Keyboard", -42, device_kind::keyboard),
+        make_device("AA:BB:CC:DD:EE:11", "Mouse", -47, device_kind::mouse),
+    });
+    CHECK(machine.current_screen() == screen::results);
+    CHECK_EQ(machine.devices().size(), std::size_t(2));
+    CHECK(machine.owns_input());
+    CHECK_EQ(machine.selected_index(), std::size_t(0));
+
+    machine.press(key::escape);
+    CHECK(machine.current_screen() == screen::idle);
+    CHECK(!machine.owns_input());
+}
+
 void test_stale_scan_tokens_cannot_mutate_the_visible_list()
 {
     state_machine machine;
@@ -991,6 +1020,7 @@ int main()
     test_scan_timeout_fires_exactly_at_the_deadline();
     test_scan_outcomes_map_to_distinct_messages();
     test_input_ownership_is_derived_from_visible_model_state();
+    test_scan_ownership_covers_active_empty_and_nonempty_paths();
     test_stale_scan_tokens_cannot_mutate_the_visible_list();
     test_navigation_and_enter_from_results();
     test_enter_refuses_an_empty_or_non_connectable_selection();

@@ -106,23 +106,28 @@ def marker_harness(source: str) -> str:
     return f'''#include <cassert>
 #include <string>
 struct shell {{ std::string value; std::string cwd() const {{ return value; }} }};
+struct ble_model {{ bool owned = false; bool owns_input() const {{ return owned; }} }};
 enum class wifi_ui_state_t {{ IDLE, SEARCH_SELECT, SAVED_SELECT, SAVED_CONFIRM }};
 shell s_local_shell;
+ble_model s_ble_model;
 wifi_ui_state_t s_wifi_ui_state = wifi_ui_state_t::IDLE;
 std::string fit_prompt_marker(const std::string &marker) {{ return marker; }}
-std::string marker_for(bool connected, bool password, wifi_ui_state_t state,
-                       const std::string &cwd) {{
+std::string marker_for(bool connected, bool password, bool ble_owned,
+                       wifi_ui_state_t state, const std::string &cwd) {{
     s_local_shell.value = cwd;
+    s_ble_model.owned = ble_owned;
     s_wifi_ui_state = state;
     return {expression};
 }}
 int main() {{
-    assert(marker_for(false, false, wifi_ui_state_t::IDLE, "/") == "/$ ");
-    assert(marker_for(true, false, wifi_ui_state_t::IDLE, "/") == "");
-    assert(marker_for(false, true, wifi_ui_state_t::IDLE, "/") == "Password: ");
-    assert(marker_for(false, false, wifi_ui_state_t::SEARCH_SELECT, "/secret") == "");
-    assert(marker_for(false, false, wifi_ui_state_t::SAVED_SELECT, "/secret") == "");
-    assert(marker_for(false, false, wifi_ui_state_t::SAVED_CONFIRM, "/secret") == "");
+    assert(marker_for(false, false, false, wifi_ui_state_t::IDLE, "/") == "/$ ");
+    assert(marker_for(false, false, true, wifi_ui_state_t::IDLE, "/") == "");
+    assert(marker_for(false, false, false, wifi_ui_state_t::IDLE, "/") == "/$ ");
+    assert(marker_for(true, false, true, wifi_ui_state_t::IDLE, "/") == "");
+    assert(marker_for(false, true, true, wifi_ui_state_t::IDLE, "/") == "Password: ");
+    assert(marker_for(false, false, false, wifi_ui_state_t::SEARCH_SELECT, "/secret") == "");
+    assert(marker_for(false, false, false, wifi_ui_state_t::SAVED_SELECT, "/secret") == "");
+    assert(marker_for(false, false, false, wifi_ui_state_t::SAVED_CONFIRM, "/secret") == "");
 }}
 '''
 
