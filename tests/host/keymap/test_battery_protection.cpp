@@ -6,6 +6,7 @@
  */
 #include "cyberdeck_battery_protection.h"
 
+#include <cstring>
 #include <cstdio>
 
 namespace {
@@ -70,6 +71,45 @@ void test_constants_and_active_low_chg_stat()
     CHECK(decode_chg_stat(true, false) == charge_signal::not_charging);
     CHECK(decode_chg_stat(false, false) == charge_signal::unknown);
     CHECK(decode_chg_stat(false, true) == charge_signal::unknown);
+}
+
+void test_status_names_and_exact_formatter_contract()
+{
+    using namespace cyberdeck_battery_protection;
+
+    CHECK(std::strcmp(state_name(battery_state::unknown), "unknown") == 0);
+    CHECK(std::strcmp(state_name(battery_state::battery), "battery") == 0);
+    CHECK(std::strcmp(state_name(battery_state::external), "external") == 0);
+    CHECK(std::strcmp(state_name(battery_state::charging), "charging") == 0);
+    CHECK(std::strcmp(state_name(battery_state::absent), "absent") == 0);
+    CHECK(std::strcmp(charge_signal_name(charge_signal::unknown), "unknown") == 0);
+    CHECK(std::strcmp(charge_signal_name(charge_signal::not_charging), "not_charging") == 0);
+    CHECK(std::strcmp(charge_signal_name(charge_signal::charging), "charging") == 0);
+
+    const snapshot value{
+        battery_state::external, charge_signal::not_charging, true,
+        63, 8123, -47, false, true, false,
+    };
+    constexpr char expected[] =
+        "battery: state=external charge=not_charging available=true "
+        "voltage_mv=8123 current_ma=-47 percentage=63 protection=active "
+        "charger=off\n";
+    char buffer[256] = {};
+    const int result = format_status_line(buffer, sizeof(buffer), value);
+    CHECK_EQ(result, static_cast<int>(std::strlen(expected)));
+    CHECK(std::strcmp(buffer, expected) == 0);
+
+    char truncated[16];
+    std::memset(truncated, 'X', sizeof(truncated));
+    const int required = format_status_line(truncated, sizeof(truncated), value);
+    CHECK_EQ(required, static_cast<int>(std::strlen(expected)));
+    CHECK(truncated[sizeof(truncated) - 1] == '\0');
+    CHECK(std::strncmp(truncated, expected, sizeof(truncated) - 1) == 0);
+
+    char sentinel[] = {'X', 'Y', 'Z'};
+    CHECK_EQ(format_status_line(sentinel, 0, value), 0);
+    CHECK(sentinel[0] == 'X' && sentinel[1] == 'Y' && sentinel[2] == 'Z');
+    CHECK_EQ(format_status_line(nullptr, 0, value), 0);
 }
 
 void test_default_and_persisted_option()
@@ -168,10 +208,32 @@ void test_state_classification_and_vote_boundaries()
     CHECK(absent.state == battery_state::absent);
     CHECK(absent.available);
 
+    /* A disconnected pack leaves the measured bus below the approved battery
+     * window instead of raising it to the external-power range. */
+    state low_voltage_absent;
+    const observation disconnected_sample = sample(true, true, false, 1907, 0, 0);
+    feed(low_voltage_absent, disconnected_sample, 4);
+    CHECK(low_voltage_absent.snapshot().state != battery_state::absent);
+    const auto disconnected = low_voltage_absent.observe(disconnected_sample);
+    CHECK(disconnected.state == battery_state::absent);
+    CHECK(disconnected.available);
+
     state below_absent;
     feed(below_absent,
          sample(true, true, false, 8329, 0, 50), 8);
     CHECK(below_absent.snapshot().state != battery_state::absent);
+
+    /* Below the valid battery window, absence wins over a readable charging
+     * signal after exactly the approved five votes. */
+    state low_voltage;
+    const observation low_charging = sample(true, true, true, 5999, -120, 0);
+    feed(low_voltage, low_charging, 4);
+    CHECK(low_voltage.snapshot().state != battery_state::absent);
+    const auto low_absent = low_voltage.observe(low_charging);
+    CHECK(low_absent.state == battery_state::absent);
+    CHECK(low_absent.charge == charge_signal::charging);
+    CHECK(!low_absent.protection_active);
+    CHECK(low_absent.charger_enabled);
 
     /* A non-matching vote resets the consecutive counter. */
     state reset_votes;
@@ -266,7 +328,7 @@ void test_invalid_inputs_preserve_last_safe_protection_state()
     const auto after_ina_failure =
         value.observe(sample(false, true, true, 0, 0, 0));
     CHECK(after_ina_failure.state == safe.state);
-    CHECK(after_ina_failure.available);
+    CHECK(!after_ina_failure.available);
     CHECK(value.protection_active());
     CHECK(!value.charger_enabled());
     CHECK(value.last_safe_snapshot().state == safe.state);
@@ -276,7 +338,7 @@ void test_invalid_inputs_preserve_last_safe_protection_state()
     CHECK_EQ(value.last_safe_snapshot().bus_voltage_mv, safe.bus_voltage_mv);
 
     const auto after_chg_failure =
-        value.observe(sample(true, false, false, 0, 0, 0));
+        value.observe(sample(true, false, false, 7400, 0, 62));
     /* REQ-BAT-UI-001: the CHG_STAT failure must not be published as a
      * negative charger answer, and it must not fabricate a charging transition
      * that would then drive CHG_EN off.  The snapshot is re-derived from the
@@ -285,8 +347,8 @@ void test_invalid_inputs_preserve_last_safe_protection_state()
     CHECK(after_chg_failure.charge != charge_signal::not_charging);
     CHECK(after_chg_failure.state == battery_state::battery);
     CHECK(after_chg_failure.available);
-    CHECK_EQ(after_chg_failure.percentage, 0);
-    CHECK_EQ(after_chg_failure.bus_voltage_mv, 0);
+    CHECK_EQ(after_chg_failure.percentage, 62);
+    CHECK_EQ(after_chg_failure.bus_voltage_mv, 7400);
     CHECK(!value.protection_active());
     CHECK(value.charger_enabled());
 
@@ -294,11 +356,11 @@ void test_invalid_inputs_preserve_last_safe_protection_state()
     const auto after_second_ina_failure =
         value.observe(sample(false, false, false, 0, 0, 0));
     CHECK(after_second_ina_failure.state == battery_state::battery);
-    CHECK(after_second_ina_failure.available);
-    CHECK_EQ(after_second_ina_failure.percentage, 0);
-    CHECK_EQ(after_second_ina_failure.bus_voltage_mv, 0);
-    CHECK_EQ(value.last_safe_snapshot().percentage, 0);
-    CHECK_EQ(value.last_safe_snapshot().bus_voltage_mv, 0);
+    CHECK(!after_second_ina_failure.available);
+    CHECK_EQ(after_second_ina_failure.percentage, 62);
+    CHECK_EQ(after_second_ina_failure.bus_voltage_mv, 7400);
+    CHECK_EQ(value.last_safe_snapshot().percentage, 62);
+    CHECK_EQ(value.last_safe_snapshot().bus_voltage_mv, 7400);
     CHECK(value.charger_enabled());
 }
 
@@ -432,6 +494,7 @@ void test_absent_precedence_over_stuck_low_chg_stat()
 int main()
 {
     test_constants_and_active_low_chg_stat();
+    test_status_names_and_exact_formatter_contract();
     test_default_and_persisted_option();
     test_state_classification_and_vote_boundaries();
     test_protection_requires_all_three_conditions();

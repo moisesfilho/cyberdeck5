@@ -210,6 +210,19 @@ e coberta pelos testes host: validar com `idf.py build` e o roteiro
 
 ## Dependencias e composicao
 
+### Status textual da bateria
+
+`components/cyberdeck/include/platform/sensors/cyberdeck_battery_protection.h`
+declara `state_name`, `charge_signal_name` e `format_status_line`; a
+implementação permanece pura em
+`components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp`.
+`format_status_line` recebe um único `snapshot` e produz, sem alocação ou
+ESP-IDF, o formato exato
+`battery: state=%s charge=%s available=%s voltage_mv=%ld current_ma=%ld percentage=%ld protection=%s charger=%s\n`,
+com buffer bounded, terminação NUL quando há capacidade e `capacity == 0`
+seguro. `cyberdeck_ui.cpp` usa o formatter no comando `battery protection
+status`, sem tabelas locais nem getters live adicionais.
+
 ### ESP-IDF e componentes
 
 `components/cyberdeck/CMakeLists.txt` registra todos os fontes de producao e

@@ -163,6 +163,17 @@ battery protection status  # mostra estado da proteção
 Os comandos também são alcançáveis via bridge serial `ui.type`
 transitivamente (ex.: `ui.type "battery protection off"`).
 
+A resposta de `battery protection status` é formatada pelo módulo puro da
+política de bateria, usando um único snapshot sincronizado e armazenamento
+bounded. O formato exato da linha é:
+
+```text
+battery: state=%s charge=%s available=%s voltage_mv=%ld current_ma=%ld percentage=%ld protection=%s charger=%s\n
+```
+
+O formatador não aloca, respeita sempre a capacidade informada e é seguro com
+capacidade zero.
+
 ### Wi-Fi
 
 Use `wifi search` para procurar redes, ordenadas pela intensidade do sinal. Na

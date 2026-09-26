@@ -192,11 +192,22 @@ def check_expander_and_fail_safe(failures: list[str]) -> None:
     require_all(failures, init_body is not None,
                 "protection adapter must expose an initialization/start seam")
     if init_body is not None:
-        require_all(failures, re.search(r"CHG_EN[\s\S]{0,500}(?:set_level|level)[\s\S]{0,250}1",
-                                        init_body, re.IGNORECASE) is not None or
-                    re.search(r"set_level[\s\S]{0,250}1[\s\S]{0,500}CHG_EN",
-                              init_body, re.IGNORECASE) is not None,
-                "CHG_EN must be initialized high (enabled)")
+        require_all(failures, re.search(r"\binit_expander\s*\(\s*\)", init_body)
+                    is not None,
+                    "battery protection startup must reach expander initialization")
+
+    # Keep the real initialization path explicit: the high write must be
+    # reached from init_expander(), rather than a dead constant or an
+    # unrelated test-only/table value.
+    expander_init = function_body(source, "init_expander(")
+    require_all(failures, expander_init is not None,
+                "protection adapter must expose the expander initialization path")
+    if expander_init is not None:
+        require_all(failures, re.search(r"write_chg_enable\s*\(\s*true\s*\)", expander_init)
+                    is not None,
+                    "init_expander must actively drive CHG_EN high")
+    require_all(failures, "k_chg_en_init" not in source,
+                "dead k_chg_en_init literal must not remain in the adapter")
 
     # Reader ownership is deliberately separate: it may read INA226 registers,
     # but it must not own charger GPIOs or policy.
@@ -245,6 +256,19 @@ def check_ui_shell_and_serial(failures: list[str]) -> None:
     shell_header = strip_comments(read(SHELL_HEADER, failures))
     serial = strip_comments(read(SERIAL, failures))
     serial_test = read(SERIAL_TEST, failures)
+
+    refresh = function_body(ui, "void refresh_battery_status(")
+    require_all(failures, refresh is not None,
+                "UI battery refresh seam is missing")
+    if refresh is not None:
+        policy_reads = re.findall(r"battery_protection_get_policy_snapshot\s*\(", refresh)
+        require_all(failures, len(policy_reads) == 1,
+                    "battery refresh must consume one copied policy snapshot")
+        require_all(failures, "battery_protection_get_snapshot" not in refresh,
+                    "battery refresh must not use the live shell snapshot getter")
+        require_all(failures, "state_name" not in refresh and
+                    "charge_signal_name" not in refresh,
+                    "battery refresh must not duplicate status-name tables")
 
     # The LVGL timer consumes a copied snapshot.  It must not acquire raw I2C,
     # NVS, or expander state on the LVGL task.

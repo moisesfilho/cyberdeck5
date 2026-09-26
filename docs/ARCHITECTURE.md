@@ -108,6 +108,14 @@ snapshot puro da política em `battery_protection_get_policy_snapshot`, que é a
 NVS ou leitura de `CHG_STAT` são registradas em log sem desligar `CHG_EN` nem
 perder o último snapshot seguro.
 
+O header puro `cyberdeck_battery_protection.h` também concentra a representação
+textual do status: `state_name`, `charge_signal_name` e `format_status_line`.
+O último recebe um único `snapshot` e produz, sem alocação ou ESP-IDF, a linha
+bounded `battery: state=%s charge=%s available=%s voltage_mv=%ld current_ma=%ld
+percentage=%ld protection=%s charger=%s\n`, com terminação NUL e tratamento seguro
+para capacidade zero. A UI usa esse formatter para `battery protection status`
+e não consulta getters live adicionais.
+
 ## Battery Protection
 
 O firmware implementa **battery protection** (proteção de carga) para prolongar a vida útil da bateria. A política pura (`cyberdeck_battery_protection`) define os estados `battery`, `external`, `charging`, `absent` e `unknown`, com threshold de corrente ±15 mA, `external` ≥ 7900 mV e `absent` ≥ 8330 mV exigindo 5 votos consecutivos. A proteção ativa somente quando as três condições são satisfeitas: estado `charging`, percentual ≥ 90 e tensão ≥ 8200 mV. Uma vez ativa, permanece travada pela histerese e libera apenas quando o percentual cai para ≤ 85 (ou quando a carga para). A única opção persistida no NVS é `protection_enabled` (default `true`); desabilitá-la religa o carregador imediatamente e exige reativação explícita. Falhas de leitura não desligam `CHG_EN` nem perdem o último estado seguro.
@@ -125,7 +133,9 @@ fixa a histerese 90/85 e fail-safe, e REQ-BAT-010 fixa NVS, timer UI, shell e
 
 - **REQ-BAT-UI-001 / AC-BAT-UI-001..002** — falha de `CHG_STAT` não congela o
   snapshot: leitura INA válida atualiza tensão/corrente/percentual/
-  disponibilidade; leitura INA inválida continua sem percentual.
+  disponibilidade; leitura INA inválida preserva o estado seguro da proteção,
+  mas publica `available=false` para ocultar a UI e não renderizar um snapshot
+  antigo.
 - **REQ-BAT-UI-002 / AC-BAT-UI-003** — precedência de ausência/presença antes
   do sinal do carregador, preservando estados, thresholds e votos aprovados.
 - **REQ-BAT-UI-003 / AC-BAT-UI-004** — camada pura
@@ -138,7 +148,7 @@ fixa a histerese 90/85 e fail-safe, e REQ-BAT-010 fixa NVS, timer UI, shell e
   glyph nunca é escolhido pelo percentual.
 
 Limitação de hardware: a ausência é inferida pela tensão fixa do barramento
-(>= 8330 mV, 5 votos), sem sinal dedicado de presença. Limitação de recurso: a
+(< 6000 mV ou >= 8330 mV, 5 votos), sem sinal dedicado de presença. Limitação de recurso: a
 fonte `cyberdeck_font.c` embarca apenas os codepoints FontAwesome `0xF067`
 (mais), `0xF068` (menos), `0xF0E7` (carga), `0xF1EB` (Wi-Fi) e `0xF240..0xF244`
 (bateria); não existe glyph de tomada, USB ou energia na fonte compilada e

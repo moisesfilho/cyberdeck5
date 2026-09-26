@@ -268,9 +268,6 @@ extern "C" esp_err_t battery_protection_init(void)
     s_policy.restore_protection_enabled(persisted_enabled);
 
     err = init_expander();
-    // CHG_EN set_level 1 (enabled)
-    static constexpr const char *k_chg_en_init = "CHG_EN set_level 1";
-    (void)k_chg_en_init;
     if (err != ESP_OK) {
         return err;
     }

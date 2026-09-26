@@ -1171,12 +1171,12 @@ void execute_line(bool line_already_sent = false) {
             append_line("battery protection unavailable\n");
             break;
         }
-        char buf[128];
-        snprintf(buf, sizeof(buf),
-                 "battery protection: enabled=%s active=%s charger=%s\n",
-                 battery_protection_is_enabled() ? "true" : "false",
-                 battery_protection_is_active() ? "true" : "false",
-                 battery_protection_charger_enabled() ? "true" : "false");
+        cyberdeck_battery_protection::snapshot value{};
+        if (!battery_protection_get_policy_snapshot(&value)) {
+            value.available = false;
+        }
+        char buf[256] = {};
+        cyberdeck_battery_protection::format_status_line(buf, sizeof(buf), value);
         append_line(buf);
         break;
     }

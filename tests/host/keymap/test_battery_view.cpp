@@ -98,7 +98,7 @@ void feed(state &value, const observation &input, int count)
     }
 }
 
-const char *state_name(battery_state value)
+const char *state_label(battery_state value)
 {
     switch (value) {
     case battery_state::unknown: return "unknown";
@@ -212,7 +212,7 @@ void test_invalid_or_unknown_is_hidden()
                 unavailable.percentage != 0) {
                 ++failures;
                 std::printf("FAIL %s:%d: unavailable %s/%s must be fully hidden\n",
-                            __FILE__, __LINE__, state_name(kStates[i]),
+                            __FILE__, __LINE__, state_label(kStates[i]),
                             signal_name(kSignals[j]));
             }
 
@@ -416,7 +416,7 @@ void test_total_state_signal_matrix()
                 ++failures;
                 std::printf("FAIL %s:%d: %s/%s resolved to visible=%d "
                             "show_percentage=%d percentage=%d glyph=%s\n",
-                            __FILE__, __LINE__, state_name(kStates[i]),
+                            __FILE__, __LINE__, state_label(kStates[i]),
                             signal_name(kSignals[j]),
                             shown.visible ? 1 : 0,
                             shown.show_percentage ? 1 : 0,
@@ -452,7 +452,7 @@ void test_glyph_is_never_chosen_from_the_percentage()
                     ++failures;
                     std::printf("FAIL %s:%d: %s/%s glyph changed from %s to %s "
                                 "at %d%%\n", __FILE__, __LINE__,
-                                state_name(kStates[i]), signal_name(kSignals[j]),
+                                state_label(kStates[i]), signal_name(kSignals[j]),
                                 glyph_name(first), glyph_name(current),
                                 static_cast<int>(percentage));
                 }
@@ -512,15 +512,21 @@ void test_valid_ina_with_invalid_chg_stat_keeps_indicator_visible()
     CHECK_EQ(shown.percentage, 62);
     CHECK_GLYPH(shown.glyph, power_glyph::battery);
 
-    /* An invalid INA read is the only case that preserves the previous
-     * snapshot, and it still must not invent a percentage. */
+    /* An invalid INA read preserves the policy values for protection, but marks
+     * the current measurement unavailable so the header hides stale data. */
     const snapshot after_ina_failure =
         value.observe(sample(false, false, false, 0, 0, 0));
     CHECK(after_ina_failure.state == after.state);
     CHECK_EQ(after_ina_failure.percentage, 62);
-    CHECK(after_ina_failure.available);
+    CHECK(!after_ina_failure.available);
     CHECK_EQ(value.last_safe_snapshot().percentage, 62);
     CHECK_EQ(value.last_safe_snapshot().bus_voltage_mv, 7400);
+    const view::presentation hidden_after_failure =
+        view::resolve(view::from_snapshot(after_ina_failure));
+    CHECK(!hidden_after_failure.visible);
+    CHECK(!hidden_after_failure.show_percentage);
+    CHECK_EQ(hidden_after_failure.percentage, 0);
+    CHECK_GLYPH(hidden_after_failure.glyph, power_glyph::none);
 
     /* From a fresh policy, an invalid INA read stays unavailable. */
     state fresh;

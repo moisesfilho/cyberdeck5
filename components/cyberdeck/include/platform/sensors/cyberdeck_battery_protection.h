@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <memory>
 
 #ifdef __cplusplus
@@ -84,6 +85,9 @@ private:
 };
 
 charge_signal decode_chg_stat(bool valid, bool raw_low);
+const char *state_name(battery_state value);
+const char *charge_signal_name(charge_signal value);
+int format_status_line(char *buffer, std::size_t capacity, const snapshot &value);
 
 } // namespace cyberdeck_battery_protection
 

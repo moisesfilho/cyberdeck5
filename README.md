@@ -164,6 +164,17 @@ battery protection status  # show protection state
 The commands are also reachable via the serial bridge `ui.type`
 transitively (e.g., `ui.type "battery protection off"`).
 
+The `battery protection status` response is formatted by the pure battery
+policy module, using one synchronized snapshot and bounded storage. Its exact
+line format is:
+
+```text
+battery: state=%s charge=%s available=%s voltage_mv=%ld current_ma=%ld percentage=%ld protection=%s charger=%s\n
+```
+
+The formatter does not allocate, always respects the supplied capacity, and is
+safe when the capacity is zero.
+
 Use `wifi search` to scan networks, ordered by signal strength. In the list,
 Up/Down navigates, Enter selects, and Escape cancels. Open networks connect
 immediately; saved credentials are reused. A new protected network prompts for
