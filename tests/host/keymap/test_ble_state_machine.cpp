@@ -231,6 +231,48 @@ void test_scan_outcomes_map_to_distinct_messages()
     }
 }
 
+void test_input_ownership_is_derived_from_visible_model_state()
+{
+    state_machine machine;
+    CHECK(!machine.owns_input());
+
+    machine.begin_search();
+    CHECK(machine.owns_input());
+    const std::uint64_t token = machine.active_scan_token();
+    machine.take_actions();
+    machine.scan_finished(token, {});
+    CHECK(machine.current_screen() == screen::results);
+    CHECK(machine.current_notice() == notice::empty);
+    CHECK(!machine.owns_input());
+    CHECK(machine.take_actions().empty());
+    machine.press(key::up);
+    machine.press(key::down);
+    machine.press(key::enter);
+    CHECK(machine.current_screen() == screen::results);
+    CHECK(machine.current_notice() == notice::empty);
+    CHECK(machine.take_actions().empty());
+
+    state_machine failed;
+    failed.begin_search();
+    const std::uint64_t failed_token = failed.active_scan_token();
+    failed.take_actions();
+    failed.scan_failed(failed_token);
+    CHECK(failed.current_notice() == notice::failed);
+    CHECK(!failed.owns_input());
+    CHECK(failed.take_actions().empty());
+
+    state_machine timed_out;
+    timed_out.begin_search();
+    timed_out.take_actions();
+    timed_out.advance_time(cyberdeck_ble::k_scan_timeout_ms);
+    CHECK(timed_out.current_notice() == notice::timed_out);
+    CHECK(!timed_out.owns_input());
+    CHECK_EQ(count_actions(timed_out.take_actions(), action_kind::cancel_scan),
+             std::size_t(1));
+    timed_out.press(key::escape);
+    CHECK(timed_out.take_actions().empty());
+}
+
 void test_stale_scan_tokens_cannot_mutate_the_visible_list()
 {
     state_machine machine;
@@ -282,6 +324,7 @@ void test_navigation_and_enter_from_results()
     });
     CHECK(machine.current_screen() == screen::results);
     CHECK(machine.current_notice() == notice::none);
+    CHECK(machine.owns_input());
     CHECK_STR(machine.notice_text(), "");
     CHECK_EQ(machine.selected_index(), std::size_t(0));
 
@@ -304,6 +347,7 @@ void test_navigation_and_enter_from_results()
         CHECK(pairing[0].token != 0);
     }
     CHECK(machine.current_screen() == screen::pairing);
+    CHECK(machine.owns_input());
     CHECK_STR(machine.active_address(), "AA:BB:CC:DD:EE:03");
 
     /* Escape from a ready list is silent: nothing was cancelled. */
@@ -314,6 +358,7 @@ void test_navigation_and_enter_from_results()
     listing.take_actions();
     listing.press(key::escape);
     CHECK(listing.current_screen() == screen::idle);
+    CHECK(!listing.owns_input());
     CHECK(listing.current_notice() == notice::none);
     CHECK_STR(listing.notice_text(), "");
     CHECK(listing.take_actions().empty());
@@ -767,6 +812,7 @@ void test_paired_list_enters_a_connection_without_re_pairing()
     });
     machine.begin_paired();
     CHECK(machine.current_screen() == screen::paired);
+    CHECK(machine.owns_input());
     CHECK(machine.current_notice() == notice::none);
     CHECK_EQ(machine.devices().size(), std::size_t(2));
     CHECK(machine.take_actions().empty());
@@ -784,6 +830,7 @@ void test_paired_list_enters_a_connection_without_re_pairing()
         CHECK_STR(connect[0].address, "AA:BB:CC:DD:EE:02");
     }
     CHECK(machine.current_screen() == screen::connecting);
+    CHECK(machine.owns_input());
 
     /* begin_paired on an empty store is still safe. */
     state_machine empty;
@@ -791,9 +838,11 @@ void test_paired_list_enters_a_connection_without_re_pairing()
     CHECK(empty.current_screen() == screen::paired);
     CHECK_EQ(empty.devices().size(), std::size_t(0));
     CHECK(empty.selected() == nullptr);
+    CHECK(!empty.owns_input());
     empty.press(key::enter);
     CHECK(empty.take_actions().empty());
     CHECK(empty.current_screen() == screen::paired);
+    CHECK(!empty.owns_input());
 }
 
 void test_automatic_reconnection_gives_up_after_the_cap()
@@ -941,6 +990,7 @@ int main()
     test_search_is_asynchronous_and_emits_exactly_one_start();
     test_scan_timeout_fires_exactly_at_the_deadline();
     test_scan_outcomes_map_to_distinct_messages();
+    test_input_ownership_is_derived_from_visible_model_state();
     test_stale_scan_tokens_cannot_mutate_the_visible_list();
     test_navigation_and_enter_from_results();
     test_enter_refuses_an_empty_or_non_connectable_selection();

@@ -184,6 +184,9 @@ public:
     screen current_screen() const;
     notice current_notice() const;
 
+    /* Whether BLE currently owns the four navigation keys. */
+    bool owns_input() const;
+
     /* Exact single-line user message for the current notice, "" for none. */
     std::string notice_text() const;
 

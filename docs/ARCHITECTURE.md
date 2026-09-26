@@ -330,7 +330,11 @@ rejeitado por contrato.
   (`start_scan`/`pair`/`submit_auth`/`connect`/`reconnect`/...), quatro teclas
   (`up`/`down`/`enter`/`escape`), mensagens unicas por classe (vazio/falha/timeout/
   cancelamento para scan/pair/connect), reconexao automatica com orcamento de 3
-  tentativas e rearme manual.
+  tentativas e rearme manual. O predicado puro `owns_input()` e a unica fonte
+  de ownership das teclas: `searching` e fluxos ativos retêm BLE, enquanto
+  `results`/`paired` so retêm as teclas quando a lista possui itens. Assim,
+  uma conclusao vazia, falha ou timeout libera o terminal depois de anexar a
+  mensagem/lista final, sem apagar a saida.
 - `cyberdeck_ble_event_dispatch.{h,cpp}`: seam bounded (8 eventos) entre
   callbacks da stack e o modelo de tela; filas com overflow fail-closed,
   geracoes de token monotono para scan/pair/connect, `event_summary` sem
@@ -363,8 +367,8 @@ comandos e callbacks GAP. Usa NimBLE VHCI (`CONFIG_BT_NIMBLE_ENABLED=y`,
   `CYBERDECK_CMD_UNKNOWN`.
 - `cyberdeck_shell_help.h`: catalogo unico com 16 entradas, linha
   `bluetooth [search|paired]` entre `battery` e `ssh`.
-- `cyberdeck_ui.cpp`: estado BLE (`ble_ui_state_t`), rotea `Up`/`Down`/
-  `Enter`/`Escape` para `cyberdeck_ble::state_machine`, consome acoes
+- `cyberdeck_ui.cpp`: roteia `Up`/`Down`/`Enter`/`Escape` conforme o predicado
+  `cyberdeck_ble::state_machine::owns_input()`, consome acoes
   derivadas e as encaminha ao `ble_mgr` via fila, processa eventos BLE em
   timer LVGL de 100 ms (`process_ble_events`), renderiza lista e mensagens
   do modelo puro.

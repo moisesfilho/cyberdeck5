@@ -270,7 +270,7 @@ def check_pure_abi_matches_the_contracts(report: Report) -> None:
                                          "take_actions", "k_msg_scan_empty",
                                          "k_msg_scan_failed",
                                          "k_msg_scan_timeout",
-                                         "k_msg_search_cancelled")),
+                                          "k_msg_search_cancelled", "owns_input")),
         (BLE_EVENTS_HDR, CONTRACT_EVENTS, ("event_dispatch", "begin_scan",
                                            "begin_pairing", "begin_connection",
                                            "publish_scan_result", "publish_auth_request",
@@ -358,6 +358,31 @@ def check_ui_routing(report: Report) -> None:
     ui = strip_comments(report.read(UI))
     if not ui:
         return
+
+    # Ownership must come from the model. A shadow UI flag can remain true
+    # after an empty, failed, or timed-out scan publishes its final notice.
+    report.require("s_ble_ui_active" not in ui,
+                   "cyberdeck_ui.cpp must not keep a shadow BLE ownership flag")
+    state_header = strip_comments(report.read(BLE_STATE_HDR))
+    state_source = strip_comments(report.read(BLE_STATE_SRC))
+    report.require("bool owns_input() const" in state_header,
+                   "the production state-machine header must expose owns_input()")
+    report.require("bool state_machine::owns_input() const" in state_source,
+                   "the production state machine must implement owns_input()")
+    report.require("s_ble_model.owns_input()" in ui,
+                   "cyberdeck_ui.cpp must derive BLE ownership from the model")
+
+    process = function_body(ui, "void process_ble_events(", report)
+    if process:
+        notice_append = process.find('append_line(notice + "\\n")')
+        notice_bookkeeping = process.find("s_ble_last_notice = notice")
+        report.require(notice_append >= 0 and notice_bookkeeping > notice_append,
+                       "BLE notice must be appended before release bookkeeping")
+
+    local_key = function_body(ui, "void local_key(", report)
+    if local_key:
+        report.require("s_ble_model.owns_input()" in local_key,
+                       "BLE key routing must consult model ownership at dispatch time")
     for token in ("CYBERDECK_CMD_BLUETOOTH_SEARCH", "CYBERDECK_CMD_BLUETOOTH_PAIRED"):
         report.require(token in ui,
                        f"cyberdeck_ui.cpp must route {token} to the BLE feature")
@@ -638,6 +663,10 @@ def check_registration_and_traceability(report: Report) -> None:
                            "BLE integration contract must depend on ble_mgr.cpp")
             report.require("$(BLE_MGR_HDR)" in dependencies,
                            "BLE integration contract must depend on ble_mgr.h")
+            report.require("$(BLE_STATE_SRC)" in dependencies,
+                           "BLE integration contract must depend on the production state machine")
+            report.require("$(BLE_STATE_HDR)" in dependencies,
+                           "BLE integration contract must depend on the state-machine header")
 
     gitignore = report.read(GITIGNORE)
     if gitignore:

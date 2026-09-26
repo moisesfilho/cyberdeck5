@@ -580,6 +580,24 @@ notice state_machine::current_notice() const
     return state_->active_notice;
 }
 
+bool state_machine::owns_input() const
+{
+    switch (state_->current) {
+    case screen::searching:
+    case screen::pairing:
+    case screen::auth:
+    case screen::connecting:
+    case screen::connected:
+        return true;
+    case screen::results:
+    case screen::paired:
+        return state_->devices_.size() != 0;
+    case screen::idle:
+        return false;
+    }
+    return false;
+}
+
 std::string state_machine::notice_text() const
 {
     switch (state_->active_notice) {

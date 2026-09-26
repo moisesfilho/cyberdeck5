@@ -111,7 +111,6 @@ QueueHandle_t s_ble_event_queue = nullptr;
 ble_mgr_observer_handle_t s_ble_observer = nullptr;
 cyberdeck_ble::state_machine s_ble_model;
 cyberdeck_ble::device_list s_ble_scan_devices;
-bool s_ble_ui_active = false;
 std::string s_ble_last_notice;
 
 void append_line(const std::string &line);
@@ -169,12 +168,12 @@ void process_ble_events(lv_timer_t *)
         s_ble_observer = ble_mgr_register_observer(on_ble_event, nullptr);
     }
     if (s_ble_event_queue == nullptr) return;
-    if (s_ble_ui_active) {
+    if (s_ble_model.owns_input()) {
         s_ble_model.advance_time(100);
         ble_submit_actions();
     }
     ble_mgr_event_t event{};
-    bool changed = s_ble_ui_active;
+    bool changed = s_ble_model.owns_input();
     while (xQueueReceive(s_ble_event_queue, &event, 0) == pdTRUE) {
         changed = true;
         switch (event.kind) {
@@ -1181,7 +1180,6 @@ void execute_line(bool line_already_sent = false) {
         break;
     }
     case CYBERDECK_CMD_BLUETOOTH_SEARCH:
-        s_ble_ui_active = true;
         s_ble_last_notice.clear();
         s_ble_scan_devices.clear();
         s_ble_model.begin_search();
@@ -1189,7 +1187,6 @@ void execute_line(bool line_already_sent = false) {
         append_line("Bluetooth search started.\n");
         break;
     case CYBERDECK_CMD_BLUETOOTH_PAIRED:
-        s_ble_ui_active = true;
         s_ble_last_notice.clear();
         s_ble_model.begin_paired();
         append_line(s_ble_model.devices().render());
@@ -1250,7 +1247,7 @@ void move_history(int direction) {
 }
 
 void local_key(uint32_t key) {
-    if (s_ble_ui_active) {
+    if (s_ble_model.owns_input()) {
         cyberdeck_ble::key ble_key;
         if (key == LV_KEY_UP) ble_key = cyberdeck_ble::key::up;
         else if (key == LV_KEY_DOWN) ble_key = cyberdeck_ble::key::down;
@@ -1259,7 +1256,6 @@ void local_key(uint32_t key) {
         else goto not_ble_key;
         s_ble_model.press(ble_key);
         ble_submit_actions();
-        if (s_ble_model.current_screen() == cyberdeck_ble::screen::idle) s_ble_ui_active = false;
         render_terminal();
         return;
     }
