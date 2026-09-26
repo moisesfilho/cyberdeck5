@@ -338,9 +338,15 @@ rejeitado por contrato.
 ### Adaptador ESP-IDF (`ble_mgr.{h,cpp}`)
 
 Unico modulo autorizado a falar com a stack BLE do C6 via `esp_hosted`.
-Possui task FreeRTOS dedicada (`ble_mgr`, stack 4 KiB, prio 5) e fila
-bounded de comandos (8). A UI apenas enfileira acoes; `ble_mgr_start` e
-nao fatal no boot. Usa NimBLE VHCI (`CONFIG_BT_NIMBLE_ENABLED=y`,
+`ble_mgr_start` executa em ordem estrita `esp_hosted_connect_to_slave()` ->
+`esp_hosted_bt_controller_init()` -> `esp_hosted_bt_controller_enable()` ->
+`nimble_port_init()`, registra cada retorno e encerra a tentativa sem iniciar
+NimBLE quando transporte ou controlador falham. O boot permanece não fatal e
+não há retry/reset loop; a versão do firmware C6 é consultada e registrada pela
+API `esp_hosted_get_coprocessor_fwversion` quando disponível. Possui task FreeRTOS dedicada (`ble_mgr`, stack 4 KiB, prio 5), task
+host nomeada `ble_host` com stack de 8 KiB e fila bounded de comandos (8). A UI apenas enfileira acoes; `ble_mgr_start` e
+nao fatal no boot. O `event_dispatch` é protegido por mutex entre a task de
+comandos e callbacks GAP. Usa NimBLE VHCI (`CONFIG_BT_NIMBLE_ENABLED=y`,
 `CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y`, `CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y`).
 
 ### Integracao Shell e UI
@@ -368,7 +374,9 @@ nao fatal no boot. Usa NimBLE VHCI (`CONFIG_BT_NIMBLE_ENABLED=y`,
 
 ### Rastreabilidade
 
-REQ-BLE-001..011 / AC-BLE-001..011 mapeados em `code-map.md`; contratos host
+REQ-BLE-001..014 / AC-BLE-001..014 mapeados em `code-map.md`; contratos host
 em `tests/host/keymap/contracts/cyberdeck_ble_*.h`; alvos de teste
 `test_ble_types`, `test_ble_state_machine`, `test_ble_event_dispatch`,
 `test_ble_store`, `test_ble_command_parse`, `test_ble_integration_contract`.
+O teardown de `nimble_port_freertos` não foi alterado nesta correção e permanece
+como follow-up dedicado.

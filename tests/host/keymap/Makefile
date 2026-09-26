@@ -96,6 +96,8 @@ BLE_TYPES_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cy
 BLE_STATE_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_state_machine.h
 BLE_EVENTS_HDR    := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_event_dispatch.h
 BLE_STORE_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_store.h
+BLE_MGR_SRC       := ../../../components/cyberdeck/src/features/bluetooth/ble_mgr.cpp
+BLE_MGR_HDR       := ../../../components/cyberdeck/include/features/bluetooth/ble_mgr.h
 BLE_TYPES_CONTRACT_HDR     := contracts/cyberdeck_ble_types.h
 BLE_STATE_CONTRACT_HDR     := contracts/cyberdeck_ble_state_machine.h
 BLE_EVENTS_CONTRACT_HDR    := contracts/cyberdeck_ble_event_dispatch.h
@@ -550,7 +552,7 @@ test_ble_command_parse: test_ble_command_parse.cpp contracts/cyberdeck_help.h $(
 # wiring, the FreeRTOS task boundary, the log-secret rule, the REQ-BLE-011
 # classic-Bluetooth exclusion and the REQ/AC traceability.  Source inspection
 # only; it never opens hardware, a radio or the Serial Automation Bridge.
-test_ble_integration_contract: test_ble_integration_contract.py $(BLE_TYPES_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STORE_CONTRACT_HDR) ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_help.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../main/idf_component.yml ../../../sdkconfig.defaults ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md ../../../code-map.md ../../../.gitignore
+test_ble_integration_contract: test_ble_integration_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STORE_CONTRACT_HDR) ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_help.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../main/idf_component.yml ../../../sdkconfig.defaults ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md ../../../code-map.md ../../../.gitignore
 	$(PYTHON) test_ble_integration_contract.py
 
 test: $(BINS)

@@ -32,6 +32,7 @@ static const char *TAG = "ble_mgr";
 
 #define BLE_MGR_QUEUE_SIZE 8
 #define BLE_MGR_TASK_STACK 4096
+#define BLE_MGR_HOST_TASK_STACK 8192
 #define BLE_MGR_TASK_PRIO 5
 #define BLE_MGR_MAX_OBSERVERS 4
 #define BLE_MGR_NVS_NAMESPACE "ble_bonds"
@@ -46,6 +47,9 @@ struct ble_mgr_observer {
 static QueueHandle_t s_ble_queue = NULL;
 static TaskHandle_t s_ble_task = NULL;
 static SemaphoreHandle_t s_ble_mutex = NULL;
+/* GAP callbacks execute in the NimBLE host task while commands are handled by
+ * ble_mgr.  The pure dispatch object is deliberately kept behind this lock. */
+static SemaphoreHandle_t s_dispatch_mutex = NULL;
 static bool s_started = false;
 static uint8_t s_own_addr[6] = {0};
 
@@ -110,14 +114,74 @@ esp_err_t ble_mgr_start(void)
         return ESP_ERR_NO_MEM;
     }
 
+    s_dispatch_mutex = xSemaphoreCreateMutex();
+    if (s_dispatch_mutex == NULL) {
+        vSemaphoreDelete(s_ble_mutex);
+        s_ble_mutex = NULL;
+        vQueueDelete(s_ble_queue);
+        s_ble_queue = NULL;
+        ESP_LOGE(TAG, "Failed to create BLE dispatch mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
     esp_err_t err = esp_hosted_connect_to_slave();
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "esp_hosted_connect_to_slave failed: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "esp_hosted_connect_to_slave failed: %s (%d); BLE disabled",
+                 esp_err_to_name(err), err);
+        vSemaphoreDelete(s_dispatch_mutex);
+        s_dispatch_mutex = NULL;
+        vSemaphoreDelete(s_ble_mutex);
+        s_ble_mutex = NULL;
+        vQueueDelete(s_ble_queue);
+        s_ble_queue = NULL;
+        return err;
+    }
+
+    err = esp_hosted_bt_controller_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_hosted_bt_controller_init failed: %s (%d); BLE disabled",
+                 esp_err_to_name(err), err);
+        vSemaphoreDelete(s_dispatch_mutex);
+        s_dispatch_mutex = NULL;
+        vSemaphoreDelete(s_ble_mutex);
+        s_ble_mutex = NULL;
+        vQueueDelete(s_ble_queue);
+        s_ble_queue = NULL;
+        return err;
+    }
+
+    err = esp_hosted_bt_controller_enable();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_hosted_bt_controller_enable failed: %s (%d); BLE disabled",
+                 esp_err_to_name(err), err);
+        vSemaphoreDelete(s_dispatch_mutex);
+        s_dispatch_mutex = NULL;
+        vSemaphoreDelete(s_ble_mutex);
+        s_ble_mutex = NULL;
+        vQueueDelete(s_ble_queue);
+        s_ble_queue = NULL;
+        return err;
+    }
+
+    esp_hosted_coprocessor_fwver_t c6_fw = {};
+    const int fw_rc = esp_hosted_get_coprocessor_fwversion(&c6_fw);
+    if (fw_rc == ESP_OK) {
+        ESP_LOGI(TAG, "ESP-Hosted BLE controller enabled; C6 firmware %u.%u.%u rev=%ld",
+                 static_cast<unsigned>(c6_fw.major1),
+                 static_cast<unsigned>(c6_fw.minor1),
+                 static_cast<unsigned>(c6_fw.patch1),
+                 static_cast<long>(c6_fw.revision));
+    } else {
+        ESP_LOGW(TAG, "ESP-Hosted BLE controller enabled; C6 firmware query failed: %s (%d)",
+                 esp_err_to_name(fw_rc), fw_rc);
     }
 
     err = nimble_port_init();
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "nimble_port_init failed: %d", err);
+        ESP_LOGW(TAG, "nimble_port_init failed: %s (%d); BLE disabled",
+                 esp_err_to_name(err), err);
+        vSemaphoreDelete(s_dispatch_mutex);
+        s_dispatch_mutex = NULL;
         vSemaphoreDelete(s_ble_mutex);
         s_ble_mutex = NULL;
         vQueueDelete(s_ble_queue);
@@ -161,6 +225,8 @@ esp_err_t ble_mgr_start(void)
     if (xTaskCreate(ble_mgr_task, "ble_mgr", BLE_MGR_TASK_STACK, NULL, BLE_MGR_TASK_PRIO, &s_ble_task) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create BLE manager task");
         nimble_port_freertos_deinit();
+        vSemaphoreDelete(s_dispatch_mutex);
+        s_dispatch_mutex = NULL;
         vSemaphoreDelete(s_ble_mutex);
         s_ble_mutex = NULL;
         vQueueDelete(s_ble_queue);
@@ -195,6 +261,11 @@ esp_err_t ble_mgr_stop(void)
     if (s_ble_mutex != NULL) {
         vSemaphoreDelete(s_ble_mutex);
         s_ble_mutex = NULL;
+    }
+
+    if (s_dispatch_mutex != NULL) {
+        vSemaphoreDelete(s_dispatch_mutex);
+        s_dispatch_mutex = NULL;
     }
 
     if (s_ble_queue != NULL) {
@@ -259,7 +330,7 @@ static void ble_mgr_task(void *arg)
     (void)arg;
     ESP_LOGI(TAG, "BLE manager task started");
 
-    if (xTaskCreate(ble_host_task, "ble_host", BLE_MGR_TASK_STACK, NULL, BLE_MGR_TASK_PRIO - 1, NULL) != pdPASS) {
+    if (xTaskCreate(ble_host_task, "ble_host", BLE_MGR_HOST_TASK_STACK, NULL, BLE_MGR_TASK_PRIO - 1, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create BLE host task");
         vTaskDelete(NULL);
         return;
@@ -268,6 +339,11 @@ static void ble_mgr_task(void *arg)
     for (;;) {
         ble_mgr_cmd_t cmd;
         if (xQueueReceive(s_ble_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+            continue;
+        }
+
+        if (xSemaphoreTake(s_dispatch_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "BLE dispatch mutex unavailable; command dropped");
             continue;
         }
 
@@ -437,6 +513,7 @@ static void ble_mgr_task(void *arg)
             break;
         }
         }
+        xSemaphoreGive(s_dispatch_mutex);
     }
 }
 
@@ -453,6 +530,12 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 {
     if (event == nullptr) return 0;
     uint64_t token = (uint64_t)(uintptr_t)arg;
+
+    if (s_dispatch_mutex == NULL ||
+        xSemaphoreTake(s_dispatch_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "BLE dispatch mutex unavailable; GAP event dropped");
+        return 0;
+    }
 
     switch (event->type) {
     case BLE_GAP_EVENT_DISC: {
@@ -554,11 +637,13 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
         struct ble_gap_conn_desc desc;
         ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc);
         ble_store_util_delete_peer(&desc.peer_id_addr);
+        xSemaphoreGive(s_dispatch_mutex);
         return BLE_GAP_REPEAT_PAIRING_RETRY;
     }
     default:
         break;
     }
+    xSemaphoreGive(s_dispatch_mutex);
     return 0;
 }
 

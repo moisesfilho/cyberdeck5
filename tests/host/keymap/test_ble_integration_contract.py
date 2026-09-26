@@ -468,6 +468,57 @@ def check_adapter_composition(report: Report) -> None:
                        f"the BLE adapter is a NimBLE host: {token!r} (Bluedroid) "
                        "must not appear (REQ-BLE-001)")
 
+    # Regression: esp_hosted must be ready before the controller, and the
+    # controller must be enabled before NimBLE is initialized.  Checking the
+    # actual start() body (rather than file-wide token order) prevents helper
+    # declarations or comments from making an obsolete build look green.
+    start_body = function_body(source, "esp_err_t ble_mgr_start(", report)
+    init_order = (
+        "esp_hosted_connect_to_slave",
+        "esp_hosted_bt_controller_init",
+        "esp_hosted_bt_controller_enable",
+        "nimble_port_init",
+    )
+    positions = []
+    for token in init_order:
+        position = start_body.find(token)
+        report.require(position >= 0,
+                       f"ble_mgr_start must call {token} in its initialization path")
+        positions.append(position)
+    if all(position >= 0 for position in positions):
+        report.require(positions == sorted(positions),
+                       "BLE initialization order must be connect < controller init "
+                       "< controller enable < NimBLE init")
+
+    # Regression: transport/controller initialization is non-fatal.  The
+    # adapter returns errors and cleans up; it must not hide an aborting macro
+    # in the path under test.
+    for fatal in ("abort(", "ESP_ERROR_CHECK"):
+        report.require(fatal not in start_body,
+                       f"ble_mgr_start must not use fatal {fatal} on init failure")
+
+    # Regression: GAP callbacks and the manager task share the dispatch object.
+    # Keep this as a source contract because the ESP-IDF adapter cannot be
+    # linked by deterministic host tests.
+    report.require("s_dispatch_mutex" in source,
+                   "BLE adapter must declare a dispatch mutex")
+    report.require("xSemaphoreCreateMutex" in source,
+                   "BLE adapter must create the dispatch mutex")
+    report.require(source.count("xSemaphoreTake(s_dispatch_mutex") >= 2,
+                   "manager and GAP callback paths must take the dispatch mutex")
+    report.require(source.count("xSemaphoreGive(s_dispatch_mutex)") >= 2,
+                   "manager and GAP callback paths must release the dispatch mutex")
+
+    # Regression: the host task has an explicit diagnostic name and the
+    # approved 8192-byte stack contract, not an accidental default/renamed
+    # task that could regress silently.
+    report.require(re.search(r"#\s*define\s+BLE_MGR_HOST_TASK_STACK\s+8192\b", source)
+                   is not None,
+                   "BLE host task stack must remain explicitly set to 8192 bytes")
+    report.require(re.search(r"xTaskCreate\s*\(\s*ble_host_task\s*,\s*\"ble_host\"\s*,\s*"
+                             r"BLE_MGR_HOST_TASK_STACK", source) is not None,
+                   "BLE host task must use the named 8192-byte stack contract")
+
     # The pure modules must not be reachable from the LVGL task: the UI keeps no
     # stack handle.  The rule is an allow-list of the public bounded API, so a
     # private helper or a blocking adapter call is rejected without having to
@@ -570,6 +621,23 @@ def check_registration_and_traceability(report: Report) -> None:
                        "cyberdeck_ble_event_dispatch.cpp", "cyberdeck_ble_store.cpp"):
             report.require(source in makefile,
                            f"the host Makefile must link the production {source}")
+
+        # Regression: this structural target must be invalidated when the
+        # adapter changes.  Otherwise a previously passing Python contract can
+        # remain green while ble_mgr.cpp/header no longer satisfy it.
+        target = re.search(
+            r"^test_ble_integration_contract:\s*(?P<deps>[^\n]+)",
+            makefile,
+            re.MULTILINE,
+        )
+        report.require(target is not None,
+                       "the host Makefile must define test_ble_integration_contract")
+        if target:
+            dependencies = target.group("deps")
+            report.require("$(BLE_MGR_SRC)" in dependencies,
+                           "BLE integration contract must depend on ble_mgr.cpp")
+            report.require("$(BLE_MGR_HDR)" in dependencies,
+                           "BLE integration contract must depend on ble_mgr.h")
 
     gitignore = report.read(GITIGNORE)
     if gitignore:
