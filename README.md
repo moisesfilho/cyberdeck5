@@ -183,6 +183,33 @@ completion ACK, the timestamped file is under `/sdcard/wifi-audit/` as
 automatically, existing files are never overwritten, and the retired export
 spelling is rejected.
 
+### Bluetooth LE (ESP32-C6 via ESP-Hosted)
+
+O radio BLE reside no coprocessor ESP32-C6, alcancado por `esp_hosted`
+(VHCI/HCI). A stack NimBLE roda no ESP32-P4. Bluetooth Classic (BR/EDR) esta
+fora do escopo.
+
+Comandos disponiveis:
+
+```text
+bluetooth search      # scan assincrono de dispositivos BLE (timeout 10 s)
+bluetooth paired      # lista de dispositivos pareados (bonds persistidos)
+```
+
+No resultado do `bluetooth search`, a lista mostra nome e tipo
+(`Keyboard`, `Headset`, `Mouse`, `Unknown`). Navegacao com Cima/Baixo,
+Enter inicia o pareamento, Escape cancela. Dispositivos nao conectaveis sao
+listados mas nao podem ser pareados. O pareamento usa autenticacao
+interativa quando o peer exige (passkey, numeric comparison ou confirmacao).
+O passkey aparece apenas na linha de status da tela de autenticacao e nunca
+em logs. Bonds sao persistidos (capacidade 16) e reconexoes automaticas sao
+tentadas (maximo 3 falhas consecutivas; rearme manual via Enter).
+
+Mensagens de terminal (uma por classe):
+- Scan: `No Bluetooth devices found.` | `Bluetooth scan failed.` | `Bluetooth search timed out.` | `Bluetooth search cancelled.`
+- Pair: `Bluetooth pairing rejected.` | `Bluetooth pairing failed.` | `Bluetooth pairing timed out.` | `Bluetooth pairing cancelled.`
+- Connect: `Bluetooth connection failed.` | `Bluetooth connection timed out.` | `Bluetooth connection cancelled.` | `Bluetooth reconnection failed.`
+
 A sessão SSH roda em uma task FreeRTOS dedicada para não bloquear a UI.
 
 ## Screenshot HTTP

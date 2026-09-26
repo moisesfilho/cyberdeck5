@@ -14,6 +14,8 @@ idf_component_register(
         "src/features/wifi/cyberdeck_wifi_state_machine.cpp"
         "src/platform/display/cyberdeck_clock.cpp"
         "src/platform/display/cyberdeck_screen_protection.cpp"
+        # Pure header-view mapping: keeps the battery rendering rule out of LVGL.
+        "src/platform/display/cyberdeck_battery_view.cpp"
         "src/features/shell/cyberdeck_history.cpp"
         "src/features/shell/cyberdeck_shell_utils.cpp"
         "src/features/shell/cyberdeck_local_shell.cpp"
@@ -41,8 +43,22 @@ idf_component_register(
         "src/features/screenshot/screenshot_bmp.cpp"
         "src/features/screenshot/screenshot_server.cpp"
         "src/features/serial/cyberdeck_serial_bridge.cpp"
+        "src/features/bluetooth/cyberdeck_ble_types.cpp"
+        "src/features/bluetooth/cyberdeck_ble_state_machine.cpp"
+        "src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp"
+        "src/features/bluetooth/cyberdeck_ble_store.cpp"
+        "src/features/bluetooth/ble_mgr.cpp"
         "src/platform/display/cyberdeck_font.c"
     INCLUDE_DIRS "include"
+    PRIV_INCLUDE_DIRS "${IDF_PATH}/components/bt/host/nimble/nimble/porting/nimble/include"
+                       "${IDF_PATH}/components/bt/host/nimble/port/include"
+                       "${IDF_PATH}/components/bt/porting/include"
+                       "${IDF_PATH}/components/bt/host/nimble/nimble/nimble/transport/include"
+                       "${IDF_PATH}/components/bt/host/nimble/nimble/nimble/host/util/include"
+                       "${IDF_PATH}/components/bt/host/nimble/nimble/nimble/host/services/gap/include"
+                       "${IDF_PATH}/components/bt/host/nimble/nimble/nimble/include"
+                       "${IDF_PATH}/components/bt/porting/npl/freertos/include"
+                       "${IDF_PATH}/components/bt/host/nimble/nimble/nimble/host/include"
     REQUIRES
         lvgl
         m5stack_tab5
@@ -62,4 +78,6 @@ idf_component_register(
         sdmmc
         libssh
         esp_http_server
+        bt
+        esp_hosted
 )

@@ -43,6 +43,10 @@ struct observation {
 
 struct snapshot {
     battery_state state{battery_state::unknown};
+    /* Last decoded CHG_STAT evidence.  A failed read is `unknown`, never
+     * `not_charging`, so consumers cannot read a missing reading as a
+     * negative charger answer. */
+    charge_signal charge{charge_signal::unknown};
     bool available{false};
     std::int32_t percentage{0};
     std::int32_t bus_voltage_mv{0};

@@ -10,13 +10,16 @@
 #include "platform/display/cyberdeck_wifi_indicator.h"
 #include "platform/display/cyberdeck_wifi_icon.h"
 #include "platform/display/cyberdeck_clock.h"
-#include "platform/sensors/ina226_reader.h"
+#include "platform/display/cyberdeck_battery_view.h"
 #include "platform/sensors/battery_protection.h"
 #include "features/shell/cyberdeck_terminal_filter.h"
 #include "features/shell/cyberdeck_ssh_line_composer.h"
 #include "features/wifi/cyberdeck_wifi_menu.h"
 #include "features/wifi/cyberdeck_wifi_state_machine.h"
 #include "features/wifi/cyberdeck_wifi_audit.h"
+#include "features/bluetooth/ble_mgr.h"
+#include "features/bluetooth/cyberdeck_ble_types.h"
+#include "features/bluetooth/cyberdeck_ble_state_machine.h"
 #include "features/shell/cyberdeck_edit_line.h"
 #include "features/shell/cyberdeck_local_shell.h"
 #include "features/shell/cyberdeck_cat_worker.h"
@@ -28,6 +31,7 @@
 #include <string>
 #include <ctime>
 #include <cstdint>
+#include <vector>
 #include <new>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -103,6 +107,129 @@ QueueHandle_t s_wifi_scan_queue = nullptr;
 SemaphoreHandle_t s_wifi_scan_context_mutex = nullptr;
 QueueHandle_t s_keyboard_event_queue = nullptr;
 SemaphoreHandle_t s_keyboard_async_mutex = nullptr;
+QueueHandle_t s_ble_event_queue = nullptr;
+ble_mgr_observer_handle_t s_ble_observer = nullptr;
+cyberdeck_ble::state_machine s_ble_model;
+cyberdeck_ble::device_list s_ble_scan_devices;
+bool s_ble_ui_active = false;
+std::string s_ble_last_notice;
+
+void append_line(const std::string &line);
+void render_terminal();
+
+bool ble_address_bytes(const std::string &address, uint8_t out[6])
+{
+    unsigned int bytes[6]{};
+    if (std::sscanf(address.c_str(), "%02X:%02X:%02X:%02X:%02X:%02X",
+                    &bytes[0], &bytes[1], &bytes[2], &bytes[3], &bytes[4], &bytes[5]) != 6)
+        return false;
+    for (int i = 0; i < 6; ++i) out[i] = static_cast<uint8_t>(bytes[i]);
+    return true;
+}
+
+void ble_submit_actions()
+{
+    for (const cyberdeck_ble::action &action : s_ble_model.take_actions()) {
+        ble_mgr_cmd_t cmd{};
+        cmd.token = action.token;
+        switch (action.kind) {
+        case cyberdeck_ble::action_kind::start_scan: cmd.kind = BLE_MGR_CMD_SCAN_START; break;
+        case cyberdeck_ble::action_kind::cancel_scan: cmd.kind = BLE_MGR_CMD_SCAN_CANCEL; break;
+        case cyberdeck_ble::action_kind::pair: cmd.kind = BLE_MGR_CMD_PAIR; break;
+        case cyberdeck_ble::action_kind::submit_auth: cmd.kind = BLE_MGR_CMD_PASSKEY_REPLY; break;
+        case cyberdeck_ble::action_kind::cancel_pair: cmd.kind = BLE_MGR_CMD_PAIR_CANCEL; break;
+        case cyberdeck_ble::action_kind::connect: cmd.kind = BLE_MGR_CMD_CONNECT; break;
+        case cyberdeck_ble::action_kind::disconnect: cmd.kind = BLE_MGR_CMD_DISCONNECT; break;
+        case cyberdeck_ble::action_kind::cancel_connect: cmd.kind = BLE_MGR_CMD_DISCONNECT; break;
+        case cyberdeck_ble::action_kind::reconnect: cmd.kind = BLE_MGR_CMD_RECONNECT; break;
+        }
+        if (!action.address.empty() && !ble_address_bytes(action.address, cmd.connect.addr)) continue;
+        if (action.kind == cyberdeck_ble::action_kind::submit_auth) {
+            std::memcpy(cmd.passkey.addr, cmd.connect.addr, sizeof(cmd.passkey.addr));
+            cmd.passkey.passkey = action.passkey;
+        }
+        if (action.kind == cyberdeck_ble::action_kind::pair ||
+            action.kind == cyberdeck_ble::action_kind::cancel_pair)
+            std::memcpy(cmd.pair.addr, cmd.connect.addr, sizeof(cmd.pair.addr));
+        if (action.kind == cyberdeck_ble::action_kind::connect ||
+            action.kind == cyberdeck_ble::action_kind::reconnect)
+            cmd.connect.automatic = action.kind == cyberdeck_ble::action_kind::reconnect;
+        (void)ble_mgr_enqueue_cmd(&cmd, 0);
+    }
+}
+
+void on_ble_event(const ble_mgr_event_t *event, void *)
+{
+    if (event != nullptr && s_ble_event_queue != nullptr) (void)xQueueSend(s_ble_event_queue, event, 0);
+}
+
+void process_ble_events(lv_timer_t *)
+{
+    if (s_ble_observer == nullptr) {
+        s_ble_observer = ble_mgr_register_observer(on_ble_event, nullptr);
+    }
+    if (s_ble_event_queue == nullptr) return;
+    if (s_ble_ui_active) {
+        s_ble_model.advance_time(100);
+        ble_submit_actions();
+    }
+    ble_mgr_event_t event{};
+    bool changed = s_ble_ui_active;
+    while (xQueueReceive(s_ble_event_queue, &event, 0) == pdTRUE) {
+        changed = true;
+        switch (event.kind) {
+        case BLE_MGR_EVT_SCAN_RESULT: {
+            cyberdeck_ble::device item;
+            item.address = event.scan_result.address;
+            item.name = event.scan_result.name;
+            item.rssi = event.scan_result.rssi;
+            item.kind = static_cast<cyberdeck_ble::device_kind>(event.scan_result.kind);
+            item.connectable = event.scan_result.connectable;
+            item.paired = event.scan_result.paired;
+            (void)s_ble_scan_devices.add(item);
+            break;
+        }
+        case BLE_MGR_EVT_SCAN_FINISHED: {
+            const cyberdeck_ble::notice outcome =
+                static_cast<cyberdeck_ble::notice>(event.scan_finished.outcome);
+            if (outcome == cyberdeck_ble::notice::failed) {
+                s_ble_model.scan_failed(event.token);
+            } else if (outcome == cyberdeck_ble::notice::timed_out) {
+                s_ble_model.scan_timed_out(event.token);
+            } else {
+                s_ble_model.scan_finished(event.token, s_ble_scan_devices.snapshot());
+            }
+            s_ble_scan_devices.clear();
+            break;
+        }
+        case BLE_MGR_EVT_AUTH_REQUEST:
+            s_ble_model.auth_requested(event.token,
+                static_cast<cyberdeck_ble::auth_request_kind>(event.auth_request.kind),
+                event.auth_request.passkey);
+            break;
+        case BLE_MGR_EVT_PAIR_FINISHED:
+            s_ble_model.pairing_finished(event.token,
+                static_cast<cyberdeck_ble::pair_outcome>(event.pair_finished.outcome));
+            break;
+        case BLE_MGR_EVT_CONNECTED: s_ble_model.connection_finished(event.token, true); break;
+        case BLE_MGR_EVT_DISCONNECTED: s_ble_model.connection_finished(event.token, false); break;
+        default: break;
+        }
+    }
+    if (changed) {
+        ble_submit_actions();
+        const std::string notice = s_ble_model.notice_text();
+        if (!notice.empty() && notice != s_ble_last_notice) {
+            append_line(notice + "\n");
+            if (s_ble_model.current_screen() == cyberdeck_ble::screen::results ||
+                s_ble_model.current_screen() == cyberdeck_ble::screen::paired) {
+                append_line(s_ble_model.devices().render());
+            }
+        }
+        s_ble_last_notice = notice;
+        render_terminal();
+    }
+}
 
 struct keyboard_event_context {
     size_t length;
@@ -130,6 +257,14 @@ void discard_keyboard_event_from_queue(keyboard_event_context *event)
 void destroy_ui_resource_handles()
 {
     s_wifi_audit.teardown();
+    if (s_ble_observer != nullptr) {
+        ble_mgr_unregister_observer(s_ble_observer);
+        s_ble_observer = nullptr;
+    }
+    if (s_ble_event_queue != nullptr) {
+        vQueueDelete(s_ble_event_queue);
+        s_ble_event_queue = nullptr;
+    }
     if (s_wifi_scan_context_mutex != nullptr) {
         vSemaphoreDelete(s_wifi_scan_context_mutex);
         s_wifi_scan_context_mutex = nullptr;
@@ -413,6 +548,27 @@ void style_base(lv_obj_t *obj, lv_color_t bg, lv_color_t text) {
 }
 void hidden(lv_obj_t *obj, bool value) { if (obj) lv_obj_set_hidden(obj, value); }
 
+/* Binds the pure view decision to the glyphs available in cyberdeck_font.
+ * The font ships only the FontAwesome codepoints 0xF067 (plus), 0xF068
+ * (minus), 0xF0E7 (charge), 0xF1EB (wifi) and 0xF240..0xF244 (battery), so
+ * LV_SYMBOL_USB/LV_SYMBOL_POWER/plug cannot be rendered without regenerating
+ * the committed font.  The battery pictogram is a constant marker: the level
+ * belongs to the numeric percentage and is never encoded in the glyph. */
+const char *battery_indicator_symbol(cyberdeck_battery_view::power_glyph value)
+{
+    switch (value) {
+    case cyberdeck_battery_view::power_glyph::charging:
+        return LV_SYMBOL_CHARGE;
+    case cyberdeck_battery_view::power_glyph::battery:
+        return LV_SYMBOL_BATTERY_FULL;
+    case cyberdeck_battery_view::power_glyph::external:
+        return LV_SYMBOL_MINUS;
+    case cyberdeck_battery_view::power_glyph::none:
+    default:
+        return "";
+    }
+}
+
 void refresh_battery_status()
 {
     if (s_battery_status == nullptr || s_battery_symbol == nullptr ||
@@ -420,32 +576,27 @@ void refresh_battery_status()
         return;
     }
 
-    cyberdeck_battery::snapshot value{};
-    const bool prot_started = battery_protection_started();
-    const bool battery_available = prot_started &&
-        battery_protection_get_snapshot(&value) && value.available &&
-        value.charge != cyberdeck_battery::charge_class::absent &&
-        value.charge != cyberdeck_battery::charge_class::unavailable;
-    if (!battery_available) {
+    cyberdeck_battery_protection::snapshot value{};
+    if (!battery_protection_started() ||
+        !battery_protection_get_policy_snapshot(&value)) {
         lv_obj_add_flag(s_battery_status, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
-    const std::int32_t percentage = value.percentage < 0
-        ? 0 : value.percentage > 100 ? 100 : value.percentage;
-    const char *battery_icon = "";
-    if (value.charge == cyberdeck_battery::charge_class::charging) {
-        battery_icon = LV_SYMBOL_CHARGE;
-    } else if (value.charge == cyberdeck_battery::charge_class::discharging) {
-        battery_icon = LV_SYMBOL_MINUS;
-    } else if (value.charge == cyberdeck_battery::charge_class::neutral) {
-        battery_icon = "";
+    /* The pure view owns the state -> visibility/percentage/glyph mapping; the
+     * LVGL layer only applies the result to the two labels. */
+    const cyberdeck_battery_view::presentation shown =
+        cyberdeck_battery_view::resolve(cyberdeck_battery_view::from_snapshot(value));
+    if (!shown.visible) {
+        lv_obj_add_flag(s_battery_status, LV_OBJ_FLAG_HIDDEN);
+        return;
     }
-    lv_label_set_text(s_battery_symbol, battery_icon);
 
     char percentage_text[8] = {};
-    snprintf(percentage_text, sizeof(percentage_text), "%d%%", static_cast<int>(percentage));
-    lv_label_set_text(s_battery_percentage, percentage_text);
+    snprintf(percentage_text, sizeof(percentage_text), "%d%%", static_cast<int>(shown.percentage));
+    lv_label_set_text(s_battery_symbol, battery_indicator_symbol(shown.glyph));
+    lv_label_set_text(s_battery_percentage,
+                      shown.show_percentage ? percentage_text : "");
     lv_obj_clear_flag(s_battery_status, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1029,6 +1180,20 @@ void execute_line(bool line_already_sent = false) {
         append_line(buf);
         break;
     }
+    case CYBERDECK_CMD_BLUETOOTH_SEARCH:
+        s_ble_ui_active = true;
+        s_ble_last_notice.clear();
+        s_ble_scan_devices.clear();
+        s_ble_model.begin_search();
+        ble_submit_actions();
+        append_line("Bluetooth search started.\n");
+        break;
+    case CYBERDECK_CMD_BLUETOOTH_PAIRED:
+        s_ble_ui_active = true;
+        s_ble_last_notice.clear();
+        s_ble_model.begin_paired();
+        append_line(s_ble_model.devices().render());
+        break;
     case CYBERDECK_CMD_WIFI_SAVED: {
         s_wifi_model.begin_saved();
         wifi_saved_list_t list;
@@ -1085,6 +1250,20 @@ void move_history(int direction) {
 }
 
 void local_key(uint32_t key) {
+    if (s_ble_ui_active) {
+        cyberdeck_ble::key ble_key;
+        if (key == LV_KEY_UP) ble_key = cyberdeck_ble::key::up;
+        else if (key == LV_KEY_DOWN) ble_key = cyberdeck_ble::key::down;
+        else if (key == LV_KEY_ENTER) ble_key = cyberdeck_ble::key::enter;
+        else if (key == LV_KEY_ESC) ble_key = cyberdeck_ble::key::escape;
+        else goto not_ble_key;
+        s_ble_model.press(ble_key);
+        ble_submit_actions();
+        if (s_ble_model.current_screen() == cyberdeck_ble::screen::idle) s_ble_ui_active = false;
+        render_terminal();
+        return;
+    }
+not_ble_key:
     if (s_wifi_ui_state == wifi_ui_state_t::SEARCH_SELECT) {
         if (key == LV_KEY_UP) {
             s_wifi_search_menu.move_up();
@@ -1383,11 +1562,17 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
         * discard it without allowing it to starve the newer result. */
        s_wifi_scan_queue = xQueueCreate(2, sizeof(wifi_scan_result *));
        s_wifi_scan_context_mutex = xSemaphoreCreateMutex();
-        if (s_wifi_scan_queue == nullptr || s_wifi_scan_context_mutex == nullptr) {
-           destroy_ui_resource_handles();
-            return ESP_ERR_NO_MEM;
-        }
-        s_cat_worker_ready = cyberdeck_cat_worker_start("/sdcard", on_cat_result, nullptr);
+         if (s_wifi_scan_queue == nullptr || s_wifi_scan_context_mutex == nullptr) {
+            destroy_ui_resource_handles();
+             return ESP_ERR_NO_MEM;
+         }
+         s_ble_event_queue = xQueueCreate(8, sizeof(ble_mgr_event_t));
+         if (s_ble_event_queue == nullptr) {
+             destroy_ui_resource_handles();
+             return ESP_ERR_NO_MEM;
+         }
+         s_ble_observer = ble_mgr_register_observer(on_ble_event, nullptr);
+         s_cat_worker_ready = cyberdeck_cat_worker_start("/sdcard", on_cat_result, nullptr);
      s_screen = lv_scr_act(); style_base(s_screen, BLACK, WHITE); lv_obj_set_style_pad_all(s_screen, 12, 0); lv_obj_set_layout(s_screen, LV_LAYOUT_NONE); disable_scrolling(s_screen);
     s_menu = lv_obj_create(s_screen); lv_obj_set_size(s_menu, LV_PCT(100), LV_PCT(100)); style_base(s_menu, BLACK, WHITE); lv_obj_set_style_pad_all(s_menu, 0, 0); lv_obj_set_flex_flow(s_menu, LV_FLEX_FLOW_COLUMN); disable_scrolling(s_menu);
     lv_obj_t *header = lv_obj_create(s_menu);
@@ -1464,6 +1649,7 @@ s_last_clock_text.clear();
       lv_timer_create(update_clock, 1000, nullptr);
       lv_timer_create(process_wifi_state, 100, nullptr);
       lv_timer_create(process_wifi_scan, 100, nullptr);
+      lv_timer_create(process_ble_events, 100, nullptr);
       lv_timer_create(process_wifi_audit, 100, nullptr);
       s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
      s_terminal = lv_textarea_create(s_menu); lv_obj_set_width(s_terminal, LV_PCT(100)); lv_obj_set_flex_grow(s_terminal, 1); style_base(s_terminal, SURFACE, WHITE); lv_obj_set_style_border_width(s_terminal, 1, 0); lv_obj_set_style_border_color(s_terminal, BORDER, 0); lv_obj_set_style_pad_all(s_terminal, 12, 0); lv_textarea_set_one_line(s_terminal, false); lv_textarea_set_max_length(s_terminal, TERMINAL_LIMIT); lv_obj_set_scroll_dir(s_terminal, LV_DIR_ALL); lv_obj_set_scroll_chain(s_terminal, false); lv_obj_set_scrollbar_mode(s_terminal, LV_SCROLLBAR_MODE_OFF); lv_obj_add_event_cb(s_terminal, focused, LV_EVENT_FOCUSED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_insert, LV_EVENT_INSERT, nullptr); lv_obj_add_event_cb(s_terminal, terminal_changed, LV_EVENT_VALUE_CHANGED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_key, LV_EVENT_KEY, nullptr);

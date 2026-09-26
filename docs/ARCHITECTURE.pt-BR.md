@@ -69,12 +69,37 @@ opção persistida no NVS é `protection_enabled` (default `true`); desabilitá-
 religa o carregador imediatamente e exige reativação explícita. Falhas de
 leitura não desligam `CHG_EN` nem perdem o último estado seguro.
 
+Duas regras de precedência tornam essa política segura para uma bateria
+removível. Primeiro, somente uma leitura INA226 **inválida** preserva o snapshot
+anterior: uma leitura válida atualiza tensão, corrente, percentual e
+disponibilidade mesmo quando `CHG_STAT` não pôde ser lido, e o sinal ausente é
+publicado como `unknown` (nunca como `not_charging`). Uma falha de leitura do
+expander, portanto, não congela mais o indicador nem o oculta. Segundo, a
+precedência de ausência/presença é resolvida antes do sinal do carregador e da
+corrente: com o barramento em `absent` (>= 8330 mV voteado) o estado é
+`absent`, de modo que um `CHG_STAT` preso em low não fabrica uma bateria
+carregando. Estados, thresholds e número de votos permanecem os aprovados. O
+snapshot também publica o sinal `charge` já decodificado.
+
+`cyberdeck_battery_view.cpp` é a camada pura de apresentação do indicador, sem
+ESP-IDF, FreeRTOS, LVGL, I2C, NVS ou BSP. `resolve()` é um mapeamento total de
+`battery_state` + `charge_signal` + disponibilidade + percentual para
+`{visible, show_percentage, percentage, glyph}`: indisponível ou `unknown` fica
+oculto; `absent` fica visível com o glyph externo e **sem** percentual;
+`charging` (por estado ou por sinal) usa o glyph de carga com percentual; e
+`battery`/`external` usam o glyph de bateria com percentual. O glyph nunca é
+escolhido pelo nível: o percentual numérico ao lado é a única fonte de nível.
+
 `battery_protection.cpp` é o adaptador exclusivo de hardware: inicializa o
 Expander B via `bsp_io_expander1_init()` (endereço I2C 0x44), configura
 `CHG_STAT` no pin 6 como entrada active-low com pull-up e `CHG_EN` no pin 7
 como saída push-pull com valor inicial alto (carregador habilitado). Integra o
 reader INA226 (sensor-only), a política pura, a persistência NVS da opção
-`enabled` e expõe snapshots para a UI via timer LVGL de 1 s. Falhas de I2C,
+`enabled` e expõe snapshots para a UI via timer LVGL de 1 s. Um único
+`sample_and_publish` alimenta a política e publica as duas projeções: a
+`cyberdeck_battery::snapshot` (`charge_class`, usada pelo shell/status) e o
+snapshot puro da política em `battery_protection_get_policy_snapshot`, que é a
+única entrada de bateria consumida pela view do header. Falhas de I2C,
 NVS ou leitura de `CHG_STAT` são registradas em log sem desligar `CHG_EN` nem
 perder o último snapshot seguro.
 
@@ -90,6 +115,30 @@ e o mapa permaneçam alinhados aos contratos host, REQ-BAT-007 fixa o Expander B
 e pinos CHG_STAT/CHG_EN, REQ-BAT-008 fixa os estados e thresholds, REQ-BAT-009
 fixa a histerese 90/85 e fail-safe, e REQ-BAT-010 fixa NVS, timer UI, shell e
 `ui.type`.
+
+### Indicador de energia removível (REQ-BAT-UI-001..005 / AC-BAT-UI-001..006)
+
+- **REQ-BAT-UI-001 / AC-BAT-UI-001..002** — falha de `CHG_STAT` não congela o
+  snapshot: leitura INA válida atualiza tensão/corrente/percentual/
+  disponibilidade; leitura INA inválida continua sem percentual.
+- **REQ-BAT-UI-002 / AC-BAT-UI-003** — precedência de ausência/presença antes
+  do sinal do carregador, preservando estados, thresholds e votos aprovados.
+- **REQ-BAT-UI-003 / AC-BAT-UI-004** — camada pura (`cyberdeck_battery_view`)
+  com mapeamento total para visível, percentual e glyph semântico, sem
+  ESP-IDF, FreeRTOS ou LVGL.
+- **REQ-BAT-UI-004 / AC-BAT-UI-005** — a UI mantém dois labels e a grade
+  30/40/30 e apenas aplica a view, sem regra de negócio no LVGL e sem acesso
+  direto a I2C/NVS/reader.
+- **REQ-BAT-UI-005 / AC-BAT-UI-006** — `absent` mostra só o glyph externo e o
+  glyph nunca é escolhido pelo percentual.
+
+Limitação de hardware: a ausência é inferida pela tensão fixa do barramento
+(>= 8330 mV, 5 votos), sem sinal dedicado de presença. Limitação de recurso: a
+fonte `cyberdeck_font.c` embarca apenas os codepoints FontAwesome `0xF067`
+(mais), `0xF068` (menos), `0xF0E7` (carga), `0xF1EB` (Wi-Fi) e `0xF240..0xF244`
+(bateria); não existe glyph de tomada, USB ou energia na fonte compilada e
+regenerá-la está fora do escopo, então o caso de alimentação externa sem
+bateria usa `LV_SYMBOL_MINUS` como marcador de "sem bateria".
 
 ## Proteção de Tela
 
@@ -215,12 +264,17 @@ nunca é renderizado. Estados e erros de SSH são exibidos no terminal e
 registrados no log de eventos. Diagnósticos de rede continuam disponíveis pelo
 comando `wifi` do shell, fora do header.
 
-O grupo de bateria exibe um único ícone semântico de estado
-(`LV_SYMBOL_MINUS` durante descarga e `LV_SYMBOL_CHARGE` durante carga) e o
-percentual numérico saturado. No estado neutral, o percentual permanece visível,
-sem glyph ou texto de estado; nunca seleciona um glyph de nível de bateria. Ele
-é atualizado a partir do snapshot sincronizado do reader e fica
-oculto por completo quando o sensor está ausente ou a leitura falha. O layout do
+O grupo de bateria mantém exatamente dois labels: um glyph semântico e o
+percentual numérico saturado. A escolha não acontece na camada LVGL.
+`refresh_battery_status` copia do adaptador de proteção o snapshot puro da
+política, entrega-o a `cyberdeck_battery_view::resolve` e aplica o resultado:
+`charging` renderiza o glyph de carga com o percentual, bateria presente
+(`battery`/`external`) renderiza o pictograma constante de bateria com o
+percentual, um `absent` voteado renderiza o glyph externo sem percentual, e
+leitura indisponível ou estado `unknown` oculta o grupo inteiro. O glyph nunca
+é selecionado pelo nível do percentual; o nível pertence ao número ao lado. Ele
+é atualizado a partir do snapshot sincronizado do adaptador, sem acesso direto
+a I2C, expander, NVS ou reader. O layout do
 Wi-Fi reage a `LV_EVENT_SIZE_CHANGED` dentro de sua parte alocada da célula
 direita, com pixels visíveis a aproximadamente 2 px da borda dessa subcélula.
 
@@ -237,3 +291,74 @@ aparência nem o estado do indicador. A âncora vertical aprovada é
 `29.5px` e alinha opticamente o ícone ao título e ao relógio. Essa âncora
 mantém X, tamanho, gap, cores e semântica de estado; o resize continua
 atualizando somente a posição.
+
+## Bluetooth LE (ESP32-C6 via ESP-Hosted)
+
+O radio BLE nao reside no ESP32-P4; ele pertence ao coprocessor ESP32-C6
+alcancado por `esp_hosted` (VHCI/HCI), com a stack host (NimBLE) rodando no P4.
+Nenhum modulo BLE puro toca `lvgl.h`, FreeRTOS, NVS, BSP ou ESP-IDF, exceto o
+adaptador `ble_mgr.cpp`. Bluetooth Classic (BR/EDR) esta fora do escopo e e
+rejeitado por contrato.
+
+### Modulos puros (testaveis no host)
+
+- `cyberdeck_ble_types.{h,cpp}`: tipos limitados, classificacao por `appearance`
+  (teclado `0x03C1`, mouse `0x03C2`, fone `0x0401`/`0x0408`/`0x0418`/`0x0419`/`0x041A`/`0x041B`),
+  sanitizador de nome bounded/UTF-8, normalizacao estrita de endereco, helpers
+  de passkey (parse/formato/mascaracao `******`) e `device_list` deduplicado por
+  endereco (RSSI mais forte, primeiro nome, `paired`/`connectable` monotonicos).
+- `cyberdeck_ble_state_machine.{h,cpp}`: maquina de estados da tela
+  (`idle`/`searching`/`results`/`paired`/`pairing`/`auth`/`connecting`/`connected`),
+  deadlines exatos (scan 10 s, pair 30 s, auth 30 s, connect 20 s), tokens
+  monotonicos para descartar callbacks obsoletos, acoes derivadas
+  (`start_scan`/`pair`/`submit_auth`/`connect`/`reconnect`/...), quatro teclas
+  (`up`/`down`/`enter`/`escape`), mensagens unicas por classe (vazio/falha/timeout/
+  cancelamento para scan/pair/connect), reconexao automatica com orcamento de 3
+  tentativas e rearme manual.
+- `cyberdeck_ble_event_dispatch.{h,cpp}`: seam bounded (8 eventos) entre
+  callbacks da stack e o modelo de tela; filas com overflow fail-closed,
+  geracoes de token monotono para scan/pair/connect, `event_summary` sem
+  segredos (passkey mascarado).
+- `cyberdeck_ble_store.{h,cpp}`: persistencia logica de bonds (capacidade 16,
+  registro `addr`+`name`+`kind`+`last` sem material de chave), encode
+  deterministico (`CDB1;addr=...;name=...;kind=...;last=0|1`), decode estrito
+  rejeitando campos duplicados/reordenados/desconhecidos (impede contrabando de
+  LTK/IRK/passkey), deserialize atomico fail-closed, round-trip de reboot.
+
+### Adaptador ESP-IDF (`ble_mgr.{h,cpp}`)
+
+Unico modulo autorizado a falar com a stack BLE do C6 via `esp_hosted`.
+Possui task FreeRTOS dedicada (`ble_mgr`, stack 4 KiB, prio 5) e fila
+bounded de comandos (8). A UI apenas enfileira acoes; `ble_mgr_start` e
+nao fatal no boot. Usa NimBLE VHCI (`CONFIG_BT_NIMBLE_ENABLED=y`,
+`CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y`, `CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y`).
+
+### Integracao Shell e UI
+
+- `cyberdeck_shell_utils.{h,cpp}`: roteia exatamente `bluetooth search` e
+  `bluetooth paired` para `CYBERDECK_CMD_BLUETOOTH_SEARCH` e
+  `CYBERDECK_CMD_BLUETOOTH_PAIRED`; o verbo nu e operando extra sao
+  `CYBERDECK_CMD_UNKNOWN`.
+- `cyberdeck_shell_help.h`: catalogo unico com 16 entradas, linha
+  `bluetooth [search|paired]` entre `battery` e `ssh`.
+- `cyberdeck_ui.cpp`: estado BLE (`ble_ui_state_t`), rotea `Up`/`Down`/
+  `Enter`/`Escape` para `cyberdeck_ble::state_machine`, consome acoes
+  derivadas e as encaminha ao `ble_mgr` via fila, processa eventos BLE em
+  timer LVGL de 100 ms (`process_ble_events`), renderiza lista e mensagens
+  do modelo puro.
+
+### Configuracao
+
+- `sdkconfig.defaults`: `CONFIG_BT_ENABLED=y`, `CONFIG_BT_CONTROLLER_DISABLED=y`,
+  `CONFIG_BT_NIMBLE_ENABLED=y`, `CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y`,
+  `CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y`.
+- `main/idf_component.yml`: mantem `esp_hosted` para o link C6.
+- `components/cyberdeck/CMakeLists.txt`: registra os 4 modulos puros +
+  `ble_mgr.cpp`; depende de `bt`, `nimble`, `esp_hosted`.
+
+### Rastreabilidade
+
+REQ-BLE-001..011 / AC-BLE-001..011 mapeados em `code-map.md`; contratos host
+em `tests/host/keymap/contracts/cyberdeck_ble_*.h`; alvos de teste
+`test_ble_types`, `test_ble_state_machine`, `test_ble_event_dispatch`,
+`test_ble_store`, `test_ble_command_parse`, `test_ble_integration_contract`.

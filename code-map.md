@@ -40,20 +40,24 @@ Ordem relevante de inicializacao:
 
 | Arquivo | Simbolos/funcao | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, callbacks de SSH/Wi-Fi/cat, `refresh_battery_status` | Compoe a TUI multilinear, roteia Enter por estado, sanitiza dados de `cat` antes do LVGL, aplica limite explicito ao textarea, atualiza sob lock e integra shell, SSH, Wi-Fi, auditoria local com gate de estado no timer (sem publicar `collecting`), o hand-off não bloqueante de `wifi audit save` com ACK/path pós-publicação e o snapshot de bateria no terceiro filho do header com percentual e um único ícone semântico. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, callbacks de SSH/Wi-Fi/cat, `battery_indicator_symbol`, `refresh_battery_status` | Compoe a TUI multilinear, roteia Enter por estado, sanitiza dados de `cat` antes do LVGL, aplica limite explicito ao textarea, atualiza sob lock e integra shell, SSH, Wi-Fi, auditoria local com gate de estado no timer (sem publicar `collecting`), o hand-off não bloqueante de `wifi audit save` com ACK/path pós-publicação e o snapshot de bateria no terceiro filho do header. O <PII type="CASE_ID" id="29"> só consome `battery_protection_get_policy_snapshot`, delega o mapeamento a `cyberdeck_battery_view::resolve` e fixa o glyph semântico em `battery_indicator_symbol` (`LV_SYMBOL_CHARGE`, `LV_SYMBOL_BATTERY_FULL` constante e `LV_SYMBOL_MINUS`); não há regra de negócio, escolha de glyph por estado nem acesso a I2C/NVS/reader na camada LVGL. |
 | `components/cyberdeck/include/platform/display/cyberdeck_ui.h` | API publica da UI | Contrato usado por `app_main` e pelo driver de teclado. |
-| `components/cyberdeck/src/platform/display/cyberdeck_font.c` | Fonte monoespaciada | Recurso visual do terminal/header, incluindo os simbolos LVGL de Wi-Fi, menos e carga; o include LVGL permanece condicionado por `LV_LVGL_H_INCLUDE_SIMPLE` e usa `"lvgl.h"` em ambos os ramos. |
+| `components/cyberdeck/src/platform/display/cyberdeck_font.c` | Fonte monoespaciada | Recurso visual do terminal/header, incluindo os simbolos LVGL de Wi-Fi, menos e carga; o include LVGL permanece condicionado por `LV_LVGL_H_INCLUDE_SIMPLE` e usa `"lvgl.h"` em ambos os ramos. Os unicos codepoints FontAwesome disponiveis sao `0xF067` (mais), `0xF068` (menos), `0xF0E7` (carga), `0xF1EB` (Wi-Fi) e `0xF240..0xF244` (bateria), portanto nao ha glyph de tomada/USB/energia para o caso de alimentacao externa sem bateria. |
 | `components/cyberdeck/src/platform/display/cyberdeck_clock.cpp` | `cyberdeck_clock_from_utc`, `cyberdeck_format_clock` | Conversao/formato do relogio GMT-3. |
 | `components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp` | `cyberdeck_wifi_indicator_is_lit` | Regra pura: claro somente com `enabled && connected && has_ip`. |
 | `components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp` | layout, criacao, resize e cor do icone | Desenha tres arcos e ponto; recalcula posicao em resize. |
 | `components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_screen_protection.h` | `parse_timeout_minutes`, `state`, `persisted_timeout` | Politica pura host-testavel: timeout padrao de 2 min, faixa inclusiva 0..1440, zero desabilitando sem perder o ultimo valor positivo, restauracao dos dois campos e transicao on/off no limite exato de inatividade. |
+| `components/cyberdeck/src/platform/display/cyberdeck_battery_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_battery_view.h` | `power_glyph`, `input`, `presentation`, `clamp_percentage`, `from_snapshot`, `resolve` | View pura do indicador de energia do header, sem ESP-IDF, FreeRTOS, LVGL, I2C, NVS ou BSP. Mapeamento total de `battery_state` + `charge_signal` + disponibilidade + percentual para visivel/percentual/glyph: indisponivel ou `unknown` fica oculto, `absent` fica visivel com glyph externo e sem percentual, `charging` (por estado ou por sinal) usa glyph de carga com percentual, e `battery`/`external` usam glyph de bateria com percentual. Ausencia e resolvida antes do sinal do carregador, portanto um `CHG_STAT` preso em low nunca fabrica uma bateria. O nivel nunca vem do glyph. |
 | `components/cyberdeck/src/platform/display/screen_off.cpp`, `components/cyberdeck/include/platform/display/screen_off.h` | `screen_off_init`, `screen_off_turn_on`, `screen_off_turn_off`, `screen_off_set_timeout_minutes` | Adaptador LVGL/BSP da protecao de tela: timer de 1 s, duplo toque para religar, comandos `screen on|off|timeout`, restauracao NVS antes do timer e persistencia enfileirada para uma task dedicada (fora da task LVGL) do timeout efetivo e do ultimo valor positivo, com zero pausando/desabilitando o timer. |
 
 O header usa grade direta 30/40/30 para titulo, relogio e celula direita. A
-celula direita renderiza Wi-Fi antes da bateria; a bateria mostra um único
-ícone semântico de estado (`LV_SYMBOL_MINUS` para descarga e `LV_SYMBOL_CHARGE`
-para carga) e percentual numérico, sem glyph de nível, e fica oculta quando
-ausente ou indisponível. O filho Wi-Fi ocupa a largura compacta derivada de
+celula direita renderiza Wi-Fi antes da bateria; a bateria mantem os dois labels
+originais (um glyph semantico e o percentual numerico) e apenas aplica o que a
+view pura `cyberdeck_battery_view` decidiu: glyph de carga em `charging`, glyph
+constante de bateria mais percentual em `battery`/`external`, glyph externo sem
+percentual em `absent` e grupo oculto quando a leitura e invalida ou o estado e
+`unknown`. O nivel nunca e escolhido pelo percentual. O filho Wi-Fi ocupa a
+largura compacta derivada de
 `CYBERDECK_WIFI_ICON_RADIUS_2` e
 `CYBERDECK_WIFI_ICON_DEFAULT_THICKNESS` (`2 * (raio + espessura)`, ~34 px), a
 bateria usa `LV_SIZE_CONTENT`, ambos definem `flex_grow=0` e a celula usa
@@ -68,10 +72,10 @@ pelo comando `wifi` e pela auditoria local.
 | `components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp` | classe `cyberdeck_local_shell`; `cyberdeck_local_shell_cat` | Shell confinado ao root virtual `/`; `host_root` continua sendo o ponto fisico do SD (montado em `/sdcard`), e `/sdcard` e descendentes sao rejeitados no namespace virtual. Tokenizer manual byte-a-byte bounded para espacos/tabs; implementa `pwd`, `cd`, `ls`, `cat`, `touch`, `mkdir`, `rm`, `rmdir` e ajuda. A ajuda e as opcoes `-h`/`--help` consomem o catalogo compartilhado sem listas literais locais. A API cat-specific usa as mesmas regras de cwd/caminho, apenas strings bounded e descritores confinados, retorna output heap-backed, limita arquivos a 12288 bytes e chunks de 1024, e e usada pelo worker sem construir o shell geral. |
 | `components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp`, `components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h` | `cyberdeck_cat_worker_start`, `cyberdeck_cat_worker_enqueue`, `cyberdeck_cat_worker_teardown` | Worker FreeRTOS com fila bounded para I/O de `cat`, stack explícita de 6144 bytes; o worker deve chamar uma API cat-specific heap/bounded, sem construir/usar o shell genérico, `fs::path` ou `vector` no caminho específico. O contrato estrutural permite os identificadores `cyberdeck_local_shell_*` da API dedicada e rejeita apenas a construção/uso genérico. Cada start drena a sinalização de parada e cria uma geração nova, e teardown sinaliza/aguarda o retorno do worker antes de liberar fila, root e callback, invalidando callbacks LVGL tardios. |
 | `components/cyberdeck/include/features/shell/cyberdeck_local_shell.h` | API do shell local | Contrato usado pela UI e testes. |
-| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` | `cyberdeck_shell_help::kCatalog`, `cyberdeck_shell_help::text`, `cyberdeck_shell_help::command_text` | Modulo header-only puro STL com a unica tabela ordenada de 14 entradas e formatadores deterministicos; nao depende de LVGL, UI ou ESP-IDF. |
+| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` | `cyberdeck_shell_help::kCatalog`, `cyberdeck_shell_help::text`, `cyberdeck_shell_help::command_text` | Modulo header-only puro STL com a unica tabela ordenada de 16 entradas e formatadores deterministicos; nao depende de LVGL, UI ou ESP-IDF. |
 | `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp`, `components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h` | `cyberdeck_help_text`, `cyberdeck_command_help_text`, `parse_ssh_target`, `cyberdeck_parse_command`, `CYBERDECK_CMD_WIFI_AUDIT_SAVE`, `CYBERDECK_CMD_SCREEN_ON/OFF/TIMEOUT` | Adapters publicos para o catalogo compartilhado, parser de `ssh [user@]host[:port]`, comandos `wifi` (incluindo auditoria local e `wifi audit save` explicito; a grafia de exportacao legada e rejeitada) e roteamento de `screen on`, `screen off` e `screen timeout <0-1440>` para a politica pura. |
 | `tests/host/keymap/contracts/cyberdeck_help.h` | `kUnifiedHelpText` | Fixture de teste com o catalogo unificado esperado; nao e uma implementacao de producao. |
-| `tests/host/keymap/test_help_unification.cpp` | paridade de `help`, `help -h` e `help --help`; catalogo unico | Teste comportamental host que liga `cyberdeck_shell_utils.cpp` e `cyberdeck_local_shell.cpp`, sem hardware. |
+| `tests/host/keymap/test_help_unification.cpp` | paridade de `help`, `help -h` e `help --help`; catalogo unico de 16 linhas | Teste comportamental host que liga `cyberdeck_shell_utils.cpp` e `cyberdeck_local_shell.cpp`, sem hardware. |
 | `tests/host/keymap/help_unification_contract.py` | contrato estrutural do catalogo | Impede listas literais independentes em `cyberdeck_shell_utils.cpp`, `cyberdeck_local_shell.cpp` e `cyberdeck_ui.cpp`. |
 | `components/cyberdeck/src/features/shell/cyberdeck_history.cpp` | classe `cyberdeck_history` | Historico limitado a 64 linhas, com navegacao e duplicatas preservadas. |
 | `components/cyberdeck/src/features/shell/cyberdeck_edit_line.cpp` | classe `cyberdeck_edit_line` | Linha UTF-8, cursor, backspace, Enter e comportamento por sessao. |
@@ -119,6 +123,37 @@ O callback de `GOT_IP` somente publica snapshot. Trabalho pesado, SNTP,
 persistencia e notificacao da UI ocorrem no contexto apropriado. Tokens
 monotônicos impedem callbacks atrasados de alterar uma tentativa nova.
 
+### Bluetooth LE no ESP32-C6 hospedado (REQ-BLE-001..011)
+
+O radio BLE nao e do ESP32-P4: e do coprocessor ESP32-C6 alcancado por
+`esp_hosted` (VHCI/HCI), e a stack host roda no P4. Nenhum modulo BLE toca
+`lvgl.h`, FreeRTOS, NVS ou BSP, exceto o adaptador. Bluetooth Classic (BR/EDR)
+esta fora do escopo e e rejeitado por contrato.
+
+| Arquivo | Simbolos/contrato | Papel |
+| --- | --- | --- |
+| `components/cyberdeck/include/features/bluetooth/cyberdeck_ble_types.h`, `components/cyberdeck/src/features/bluetooth/cyberdeck_ble_types.cpp` | `k_max_name_bytes`, `k_max_address_bytes`, `k_max_devices`, `k_min_rssi`/`k_max_rssi`, `k_passkey_digits`/`k_passkey_modulus`, `k_unnamed_placeholder`, constantes de appearance do Bluetooth SIG, `device_kind`, `device`, `kind_from_appearance`, `kind_label`, `normalize_address`, `sanitize_name`, `display_name`, `clamp_rssi`, `parse_passkey`, `format_passkey`, `mask_passkey`, `device_list` | Tipos puros e modelo de listabounded. Classificacao por `appearance` apenas quando provavel (teclado `0x03C1`, mouse `0x03C2`, fone de ouvido `0x0401`/`0x0408`/`0x0418`/`0x0419`/`0x041A`/`0x041B`); `0x03C0` (HID generico), joystick, gamepad, `0x0400` e qualquer outro valor viram `unknown` em vez de adivinharem. `sanitize_name` converte C0/C1, `U+007F`, `U+2028`/`U+2029` e byte UTF-8 invalido em um unico espaco, limita a 32 bytes e nunca corta uma sequencia UTF-8. `device` nao possui campo de chave, ligacao ou IRK, portanto listagem, snapshot, log e store nao conseguem vazar segredo por construcao. `device_list` deduplica por endereco (RSSI mais forte, primeiro nome nao vazio, `paired`/`connectable` monotonicos), limita a 32 entradas e renderiza `Nome (Tipo, -55 dBm)` de forma deterministica. |
+| `components/cyberdeck/include/features/bluetooth/cyberdeck_ble_state_machine.h`, `components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp` | `k_scan_timeout_ms` (10000), `k_pair_timeout_ms`/`k_auth_timeout_ms` (30000), `k_connect_timeout_ms` (20000), `k_max_reconnect_attempts` (3), `screen`, `key`, `notice`, `auth_request_kind`, `pair_outcome`, `action_kind`, `action`, mensagens `k_msg_*`/`k_status_*`, `state_machine` | Modelo de tela voltado ao usuario, sem I/O e sem chamada de stack, portanto nao pode bloquear a task LVGL. Conclusoes de conexao usam token + marcador in-flight mesmo quando uma busca simultanea muda a tela; callbacks terminais nao geram cancelamentos duplicados, enquanto deadlines geram exatamente a acao de cancelamento correspondente; cancelamento e disconnect preservam endereco/token e notices distinguem origem de pareamento, conexao e reconexao. `status_line()` usa `display_name()` bounded/sanitizado e o teto de reconexao nao emite nova action. |
+| `components/cyberdeck/include/features/bluetooth/cyberdeck_ble_event_dispatch.h`, `components/cyberdeck/src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp` | `k_max_pending_events` (8), `ble_event_kind`, `ble_event`, `event_dispatch`, `begin_scan`/`begin_pairing`/`begin_connection` (incluindo ativacao com token externo), `publish_*`, `drain`, `drop_stale`, `reset`, `event_summary` | Seam entre o callback da stack e o modelo de tela. Publica somente snapshots bounded, com fila limitada e overflow fail-closed; o adaptador pode ativar cada geracao com o token emitido pelo modelo, eliminando dominios shadow. Tokens monotônicos compartilhados impedem que callback obsoleto ou de outra geração seja aplicado. `drop_stale` conserva a geracao ativa e a imediatamente anterior por tipo, sem que pairing invalide scan; conexoes copiam endereco e marcador automatico para o snapshot. `event_summary` inclui nome sanitizado/bounded e nunca contem passkey, PIN, link key ou IRK. |
+| `components/cyberdeck/include/features/bluetooth/cyberdeck_ble_store.h`, `components/cyberdeck/src/features/bluetooth/cyberdeck_ble_store.cpp` | `k_max_bonds` (16), `k_max_record_bytes` (96), `k_max_store_bytes` (2048), `k_bond_magic` (`CDB1`), `bond_record`, `store_result`, `encode_bond`, `decode_bond`, `bond_store` (`add`/`update`/`remove`/`find`/`snapshot`/`serialize`/`deserialize`/`clear`) | Persistencia logica de bonds, sem ESP-IDF, NVS ou FATFS; o mapeamento bytes-armazenamento e do adaptador. O registro e `addr` + `name` + `kind` + `last`, nessa ordem fixa; nao existe campo para chave, IRK, LTK ou passkey, e um payload com campo desconhecido e rejeitado fail-closed em vez de ser aceito e repersistido. `deserialize` e atômico: payload malformado deixa o conteudo anterior intacto. |
+| `components/cyberdeck/include/features/bluetooth/ble_mgr.h`, `components/cyberdeck/src/features/bluetooth/ble_mgr.cpp` | `ble_mgr_start`, `ble_mgr_stop` | Adaptador ESP-IDF, unico modulo autorizado a falar com a stack BLE do C6 via `esp_hosted`. Possui task FreeRTOS dedicada e fila bounded; a UI apenas enfileira. Pair/connect usam o endereco e token da acao, a seguranca inicia por `ble_gap_security_initiate` e so callbacks reais publicam conclusoes; cancelamento/desconexao usam terminacao bounded, OOB e passkeys invalidos falham fechados. O ciclo de vida separa o cancelamento de pairing da conexao autenticada promovida apos o bond: disconnect fisico publica DISCONNECTED real e permite nova conexao. Callbacks GAP e comandos de cancelamento/autenticacao validam a geracao ativa; callbacks stale nao alteram estado nem publicam. Bonds existentes sao atualizados, nao duplicados. O adaptador drena o `event_dispatch` para os observers, preservando um unico dominio de tokens. Falha de inicializacao e nao fatal no boot. |
+| `components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h`, `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp` | `CYBERDECK_CMD_BLUETOOTH_SEARCH`, `CYBERDECK_CMD_BLUETOOTH_PAIRED`, `"bluetooth search"`, `"bluetooth paired"` | Parser roteia exatamente os dois subcomandos aprovados; o verbo nu e qualquer operando extra continuam `CYBERDECK_CMD_UNKNOWN`. Nao ha subcomando para Bluetooth Classic. |
+| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` | linha `bluetooth [search|paired]` | Catalogo unico de ajuda (16 entradas), com a linha bluetooth entre `battery` e `ssh`; o `static_assert` de descricoes em `cyberdeck_shell_utils.cpp` acompanha a ordem. |
+| `tests/host/keymap/contracts/cyberdeck_ble_types.h` | ABI de `cyberdeck_ble_types.h` | Fixture de teste, nao e implementacao de producao. |
+| `tests/host/keymap/contracts/cyberdeck_ble_state_machine.h` | ABI de `cyberdeck_ble_state_machine.h` + mensagens `k_msg_*`/`k_status_*` | Fixture de teste; fonte unica das mensagens de terminal e dos deadlines. |
+| `tests/host/keymap/contracts/cyberdeck_ble_event_dispatch.h` | ABI de `cyberdeck_ble_event_dispatch.h` | Fixture de teste. |
+| `tests/host/keymap/contracts/cyberdeck_ble_store.h` | ABI de `cyberdeck_ble_store.h` | Fixture de teste. |
+| `tests/host/keymap/contracts/cyberdeck_help.h` | `kUnifiedHelpText` | Fixture compartilhada; agora inclui a linha `bluetooth` aprovada. E a oracle byte a byte de `test_shell_utils.cpp` e `test_help_unification.cpp`, incluindo a linha `screen [on|off|timeout <0-1440>]`. |
+
+A listagem mostra nome e tipo (`Keyboard`, `Headset`, `Mouse`, `Unknown`), em
+ingles como todas as demais strings de terminal do firmware; nome ausente vira
+`(unnamed)` e dois perifericos com o mesmo nome so sao distinguidos pelo
+endereco. A navegacao usa Cima, Baixo, Enter e Escape. Mensagens de terminal
+sao exatamente uma por classe: lista vazia, falha, timeout e cancelamento, para
+scan, pareamento e conexao. O scan e assincrono e toda espera e bounded por
+`advance_time`; nenhum modulo BLE puro importa ESP-IDF, FreeRTOS, LVGL, NVS ou
+FATFS, e o log nunca recebe passkey ou material de chave.
+
 ### Screenshot HTTP
 
 | Arquivo | Simbolos/contrato | Papel |
@@ -163,9 +198,10 @@ e coberta pelos testes host: validar com `idf.py build` e o roteiro
 | `components/cyberdeck/src/platform/sensors/orientation.cpp` | `orientation_from_accel`, `orientation_update` | Conversao da aceleracao em rotacao e debounce da orientacao posterior. |
 | `components/cyberdeck/src/platform/sensors/battery_status.cpp`, `components/cyberdeck/include/platform/sensors/battery_status.h` | `percentage_from_bus_voltage_mv`, `classify_current_ma`, `classify_sample` | Logica pura recebe `bus_voltage_mv`, satura a janela validada `6000..8230` mV em `0..100` e classifica corrente positiva como descarregando, negativa como carregando e zero/indeterminada como neutral; ausencia so ocorre com presenca explicita e leitura invalida fica indisponivel sem fabricar percentual. |
 | `components/cyberdeck/src/platform/sensors/ina226_reader.cpp`, `components/cyberdeck/include/platform/sensors/ina226_reader.h` | `ina226_reader_start`, `ina226_reader_get_snapshot` | Reader INA226 no barramento BSP e endereco I2C `0x41`: registra de tensao `0x02` convertido em mV, configuracao `0x4527`, calibracao `0x0D55`, identificacao, tarefa dedicada a cada 1 s e snapshot protegido por mutex; falhas de leitura apos startup sao publicadas como indisponiveis. Nao usa `CHG_EN`, `CHG_STAT`, NVS ou politica de protecao; o startup e nao fatal. |
-| `components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp`, `components/cyberdeck/include/platform/sensors/cyberdeck_battery_protection.h` | `decode_chg_stat`, `state::observe`, `state::snapshot`, `state::set_protection_enabled`, `state::charger_enabled`, `current_uncertainty_ma`, `external_voltage_mv`, `absent_voltage_mv`, `state_vote_count`, `protection_enter_percentage`, `protection_enter_voltage_mv`, `protection_exit_percentage`, `default_protection_enabled` | Politica pura host-testavel: estados battery/external/charging/absent/unknown, threshold corrente ±15 mA, external >=7900 mV, absent >=8330 mV com 5 votos, protecao so em charging + percentual >=90 + tensao >=8200, histerese retoma <=85, opcao enabled persistida no NVS (default true), falhas nao desligam CHG_EN nem perdem ultimo estado seguro. Nao usa ESP-IDF, FreeRTOS, I2C, NVS, LVGL ou BSP. |
-| `components/cyberdeck/src/platform/sensors/battery_protection.cpp`, `components/cyberdeck/include/platform/sensors/battery_protection.h` | `battery_protection_init`, `battery_protection_start`, `battery_protection_get_snapshot`, `battery_protection_set_enabled`, `battery_protection_is_enabled`, `battery_protection_is_active`, `battery_protection_charger_enabled` | Adaptador exclusivo para hardware: Expander B via `bsp_io_expander1_init()` (0x44), CHG_STAT pin 6 active-low input/pull-up, CHG_EN pin 7 output push-pull, CHG_EN=1 por default. Integra reader INA226 (sensor-only), politica pura, NVS para opcao enabled, timer UI 1 s. Falhas de I2C/NVS/CHG logadas sem desligar CHG_EN nem perder estado seguro. |
-| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `refresh_battery_status`, `process_battery_protection`, `execute_line` (battery protection on/off/status), timer LVGL 1 s | Mantem a grade direta 30/40/30, Wi-Fi antes da bateria dentro da celula direita, percentual numerico e um unico icone semantico (`LV_SYMBOL_MINUS`/`LV_SYMBOL_CHARGE`) nos estados ativo; neutral conserva percentual sem glyph/texto de estado, sem glyph de nivel ou seletor por porcentagem; oculta o grupo em sensor ausente ou leitura indisponivel. Timer LVGL 1 s consome snapshot do adaptador; comandos shell `battery protection on/off/status` roteados para adaptador; `ui.type` transita via bridge serial. |
+| `components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp`, `components/cyberdeck/include/platform/sensors/cyberdeck_battery_protection.h` | `decode_chg_stat`, `state::observe`, `state::snapshot`, `state::last_safe_snapshot`, `state::set_protection_enabled`, `charger_enabled`, `current_uncertainty_ma`, `external_voltage_mv`, `absent_voltage_mv`, `state_vote_count`, `protection_enter_percentage`, `protection_enter_voltage_mv`, `protection_exit_percentage`, `default_protection_enabled` | Politica pura host-testavel: estados battery/external/charging/absent/unknown, threshold corrente ±15 mA, external >=7900 mV, absent >=8330 mV com 5 votos, protecao so em charging + percentual >=90 + tensao >=8200, histerese retoma <=85, opcao enabled persistida no NVS (default true), falhas nao desligam CHG_EN nem perdem ultimo estado seguro. O snapshot tambem publica o sinal `charge` decodificado. Leitura INA valida atualiza tensao/corrente/percentual/disponibilidade mesmo com `CHG_STAT` invalido (sinal `unknown`, nunca `not_charging`), e somente leitura INA invalida preserva o ultimo estado seguro sem fabricar percentual. A precedencia de ausencia/presenca (>=8330 mV voteado) e resolvida antes do sinal do carregador e da corrente, de modo que um `CHG_STAT` preso em low nao fabrica uma bateria carregando. Nao usa ESP-IDF, FreeRTOS, I2C, NVS, LVGL ou BSP. |
+| `components/cyberdeck/src/platform/sensors/battery_protection.cpp`, `components/cyberdeck/include/platform/sensors/battery_protection.h` | `battery_protection_init`, `battery_protection_start`, `battery_protection_get_snapshot`, `battery_protection_get_policy_snapshot`, `battery_protection_set_enabled`, `battery_protection_is_enabled`, `battery_protection_is_active`, `battery_protection_charger_enabled`, `sample_and_publish` | Adaptador exclusivo para hardware: Expander B via `bsp_io_expander1_init()` (0x44), CHG_STAT pin 6 active-low input/pull-up, CHG_EN pin 7 output push-pull, CHG_EN=1 por default. Integra reader INA226 (sensor-only), politica pura, NVS para opcao enabled, timer UI 1 s. Um unico `sample_and_publish` alimenta a politica e publica as duas projecoes: `cyberdeck_battery::snapshot` (charge_class, usada pelo shell/status) e o snapshot puro da politica (`battery_protection_get_policy_snapshot`), que e a unica entrada de bateria consumida pela view do header. Falhas de I2C/NVS/CHG logadas sem desligar CHG_EN nem perder estado seguro. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `battery_indicator_symbol`, `refresh_battery_status`, `process_battery_protection`, `execute_line` (battery protection on/off/status), timer LVGL 1 s | Mantem a grade direta 30/40/30, Wi-Fi antes da bateria dentro da celula direita e exatamente dois labels no grupo da bateria (um glyph semantico e o percentual numerico). O <PII type="CASE_ID" id="30"> nao classifica estado: ele le `battery_protection_get_policy_snapshot`, aplica `cyberdeck_battery_view::resolve` e fixa o glyph por `battery_indicator_symbol` (`LV_SYMBOL_CHARGE` em carga, `LV_SYMBOL_BATTERY_FULL` constante em bateria presente, `LV_SYMBOL_MINUS` em alimentacao externa sem bateria, vazio quando invisivel); nao ha glyph de nivel nem seletor por porcentagem, e o grupo e ocultado quando a view decide `visible == false` (leitura indisponivel ou estado `unknown`). O percentual e mostrado quando a view expoe `show_percentage` (carga, bateria e external) e omitido em `absent`. Timer LVGL 1 s consome snapshot do adaptador; comandos shell `battery protection on/off/status` roteados para adaptador; `ui.type` transita via bridge serial. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `execute_line`, `local_key`, `process_ble_events`, `on_ble_event` | Integra a UI BLE sem chamadas diretas à stack: comandos `bluetooth search/paired`, teclas Up/Down/Enter/Escape, fila bounded de eventos e observer `ble_mgr`; `cyberdeck_ble::device_list` agrega snapshots de scan e `cyberdeck_ble::state_machine` permanece a fonte da seleção/estado. Todas as ações atravessam `ble_mgr_enqueue_cmd`, e deadlines são avançados no timer LVGL sem chamadas de stack. |
 
 ## Dependencias e composicao
 
@@ -174,7 +210,9 @@ e coberta pelos testes host: validar com `idf.py build` e o roteiro
 `components/cyberdeck/CMakeLists.txt` registra todos os fontes de producao e
 declara dependencias de LVGL, BSP, I2C master, Wi-Fi, rede, FreeRTOS, SD/FATFS,
 libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
-`esp_hosted`, `esp_wifi_remote`, libssh e o override local de `sock_utils`. `sdkconfig.defaults` habilita `CONFIG_FATFS_FS_LOCK=5` (protege os cinco VFS FAT slots contra rename/unlink de <PII type="CASE_ID" id="198"/> abertos) e `CONFIG_FATFS_TIMEOUT_MS=1000`; a task `wifi_audit_io` ainda impõe deadline próprio de 2 s para chamadas SD/VFS.
+`esp_hosted`, `esp_wifi_remote`, libssh e o override local de `sock_utils`. O
+componente tambem expoe o include de configuracao do port NimBLE usado pelo
+adaptador. `sdkconfig.defaults` habilita `CONFIG_FATFS_FS_LOCK=5` (protege os cinco VFS FAT slots contra rename/unlink de <PII type="CASE_ID" id="198"/> abertos) e `CONFIG_FATFS_TIMEOUT_MS=1000`; a task `wifi_audit_io` ainda impõe deadline próprio de 2 s para chamadas SD/VFS.
 
 ### Overlay local
 
@@ -205,10 +243,10 @@ libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 | --- | --- |
 | `tab5_keyboard_keys.cpp` | `test_keymap.cpp` |
 | `tab5_keyboard_event.cpp` | `test_keyboard_event.cpp` |
-| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` + `cyberdeck_shell_utils.cpp` | `test_shell_utils.cpp` (inclui os parsers de `wifi audit`/`wifi audit save` e `screen on|off|timeout <0-1440>`) |
-| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` + `cyberdeck_shell_utils.cpp` + `cyberdeck_local_shell.cpp` + `cyberdeck_ui.cpp` | `test_help_unification.cpp` (igualdade exata de `cyberdeck_help_text()` e `execute("help")`/`help -h`/`help --help`; catalogo com comandos comuns e locais uma vez cada) e `help_unification_contract.py` (fonte unica e ausencia de listas literais independentes) |
+| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` + `cyberdeck_shell_utils.cpp` | `test_shell_utils.cpp` (inclui os parsers de `wifi audit`/`wifi audit save` e `screen on|off|timeout <0-1440>`; estrutura de 16 linhas e 16 linhas nao vazias, presenca das 16 linhas do catalogo com guarda de fronteira de linha e contagem de completude, igualdade exata com a fixture e determinismo) |
+| `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h` + `cyberdeck_shell_utils.cpp` + `cyberdeck_local_shell.cpp` + `cyberdeck_ui.cpp` | `test_help_unification.cpp` (igualdade exata de `cyberdeck_help_text()` e `execute("help")`/`help -h`/`help --help`; 16 linhas com comandos comuns e locais uma vez cada) e `help_unification_contract.py` (fonte unica e ausencia de listas literais independentes) |
 | `cyberdeck_screen_protection.cpp` + contrato puro `contracts/cyberdeck_screen_protection.h` | `test_screen_protection.cpp` (default 2 min, limites 0/1/2/120/1440, parsing decimal estrito, zero desabilitando com preservacao do ultimo positivo, reject 1441 sem mutacao, restore/snapshot NVS, transicoes exatas do timer e independencia de power on/off) |
-| `screen_off.cpp` + `cyberdeck_ui.cpp` + `cyberdeck_shell_utils.cpp` + `cyberdeck_serial_bridge.cpp` + `app_main.cpp` | `test_screen_protection_contract.py` (rotas de comando, timer LVGL, persistencia/restauracao NVS, default seguro, init NVS antes do adapter, duplo toque e caminho transitivo `ui.type` -> `inject_text_segmented`/`inject_enter` -> `cyberdeck_keyboard_input`) |
+| `screen_off.cpp` + `cyberdeck_ui.cpp` + `cyberdeck_shell_utils.cpp` + `cyberdeck_serial_bridge.cpp` + `app_main.cpp` + `cyberdeck_shell_help.h` | `test_screen_protection_contract.py` (rotas de comando, literal `screen [on|off|timeout <0-1440>]` na linha unica do catalogo compartilhado com delegacao `cyberdeck_help_text()` -> `cyberdeck_shell_help::text()`, fixture `contracts/cyberdeck_help.h` e os dois testes comportamentais que a comparam, timer LVGL, persistencia/restauracao NVS, default seguro, init NVS antes do adapter, duplo toque e caminho transitivo `ui.type` -> `inject_text_segmented`/`inject_enter` -> `cyberdeck_keyboard_input`; o alvo do Makefile declara todos esses arquivos como pre-requisitos) |
 | `cyberdeck_history.cpp` | `test_history.cpp` |
 | `cyberdeck_edit_line.cpp` | `test_edit_line.cpp`, `test_prompt_behavior.py` |
 | `cyberdeck_local_shell.cpp`, `cyberdeck_cat_worker.cpp` | `test_local_shell.cpp` (raiz virtual `/`, caminhos relativos/absolutos, rejeição do alias `/sdcard`, confinamento, operações e regressões de segurança), `test_cat_multiline.cpp` (API dedicada com cwd `/` e alias físico rejeitado, LF/CRLF/tabs/UTF-8, marcador final, bytes inválidos, limite exato de 12288, NUL embutido e sufixo após newline preservados para sanitização), `cat_contract.py`, `test_cat_multiline_contract.py` (contrato estrutural de ponteiro+tamanho explícito, textarea multiline/max-length, limite UTF-8 e payload completo até append), `test_cat_lifecycle_sanitization_contract.py` (ramos sem task vs. com task, drain/join/ack, reset sincronizado, callback/generation e sanitizacao), `test_cat_start_teardown_start_contract.py` (restart e invalidacao stale), `test_cat_stack_footprint_contract.py` (regressao do stack minimo do worker), `test_cat_worker_path_safety_contract.py` (proibe o caminho worker->shell/resolve/path/vector e exige API cat-specific heap/bounded), `local_shell_security_contract.py`, `local_shell_tokenizer_contract.py` (tokenização e contrato estrutural do root `/`), `test_prompt_behavior.py`, `test_local_prompt_contract.py` |
@@ -233,10 +271,56 @@ libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
 | `cyberdeck_ui.cpp` | `test_boot_sequence.py`, `test_keyboard_input_contract.py`, `test_ui_resource_contract.py`, `test_local_prompt_contract.py`, `test_wifi_enter_routing_contract.py` |
 | `main/app_main.cpp`, `cyberdeck_ui.cpp` | `test_boot_sequence.py` (ordem SD/UI, montagem física `/sdcard` e root virtual `/`) |
 | `imu_reader.cpp` | `imu_sensor_contract.py` (callback Sensor Hub, `sensor_handle_t` obrigatorio para `bsp_sensor_init`, proibicao especifica da leitura direta `imu_acquire_acce(`, timeout/fallback seguro e continuidade da rotacao) |
-| `battery_status.cpp` + `ina226_reader.cpp` + `battery_protection.cpp` + contrato puro `contracts/cyberdeck_battery.h` | `test_battery_contract.cpp` (REQ-BAT-001/002: tensao `bus_voltage_mv`, janela `6000..8230`, saturacao, estados charging/discharging/neutral, zero/indeterminado e ausencia explicita), `test_battery_reader_contract.py` (REQ-BAT-001/002/004/005/006: `0x41`, `0x4527`/`0x0D55`, conversao do registro de tensao, task 1 s, mutex/snapshot, exclusoes, sensor-only, composicao pelo adaptador e nao-fatal), `test_battery_protection.cpp` + `test_battery_protection_contract.py` (politica e adaptador reais, sem hardware) |
-| `cyberdeck_ui.cpp` + `cyberdeck_wifi_icon.cpp` + `battery_protection.cpp` + `app_main.cpp` | `test_battery_ui_contract.py` (REQ-BAT-002/003/004/006/010: grade direta 30/40/30, ordem Wi-Fi/bateria, layout compacto, percentual numerico, exatamente um icone semantico nos estados ativos, neutral sem glyph/texto, proibicao de glyph de nivel, ocultacao em falha, timer/snapshot do adaptador sem dependencia direta do reader, continuacao do boot e rastreabilidade) |
+| `battery_status.cpp` + `ina226_reader.cpp` + `battery_protection.cpp` + contrato puro `contracts/cyberdeck_battery.h` | `test_battery_contract.cpp` (REQ-BAT-001/002: tensao `bus_voltage_mv`, janela `6000..8230`, saturacao, estados charging/discharging/neutral, zero/indeterminado e ausencia explicita), `test_battery_reader_contract.py` (REQ-BAT-001/002/004/005/006: `0x41`, `0x4527`/`0x0D55`, conversao do registro de tensao, task 1 s, mutex/snapshot, exclusoes, sensor-only, composicao pelo adaptador e nao-fatal; a UI consome a entrada de bateria apenas pelo seam de snapshot do adaptador, `battery_protection_get_policy_snapshot` ou `battery_protection_get_snapshot`, sempre declarado no header do adaptador, e nao pode conter nenhuma referencia direta ao reader INA226, seja chamada ou include), `test_battery_protection.cpp` + `test_battery_protection_contract.py` (politica e adaptador reais, sem hardware) |
+| `cyberdeck_battery_view.cpp` + contrato puro `contracts/cyberdeck_battery_view.h` | `test_battery_view.cpp` (REQ-BAT-UI-001..005 / AC-BAT-UI-001..006: `resolve` sobre a matriz total `battery_state` x `charge_signal` x disponibilidade x percentual, `absent` somente com glyph externo e sem percentual em qualquer sinal, bateria presente sem carga com percentual e glyph de bateria, `charging` por estado ou por sinal com glyph de carga, `external` com bateria presente sem glyph de carga, `invalid`/`unknown` totalmente oculto, `clamp_percentage` 0..100, `from_snapshot` sem inventar entrada, glyph nunca escolhido pelo nivel em varredura 0..100, `decode` do sinal `unknown` e regressao de `CHG_STAT` preso em low apos os 5 votos) e `test_battery_view_contract.py` (view pura sem ESP-IDF/FreeRTOS/LVGL/I2C/NVS/BSP e registrada no CMake, LVGL aplicando `from_snapshot`/`resolve` sem `charge_class::`/`battery_state::`/`charge_signal::`, tabela de glyph fixo, percentual vazio quando `show_percentage` e falso, grupo oculto quando `visible` e falso, sem I2C/NVS/reader diretos). O alvo liga a view com a politica pura de `cyberdeck_battery_protection.cpp`, sem ESP-IDF, LVGL, I2C, NVS, simulador, Serial Automation Bridge ou hardware. |
+| `cyberdeck_ui.cpp` + `cyberdeck_wifi_icon.cpp` + `cyberdeck_battery_view.cpp` + `battery_protection.cpp` + `app_main.cpp` | `test_battery_ui_contract.py` (REQ-BAT-002/003/004/006/010 + REQ-BAT-UI-004/005: grade direta 30/40/30, ordem Wi-Fi/bateria, layout compacto, percentual numerico, exatamente dois labels, ausencia de selecao de icone por nivel e de ramo `charge_class::` no refresh, ocultacao em falha, timer/snapshot do adaptador sem dependencia direta do reader, continuacao do boot e rastreabilidade). A selecao de icone foi transferida para a view pura de REQ-BAT-UI: o `refresh_battery_status` consome `battery_protection_get_policy_snapshot` e delega a `cyberdeck_battery_view::resolve`, enquanto `battery_indicator_symbol` fixa o glyph semantico. |
 | `cyberdeck_serial_bridge.cpp` (REQ-002/003/005/006/007/008/009) — ponte NDJSON bounded, rid/envelopes, UI/sys/wifi, screen.dump chunks/CRC/end, feeder tolerante a logs/fragmentacao; `cyberdeck_cli.py` | `test_serial_ndjson_dispatch.cpp` (bounded/erros/rid/envelopes/UI, inclusive `ui.type` para `screen on|off|timeout`), `test_serial_screen_dump.cpp` (byte-identical chunks/CRC/end), `test_serial_cli_tolerance.cpp` (logs/leitura fragmentada), `test_serial_sysinfo_wifi.cpp` (sys.info/wifi contratos) — todos host-only, sem pyserial/hardware; GREEN com a producao criada |
 | `cyberdeck_serial_bridge.cpp` `fs.write` (REQ-001..REQ-011) — protocolo rid/type/path/data_b64/size, limite 2048, path safety, strict canonical base64, commit por temp unico/O_EXCL+rename (substituicao atomica no host/no-clobber no ESP/FATFS; nunca remove candidato preexistente), CRC response, NDJSON errors; `cyberdeck_cli.py` `fs.write` (`build_request`, encoding, input/stdin, 2048, strict canonical) | `test_fs_write_dispatch.cpp` (dispatch/validacao/path/size/base64/CRC/preservacao; colisao de temp preexistente/no-clobber), `test_fs_write_cli.py` (parser/build_request/encoding/stdin/limite), `test_fs_write_contract.py` (estrutural: disco/path/atomic/CRC/CLI/Makefile/code-map) — todos host-only, RED antes da producao |
+| `cyberdeck_ble_types.cpp` + contrato puro `contracts/cyberdeck_ble_types.h` | `test_ble_types.cpp` (classificacao por `appearance` provavel vs. `unknown`, normalizacao estrita de endereco, sanitizador bounded/UTF-8-safe sem C0/C1, clamp de RSSI, passkey estrito + mascara constante, dedup por endereco com RSSI mais forte e primeiro nome, capacidade 32, selecao com clamp, render deterministico, nomes duplicados, beacon nao conectavel) |
+| `cyberdeck_ble_state_machine.cpp` + contrato puro `contracts/cyberdeck_ble_state_machine.h` | `test_ble_state_machine.cpp` (scan assincrono com um unico `start_scan`, deadlines exatos, quatro classes de mensagem distintas, rejeicao de token obsoleto/zero/duplicado, dispositivo desaparecido nao pareia, passkey exibido so em `status_line` e zerado apos submissao, passkey errado nao encaminha, desfechos bonded/rejected/cancelled/timed_out/failed, conectar/escape/desconectar, orcamento de reconexao com rearme manual, concorrencia scan x reconexao) |
+| `cyberdeck_ble_event_dispatch.cpp` + contrato puro `contracts/cyberdeck_ble_event_dispatch.h` | `test_ble_event_dispatch.cpp` (tokens monotonicos compartilhados, publicacao obsoleta descartada sem enfileirar, fila bounded 8 com overflow fail-closed, ordem e propriedade no `drain`, `drop_stale`, geracao manual x automatica, `event_summary` sem digitos do passkey) |
+| `cyberdeck_ble_store.cpp` + contrato puro `contracts/cyberdeck_ble_store.h` | `test_ble_store.cpp` (encode determinista com ordem de campos fixa, decode estrito rejeitando campo duplicado/reordenacao/lixo, campo desconhecido rejeitado impedindo contrabandear `ltk`/`irk`/`passkey`, capacidade 16, serialize bounded, deserialize atomico fail-closed, round trip de reboot) |
+| `cyberdeck_shell_utils.h/.cpp` + `cyberdeck_shell_help.h` (roteamento de `bluetooth search`/`bluetooth paired` e a 16a linha do catalogo) | `test_ble_command_parse.cpp` (comportamental: os dois subcomandos, o verbo nu e 22 grafias proximas — inclusive `bluetooth classic`/`spp`/`a2dp` — como `CYBERDECK_CMD_UNKNOWN`, Help com 16 linhas) + `test_help_unification.cpp`/`help_unification_contract.py` (fonte unica do catalogo) |
+| `ble_mgr.cpp` + `cyberdeck_ui.cpp` + `app_main.cpp` + `components/cyberdeck/CMakeLists.txt` + `sdkconfig.defaults` + `main/idf_component.yml` (REQ-BLE-001/003/008/010/011) | `test_ble_integration_contract.py` (modulos puros livres de stack/RTOS/UI, ABI de producao igual aos contratos, roteamento de shell e UI com as quatro teclas, task FreeRTOS dedicada e `ble_mgr_start` nao fatal, ausencia de log com passkey/chave e de campo secreto em `bond_record`, registro em CMake/sdconfig/idf_component.yml, exclusao de Bluetooth Classic, rastreabilidade REQ/AC em Makefile/.gitignore/code-map/docs/READMEs) |
+
+### Bluetooth LE: rastreabilidade REQ/AC -> TEST
+
+| Requisito | Criterio de aceite | Testes host/contratos |
+| --- | --- | --- |
+| `REQ-BLE-001` — BLE somente no ESP32-C6 hospedado pelo ESP32-P4 | `AC-BLE-001` | `test_ble_integration_contract.py` (adaptador como unico modulo da stack, host NimBLE com `CONFIG_BT_NIMBLE_ENABLED=y` + VHCI `CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y` e `CONFIG_BT_BLUEDROID_ENABLED=n`, `esp_hosted` em `main/idf_component.yml`, `CONFIG_BT_ENABLED=y` em `sdkconfig.defaults`, tokens Bluedroid `esp_ble_gap`/`esp_ble_gattc`/`esp_gap_ble` rejeitados, modulos puros sem `esp_bt`/`nimble`/`esp_hosted`) |
+| `REQ-BLE-002` — shell `bluetooth search` e `bluetooth paired` | `AC-BLE-002` | `test_ble_command_parse.cpp`, `test_ble_integration_contract.py`, `test_help_unification.cpp`, `help_unification_contract.py` |
+| `REQ-BLE-003` — scan assincrono e nao bloqueante | `AC-BLE-003` | `test_ble_state_machine.cpp`, `test_ble_event_dispatch.cpp`, `test_ble_integration_contract.py` (UI nao chama API de stack NimBLE; UI roteia so pela fila publica limitada `ble_mgr_enqueue_cmd` com `TickType_t` e pelo observador `ble_mgr_register_observer`; qualquer outro simbolo `ble_mgr_*` na UI e rejeitado por allow-list, sem depender de nomes privados) |
+| `REQ-BLE-004` — listagem com nome e tipo (teclado, fone de ouvido, mouse, desconhecido) | `AC-BLE-004` | `test_ble_types.cpp` (`kind_from_appearance`, `kind_label`, `render`, `(unnamed)`, duplicatas por endereco) |
+| `REQ-BLE-005` — navegacao Cima/Baixo, Enter e Escape | `AC-BLE-005` | `test_ble_state_machine.cpp`, `test_ble_integration_contract.py` (`cyberdeck_ble::key::up/down/enter/escape` na UI) |
+| `REQ-BLE-006` — pareamento com autenticacao interativa quando necessaria | `AC-BLE-006` | `test_ble_state_machine.cpp` (passkey exibido, conferido, zerado apos submissao; confirm e numeric comparison sem segredo), `test_ble_types.cpp` (`parse_passkey`/`format_passkey`/`mask_passkey`) |
+| `REQ-BLE-007` — persistencia de bonds | `AC-BLE-007` | `test_ble_store.cpp`, `test_ble_integration_contract.py` (adapter responsavel por bytes para NVS/FATFS) |
+| `REQ-BLE-008` — reconexao automatica | `AC-BLE-008` | `test_ble_state_machine.cpp` (orcamento de 3 tentativas e rearme manual), `test_ble_event_dispatch.cpp` (geracao `automatic`) |
+| `REQ-BLE-009` — mensagens de lista vazia, falha, timeout e cancelamento | `AC-BLE-009` | `test_ble_state_machine.cpp` (constantes `k_msg_*` como fonte unica, um texto exato por classe) |
+| `REQ-BLE-010` — sem bloquear a UI e sem expor segredos | `AC-BLE-010` | `test_ble_types.cpp`, `test_ble_state_machine.cpp`, `test_ble_event_dispatch.cpp`, `test_ble_store.cpp`, `test_ble_integration_contract.py` (nenhum `ESP_LOG` com passkey/chave, `bond_record` sem campo secreto) |
+| `REQ-BLE-011` — Bluetooth Classic fora do escopo | `AC-BLE-011` | `test_ble_integration_contract.py` (lista de tokens BR/EDR rejeitada em todo o diretorio da feature) |
+
+Os seis alvos BLE exercitam agora a implementacao de producao: os modulos puros
+(`cyberdeck_ble_types.cpp`, `cyberdeck_ble_state_machine.cpp`,
+`cyberdeck_ble_event_dispatch.cpp`, `cyberdeck_ble_store.cpp`), o adaptador
+`ble_mgr.cpp`, o roteamento de shell/UI e a linha do catalogo de ajuda foram
+criados. Os contratos de `contracts/cyberdeck_ble_*.h` sao fixtures de teste:
+definem a ABI e re-incluem o header de producao assim que ele existir, portanto
+nenhum teste inventa API de hardware. `CONFIG_BT_ENABLED=y` em
+`sdkconfig.defaults` e o registro de `ble_mgr.cpp` em
+`components/cyberdeck/CMakeLists.txt` fazem parte da implementacao.
+
+`test_ble_integration_contract.py` fixa a stack aprovada: o host BLE e NimBLE
+(`nimble_port_*`, `ble_hs_cfg`, `ble_gap_disc`, `ble_gap_connect`) com HCI
+transportado pelo ESP-Hosted VHCI ate o controlador do ESP32-C6, e
+`CONFIG_BT_BLUEDROID_ENABLED=n` mantem o Bluedroid fora do escopo, entao as
+APIs exclusivas de Bluedroid (`esp_ble_gap`, `esp_ble_gattc`, `esp_gap_ble`) sao
+rejeitadas em todo o diretorio da feature. O adaptador e o unico caller da
+stack: ele cria a tarefa FreeRTOS (com nome explicito em toda criacao) e uma
+fila de comandos limitada por constante de compilacao. A composicao com a UI e
+descrita pela superficie publica limitada — `ble_mgr_start`/`ble_mgr_stop`,
+`ble_mgr_enqueue_cmd` (com `TickType_t`, para nunca bloquear o LVGL) e
+`ble_mgr_register_observer`/`ble_mgr_unregister_observer` — e nao por nomes de
+helpers privados, entao a regra nao fixa a implementacao interna do adaptador.
 
 ### Bateria: rastreabilidade REQ -> TEST
 
@@ -265,6 +349,37 @@ politica pura host-testavel, adaptador expander-B/INA226/NVS, timer UI 1 s,
 comandos shell `battery protection on/off/status` e compatibilidade serial
 transitiva via `ui.type`. A validacao final dos alvos fica a cargo
 do reviewer.
+
+### Indicador de energia removivel: rastreabilidade REQ/AC -> implementacao
+
+| Requisito | Criterio de aceite | Implementacao de producao |
+| --- | --- | --- |
+| `REQ-BAT-UI-001` — falha de leitura de `CHG_STAT` nao congela o snapshot | `AC-BAT-UI-001` — leitura INA valida atualiza tensao, corrente, percentual e disponibilidade | `cyberdeck_battery_protection.cpp`: `state::observe` so preserva o ultimo estado seguro quando `ina_valid == false`; `snapshot.charge` publica `unknown` para leitura CHG_STAT falha |
+| `REQ-BAT-UI-001` — leitura INA invalida continua sem percentual | `AC-BAT-UI-002` — nenhuma percentual e fabricado a partir de leitura invalida | `cyberdeck_battery_protection.cpp` (`state::observe`, `state::last_safe_snapshot`), `battery_protection.cpp` (`sample_and_publish`) |
+| `REQ-BAT-UI-002` — precedencia de ausencia/presenca | `AC-BAT-UI-003` — `CHG_STAT` preso em low nao fabrica bateria carregando; estados e thresholds aprovados preservados | `cyberdeck_battery_protection.cpp`: `classify_state` decide `absent` (>= 8330 mV, 5 votos) antes do sinal do carregador e da corrente; `cyberdeck_battery_view.cpp`: `resolve` decide ausencia antes do sinal |
+| `REQ-BAT-UI-003` — camada pura de apresentacao sem ESP/LVGL/FreeRTOS | `AC-BAT-UI-004` — mapeamento total de estado/sinal/disponibilidade/percentual para visivel, percentual e glyph semantico | `cyberdeck_battery_view.h`/`.cpp`: `power_glyph`, `input`, `presentation`, `clamp_percentage`, `from_snapshot`, `resolve` |
+| `REQ-BAT-UI-004` — integracao da UI sem regra de negocio no LVGL | `AC-BAT-UI-005` — dois labels, grade 30/40/30, sem acesso direto a I2C/NVS/reader | `cyberdeck_ui.cpp`: `battery_indicator_symbol` fixa o glyph, `refresh_battery_status` consome `battery_protection_get_policy_snapshot` e aplica `resolve`; `battery_protection.cpp`/`battery_protection.h` publicam o snapshot puro |
+| `REQ-BAT-UI-005` — sem percentual/`CHG_STAT` e sem glyph de nivel | `AC-BAT-UI-006` — `absent` mostra apenas o glyph externo e o glyph nunca e escolhido pelo percentual | `cyberdeck_battery_view.cpp` (`show_percentage` falso em `absent`), `cyberdeck_ui.cpp` (percentual vazio quando `show_percentage == false`) |
+
+Os alvos host desses requisitos sao criados pelo `tester` depois desta
+implementacao; ate la, o contrato existente `test_battery_ui_contract.py` ainda
+descreve o contrato anterior de selecao de icone dentro de
+`refresh_battery_status`, e `test_battery_protection.cpp` ainda fixa o
+comportamento antigo de congelamento no caminho `chg_valid == false`.
+A execucao e a regressao da suite ficam a cargo do `reviewer`.
+
+Limitacoes de hardware e de recurso que restringem o desenho acima:
+
+- A ausencia e detectada por tensao fixa do barramento (>= 8330 mV, 5 votos),
+  nao por presenca eletrica dedicada. Um `CHG_STAT` preso em low abaixo dessa
+  janela ainda podeappear como carga ate a votacao de ausencia confirmar.
+- `cyberdeck_font.c` embarca somente os codepoints FontAwesome `0xF067` (mais),
+  `0xF068` (menos), `0xF0E7` (carga), `0xF1EB` (Wi-Fi) e `0xF240..0xF244`
+  (bateria). Nao existe glyph de tomada, USB ou energia na fonte compilada, e
+  regenerar a fonte esta fora do escopo: o caso de alimentacao externa sem
+  bateria usa `LV_SYMBOL_MINUS` como marcador de "sem bateria".
+- O pictograma de bateria e um marcador constante (`LV_SYMBOL_BATTERY_FULL`): o
+  nivel pertence ao percentual numerico vizinho e nunca e derivado do glyph.
 
 Os testes host nao substituem a validacao do hardware para LVGL, touch, I2C,
 Wi-Fi real, libssh real ou endpoint HTTP. Os contratos Python inspecionam a
@@ -300,12 +415,15 @@ make -C tests/host/keymap test_local_shell test_cat_multiline test_prompt_behavi
 make -C tests/host/keymap test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi
 make -C tests/host/keymap test_fs_write_dispatch test_fs_write_cli test_fs_write_contract
 make -C tests/host/keymap test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract
+make -C tests/host/keymap test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store
+make -C tests/host/keymap test_ble_command_parse test_help_unification help_unification_contract
+make -C tests/host/keymap test_ble_integration_contract
 ```
 
 `verify` compara os valores `LV_KEY_*` do shim com o LVGL gerenciado. Os
 `test_battery_*` sao os contratos desta correcao: o alvo puro exercita a
-percentual por tensao e os estados, enquanto os dois alvos Python inspecionam a
-fonte real para leitura INA226, icone semantico unico, boot nao fatal e
+percentual por tensao e os estados, enquanto os dois alvos Python inspecionam
+a fonte real para leitura INA226, icone semantico unico, boot nao fatal e
 ausencia de controle de carregador. `test_battery_protection` e
 `test_battery_protection_contract` exercitam a politica pura de estados e
 protecao de carregamento, o adaptador expander-B/INA226/NVS, o timer UI 1 s,
@@ -316,6 +434,12 @@ da seam injetável e permanecem registrados no Makefile; `test` executa o binár
 comportamental (não apenas a compilação). O contrato
 IMU continua como alvo separado e, quando falha, é identificado no final como
 falha preexistente isolada, sem misturá-la com os testes desta transação.
+
+Os seis alvos BLE exercitam agora a implementacao de producao: os modulos puros
+(`cyberdeck_ble_types.cpp`, `cyberdeck_ble_state_machine.cpp`,
+`cyberdeck_ble_event_dispatch.cpp`, `cyberdeck_ble_store.cpp`), o adaptador
+`ble_mgr.cpp`, o roteamento de shell/UI e a linha do catalogo de ajuda foram
+criados. A validacao final dos alvos fica a cargo do reviewer.
 
 `test_wifi_audit_save` e um contrato comportamental do fluxo novo: ele
 exercita os seams reais de auditoria/persistência e o parser/renderizador
@@ -334,9 +458,15 @@ relacionados.
 default/range, zero desabilitando com retenção do último positivo, round-trip
 dos dois campos NVS e o limite exato do timer. `test_screen_protection_contract`
 inspeciona o adaptador LVGL/BSP/NVS, o roteamento da UI, a ordem de boot e a
-compatibilidade transitiva via `ui.type`, sem abrir hardware. A implementação
-de produção fornece o seam puro, o adaptador LVGL/NVS e o roteamento shell;
-esses contratos aguardam apenas a validação do reviewer.
+compatibilidade transitiva via `ui.type`, sem abrir hardware. Como a ajuda deixou
+de ser uma lista literal em `cyberdeck_shell_utils.cpp`, o contrato também fixa a
+linha `screen [on|off|timeout <0-1440>]` na tabela compartilhada de 16 entradas,
+exige a delegação `cyberdeck_help_text()` -> `cyberdeck_shell_help::text()`, a
+presença exata da linha na fixture e o uso dessa fixture pelos dois testes
+comportamentais, e exige que o alvo do Makefile declare catálogo, fixture e testes
+como pré-requisitos para que nenhum deles possa ficar obsoleto em silêncio. A
+implementação de produção fornece o seam puro, o adaptador LVGL/NVS e o
+roteamento shell; esses contratos aguardam apenas a validação do reviewer.
 
 ### Build ESP-IDF
 
@@ -385,6 +515,9 @@ O roteiro da ponte serial esta em
 - `tests/manual/tui-shell-validation.pt-BR.md`: validacao no dispositivo.
 - `docs/WIFI.md`: fluxos Wi-Fi, incluindo auditoria local e salvamento explícito
   da rede conectada.
+- Bluetooth LE: `bluetooth search` e `bluetooth paired` sao as duas entradas de
+  terminal; o catalogo de ajuda e a linha 16 de
+  `components/cyberdeck/include/features/shell/cyberdeck_shell_help.h`.
 - `tests/manual/serial-bridge-validation.pt-BR.md`: validacao da ponte
   USB Serial-JTAG no dispositivo.
 - `tools/cyberdeck_cli.py`: cliente NDJSON host da ponte serial.

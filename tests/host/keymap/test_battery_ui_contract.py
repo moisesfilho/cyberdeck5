@@ -14,6 +14,12 @@ Traceability:
   REQ-BAT-003 -> numeric percentage + one semantic state icon, no level icon.
   REQ-BAT-004 -> boot remains non-fatal and the UI has no raw charger I/O.
   REQ-BAT-006 -> docs and code-map retain the battery test traceability.
+  REQ-BAT-UI-004 -> the LVGL layer only applies the pure view result.
+  REQ-BAT-UI-005 -> the glyph is a fixed semantic marker, never level-based.
+
+The state -> visible/percentage/glyph rule lives in the pure view
+(`cyberdeck_battery_view`), so this contract asserts the LVGL hand-off instead
+of the superseded `charge_class::` branch selection.
 """
 import re
 from pathlib import Path
@@ -31,6 +37,8 @@ TRACEABILITY = (
     "REQ-BAT-003 -> test_battery_ui_contract.py",
     "REQ-BAT-004 -> test_battery_ui_contract.py",
     "REQ-BAT-006 -> test_battery_ui_contract.py + code-map.md",
+    "REQ-BAT-UI-004 -> test_battery_ui_contract.py (UI applies the pure view)",
+    "REQ-BAT-UI-005 -> test_battery_ui_contract.py (no level glyph, empty pct)",
 )
 
 
@@ -142,42 +150,6 @@ def calls_for_object(source: str, function: str, object_name: str):
 def is_zero_literal(expression: str) -> bool:
     compact = re.sub(r"\s+", "", expression)
     return re.fullmatch(r"[+-]?0+(?:[uUlL]+)?", compact) is not None
-
-
-def state_window(source: str, state: str) -> str:
-    """Return the balanced source block associated with one state branch."""
-    marker = f"charge_class::{state}"
-    start = source.find(marker)
-    require(start >= 0, f"battery UI must branch on {state}")
-
-    # The current seam uses if/else-if blocks.  Prefer the balanced block after
-    # the condition so a following default branch cannot be counted as part of
-    # the selected state's icon.
-    opening = source.find("{", start)
-    if opening >= 0 and opening - start <= 800:
-        depth = 0
-        for index in range(opening, len(source)):
-            if source[index] == "{":
-                depth += 1
-            elif source[index] == "}":
-                depth -= 1
-                if depth == 0:
-                    return source[opening:index + 1]
-
-    # Also support a switch/case or a compact one-line branch.
-    following = [
-        position for position in
-         (source.find(f"charge_class::{candidate}", start + len(marker))
-          for candidate in ("charging", "discharging", "neutral", "absent", "unavailable"))
-
-        if position >= 0
-    ]
-    end = min(following) if following else len(source)
-    return source[start:end]
-
-
-def symbol_tokens(source: str) -> list[str]:
-    return re.findall(r"\bLV_SYMBOL_[A-Z0-9_]+\b", source)
 
 
 def small_style_value(arguments: list[str], description: str, maximum: int = 4) -> None:
@@ -338,14 +310,29 @@ def main() -> int:
             "cyberdeck_wifi_icon_update_layout" in wifi_icon,
             "Wi-Fi resize callback must invoke update_layout")
 
-    # REQ-BAT-003: the visual contract is one semantic state icon plus the
-    # numeric percentage.  Battery-level glyphs and multi-glyph charge text
-    # are explicitly forbidden.
+    # REQ-BAT-UI-005 / AC-BAT-UI-006: the level must never be encoded in a
+    # pictogram.  The battery pictogram is a CONSTANT marker, so the single
+    # permitted LV_SYMBOL_BATTERY_* token is the full glyph in the shared table;
+    # every level variant stays forbidden and nothing may select a glyph from
+    # the percentage.
     refresh = function_body(ui, "refresh_battery_status")
+    glyph_table = function_body(ui, "battery_indicator_symbol")
     require("battery_level_symbol" not in ui,
             "battery UI must not select a glyph from percentage level")
-    require(re.search(r"\bLV_SYMBOL_BATTERY(?:_[A-Z0-9_]+)?\b", ui) is None,
-            "battery UI must not render an LV_SYMBOL_BATTERY level icon")
+    level_glyphs = re.findall(r"\bLV_SYMBOL_BATTERY_[A-Z0-9_]+\b", ui)
+    require(set(level_glyphs) <= {"LV_SYMBOL_BATTERY_FULL"},
+            f"no battery level pictogram may be rendered, found {sorted(set(level_glyphs))}")
+    require(not re.search(r"percentage[^;]*\?\s*LV_SYMBOL_|"
+                          r"LV_SYMBOL_[A-Z0-9_]+\s*\?[^;]*percentage",
+                          glyph_table + refresh, re.DOTALL),
+            "the battery glyph must never be chosen by the percentage")
+    require("cyberdeck_battery_view::power_glyph" in glyph_table,
+            "the glyph table must switch on the view's semantic glyph")
+    require(re.search(r"lv_label_set_text\s*\(\s*s_battery_symbol\s*,\s*"
+                      r"battery_indicator_symbol\s*\(", refresh) is not None,
+            "battery refresh must apply the shared glyph table")
+    require(not re.search(r"\bLV_SYMBOL_[A-Z0-9_]+\b", refresh),
+            "battery refresh must not hardcode a pictogram")
 
     battery_label_updates = re.findall(
         r"lv_label_set_text(?:_fmt)?\s*\(\s*(s_battery_[A-Za-z0-9_]+)",
@@ -361,27 +348,28 @@ def main() -> int:
     require(percentage_updates,
             "battery refresh must update a dedicated numeric percentage label")
 
-    for state in ("charging", "discharging"):
-        branch = state_window(refresh + "\n", state)
-        icons = symbol_tokens(branch)
-        require(len(icons) == 1,
-                f"{state} state must select exactly one semantic LVGL icon")
-        require(all(not icon.startswith("LV_SYMBOL_BATTERY") for icon in icons),
-                f"{state} state must not select a battery-level icon")
-    require(re.search(r"charge_class::discharging", refresh) is not None,
-            "battery UI must distinguish discharging from charging")
-    require(re.search(r"charge_class::charging", refresh) is not None,
-            "battery UI must retain the charging state branch")
-    require(re.search(r"charge_class::neutral", refresh) is not None,
-            "battery UI must retain an explicit neutral state branch")
-    neutral_branch = state_window(refresh + "\n", "neutral")
-    neutral_icons = symbol_tokens(neutral_branch)
-    require(len(neutral_icons) == 0,
-            "neutral state must not render a battery/state glyph")
-    require(re.search(r"LV_OBJ_FLAG_HIDDEN|lv_obj_add_flag|lv_obj_set_hidden",
-                      neutral_branch) is None,
-            "neutral state must keep the battery group visible")
-    require(re.search(r"LV_SYMBOL_WIFI", ui) or "cyberdeck_wifi_icon" in ui,
+    # REQ-BAT-UI-003/004: the state -> visible/percentage/glyph rule moved to the
+    # pure view, so the LVGL layer must apply it and must not re-implement it.
+    # The old `charge_class::` branch selection is therefore forbidden here.
+    require(re.search(r"\bcharge_class::", refresh) is None,
+            "battery UI must not classify the state itself (charge_class::)")
+    for enum_token in ("battery_state::", "charge_signal::", "power_glyph::"):
+        require(enum_token not in refresh,
+                f"battery UI must not classify the state itself ({enum_token})")
+    require("cyberdeck_battery_view::from_snapshot" in refresh and
+            re.search(r"cyberdeck_battery_view::resolve\s*\(", refresh) is not None,
+            "battery UI must delegate the mapping to the pure view")
+    require(re.search(r"lv_obj_add_flag\s*\([^;]*LV_OBJ_FLAG_HIDDEN", refresh)
+            is not None,
+            "a not-visible presentation must hide the battery group")
+    require(re.search(r"lv_obj_clear_flag\s*\([^;]*LV_OBJ_FLAG_HIDDEN", refresh)
+            is not None,
+            "a visible presentation must clear the hidden state")
+    require(re.search(r"\.show_percentage\s*\?", refresh) is not None,
+            "the percentage label must be gated by the view's show_percentage")
+    require(re.search(r"\?\s*percentage_text\s*:\s*\"\"", refresh) is not None,
+            "an absent source must render an empty percentage label")
+    require(re.search(r"\bLV_SYMBOL_WIFI\b", ui) or "cyberdeck_wifi_icon" in ui,
             "header must retain the LVGL Wi-Fi indicator")
     battery_label_creates = re.findall(
         r"lv_label_create\s*\(\s*s_battery_status\s*\)", init)
@@ -401,13 +389,16 @@ def main() -> int:
                 f"battery UI must not render the textual state {state_word!r}")
 
     # A failed read/absent battery must hide the group, not display stale or
-    # fabricated zero data.  A subsequent valid snapshot may reveal it again.
+    # fabricated zero data.  The decision now belongs to the pure view, so the
+    # UI only applies its `visible` result; it must not re-derive availability.
     require(re.search(r"(?:battery|charge)[^;]*(?:hidden|hide)|lv_obj_(?:add_flag|set_hidden)[^;]*battery",
                       ui, re.IGNORECASE | re.DOTALL),
             "battery failure path must hide the battery indicator")
+    require(re.search(r"\.\s*visible", refresh) is not None,
+            "UI must apply the view's visible decision")
     require(re.search(r"value\.available|charge_class::(?:absent|unavailable)",
-                      refresh),
-            "UI must branch on battery availability/validity/state")
+                      refresh) is None,
+            "UI must not derive visibility itself; the pure view owns it")
     require(re.search(r"lv_obj_add_flag\s*\([^;]*LV_OBJ_FLAG_HIDDEN|lv_obj_set_hidden\s*\([^;]*true",
                       ui, re.DOTALL),
             "failure must use an explicit LVGL hidden state")
@@ -416,8 +407,8 @@ def main() -> int:
     # starts the protection adapter, while the UI consumes only the adapter's
     # synchronized snapshot; a direct reader dependency must not be required
     # (or reintroduced) in the LVGL layer.
-    require(re.search(r"\bbattery_protection_get_snapshot\s*\(", ui) is not None,
-            "UI must consume the battery-protection snapshot")
+    require(re.search(r"\bbattery_protection_get_policy_snapshot\s*\(", ui) is not None,
+            "UI must consume the pure policy snapshot of the battery-protection adapter")
     require(re.search(r"\bbattery_protection_started\s*\(", ui) is not None,
             "UI must use the adapter's started state")
     require(re.search(r"\bina226_reader_(?:get_snapshot|get_raw_sample|started|start|init)\s*\(", ui) is None,
@@ -449,8 +440,8 @@ def main() -> int:
             "battery UI must not perform NVS directly")
     require(start is not None and re.search(r"\bnvs_", tail, re.IGNORECASE) is None,
             "battery protection startup path must not perform NVS directly")
-    require(re.search(r"\bbattery_protection_get_snapshot\s*\(", ui) is not None,
-            "UI must consume the synchronized battery protection snapshot")
+    require(re.search(r"\bbattery_protection_get_policy_snapshot\s*\(", ui) is not None,
+            "UI must consume the synchronized pure policy snapshot")
     require("lv_timer_create" in ui and re.search(
         r"lv_timer_create\s*\([^;]{0,500}1000", ui, re.S) is not None,
         "UI must refresh the battery snapshot from a one-second LVGL timer")

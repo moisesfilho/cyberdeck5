@@ -68,9 +68,38 @@ BATTERY_PROTECTION_HDR := ../../../components/cyberdeck/include/platform/sensors
 BATTERY_PROTECTION_CONTRACT_HDR := contracts/cyberdeck_battery_protection.h
 BATTERY_PROTECTION_BIN := test_battery_protection_bin
 BATTERY_PROTECTION_CONTRACT := test_battery_protection_contract.py
+# Indicador de energia removivel (REQ-BAT-UI-001..005 / AC-BAT-UI-001..006).
+# A view pura do header e host-linkable: o alvo liga cyberdeck_battery_view.cpp
+# com a politica pura cyberdeck_battery_protection.cpp para provar a costura
+# snapshot -> apresentacao (precedencia de ausencia, sinal CHG_STAT invalido,
+# mapeamento total e clamp de percentual) sem ESP-IDF, FreeRTOS, LVGL, I2C,
+# NVS, BSP, simulador, Serial Automation Bridge ou hardware.
+BATTERY_VIEW_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_battery_view.cpp
+BATTERY_VIEW_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_battery_view.h
+BATTERY_VIEW_CONTRACT_HDR := contracts/cyberdeck_battery_view.h
+BATTERY_VIEW_TEST := test_battery_view.cpp
+BATTERY_VIEW_BIN := test_battery_view_bin
+BATTERY_VIEW_CONTRACT := test_battery_view_contract.py
 BATTERY_BIN       := test_battery_contract
 SERIAL_BRIDGE_SRC := ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp
 SERIAL_BRIDGE_HDR := ../../../components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
+# BLE (REQ-BLE-001..011 / AC-BLE-001..011).  The radio lives on the ESP32-C6
+# coprocessor reached through esp_hosted, so the host suite only ever links the
+# four pure modules plus the host-linkable shell parser.  The contracts are
+# test-owned ABI fixtures under contracts/ and the production headers must
+# expose exactly the same symbols.
+BLE_TYPES_SRC     := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_types.cpp
+BLE_STATE_SRC     := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp
+BLE_EVENTS_SRC    := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp
+BLE_STORE_SRC     := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_store.cpp
+BLE_TYPES_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_types.h
+BLE_STATE_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_state_machine.h
+BLE_EVENTS_HDR    := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_event_dispatch.h
+BLE_STORE_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_store.h
+BLE_TYPES_CONTRACT_HDR     := contracts/cyberdeck_ble_types.h
+BLE_STATE_CONTRACT_HDR     := contracts/cyberdeck_ble_state_machine.h
+BLE_EVENTS_CONTRACT_HDR    := contracts/cyberdeck_ble_event_dispatch.h
+BLE_STORE_CONTRACT_HDR     := contracts/cyberdeck_ble_store.h
 INCLUDES        := -Ishim -I../../../components/cyberdeck/include
 
 # LVGL gerenciado pelo ESP-IDF (fonte da verdade p/ valores de LV_KEY_*).
@@ -81,12 +110,14 @@ SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/features/screenshot/scre
 LOCAL_SHELL_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp
 LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/features/shell/cyberdeck_local_shell.h
 CAT_MULTILINE_SRC := test_cat_multiline.cpp
+SHELL_TEST       := test_shell_utils.cpp
+SERIAL_TEST      := test_serial_ndjson_dispatch.cpp
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN)
+BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
-.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_screen_protection test_screen_protection_contract
+.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract
 
 all: test
 
@@ -234,8 +265,11 @@ test_screen_protection: $(SCREEN_PROTECTION_TEST) $(SCREEN_PROTECTION_SRC) $(SCR
 	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include $(SCREEN_PROTECTION_TEST) $(SCREEN_PROTECTION_SRC) -o test_screen_protection
 
 # TDD RED: contrato estrutural para comando/UI, timer, NVS e ui.type. Nao
-# executa display, Serial Automation Bridge, simulador ou power-cycle.
-test_screen_protection_contract: $(SCREEN_PROTECTION_CONTRACT) $(SCREEN_PROTECTION_SRC) $(SCREEN_PROTECTION_HDR) ../../../components/cyberdeck/src/platform/display/screen_off.cpp ../../../components/cyberdeck/include/platform/display/screen_off.h ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../.gitignore
+# executa display, Serial Automation Bridge, simulador ou power-cycle. O catalogo
+# compartilhado de ajuda, a fixture e os dois testes comportamentais que
+# comparam a ajuda de producao sao pre-requisitos: o contrato inspeciona todos
+# eles e nao pode ser invalidado por arquivo obsoleto.
+test_screen_protection_contract: $(SCREEN_PROTECTION_CONTRACT) $(SCREEN_PROTECTION_SRC) $(SCREEN_PROTECTION_HDR) $(SHELL_HELP_HDR) contracts/cyberdeck_help.h $(SHELL_TEST) $(HELP_UNIFICATION_TEST) $(SERIAL_TEST) ../../../components/cyberdeck/src/platform/display/screen_off.cpp ../../../components/cyberdeck/include/platform/display/screen_off.h ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../.gitignore
 	$(PYTHON) $(SCREEN_PROTECTION_CONTRACT)
 
 # Logica pura (sem LVGL): filtro puro e incremental da saida SSH (contrato em
@@ -368,6 +402,26 @@ test_battery_protection: $(BATTERY_PROTECTION_BIN)
 $(BATTERY_PROTECTION_BIN): test_battery_protection.cpp $(BATTERY_PROTECTION_CONTRACT_HDR) $(BATTERY_PROTECTION_SRC) $(BATTERY_PROTECTION_HDR)
 	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_battery_protection.cpp $(BATTERY_PROTECTION_SRC) -o $@
 
+# Contrato host da view pura do indicador de energia: mapeamento total de
+# battery_state x charge_signal x disponibilidade x percentual para visivel,
+# percentual e glyph semantico. Ausencia/presenca vencem o sinal do carregador
+# (um CHG_STAT preso em low nao fabrica bateria), `charging` usa glyph de carga
+# com percentual, `absent` usa somente o glyph externo sem percentual, leitura
+# invalida/`unknown` fica oculto e o glyph nunca e escolhido pelo nivel.
+test_battery_view: $(BATTERY_VIEW_BIN)
+	@./$(BATTERY_VIEW_BIN)
+
+$(BATTERY_VIEW_BIN): $(BATTERY_VIEW_TEST) $(BATTERY_VIEW_CONTRACT_HDR) $(BATTERY_VIEW_SRC) $(BATTERY_VIEW_HDR) $(BATTERY_PROTECTION_CONTRACT_HDR) $(BATTERY_PROTECTION_SRC) $(BATTERY_PROTECTION_HDR)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include $(BATTERY_VIEW_TEST) $(BATTERY_VIEW_SRC) $(BATTERY_PROTECTION_SRC) -o $@
+
+# Companheiro estrutural da parte nao linkavel: a view continua pura (sem
+# ESP-IDF/FreeRTOS/LVGL/I2C/NVS/BSP), esta registrada no build do firmware, e o
+# LVGL so aplica o resultado (sem `charge_class::`/`battery_state::` no refresh,
+# tabela de glyph fixo, percentual vazio quando show_percentage e falso, grupo
+# oculto quando visible e falso, sem I2C/NVS/reader diretos).
+test_battery_view_contract: $(BATTERY_VIEW_CONTRACT) $(BATTERY_VIEW_SRC) $(BATTERY_VIEW_HDR) $(BATTERY_VIEW_CONTRACT_HDR) $(BATTERY_VIEW_TEST) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/platform/sensors/cyberdeck_battery_protection.h ../../../components/cyberdeck/include/platform/sensors/battery_protection.h ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md Makefile
+	$(PYTHON) $(BATTERY_VIEW_CONTRACT)
+
 # Structural companion for expander-B, NVS, UI timer/snapshot, shell and
 # ui.type.  It reads production source and fails closed when the feature is
 # absent; it never opens hardware or a simulator.
@@ -459,6 +513,45 @@ test_fs_write_cli: test_fs_write_cli.py ../../../tools/cyberdeck_cli.py
 
 test_fs_write_contract: test_fs_write_contract.py $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) ../../../tools/cyberdeck_cli.py
 	$(PYTHON) test_fs_write_contract.py
+
+# ---------------------------------------------------------------------------
+# BLE (REQ-BLE-001..011 / AC-BLE-001..011) - TDD RED: producao ausente.
+#
+# The BLE radio belongs to the ESP32-C6 coprocessor reached through esp_hosted,
+# so none of these targets can link a stack header.  Each one links a pure
+# production module against the matching test-owned contract in contracts/, and
+# the contract header re-includes the production header as soon as it exists.
+# Until the coder creates the sources, make stops with "No rule to make target"
+# for the missing .cpp, which is the intended RED state.  No ESP-IDF, LVGL,
+# NVS, simulator, Serial Automation Bridge or hardware is touched here.
+#
+# -Icontracts comes first on purpose: the test includes the bare contract name,
+#   and the contract then binds to the production ABI when it exists.
+test_ble_types: test_ble_types.cpp $(BLE_TYPES_SRC) $(BLE_TYPES_HDR) $(BLE_TYPES_CONTRACT_HDR)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_ble_types.cpp $(BLE_TYPES_SRC) -o test_ble_types
+
+test_ble_state_machine: test_ble_state_machine.cpp $(BLE_STATE_SRC) $(BLE_STATE_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_TYPES_SRC) $(BLE_TYPES_HDR)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_ble_state_machine.cpp $(BLE_STATE_SRC) $(BLE_TYPES_SRC) -o test_ble_state_machine
+
+test_ble_event_dispatch: test_ble_event_dispatch.cpp $(BLE_EVENTS_SRC) $(BLE_EVENTS_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_TYPES_SRC) $(BLE_TYPES_HDR)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_ble_event_dispatch.cpp $(BLE_EVENTS_SRC) $(BLE_TYPES_SRC) -o test_ble_event_dispatch
+
+test_ble_store: test_ble_store.cpp $(BLE_STORE_SRC) $(BLE_STORE_HDR) $(BLE_STORE_CONTRACT_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_TYPES_SRC) $(BLE_TYPES_HDR)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_ble_store.cpp $(BLE_STORE_SRC) $(BLE_TYPES_SRC) -o test_ble_store
+
+# The shell parser is already host-linkable, so this target exercises the real
+# production cyberdeck_parse_command()/cyberdeck_help_text() instead of
+# inspecting the source.  It is RED until CYBERDECK_CMD_BLUETOOTH_SEARCH and
+# CYBERDECK_CMD_BLUETOOTH_PAIRED exist and the catalog gains the bluetooth row.
+test_ble_command_parse: test_ble_command_parse.cpp contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h shim/lvgl.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_ble_command_parse.cpp $(SHELL_UTILS_SRC) -o test_ble_command_parse
+
+# Structural companion for the non-linkable part: composition, CMake/app_main
+# wiring, the FreeRTOS task boundary, the log-secret rule, the REQ-BLE-011
+# classic-Bluetooth exclusion and the REQ/AC traceability.  Source inspection
+# only; it never opens hardware, a radio or the Serial Automation Bridge.
+test_ble_integration_contract: test_ble_integration_contract.py $(BLE_TYPES_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STORE_CONTRACT_HDR) ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_help.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../main/idf_component.yml ../../../sdkconfig.defaults ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md ../../../code-map.md ../../../.gitignore
+	$(PYTHON) test_ble_integration_contract.py
 
 test: $(BINS)
 	@echo "==> Executando testes do keymap do shell de entrada"
@@ -566,10 +659,21 @@ test: $(BINS)
 	@echo "==> Executando contrato TDD de estados/protecao de bateria"
 	@$(MAKE) --no-print-directory test_battery_protection
 	@$(MAKE) --no-print-directory test_battery_protection_contract
+	@echo "==> Executando contrato da view pura do indicador de energia"
+	@$(MAKE) --no-print-directory test_battery_view
+	@$(MAKE) --no-print-directory test_battery_view_contract
+	@echo "==> Executando contratos BLE (tipos/list, state machine, eventos/tokens, store)"
+	@./test_ble_types
+	@./test_ble_state_machine
+	@./test_ble_event_dispatch
+	@./test_ble_store
+	@echo "==> Executando contrato do parser/roteamento shell bluetooth"
+	@./test_ble_command_parse
+	@echo "==> Executando contrato estrutural da integracao BLE"
+	@$(MAKE) --no-print-directory test_ble_integration_contract
 	# Keep the known IMU contract last so unrelated task tests run first;
 	# it remains a separate, non-masked gate.
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
 	@$(MAKE) --no-print-directory imu_sensor_contract
-
 clean:
 	rm -f $(BINS) test_battery_protection

@@ -39,11 +39,12 @@ CATALOG_DESCRIPTIONS = (
     "clear the terminal",
     "control screen protection",
     "show or control battery protection",
+    "search for or list paired Bluetooth devices",
     "start an SSH session",
 )
 
 COMMAND_NAMES = (
-    "help", "wifi", "log", "clear", "screen", "battery", "ssh",
+    "help", "wifi", "log", "clear", "screen", "battery", "bluetooth", "ssh",
     "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm", "rmdir",
 )
 
@@ -81,17 +82,24 @@ def main() -> int:
         return 2
 
     # The ordered production catalog and the host fixture must carry the same
-    # approved battery row.  This keeps a stale executable/fixture from being
-    # mistaken for a passing help contract after a rebuild.
+    # approved battery and bluetooth rows.  This keeps a stale executable/fixture
+    # from being mistaken for a passing help contract after a rebuild.
     require("kCatalog" in shell_help and
-            re.search(r"std::array\s*<\s*entry\s*,\s*15\s*>\s+kCatalog", shell_help) is not None,
-            "production help header must retain the 15-entry ordered catalog")
+            re.search(r"std::array\s*<\s*entry\s*,\s*16\s*>\s+kCatalog", shell_help) is not None,
+            "production help header must retain the 16-entry ordered catalog")
     require(re.search(
         r'\{"battery"\s*,\s*"battery \[protection on\|off\|status\]"\s*,\s*'
         r'"show or control battery protection"\}', shell_help) is not None,
         "production help catalog must contain the approved battery protection row")
     require("battery [protection on|off|status] - show or control battery protection" in help_fixture,
             "host help fixture must contain the approved battery protection row")
+    require(re.search(
+        r'\{"bluetooth"\s*,\s*"bluetooth \[search\|paired\]"\s*,\s*'
+        r'"search for or list paired Bluetooth devices"\}', shell_help) is not None,
+        "production help catalog must contain the approved bluetooth row")
+    require("bluetooth [search|paired] - search for or list paired Bluetooth devices"
+            in help_fixture,
+            "host help fixture must contain the approved bluetooth row")
 
     # The canonical catalog is owned by cyberdeck_shell_help.h and exposed
     # through cyberdeck_shell_utils.cpp.  Each description is present exactly

@@ -15,6 +15,7 @@ charge_signal decode_chg_stat(bool valid, bool raw_low)
 
 struct state::impl {
     battery_state current_state_{battery_state::unknown};
+    charge_signal current_charge_{charge_signal::unknown};
     bool available_{false};
     std::int32_t percentage_{0};
     std::int32_t bus_voltage_mv_{0};
@@ -25,6 +26,7 @@ struct state::impl {
     bool charger_enabled_{true};
 
     battery_state last_safe_state_{battery_state::unknown};
+    charge_signal last_safe_charge_{charge_signal::unknown};
     bool last_safe_available_{false};
     std::int32_t last_safe_percentage_{0};
     std::int32_t last_safe_bus_voltage_mv_{0};
@@ -32,6 +34,36 @@ struct state::impl {
 
     std::uint8_t consecutive_votes_{0};
     battery_state voted_state_{battery_state::unknown};
+
+    state::snapshot_t view() const
+    {
+        return state::snapshot_t{
+            current_state_,
+            current_charge_,
+            available_,
+            percentage_,
+            bus_voltage_mv_,
+            current_ma_,
+            protection_enabled_,
+            protection_active_,
+            charger_enabled_,
+        };
+    }
+
+    state::snapshot_t last_safe_view() const
+    {
+        return state::snapshot_t{
+            last_safe_state_,
+            last_safe_charge_,
+            last_safe_available_,
+            last_safe_percentage_,
+            last_safe_bus_voltage_mv_,
+            last_safe_current_ma_,
+            protection_enabled_,
+            protection_active_,
+            charger_enabled_,
+        };
+    }
 
     bool evaluate_protection_conditions()
     {
@@ -65,59 +97,69 @@ struct state::impl {
         }
     }
 
-    battery_state classify_state(const observation &obs)
+    /* Runs one vote for a voltage-derived state and returns true only when the
+     * approved number of consecutive votes confirms it. */
+    bool confirm_voted_state(battery_state candidate)
     {
-        const charge_signal chg = decode_chg_stat(obs.chg_valid, obs.raw_chg_stat_low);
+        if (voted_state_ == candidate) {
+            ++consecutive_votes_;
+        } else {
+            voted_state_ = candidate;
+            consecutive_votes_ = 1;
+        }
+        if (consecutive_votes_ < state_vote_count) {
+            return false;
+        }
+        consecutive_votes_ = 0;
+        voted_state_ = battery_state::unknown;
+        return true;
+    }
 
-        if (chg == charge_signal::charging) {
-            consecutive_votes_ = 0;
-            voted_state_ = battery_state::unknown;
-            return battery_state::charging;
+    void reset_votes()
+    {
+        consecutive_votes_ = 0;
+        voted_state_ = battery_state::unknown;
+    }
+
+    battery_state classify_state(const observation &obs, charge_signal chg)
+    {
+        /* Absence/presence precedence: a bus voltage at or above
+         * absent_voltage_mv means there is no pack in the bay, and that is
+         * decided before the charger signal.  A CHG_STAT that reads stuck-low
+         * (missing pull-up, expander fault, unpowered charger) must never
+         * fabricate a charging battery that does not exist. */
+        if (obs.bus_voltage_mv >= absent_voltage_mv) {
+            if (confirm_voted_state(battery_state::absent)) {
+                return battery_state::absent;
+            }
+            return current_state_;
         }
 
+        if (chg == charge_signal::charging) {
+            reset_votes();
+            return battery_state::charging;
+        }
         const std::int32_t abs_current = obs.current_ma >= 0 ? obs.current_ma : -obs.current_ma;
         if (abs_current > current_uncertainty_ma) {
-            consecutive_votes_ = 0;
-            voted_state_ = battery_state::unknown;
+            reset_votes();
             return obs.current_ma > 0 ? battery_state::battery : battery_state::charging;
         }
 
-        if (obs.bus_voltage_mv >= absent_voltage_mv) {
-            if (voted_state_ == battery_state::absent) {
-                if (++consecutive_votes_ >= state_vote_count) {
-                    consecutive_votes_ = 0;
-                    voted_state_ = battery_state::unknown;
-                    return battery_state::absent;
-                }
-            } else {
-                consecutive_votes_ = 1;
-                voted_state_ = battery_state::absent;
-            }
-            return current_state_;
-        }
-
         if (obs.bus_voltage_mv >= external_voltage_mv) {
-            if (voted_state_ == battery_state::external) {
-                if (++consecutive_votes_ >= state_vote_count) {
-                    consecutive_votes_ = 0;
-                    voted_state_ = battery_state::unknown;
-                    return battery_state::external;
-                }
-            } else {
-                consecutive_votes_ = 1;
-                voted_state_ = battery_state::external;
+            if (confirm_voted_state(battery_state::external)) {
+                return battery_state::external;
             }
             return current_state_;
         }
 
-        consecutive_votes_ = 0;
-        voted_state_ = battery_state::unknown;
+        reset_votes();
         return battery_state::battery;
     }
 
     void update_last_safe()
     {
         last_safe_state_ = current_state_;
+        last_safe_charge_ = current_charge_;
         last_safe_available_ = available_;
         last_safe_percentage_ = percentage_;
         last_safe_bus_voltage_mv_ = bus_voltage_mv_;
@@ -136,84 +178,40 @@ state::snapshot_t state::observe(const observation &value)
 {
     auto &impl = *pimpl_;
 
+    /* A failed INA226 read is the only case that keeps the previous snapshot:
+     * nothing can be measured, so the last safe values and the protection
+     * decision are preserved instead of being recomputed from zeros. */
     if (!value.ina_valid) {
-        return snapshot_t{
-            impl.current_state_,
-            impl.available_,
-            impl.percentage_,
-            impl.bus_voltage_mv_,
-            impl.current_ma_,
-            impl.protection_enabled_,
-            impl.protection_active_,
-            impl.charger_enabled_,
-        };
+        return impl.view();
     }
 
-    if (!value.chg_valid) {
-        return snapshot_t{
-            impl.current_state_,
-            impl.available_,
-            impl.percentage_,
-            impl.bus_voltage_mv_,
-            impl.current_ma_,
-            impl.protection_enabled_,
-            impl.protection_active_,
-            impl.charger_enabled_,
-        };
-    }
-
+    /* A valid measurement is published even when CHG_STAT could not be read.
+     * The missing pin is an unknown signal, never a not-charging answer, so a
+     * transient expander error can no longer freeze the snapshot and hide the
+     * indicator. */
     impl.percentage_ = value.percentage;
     impl.bus_voltage_mv_ = value.bus_voltage_mv;
     impl.current_ma_ = value.current_ma;
+    impl.current_charge_ = decode_chg_stat(value.chg_valid, value.raw_chg_stat_low);
 
-    const battery_state new_state = impl.classify_state(value);
-    impl.current_state_ = new_state;
+    impl.current_state_ = impl.classify_state(value, impl.current_charge_);
     impl.available_ = true;
 
     impl.update_protection();
 
     impl.update_last_safe();
 
-    return snapshot_t{
-        impl.current_state_,
-        impl.available_,
-        impl.percentage_,
-        impl.bus_voltage_mv_,
-        impl.current_ma_,
-        impl.protection_enabled_,
-        impl.protection_active_,
-        impl.charger_enabled_,
-    };
+    return impl.view();
 }
 
 state::snapshot_t state::snapshot() const
 {
-    const auto &impl = *pimpl_;
-    return snapshot_t{
-        impl.current_state_,
-        impl.available_,
-        impl.percentage_,
-        impl.bus_voltage_mv_,
-        impl.current_ma_,
-        impl.protection_enabled_,
-        impl.protection_active_,
-        impl.charger_enabled_,
-    };
+    return pimpl_->view();
 }
 
 state::snapshot_t state::last_safe_snapshot() const
 {
-    const auto &impl = *pimpl_;
-    return snapshot_t{
-        impl.last_safe_state_,
-        impl.last_safe_available_,
-        impl.last_safe_percentage_,
-        impl.last_safe_bus_voltage_mv_,
-        impl.last_safe_current_ma_,
-        impl.protection_enabled_,
-        impl.protection_active_,
-        impl.charger_enabled_,
-    };
+    return pimpl_->last_safe_view();
 }
 
 bool state::set_protection_enabled(bool enabled)

@@ -25,8 +25,16 @@ tests/host/**/test_*
 !tests/host/keymap/test_battery_contract.cpp
 !tests/host/keymap/test_battery_reader_contract.py
 !tests/host/keymap/test_battery_ui_contract.py
+!tests/host/keymap/test_battery_view.cpp
+!tests/host/keymap/test_battery_view_contract.py
 !tests/host/keymap/test_battery_protection.cpp
 !tests/host/keymap/test_battery_protection_contract.py
 !tests/host/keymap/test_screen_protection.cpp
 !tests/host/keymap/test_screen_protection_contract.py
 !tests/host/keymap/test_help_unification.cpp
+!tests/host/keymap/test_ble_types.cpp
+!tests/host/keymap/test_ble_state_machine.cpp
+!tests/host/keymap/test_ble_event_dispatch.cpp
+!tests/host/keymap/test_ble_store.cpp
+!tests/host/keymap/test_ble_command_parse.cpp
+!tests/host/keymap/test_ble_integration_contract.py

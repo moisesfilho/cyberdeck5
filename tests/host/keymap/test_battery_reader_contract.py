@@ -22,6 +22,9 @@ Required production seam:
   * the sample field is explicitly bus_voltage_mv, never capacity_mah;
   * sampling runs in a dedicated task with a one-second cadence;
   * a copied/owned snapshot is published for the UI;
+  * the UI consumes the battery input exclusively through the battery-protection
+    adapter snapshot seam (the pure policy projection), never through a direct
+    INA226 reader call or include;
   * the INA226 reader remains sensor-only: it has no CHG_EN/CHG_STAT,
     expander control, NVS, or battery-protection policy; those belong to the
     separate protection adapter;
@@ -217,16 +220,34 @@ def main() -> int:
             "component must register the battery-protection adapter")
     require("ina226_reader.h" in battery_api,
             "reader header must be part of the contract")
-    require("battery_protection_get_snapshot" in protection_adapter_header,
-            "adapter header must expose the snapshot consumed by the UI")
     require(re.search(r"\bina226_reader_init\s*\(", protection_adapter) is not None,
             "protection adapter must initialize the sensor reader")
     require(re.search(r"\bina226_reader_get_raw_sample\s*\(", protection_adapter) is not None,
             "protection adapter must consume the reader sensor sample")
-    require(re.search(r"\bbattery_protection_get_snapshot\s*\(", ui) is not None,
-            "UI must consume the battery-protection snapshot")
+    # The UI battery input goes exclusively through the battery-protection
+    # adapter.  The adapter publishes two projections: the raw sensor snapshot
+    # (`battery_protection_get_snapshot`) and the pure policy snapshot
+    # (`battery_protection_get_policy_snapshot`, the only input the LVGL layer
+    # is allowed to consume).  Accept either accessor so this contract keeps
+    # enforcing the reader/adapter boundary instead of pinning one projection;
+    # which projection the LVGL layer uses is asserted by
+    # test_battery_view_contract.py and test_battery_ui_contract.py.
+    ui_snapshot_seam = re.search(
+        r"\bbattery_protection_get_(?:policy_)?snapshot\s*\(", ui)
+    require(ui_snapshot_seam is not None,
+            "UI must consume the battery-protection adapter snapshot seam")
+    assert ui_snapshot_seam is not None
+    # The consumed seam must actually be declared by the adapter header, so a
+    # renamed/removed projection cannot silently satisfy the UI contract.
+    require(ui_snapshot_seam.group(0)[:-1] in protection_adapter_header,
+            f"adapter header must declare the UI snapshot seam "
+            f"{ui_snapshot_seam.group(0)[:-1]}")
     require(re.search(r"\bina226_reader_(?:get_snapshot|get_raw_sample|started)\s*\(", ui) is None,
             "UI must not reintroduce a direct INA226 reader dependency")
+    # Direct access also means a direct reference: an INA226 include or symbol
+    # in the LVGL layer would re-couple the UI to the sensor seam.
+    require(re.search(r"\bina226_reader\b", ui) is None,
+            "UI must not reference the INA226 reader seam at all")
 
     # app_main composes the adapter, which owns reader startup and translates
     # sensor data into the snapshot consumed by the UI.

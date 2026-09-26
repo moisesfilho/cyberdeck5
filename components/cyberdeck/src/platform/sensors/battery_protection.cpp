@@ -190,6 +190,66 @@ void update_snapshot_from_policy(const cyberdeck_battery_protection::snapshot &p
     }();
 }
 
+/*
+ * Single sampling path shared by every reader of the policy.  It reads the
+ * INA226 sample and CHG_STAT, feeds the pure policy, republishes the battery
+ * projection and applies the resulting charger level.  A failed CHG_STAT read
+ * is published as an unknown signal instead of freezing the measurement.
+ */
+bool sample_and_publish(cyberdeck_battery_protection::observation *out_observation,
+                        cyberdeck_battery_protection::snapshot *out_policy)
+{
+    cyberdeck_battery::sample ina_sample{};
+    const bool ina_valid = ina226_reader_get_raw_sample(&ina_sample) &&
+                           ina_sample.present && ina_sample.valid;
+
+    bool chg_valid = false;
+    bool raw_chg_stat_low = false;
+    (void)read_chg_status(&chg_valid, &raw_chg_stat_low);
+
+    cyberdeck_battery_protection::observation obs{};
+    if (ina_valid) {
+        obs.ina_valid = true;
+        obs.bus_voltage_mv = ina_sample.bus_voltage_mv;
+        obs.current_ma = ina_sample.current_ma;
+        obs.percentage =
+            cyberdeck_battery::percentage_from_bus_voltage_mv(ina_sample.bus_voltage_mv);
+    }
+    if (chg_valid) {
+        obs.chg_valid = true;
+        obs.raw_chg_stat_low = raw_chg_stat_low;
+    }
+
+    cyberdeck_battery_protection::snapshot policy_snap;
+    {
+        std::lock_guard<std::mutex> lock(s_policy_mutex);
+        policy_snap = s_policy.observe(obs);
+    }
+    update_snapshot_from_policy(policy_snap);
+
+    {
+        std::lock_guard<std::mutex> lock(s_policy_mutex);
+        const bool charger_now = policy_snap.charger_enabled;
+        if (charger_now != s_last_applied_charger_state) {
+            esp_err_t err = apply_charger_state(charger_now);
+            if (err == ESP_OK) {
+                s_last_applied_charger_state = charger_now;
+            } else {
+                ESP_LOGE(TAG, "CHG_EN write failed, preserving last confirmed level (%s)",
+                         s_last_applied_charger_state ? "enabled" : "disabled");
+            }
+        }
+    }
+
+    if (out_observation != nullptr) {
+        *out_observation = obs;
+    }
+    if (out_policy != nullptr) {
+        *out_policy = policy_snap;
+    }
+    return true;
+}
+
 } // namespace
 
 extern "C" esp_err_t battery_protection_init(void)
@@ -246,50 +306,34 @@ extern "C" bool battery_protection_get_snapshot(cyberdeck_battery::snapshot *out
         return false;
     }
 
-    cyberdeck_battery::sample ina_sample{};
-    const bool ina_valid = ina226_reader_get_raw_sample(&ina_sample) && ina_sample.present && ina_sample.valid;
-
-    bool chg_valid = false;
-    bool raw_chg_stat_low = false;
-    read_chg_status(&chg_valid, &raw_chg_stat_low);
-
-    cyberdeck_battery_protection::observation obs{};
-    if (ina_valid) {
-        obs.ina_valid = true;
-        obs.bus_voltage_mv = ina_sample.bus_voltage_mv;
-        obs.current_ma = ina_sample.current_ma;
-        obs.percentage = cyberdeck_battery::percentage_from_bus_voltage_mv(ina_sample.bus_voltage_mv);
-    }
-    if (chg_valid) {
-        obs.chg_valid = true;
-        obs.raw_chg_stat_low = raw_chg_stat_low;
-    }
-
-    cyberdeck_battery_protection::snapshot policy_snap;
-    {
-        std::lock_guard<std::mutex> lock(s_policy_mutex);
-        policy_snap = s_policy.observe(obs);
-    }
-    update_snapshot_from_policy(policy_snap);
-
-    {
-        std::lock_guard<std::mutex> lock(s_policy_mutex);
-        const bool charger_now = policy_snap.charger_enabled;
-        if (charger_now != s_last_applied_charger_state) {
-            esp_err_t err = apply_charger_state(charger_now);
-            if (err == ESP_OK) {
-                s_last_applied_charger_state = charger_now;
-            } else {
-                ESP_LOGE(TAG, "CHG_EN write failed, preserving last confirmed level (%s)",
-                         s_last_applied_charger_state ? "enabled" : "disabled");
-            }
-        }
+    if (!sample_and_publish(nullptr, nullptr)) {
+        return false;
     }
 
     {
         std::lock_guard<std::mutex> lock(s_snapshot_mutex);
         *out_snapshot = s_snapshot;
     }
+    return true;
+}
+
+extern "C" bool battery_protection_get_policy_snapshot(
+    cyberdeck_battery_protection::snapshot *out_snapshot)
+{
+    if (out_snapshot == nullptr) {
+        return false;
+    }
+
+    if (!battery_protection_started()) {
+        return false;
+    }
+
+    cyberdeck_battery_protection::snapshot policy_snap{};
+    if (!sample_and_publish(nullptr, &policy_snap)) {
+        return false;
+    }
+
+    *out_snapshot = policy_snap;
     return true;
 }
 

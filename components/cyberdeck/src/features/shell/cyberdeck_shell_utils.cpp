@@ -332,6 +332,10 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
         cmd.type = CYBERDECK_CMD_BATTERY_PROTECTION_OFF;
     } else if (command == "battery protection status" || battery_command == "battery protection status") {
         cmd.type = CYBERDECK_CMD_BATTERY_PROTECTION_STATUS;
+    } else if (command == "bluetooth search") {
+        cmd.type = CYBERDECK_CMD_BLUETOOTH_SEARCH;
+    } else if (command == "bluetooth paired") {
+        cmd.type = CYBERDECK_CMD_BLUETOOTH_PAIRED;
     } else if (command.rfind("ssh", 0) == 0 && (command.size() == 3 || command[3] == ' ' || command[3] == '\t')) {
         cmd.type = CYBERDECK_CMD_SSH;
         if (command.size() > 3) {
@@ -363,15 +367,16 @@ constexpr bool help_catalog_descriptions_match_contract()
            catalog[3].description == "clear the terminal" &&
            catalog[4].description == "control screen protection" &&
            catalog[5].description == "show or control battery protection" &&
-           catalog[6].description == "start an SSH session" &&
-           catalog[7].description == "print working directory" &&
-           catalog[8].description == "change working directory" &&
-           catalog[9].description == "list directory contents" &&
-           catalog[10].description == "print a regular file" &&
-           catalog[11].description == "create an empty file" &&
-           catalog[12].description == "create a directory" &&
-           catalog[13].description == "remove a file or directory" &&
-           catalog[14].description == "remove an empty directory";
+           catalog[6].description == "search for or list paired Bluetooth devices" &&
+           catalog[7].description == "start an SSH session" &&
+           catalog[8].description == "print working directory" &&
+           catalog[9].description == "change working directory" &&
+           catalog[10].description == "list directory contents" &&
+           catalog[11].description == "print a regular file" &&
+           catalog[12].description == "create an empty file" &&
+           catalog[13].description == "create a directory" &&
+           catalog[14].description == "remove a file or directory" &&
+           catalog[15].description == "remove an empty directory";
 }
 
 static_assert(help_catalog_descriptions_match_contract(),

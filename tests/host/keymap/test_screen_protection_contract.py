@@ -3,9 +3,10 @@
 
 The LVGL/BSP/NVS adapter is not host-linkable.  Its pure policy/state ABI is
 exercised by test_screen_protection.cpp; this contract inspects the real
-firmware sources for command routing, persistence, timer/state integration, and
-the transitive ui.type -> keyboard -> shell path.  It never opens hardware,
-a simulator, Serial Automation Bridge, or a display.
+firmware sources for command routing, the shared help catalog row reached by
+cyberdeck_help_text() delegation, persistence, timer/state integration, and
+the transitive ui.type -> keyboard -> shell path.  It never opens hardware, a
+simulator, Serial Automation Bridge, or a display.
 """
 from pathlib import Path
 import re
@@ -18,6 +19,8 @@ SCREEN_SOURCE = ROOT / "components/cyberdeck/src/platform/display/screen_off.cpp
 SCREEN_HEADER = ROOT / "components/cyberdeck/include/platform/display/screen_off.h"
 SHELL_SOURCE = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
 SHELL_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h"
+HELP_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_help.h"
+HELP_FIXTURE = ROOT / "tests/host/keymap/contracts/cyberdeck_help.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 SERIAL = ROOT / "components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp"
 APP = ROOT / "main/app_main.cpp"
@@ -26,7 +29,19 @@ MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
 GITIGNORE = ROOT / ".gitignore"
 SHELL_TEST = ROOT / "tests/host/keymap/test_shell_utils.cpp"
+HELP_TEST = ROOT / "tests/host/keymap/test_help_unification.cpp"
 SERIAL_TEST = ROOT / "tests/host/keymap/test_serial_ndjson_dispatch.cpp"
+
+# The screen command is documented by the shared help catalog.  These are the
+# exact approved strings: the usage literal carries the whole subcommand set
+# and the 0-1440 range, and the rendered row is usage + " - " + description.
+SCREEN_HELP_USAGE = "screen [on|off|timeout <0-1440>]"
+SCREEN_HELP_DESCRIPTION = "control screen protection"
+SCREEN_HELP_LINE = f"{SCREEN_HELP_USAGE} - {SCREEN_HELP_DESCRIPTION}"
+SCREEN_CATALOG_ROW = re.compile(
+    r'\{"screen"\s*,\s*"screen \[on\|off\|timeout <0-1440>\]"\s*,\s*'
+    r'"control screen protection"\}'
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -74,6 +89,38 @@ def switch_case(source: str, marker: str) -> str:
 def require_before(body: str, first: str, second: str, message: str) -> None:
     require(first in body and second in body, message)
     require(body.index(first) < body.index(second), message)
+
+
+def catalog_rows(help_header: str) -> list[str]:
+    """Return the ordered catalog rows of the shared, host-linkable help header."""
+    table = re.search(r"kCatalog\s*=\s*\{\{(.*?)\}\}\s*;", help_header, flags=re.S)
+    require(table is not None,
+            "shared help header must declare the ordered kCatalog table")
+    return re.findall(r'\{"[^"]*"[^{}]*\}', table.group(1))
+
+
+def makefile_prerequisites(makefile: str, target: str) -> str:
+    """Return the prerequisite list declared for a Makefile target.
+
+    Simple ``NAME := value`` definitions are expanded so the check does not
+    depend on whether a prerequisite is spelled as a variable or literally.
+    """
+    match = re.search(rf"^{re.escape(target)}:[ \t]*(.*)$", makefile, flags=re.M)
+    require(match is not None, f"Makefile must register the {target} target")
+    definitions = dict(re.findall(r"^(\w+)[ \t]*:?=[ \t]*(\S+)[ \t]*$",
+                                 makefile, flags=re.M))
+
+    prerequisites = match.group(1)
+    for _ in range(4):  # bounded expansion: a cycle must not loop forever
+        expanded = re.sub(
+            r"\$\((\w+)\)",
+            lambda found: definitions.get(found.group(1), found.group(0)),
+            prerequisites,
+        )
+        if expanded == prerequisites:
+            break
+        prerequisites = expanded
+    return prerequisites
 
 
 def check_pure_contract(state_source: str, state_header: str, component: str) -> None:
@@ -126,16 +173,75 @@ def check_command_parser(shell: str, header: str) -> None:
             "screen timeout must forward its operand to the strict parser")
 
     help_text = function_body(shell, "std::string cyberdeck_help_text()")
-    require("screen [on|off|timeout <0-1440>]" in help_text,
-            "help must document the complete screen command/range")
+    require("cyberdeck_shell_help::text()" in help_text,
+            "help must render the shared catalog instead of a local literal list")
 
     test_source = strip_comments(SHELL_TEST.read_text(encoding="utf-8"))
     require("CYBERDECK_CMD_SCREEN_ON" in test_source and
             "CYBERDECK_CMD_SCREEN_OFF" in test_source and
             "CYBERDECK_CMD_SCREEN_TIMEOUT" in test_source,
             "host shell tests must cover all screen command routes")
-    require('"screen [on|off|timeout <0-1440>]"' in test_source,
+    # The rendered help row is asserted by check_shared_help_catalog(), which
+    # matches the whole row ("<usage> - <description>").  The previous check here
+    # required the usage with a closing quote, a form no test source can contain.
+    require(SCREEN_HELP_LINE in test_source,
             "host shell help contract must include the screen command")
+
+
+def check_shared_help_catalog(help_header: str, help_fixture: str, shell: str,
+                              shell_test: str, help_test: str) -> None:
+    """The screen row must live in the one shared catalog, reached by delegation.
+
+    The adapter used to inline the help rows.  It now delegates to
+    cyberdeck_shell_help::text(), so the screen usage/range literal is only
+    observable in the shared header, in the host fixture, and in the behavioral
+    tests that compare production output byte for byte.  Requiring all four is
+    what keeps the screen command documented after the catalog refactor.
+    """
+    rows = catalog_rows(help_header)
+    screen_rows = [row for row in rows if re.match(r'\{"screen"', row)]
+    require(len(screen_rows) == 1,
+            "shared help catalog must carry exactly one screen row, "
+            f"found {len(screen_rows)}")
+    require(any(SCREEN_CATALOG_ROW.fullmatch(row) for row in screen_rows),
+            f"shared help catalog must contain the approved screen row {screen_rows}")
+    require(help_header.count(SCREEN_HELP_USAGE) == 1,
+            "screen usage/range literal must appear once in the shared catalog")
+    require(help_header.count(SCREEN_HELP_DESCRIPTION) == 1,
+            "screen description must appear once in the shared catalog")
+
+    # The catalog header is the single source: the adapter may only carry the
+    # compile-time description guard, never its own renderable copy.
+    require(SCREEN_HELP_USAGE not in shell,
+            "shell_utils.cpp must not re-declare the screen help usage literal")
+    require(shell.count(SCREEN_HELP_DESCRIPTION) == 1,
+            "shell_utils.cpp must reference the screen description only in the "
+            "compile-time catalog guard")
+    require('#include "features/shell/cyberdeck_shell_help.h"' in shell,
+            "shell_utils.cpp must include the shared help catalog header")
+    help_text = function_body(shell, "std::string cyberdeck_help_text()")
+    require("cyberdeck_shell_help::text()" in help_text,
+            "cyberdeck_help_text() must delegate to cyberdeck_shell_help::text()")
+    require(help_text.count("return") == 1,
+            "cyberdeck_help_text() must only return the shared catalog text")
+
+    # The host fixture is the behavioral oracle: the exact rendered row must be
+    # present once, so the byte-for-byte comparison can detect any drift.
+    require(help_fixture.count(SCREEN_HELP_LINE) == 1,
+            "host help fixture must contain the approved screen row exactly once")
+    require(help_fixture.count(SCREEN_HELP_USAGE) == 1,
+            "screen usage/range literal must appear once in the host help fixture")
+
+    # Both behavioral executables must compare production output against that
+    # fixture; a fixture without them would not protect the rendered catalog.
+    for source, label in ((shell_test, "test_shell_utils.cpp"),
+                          (help_test, "test_help_unification.cpp")):
+        require("kUnifiedHelpText" in source,
+                f"{label} must compare against the shared help fixture")
+        require("cyberdeck_help_text()" in source,
+                f"{label} must exercise the production help entry point")
+    require(SCREEN_HELP_LINE in shell_test,
+            "test_shell_utils.cpp must assert the exact screen help row")
 
 
 def check_ui_routing(ui: str) -> None:
@@ -304,6 +410,23 @@ def check_wiring(contract: str) -> None:
     require("class state" in contract and "persisted_timeout" in contract,
             "test contract must retain the pure state/persistence ABI")
 
+    # Every input this contract inspects must be a declared prerequisite, so a
+    # stale catalog/fixture/test file cannot silently invalidate the checks.
+    prerequisites = makefile_prerequisites(makefile, "test_screen_protection_contract")
+    for token, message in (
+        ("cyberdeck_shell_help.h",
+         "screen contract must depend on the shared help catalog header"),
+        ("contracts/cyberdeck_help.h",
+         "screen contract must depend on the host help fixture"),
+        ("test_shell_utils.cpp",
+         "screen contract must depend on the behavioral shell test"),
+        ("test_help_unification.cpp",
+         "screen contract must depend on the behavioral help unification test"),
+        ("test_serial_ndjson_dispatch.cpp",
+         "screen contract must depend on the serial ui.type protocol test"),
+    ):
+        require(token in prerequisites, message)
+
 
 def main() -> int:
     require(STATE_SOURCE.exists(),
@@ -322,13 +445,21 @@ def main() -> int:
     screen_header = strip_comments(SCREEN_HEADER.read_text(encoding="utf-8"))
     shell = strip_comments(SHELL_SOURCE.read_text(encoding="utf-8"))
     shell_header = strip_comments(SHELL_HEADER.read_text(encoding="utf-8"))
+    help_header = strip_comments(HELP_HEADER.read_text(encoding="utf-8"))
+    help_fixture = strip_comments(HELP_FIXTURE.read_text(encoding="utf-8"))
+    shell_test = strip_comments(SHELL_TEST.read_text(encoding="utf-8"))
+    help_test = strip_comments(HELP_TEST.read_text(encoding="utf-8"))
     ui = strip_comments(UI.read_text(encoding="utf-8"))
     serial = strip_comments(SERIAL.read_text(encoding="utf-8"))
     app = strip_comments(APP.read_text(encoding="utf-8"))
     component = strip_comments(COMPONENT.read_text(encoding="utf-8"))
 
+    require(HELP_HEADER.exists() and HELP_FIXTURE.exists() and HELP_TEST.exists(),
+            "shared help catalog, host fixture, or behavioral help test is missing")
+
     check_pure_contract(state_source, state_header, component)
     check_command_parser(shell, shell_header)
+    check_shared_help_catalog(help_header, help_fixture, shell, shell_test, help_test)
     check_ui_routing(ui)
     check_adapter(screen, screen_header, ui, app, component)
     check_serial_transitive_path(serial)

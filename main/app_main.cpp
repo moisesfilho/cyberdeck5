@@ -11,6 +11,7 @@
 #include "features/wifi/wifi_mgr.h"
 #include "features/screenshot/screenshot_server.h"
 #include "features/serial/cyberdeck_serial_bridge.h"
+#include "features/bluetooth/ble_mgr.h"
 #include "bsp/m5stack_tab5.h"
 
 static const char *TAG = "cyberdeck5";
@@ -55,6 +56,13 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(screenshot_server_init());
     ESP_ERROR_CHECK(wifi_mgr_add_state_callback(screenshot_server_wifi_state, nullptr));
     ESP_ERROR_CHECK(wifi_mgr_start());
+
+    /* BLE manager (REQ-BLE-001..011): radio on ESP32-C6 via ESP-Hosted.
+     * Non-fatal failure at boot: logs warning but does not abort. */
+    esp_err_t ble_err = ble_mgr_start();
+    if (ble_err != ESP_OK) {
+        ESP_LOGW(TAG, "BLE manager unavailable: %s", esp_err_to_name(ble_err));
+    }
 
     /* Ponte manual USB Serial-JTAG NDJSON (REQ-002..009): task propria,
      * fora da stack do LVGL; falha aqui nao derruba o boot. */

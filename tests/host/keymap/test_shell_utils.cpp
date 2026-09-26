@@ -14,7 +14,7 @@
  * shell. O teste fixa o catalogo completo, incluindo os comandos comuns e os
  * comandos locais, byte a byte (separador "-" entre comando e descricao,
  * newline final). Alem da igualdade exata, os testes fixam a estrutura
- * (15 newlines, 15 linhas nao vazias, newline final), a presenca de cada
+ * (16 newlines, 16 linhas nao vazias, newline final), a presenca de cada
  * comando e o determinismo entre chamadas.
  */
 #include "features/shell/cyberdeck_shell_utils.h"
@@ -761,8 +761,8 @@ void test_help_text_exact_block()
 void test_help_text_structure()
 {
     // Arrange & Act
-    // Estrutura do catalogo unificado: exatamente 15 newlines (um por linha) e
-    // 15 linhas nao vazias; o texto termina obrigatoriamente em newline.
+    // Estrutura do catalogo unificado: exatamente 16 newlines (um por linha) e
+    // 16 linhas nao vazias; o texto termina obrigatoriamente em newline.
     const std::string text = cyberdeck_help_text();
 
     // Assert
@@ -775,7 +775,7 @@ void test_help_text_structure()
             ++newlines;
         }
     }
-    CHECK(newlines == 15);
+    CHECK(newlines == 16);
 
     // Split por '\n': linhas nao vazias entre quebras. Uma linha vazia
     // (start == i, sem caracteres) nao conta; a cauda apos o ultimo '\n'
@@ -790,7 +790,7 @@ void test_help_text_structure()
             line_start = i + 1;
         }
     }
-    CHECK(non_empty_lines == 15);
+    CHECK(non_empty_lines == 16);
 }
 
 void test_help_text_commands_present()
@@ -816,11 +816,34 @@ void test_help_text_commands_present()
         "clear - clear the terminal",
         "screen [on|off|timeout <0-1440>] - control screen protection",
         "battery [protection on|off|status] - show or control battery protection",
+        "bluetooth [search|paired] - search for or list paired Bluetooth devices",
         "ssh [user@]host[:port] - start an SSH session",
     };
     for (const char *entry : entries) {
         CHECK(text.find(entry) != std::string::npos);
     }
+
+    // Completude: a lista acima deve cobrir todas as linhas do catalogo. Sem
+    // esta contagem, uma linha nova no catalogo passaria despercebida porque
+    // o teste so procuraria as entradas conhecidas.
+    const size_t expected_rows = sizeof(entries) / sizeof(entries[0]);
+    CHECK(expected_rows == 16);
+    size_t rows_seen = 0;
+    for (const char *entry : entries) {
+        size_t position = 0;
+        while ((position = text.find(entry, position)) != std::string::npos) {
+            // A linha precisa comecar no inicio de uma linha do catalogo, para
+            // que uma entrada nao possa satisfazer outra por substring.
+            const bool at_line_start = position == 0 || text[position - 1] == '\n';
+            const bool at_line_end = (position + std::string(entry).size()) == text.size() ||
+                                     text[position + std::string(entry).size()] == '\n';
+            CHECK(at_line_start);
+            CHECK(at_line_end);
+            ++rows_seen;
+            position += std::string(entry).size();
+        }
+    }
+    CHECK(rows_seen == expected_rows);
 }
 
 void test_help_text_stable()
