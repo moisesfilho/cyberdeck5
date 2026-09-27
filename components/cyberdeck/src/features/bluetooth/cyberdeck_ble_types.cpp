@@ -385,20 +385,22 @@ bool device_list::add(const device &item)
     if (!normalize_address(item.address.c_str(), item.address.size(), normalized)) {
         return false;
     }
+    device normalized_item = item;
+    normalized_item.address = normalized;
 
     for (auto &entry : pimpl_->items) {
-        if (entry.item.address == item.address) {
-            entry.item.rssi = std::max(entry.item.rssi, item.rssi);
-            if (entry.item.name.empty() && !item.name.empty()) {
-                entry.item.name = item.name;
+        if (entry.item.address == normalized && entry.item.addr_type == normalized_item.addr_type) {
+            entry.item.rssi = std::max(entry.item.rssi, normalized_item.rssi);
+            if (entry.item.name.empty() && !normalized_item.name.empty()) {
+                entry.item.name = normalized_item.name;
             }
-            if (entry.item.kind == device_kind::unknown && item.kind != device_kind::unknown) {
-                entry.item.kind = item.kind;
+            if (entry.item.kind == device_kind::unknown && normalized_item.kind != device_kind::unknown) {
+                entry.item.kind = normalized_item.kind;
             }
-            if (item.paired) {
+            if (normalized_item.paired) {
                 entry.item.paired = true;
             }
-            if (!item.connectable) {
+            if (!normalized_item.connectable) {
                 entry.item.connectable = false;
             }
             return true;
@@ -410,7 +412,7 @@ bool device_list::add(const device &item)
     }
 
     device_entry new_entry;
-    new_entry.item = item;
+    new_entry.item = normalized_item;
     new_entry.insert_order = pimpl_->next_insert_order++;
     pimpl_->items.push_back(std::move(new_entry));
     pimpl_->clamp_selection();
@@ -441,6 +443,14 @@ const device *device_list::find(const std::string &address) const
         if (entry.item.address == address) {
             return &entry.item;
         }
+    }
+    return nullptr;
+}
+
+const device *device_list::find(const std::string &address, address_type type) const
+{
+    for (const auto &entry : pimpl_->items) {
+        if (entry.item.address == address && entry.item.addr_type == type) return &entry.item;
     }
     return nullptr;
 }

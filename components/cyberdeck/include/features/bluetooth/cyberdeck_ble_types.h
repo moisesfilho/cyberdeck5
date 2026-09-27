@@ -41,6 +41,14 @@ inline constexpr std::uint16_t k_appearance_handsfree_mic = 0x041B;
  */
 enum class device_kind { keyboard, headset, mouse, unknown };
 
+/* Peer identity type preserved across discovery, pairing and reconnect. */
+enum class address_type : std::uint8_t {
+    public_address = 0,
+    random_static = 1,
+    random_resolvable = 2,
+    random_non_resolvable = 3,
+};
+
 /*
  * A discovered/peripheral record.  It deliberately carries no key material so
  * that rendering, snapshots, logs and the bond store cannot leak a secret even
@@ -48,6 +56,7 @@ enum class device_kind { keyboard, headset, mouse, unknown };
  */
 struct device {
     std::string address;                 /* normalized uppercase MAC         */
+    address_type addr_type = address_type::public_address;
     std::string name;                    /* sanitized and bounded; may be "" */
     int rssi = k_min_rssi;
     device_kind kind = device_kind::unknown;
@@ -136,6 +145,7 @@ public:
     std::size_t capacity() const;
     const device *at(std::size_t index) const;
     const device *find(const std::string &address) const;
+    const device *find(const std::string &address, address_type type) const;
     bool remove(const std::string &address);
 
     std::size_t selected_index() const;

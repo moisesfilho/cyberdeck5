@@ -38,7 +38,14 @@ typedef enum {
     BLE_MGR_CMD_CONNECT,
     BLE_MGR_CMD_DISCONNECT,
     BLE_MGR_CMD_RECONNECT,
+    BLE_MGR_CMD_STOP,
 } ble_mgr_cmd_kind_t;
+
+typedef enum {
+    BLE_MGR_AUTH_IO_DISP = 0,
+    BLE_MGR_AUTH_IO_INPUT = 1,
+    BLE_MGR_AUTH_IO_NUMCMP = 2,
+} ble_mgr_auth_io_action_t;
 
 /**
  * BLE manager command structure for the public bounded queue.
@@ -50,13 +57,19 @@ typedef struct {
     union {
         struct {
             uint8_t addr[6];
+            uint8_t addr_type;
         } pair;
         struct {
             uint8_t addr[6];
+            uint8_t addr_type;
             uint32_t passkey;
+            uint32_t numcmp;
+            bool numcmp_accept;
+            uint8_t io_action;
         } passkey;
         struct {
             uint8_t addr[6];
+            uint8_t addr_type;
             bool automatic;
         } connect;
     };
@@ -92,6 +105,7 @@ typedef enum {
     BLE_MGR_EVT_PAIR_FINISHED,
     BLE_MGR_EVT_CONNECTED,
     BLE_MGR_EVT_DISCONNECTED,
+    BLE_MGR_EVT_HID_DISCOVERY,
 } ble_mgr_evt_kind_t;
 
 /**
@@ -105,6 +119,7 @@ typedef struct ble_mgr_event_s {
     /* scan_result */
     struct {
         char address[18];      /* "AA:BB:CC:DD:EE:FF" + NUL */
+        uint8_t addr_type;
         char name[33];         /* sanitized, bounded, NUL-terminated */
         int rssi;
         int kind;              /* cyberdeck_ble::device_kind as int */
@@ -121,6 +136,7 @@ typedef struct ble_mgr_event_s {
     struct {
         int kind;              /* cyberdeck_ble::auth_request_kind as int */
         uint32_t passkey;      /* 0 for non-passkey kinds; valid 0..999999 for passkey */
+        uint8_t io_action;     /* ble_mgr_auth_io_action_t; transient only */
     } auth_request;
 
     /* pair_finished */
@@ -131,8 +147,26 @@ typedef struct ble_mgr_event_s {
     /* connected / disconnected */
     struct {
         char address[18];
+        uint8_t addr_type;
         bool automatic;
     } connection;
+
+    /* HID discovery is a bounded capability snapshot, never report data. */
+    struct {
+        uint16_t conn_handle;
+        bool success;
+        bool hid_service;
+        uint16_t service_start;
+        uint16_t service_end;
+        uint8_t characteristic_count;
+        uint8_t cccd_count;
+        uint16_t report_map_handle;
+        uint16_t protocol_mode_handle;
+        uint16_t boot_keyboard_input_handle;
+        uint16_t boot_keyboard_input_cccd;
+        uint16_t report_input_handle;
+        uint16_t report_input_cccd;
+    } hid_discovery;
 } ble_mgr_event_t;
 
 /**

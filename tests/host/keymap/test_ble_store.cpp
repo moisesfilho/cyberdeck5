@@ -57,10 +57,13 @@ using cyberdeck_ble::k_max_store_bytes;
 using cyberdeck_ble::store_result;
 
 bond_record make_record(const char *address, const char *name,
-                        device_kind kind, bool last_connected)
+                        device_kind kind, bool last_connected,
+                        cyberdeck_ble::address_type addr_type =
+                            cyberdeck_ble::address_type::public_address)
 {
     bond_record record;
     record.address = address;
+    record.addr_type = addr_type;
     record.name = name == nullptr ? std::string() : std::string(name);
     record.kind = kind;
     record.last_connected = last_connected;
@@ -68,7 +71,9 @@ bond_record make_record(const char *address, const char *name,
 }
 
 void expect_decode(const char *text, const char *address, const char *name,
-                   device_kind kind, bool last_connected)
+                   device_kind kind, bool last_connected,
+                   cyberdeck_ble::address_type addr_type =
+                       cyberdeck_ble::address_type::public_address)
 {
     bond_record out = make_record("ZZ:ZZ:ZZ:ZZ:ZZ:ZZ", "Sentinel",
                                   device_kind::keyboard, true);
@@ -77,6 +82,7 @@ void expect_decode(const char *text, const char *address, const char *name,
     if (ok) {
         CHECK_STR(out.address, address);
         CHECK_STR(out.name, name);
+        CHECK(out.addr_type == addr_type);
         CHECK(out.kind == kind);
         CHECK_EQ(out.last_connected ? 1 : 0, last_connected ? 1 : 0);
     }
@@ -111,7 +117,7 @@ void test_encode_is_deterministic_and_field_order_is_fixed()
                                            device_kind::headset, true);
     const std::string encoded = cyberdeck_ble::encode_bond(record);
     CHECK_STR(encoded,
-              "CDB1;addr=AA:BB:CC:DD:EE:01;name=Fone;kind=headset;last=1\n");
+               "CDB1;addr=AA:BB:CC:DD:EE:01;addr_type=0;name=Fone;kind=headset;last=1\n");
 
     /* Deterministic across calls and independent of the caller's spelling. */
     CHECK_STR(cyberdeck_ble::encode_bond(record), encoded);
@@ -130,13 +136,13 @@ void test_encode_is_deterministic_and_field_order_is_fixed()
     /* Every approved kind has a stable token. */
     CHECK_STR(cyberdeck_ble::encode_bond(make_record("AA:BB:CC:DD:EE:01", "K",
                                                      device_kind::keyboard, false)),
-              "CDB1;addr=AA:BB:CC:DD:EE:01;name=K;kind=keyboard;last=0\n");
+               "CDB1;addr=AA:BB:CC:DD:EE:01;addr_type=0;name=K;kind=keyboard;last=0\n");
     CHECK_STR(cyberdeck_ble::encode_bond(make_record("AA:BB:CC:DD:EE:01", "M",
                                                      device_kind::mouse, false)),
-              "CDB1;addr=AA:BB:CC:DD:EE:01;name=M;kind=mouse;last=0\n");
+               "CDB1;addr=AA:BB:CC:DD:EE:01;addr_type=0;name=M;kind=mouse;last=0\n");
     CHECK_STR(cyberdeck_ble::encode_bond(make_record("AA:BB:CC:DD:EE:01", nullptr,
                                                      device_kind::unknown, false)),
-              "CDB1;addr=AA:BB:CC:DD:EE:01;name=;kind=unknown;last=0\n");
+               "CDB1;addr=AA:BB:CC:DD:EE:01;addr_type=0;name=;kind=unknown;last=0\n");
 }
 
 void test_encode_sanitizes_and_bounds_the_name()
@@ -164,12 +170,12 @@ void test_encode_sanitizes_and_bounds_the_name()
 
 void test_decode_round_trips_and_rejects_everything_else()
 {
-    expect_decode("CDB1;addr=AA:BB:CC:DD:EE:01;name=Fone;kind=headset;last=1\n",
+    expect_decode("CDB1;addr=AA:BB:CC:DD:EE:01;addr_type=0;name=Fone;kind=headset;last=1\n",
                   "AA:BB:CC:DD:EE:01", "Fone", device_kind::headset, true);
-    expect_decode("CDB1;addr=AA:BB:CC:DD:EE:01;name=;kind=unknown;last=0\n",
+    expect_decode("CDB1;addr=AA:BB:CC:DD:EE:01;addr_type=0;name=;kind=unknown;last=0\n",
                   "AA:BB:CC:DD:EE:01", "", device_kind::unknown, false);
     /* A record without its trailing LF is still a complete record. */
-    expect_decode("CDB1;addr=AA:BB:CC:DD:EE:01;name=K;kind=keyboard;last=0",
+    expect_decode("CDB1;addr=AA:BB:CC:DD:EE:01;addr_type=0;name=K;kind=keyboard;last=0",
                   "AA:BB:CC:DD:EE:01", "K", device_kind::keyboard, false);
 
     /* Wrong marker, truncation and garbage. */
@@ -385,12 +391,36 @@ void test_serialize_is_bounded_and_deserialize_is_atomic()
     }
 
     /* A CRLF-free trailing blank line is tolerated; a stray CR is not. */
-    CHECK(keeper.deserialize("CDB1;addr=AA:BB:CC:DD:EE:09;name=N;kind=keyboard;last=0\n\n",
-                             std::string("CDB1;addr=AA:BB:CC:DD:EE:09;name=N;kind=keyboard;last=0\n\n").size()));
+    CHECK(keeper.deserialize("CDB1;addr=AA:BB:CC:DD:EE:09;addr_type=0;name=N;kind=keyboard;last=0\n\n",
+                             std::string("CDB1;addr=AA:BB:CC:DD:EE:09;addr_type=0;name=N;kind=keyboard;last=0\n\n").size()));
     CHECK_EQ(keeper.size(), std::size_t(1));
-    CHECK(!keeper.deserialize("CDB1;addr=AA:BB:CC:DD:EE:09;name=N;kind=keyboard;last=0\r\n",
-                              std::string("CDB1;addr=AA:BB:CC:DD:EE:09;name=N;kind=keyboard;last=0\r\n").size()));
+    CHECK(!keeper.deserialize("CDB1;addr=AA:BB:CC:DD:EE:09;addr_type=0;name=N;kind=keyboard;last=0\r\n",
+                              std::string("CDB1;addr=AA:BB:CC:DD:EE:09;addr_type=0;name=N;kind=keyboard;last=0\r\n").size()));
     CHECK_EQ(keeper.size(), std::size_t(1));
+}
+
+void test_all_address_types_round_trip_without_aliasing()
+{
+    using cyberdeck_ble::address_type;
+    const address_type types[] = {address_type::public_address,
+                                  address_type::random_static,
+                                  address_type::random_resolvable,
+                                  address_type::random_non_resolvable};
+    for (address_type type : types) {
+        const bond_record input = make_record("AA:BB:CC:DD:EE:01", "Peer",
+                                              device_kind::unknown, true, type);
+        const std::string encoded = cyberdeck_ble::encode_bond(input);
+        CHECK(encoded.find("addr_type=" +
+                           std::to_string(static_cast<unsigned>(type))) !=
+              std::string::npos);
+        bond_record output = make_record("ZZ:ZZ:ZZ:ZZ:ZZ:ZZ", "sentinel",
+                                         device_kind::keyboard, false);
+        CHECK(cyberdeck_ble::decode_bond(encoded.c_str(), encoded.size(), output));
+        CHECK(output.addr_type == type);
+        bond_store store;
+        CHECK(store.add(input) == store_result::ok);
+        CHECK(store.find(input.address, type) != nullptr);
+    }
 }
 
 void test_bond_survives_a_reboot_round_trip()
@@ -430,6 +460,30 @@ void test_bond_survives_a_reboot_round_trip()
     if (kept != nullptr) CHECK_STR(kept->name, "Tab here");
 }
 
+void test_legacy_four_field_blob_is_detected_but_v2_is_not()
+{
+    const char *legacy =
+        "CDB1;addr=AA:BB:CC:DD:EE:01;name=Fone;kind=headset;last=1\n";
+    CHECK(cyberdeck_ble::is_legacy_bond_blob(legacy, std::string(legacy).size()));
+
+    const std::string v2 =
+        "CDB1;addr=AA:BB:CC:DD:EE:01;addr_type=2;name=Fone;kind=headset;last=1\n";
+    CHECK(!cyberdeck_ble::is_legacy_bond_blob(v2.c_str(), v2.size()));
+
+    bond_store preserved;
+    CHECK(preserved.deserialize(v2.c_str(), v2.size()));
+    CHECK_EQ(preserved.size(), std::size_t(1));
+    const bond_record *record = preserved.find("AA:BB:CC:DD:EE:01",
+                                                cyberdeck_ble::address_type::random_resolvable);
+    CHECK(record != nullptr);
+    if (record != nullptr) CHECK_STR(record->name, "Fone");
+
+    /* The legacy marker is a policy signal, not a silently accepted record. */
+    bond_store rejected;
+    CHECK(!rejected.deserialize(legacy, std::string(legacy).size()));
+    CHECK_EQ(rejected.size(), std::size_t(0));
+}
+
 } // namespace
 
 int main()
@@ -442,7 +496,9 @@ int main()
     test_store_add_update_remove_and_capacity();
     test_snapshot_is_insertion_ordered_and_independent();
     test_serialize_is_bounded_and_deserialize_is_atomic();
+    test_all_address_types_round_trip_without_aliasing();
     test_bond_survives_a_reboot_round_trip();
+    test_legacy_four_field_blob_is_detected_but_v2_is_not();
 
     std::printf("ble bond store contract: %d checks, %d failures\n",
                 checks, failures);

@@ -74,10 +74,13 @@ std::string repeated(const char *unit, std::size_t count)
 
 device make_device(const char *address, const char *name, int rssi,
                    device_kind kind, bool paired = false,
-                   bool connectable = true)
+                   bool connectable = true,
+                   cyberdeck_ble::address_type addr_type =
+                       cyberdeck_ble::address_type::public_address)
 {
     device item;
     item.address = address;
+    item.addr_type = addr_type;
     item.name = name == nullptr ? std::string() : std::string(name);
     item.rssi = rssi;
     item.kind = kind;
@@ -108,11 +111,56 @@ void test_approved_constants_and_labels()
     const device plain = make_device("AA:BB:CC:DD:EE:FF", "Keyboard", -55,
                                     device_kind::keyboard);
     CHECK_STR(plain.address, "AA:BB:CC:DD:EE:FF");
+    CHECK(plain.addr_type == cyberdeck_ble::address_type::public_address);
     CHECK_STR(plain.name, "Keyboard");
     CHECK_EQ(plain.rssi, -55);
     CHECK(plain.kind == device_kind::keyboard);
     CHECK(plain.connectable);
     CHECK(!plain.paired);
+}
+
+void test_eighteen_items_keep_selection_and_marker_safe()
+{
+    device_list list;
+    for (std::size_t i = 0; i < 18; ++i) {
+        char address[18];
+        std::snprintf(address, sizeof(address), "AA:BB:CC:DD:EE:%02zX", i);
+        const std::string name = "device-" + std::to_string(i);
+        CHECK(list.add(make_device(address, name.c_str(), -40,
+                                   device_kind::unknown)));
+    }
+    CHECK_EQ(list.size(), std::size_t(18));
+    CHECK_EQ(list.selected_index(), std::size_t(0));
+    CHECK(list.selected() != nullptr);
+    CHECK_STR(list.selected()->name, "device-0");
+
+    for (int i = 0; i < 17; ++i) list.move_down();
+    CHECK_EQ(list.selected_index(), std::size_t(17));
+    CHECK(list.selected() != nullptr);
+    CHECK_STR(list.selected()->name, "device-17");
+    CHECK(list.render().find("> [18] device-17") != std::string::npos);
+
+    list.move_down();
+    CHECK_EQ(list.selected_index(), std::size_t(17));
+    list.move_up();
+    CHECK_EQ(list.selected_index(), std::size_t(16));
+    CHECK(list.render().find("> [17] device-16") != std::string::npos);
+}
+
+void test_address_type_is_part_of_device_identity()
+{
+    using cyberdeck_ble::address_type;
+    device_list list;
+    CHECK(list.add(make_device("AA:BB:CC:DD:EE:01", "Public", -50,
+                               device_kind::unknown, false, true,
+                               address_type::public_address)));
+    CHECK(list.add(make_device("AA:BB:CC:DD:EE:01", "Random", -60,
+                               device_kind::unknown, false, true,
+                               address_type::random_static)));
+    CHECK_EQ(list.size(), std::size_t(2));
+    CHECK(list.find("AA:BB:CC:DD:EE:01", address_type::public_address) != nullptr);
+    CHECK(list.find("AA:BB:CC:DD:EE:01", address_type::random_static) != nullptr);
+    CHECK(list.find("AA:BB:CC:DD:EE:01", address_type::random_resolvable) == nullptr);
 }
 
 void test_kind_from_appearance_only_proves_what_is_advertised()
@@ -579,6 +627,8 @@ void test_non_connectable_devices_are_kept_but_marked()
 int main()
 {
     test_approved_constants_and_labels();
+    test_eighteen_items_keep_selection_and_marker_safe();
+    test_address_type_is_part_of_device_identity();
     test_kind_from_appearance_only_proves_what_is_advertised();
     test_address_normalization_is_strict_and_normalizing();
     test_name_sanitizer_is_bounded_utf8_safe_and_control_free();

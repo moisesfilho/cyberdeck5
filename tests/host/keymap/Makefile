@@ -119,7 +119,7 @@ HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
 BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
-.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract
+.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract
 
 all: test
 
@@ -532,7 +532,7 @@ test_fs_write_contract: test_fs_write_contract.py $(SERIAL_BRIDGE_SRC) $(SERIAL_
 test_ble_types: test_ble_types.cpp $(BLE_TYPES_SRC) $(BLE_TYPES_HDR) $(BLE_TYPES_CONTRACT_HDR)
 	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_ble_types.cpp $(BLE_TYPES_SRC) -o test_ble_types
 
-test_ble_state_machine: test_ble_state_machine.cpp $(BLE_STATE_SRC) $(BLE_STATE_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_TYPES_SRC) $(BLE_TYPES_HDR)
+test_ble_state_machine: test_ble_state_machine.cpp $(BLE_STATE_SRC) $(BLE_STATE_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_TYPES_SRC) $(BLE_TYPES_HDR) ../../../code-map.md
 	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_ble_state_machine.cpp $(BLE_STATE_SRC) $(BLE_TYPES_SRC) -o test_ble_state_machine
 
 test_ble_event_dispatch: test_ble_event_dispatch.cpp $(BLE_EVENTS_SRC) $(BLE_EVENTS_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_TYPES_SRC) $(BLE_TYPES_HDR)
@@ -554,6 +554,34 @@ test_ble_command_parse: test_ble_command_parse.cpp contracts/cyberdeck_help.h $(
 # only; it never opens hardware, a radio or the Serial Automation Bridge.
 test_ble_integration_contract: test_ble_integration_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_STATE_SRC) $(BLE_STATE_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STORE_CONTRACT_HDR) ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_help.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../main/idf_component.yml ../../../sdkconfig.defaults ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md ../../../code-map.md ../../../.gitignore
 	$(PYTHON) test_ble_integration_contract.py
+
+test_ble_scan_contract: test_ble_scan_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_TYPES_HDR) $(BLE_STORE_HDR) $(BLE_EVENTS_HDR)
+	$(PYTHON) test_ble_scan_contract.py
+
+test_ble_ui_timeout_contract: test_ble_ui_timeout_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) test_ble_ui_timeout_contract.py
+
+test_ble_adv_types_contract: test_ble_adv_types_contract.py $(BLE_MGR_SRC)
+	$(PYTHON) test_ble_adv_types_contract.py
+
+test_ble_review_regressions: test_ble_review_regressions.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(BLE_STORE_SRC) $(BLE_STORE_HDR)
+	$(PYTHON) test_ble_review_regressions.py
+
+test_ble_runtime_regressions: test_ble_runtime_regressions.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) test_ble_runtime_regressions.py
+
+test_ble_ui_render_contract: test_ble_ui_render_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(BLE_TYPES_SRC) $(BLE_TYPES_HDR) $(BLE_STATE_SRC) $(BLE_STATE_HDR) $(BLE_EVENTS_SRC) $(BLE_EVENTS_HDR) test_ble_types.cpp Makefile ../../../code-map.md
+	$(PYTHON) test_ble_ui_render_contract.py
+
+test_ble_auth_contract: test_ble_auth_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_STATE_SRC) $(BLE_STATE_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
+	$(PYTHON) test_ble_auth_contract.py
+
+test_ble_hid_contract: test_ble_hid_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_EVENTS_SRC) $(BLE_EVENTS_HDR) Makefile
+	$(PYTHON) test_ble_hid_contract.py
+
+test_ble_connection_lifecycle_contract: test_ble_connection_lifecycle_contract.py $(BLE_MGR_SRC) $(BLE_STATE_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
+	$(PYTHON) test_ble_connection_lifecycle_contract.py
+
 
 test: $(BINS)
 	@echo "==> Executando testes do keymap do shell de entrada"
@@ -673,6 +701,24 @@ test: $(BINS)
 	@./test_ble_command_parse
 	@echo "==> Executando contrato estrutural da integracao BLE"
 	@$(MAKE) --no-print-directory test_ble_integration_contract
+	@echo "==> Executando contrato de timeout/renderizacao da UI BLE"
+	@$(MAKE) --no-print-directory test_ble_ui_timeout_contract
+	@echo "==> Executando contrato dos tipos de anuncio BLE"
+	@$(MAKE) --no-print-directory test_ble_adv_types_contract
+	@echo "==> Executando contrato do scan BLE (parametros/parser/agregacao/addr_type)"
+	@$(MAKE) --no-print-directory test_ble_scan_contract
+	@echo "==> Executando regressões BLE encontradas na revisão"
+	@$(MAKE) --no-print-directory test_ble_review_regressions
+	@echo "==> Executando regressões de runtime do scan BLE"
+	@$(MAKE) --no-print-directory test_ble_runtime_regressions
+	@echo "==> Executando contrato de renderizacao da UI BLE"
+	@$(MAKE) --no-print-directory test_ble_ui_render_contract
+	@echo "==> Executando contrato de autenticacao BLE NimBLE 5.5.5"
+	@$(MAKE) --no-print-directory test_ble_auth_contract
+	@echo "==> Executando contrato de descoberta HID BLE"
+	@$(MAKE) --no-print-directory test_ble_hid_contract
+	@echo "==> Executando contrato do ciclo de vida da conexao BLE e disponibilidade da UI"
+	@$(MAKE) --no-print-directory test_ble_connection_lifecycle_contract
 	# Keep the known IMU contract last so unrelated task tests run first;
 	# it remains a separate, non-masked gate.
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"

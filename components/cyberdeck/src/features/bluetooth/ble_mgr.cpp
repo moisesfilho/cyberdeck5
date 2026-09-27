@@ -10,7 +10,11 @@
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
+#include "host/ble_hs_id.h"
+#include "host/ble_hs_adv.h"
 #include "host/ble_gap.h"
+#include "host/ble_gatt.h"
+#include "host/ble_uuid.h"
 #include "host/ble_sm.h"
 #include "host/ble_store.h"
 #include "host/util/util.h"
@@ -19,6 +23,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include <cstring>
@@ -26,6 +31,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <array>
 #include <cstdio>
 
 static const char *TAG = "ble_mgr";
@@ -37,6 +43,7 @@ static const char *TAG = "ble_mgr";
 #define BLE_MGR_MAX_OBSERVERS 4
 #define BLE_MGR_NVS_NAMESPACE "ble_bonds"
 #define BLE_MGR_NVS_KEY "bonds_v1"
+#define BLE_MGR_NVS_KEY_V2 "bonds_v2"
 
 struct ble_mgr_observer {
     ble_mgr_observer_cb_t cb;
@@ -50,8 +57,27 @@ static SemaphoreHandle_t s_ble_mutex = NULL;
 /* GAP callbacks execute in the NimBLE host task while commands are handled by
  * ble_mgr.  The pure dispatch object is deliberately kept behind this lock. */
 static SemaphoreHandle_t s_dispatch_mutex = NULL;
+static SemaphoreHandle_t s_stop_done = NULL;
 static bool s_started = false;
 static uint8_t s_own_addr[6] = {0};
+static uint8_t s_own_addr_type = BLE_OWN_ADDR_PUBLIC;
+
+struct ble_scan_stats {
+    uint32_t gap_disc;
+    uint32_t accepted_adv;
+    uint32_t accepted_dir;
+    uint32_t accepted_scan;
+    uint32_t accepted_nonconn;
+    uint32_t accepted_rsp;
+    uint32_t ignored;
+    uint32_t token_dropped;
+    uint32_t mutex_dropped;
+    uint32_t published;
+    uint32_t dispatch_dropped;
+    uint32_t malformed;
+};
+
+static ble_scan_stats s_scan_stats = {};
 
 static cyberdeck_ble::event_dispatch s_dispatch;
 static cyberdeck_ble::bond_store s_store;
@@ -68,9 +94,54 @@ static uint64_t s_connection_gap_token = 0;
 static uint16_t s_pair_conn = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_connection_conn = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_auth_conn = BLE_HS_CONN_HANDLE_NONE;
+static uint64_t s_auth_token = 0;
+static uint8_t s_auth_action = BLE_MGR_AUTH_IO_INPUT;
+static uint8_t s_auth_addr[6] = {};
+static uint8_t s_auth_addr_type = 0;
+static uint8_t s_pair_addr[6] = {};
+static uint8_t s_pair_addr_type = 0;
 static bool s_pair_inflight = false;
 static bool s_connection_automatic = false;
 static char s_connection_address[18] = {0};
+static cyberdeck_ble::address_type s_connection_addr_type = cyberdeck_ble::address_type::public_address;
+struct scan_peer {
+    cyberdeck_ble::device record;
+    bool primary_seen = false;
+};
+static std::array<scan_peer, cyberdeck_ble::k_max_devices> s_scan_peers;
+static std::size_t s_scan_peer_count = 0;
+
+constexpr uint16_t k_hid_service_uuid = 0x1812;
+constexpr uint16_t k_hid_report_map_uuid = 0x2a4b;
+constexpr uint16_t k_hid_protocol_mode_uuid = 0x2a4e;
+constexpr uint16_t k_hid_boot_keyboard_input_uuid = 0x2a22;
+constexpr uint16_t k_hid_report_uuid = 0x2a4d;
+constexpr uint16_t k_cccd_uuid = 0x2902;
+constexpr size_t k_hid_max_characteristics = 8;
+constexpr size_t k_hid_max_cccd = 4;
+constexpr int64_t k_hid_discovery_deadline_us = 10000000;
+struct hid_characteristic {
+    uint16_t value_handle = 0;
+    uint8_t properties = 0;
+    uint16_t uuid = 0;
+    uint16_t cccd = 0;
+};
+struct hid_discovery_context {
+    bool active = false;
+    uint64_t generation = 0;
+    uint64_t token = 0;
+    uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    uint16_t service_start = 0;
+    uint16_t service_end = 0;
+    size_t characteristic_count = 0;
+    size_t cccd_target_count = 0;
+    size_t cccd_scheduled = 0;
+    size_t cccd_count = 0;
+    size_t cccd_index = 0;
+    hid_characteristic characteristics[k_hid_max_characteristics] = {};
+    int64_t deadline_us = 0;
+};
+static hid_discovery_context s_hid = {};
 
 static struct ble_mgr_observer s_observers[BLE_MGR_MAX_OBSERVERS] = {0};
 
@@ -89,10 +160,18 @@ static void copy_address_to_buffer(const std::string &address, char *out, size_t
 static void load_bonds_from_nvs();
 static void save_bonds_to_nvs();
 static void scan_report_adv(const struct ble_gap_disc_desc *disc);
+static cyberdeck_ble::address_type peer_address_type(const ble_addr_t *addr);
+static uint8_t stack_address_type(cyberdeck_ble::address_type type);
 static void handle_scan_finished(int status);
 static void handle_pair_result(int status);
 static void handle_connection_result(int status);
 static void drain_dispatch_events();
+static void start_hid_discovery(uint16_t conn_handle, uint64_t token);
+static void finish_hid_discovery(bool success);
+static void poll_hid_discovery();
+static int hid_service_cb(uint16_t, const struct ble_gatt_error *, const struct ble_gatt_svc *, void *);
+static int hid_characteristic_cb(uint16_t, const struct ble_gatt_error *, const struct ble_gatt_chr *, void *);
+static int hid_descriptor_cb(uint16_t, const struct ble_gatt_error *, uint16_t, const struct ble_gatt_dsc *, void *);
 
 esp_err_t ble_mgr_start(void)
 {
@@ -201,10 +280,16 @@ esp_err_t ble_mgr_start(void)
             return;
         }
         ble_addr_t addr;
-        rc = ble_hs_id_copy_addr(BLE_OWN_ADDR_PUBLIC, addr.val, NULL);
+        rc = ble_hs_id_infer_auto(0, &s_own_addr_type);
+        if (rc != 0) {
+            ESP_LOGE(TAG, "Failed to infer local BLE address type: %d", rc);
+            return;
+        }
+        rc = ble_hs_id_copy_addr(s_own_addr_type, addr.val, NULL);
         if (rc == 0) {
             memcpy(s_own_addr, addr.val, 6);
         }
+        ESP_LOGI(TAG, "BLE local address type inferred: %u", s_own_addr_type);
         rc = ble_svc_gap_device_name_set("cyberdeck5");
         if (rc != 0) {
             ESP_LOGW(TAG, "Failed to set device name: %d", rc);
@@ -222,7 +307,8 @@ esp_err_t ble_mgr_start(void)
     ble_hs_cfg.sm_mitm = 1;
     ble_hs_cfg.sm_sc = 1;
 
-    if (xTaskCreate(ble_mgr_task, "ble_mgr", BLE_MGR_TASK_STACK, NULL, BLE_MGR_TASK_PRIO, &s_ble_task) != pdPASS) {
+    s_stop_done = xSemaphoreCreateBinary();
+    if (s_stop_done == NULL || xTaskCreate(ble_mgr_task, "ble_mgr", BLE_MGR_TASK_STACK, NULL, BLE_MGR_TASK_PRIO, &s_ble_task) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create BLE manager task");
         nimble_port_freertos_deinit();
         vSemaphoreDelete(s_dispatch_mutex);
@@ -231,6 +317,7 @@ esp_err_t ble_mgr_start(void)
         s_ble_mutex = NULL;
         vQueueDelete(s_ble_queue);
         s_ble_queue = NULL;
+        if (s_stop_done != NULL) { vSemaphoreDelete(s_stop_done); s_stop_done = NULL; }
         return ESP_ERR_NO_MEM;
     }
 
@@ -246,14 +333,13 @@ esp_err_t ble_mgr_stop(void)
     }
 
     ble_mgr_cmd_t cmd{};
-    cmd.kind = BLE_MGR_CMD_SCAN_CANCEL;
-    cmd.token = s_scan_token;
-    xQueueSend(s_ble_queue, &cmd, 0);
-
-    if (s_ble_task != NULL) {
-        vTaskDelete(s_ble_task);
-        s_ble_task = NULL;
+    cmd.kind = BLE_MGR_CMD_STOP;
+    if (xQueueSend(s_ble_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE ||
+        xSemaphoreTake(s_stop_done, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        ESP_LOGE(TAG, "BLE manager teardown timed out; resources retained safely");
+        return ESP_ERR_TIMEOUT;
     }
+    s_ble_task = NULL;
 
     nimble_port_stop();
     nimble_port_freertos_deinit();
@@ -272,6 +358,7 @@ esp_err_t ble_mgr_stop(void)
         vQueueDelete(s_ble_queue);
         s_ble_queue = NULL;
     }
+    if (s_stop_done != NULL) { vSemaphoreDelete(s_stop_done); s_stop_done = NULL; }
 
     s_started = false;
     ESP_LOGI(TAG, "BLE manager stopped");
@@ -339,6 +426,12 @@ static void ble_mgr_task(void *arg)
     for (;;) {
         ble_mgr_cmd_t cmd;
         if (xQueueReceive(s_ble_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+            if (xSemaphoreTake(s_dispatch_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+                ESP_LOGW(TAG, "BLE dispatch mutex unavailable; HID poll skipped");
+                continue;
+            }
+            poll_hid_discovery();
+            xSemaphoreGive(s_dispatch_mutex);
             continue;
         }
 
@@ -346,25 +439,57 @@ static void ble_mgr_task(void *arg)
             ESP_LOGW(TAG, "BLE dispatch mutex unavailable; command dropped");
             continue;
         }
+        poll_hid_discovery();
 
         switch (cmd.kind) {
+        case BLE_MGR_CMD_STOP:
+            s_hid.active = false;
+            ++s_hid.generation;
+            if (ble_gap_disc_active()) {
+                const int cancel_rc = ble_gap_disc_cancel();
+                ESP_LOGI(TAG, "BLE scan preempt cancel rc=%d", cancel_rc);
+            }
+            (void)ble_gap_conn_cancel();
+            if (s_stop_done != NULL) xSemaphoreGive(s_stop_done);
+            xSemaphoreGive(s_dispatch_mutex);
+            vTaskDelete(NULL);
+            return;
         case BLE_MGR_CMD_SCAN_START: {
+            /* Preempt an older scan before opening a new generation.  Its
+             * callback carries the old token and is rejected below. */
+            if (ble_gap_disc_active()) {
+                (void)ble_gap_disc_cancel();
+            }
             uint64_t token = s_scan_token = s_dispatch.begin_scan(cmd.token);
             if (token == 0) break;
+            s_scan_stats = {};
+            s_scan_peer_count = 0;
             s_dispatch.publish_scan_started(token);
 
             struct ble_gap_disc_params params = {
-                .itvl = BLE_GAP_SCAN_FAST_INTERVAL_MIN,
-                .window = BLE_GAP_SCAN_FAST_WINDOW,
+                .itvl = 0,
+                .window = 0,
                 .filter_policy = 0,
                 .limited = 0,
                 .passive = 0,
-                .filter_duplicates = 1,
+                .filter_duplicates = 0,
             };
-            int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &params, ble_gap_event_cb, (void *)(uintptr_t)token);
+            uint8_t own_addr_type = BLE_OWN_ADDR_PUBLIC;
+            int rc = ble_hs_id_infer_auto(0, &own_addr_type);
+            if (rc != 0) {
+                ESP_LOGE(TAG, "BLE scan address type inference failed: %d", rc);
+                handle_scan_finished(rc);
+                drain_dispatch_events();
+                break;
+            }
+            ESP_LOGI(TAG, "BLE scan start token=%llu addr_type=%u interval=%u window=%u passive=%u dup=%u",
+                     static_cast<unsigned long long>(token), own_addr_type,
+                     static_cast<unsigned>(params.itvl), static_cast<unsigned>(params.window),
+                     static_cast<unsigned>(params.passive), static_cast<unsigned>(params.filter_duplicates));
+            rc = ble_gap_disc(own_addr_type, 5000, &params, ble_gap_event_cb, (void *)(uintptr_t)token);
             if (rc != 0) {
                 ESP_LOGE(TAG, "ble_gap_disc failed: %d", rc);
-                s_dispatch.publish_scan_finished(token, cyberdeck_ble::notice::failed);
+                handle_scan_finished(rc);
             }
             drain_dispatch_events();
             break;
@@ -381,9 +506,11 @@ static void ble_mgr_task(void *arg)
         case BLE_MGR_CMD_PAIR: {
             uint64_t token = s_pair_token = s_dispatch.begin_pairing(cmd.token, "");
             if (token == 0) break;
+            memcpy(s_pair_addr, cmd.pair.addr, sizeof(s_pair_addr));
+            s_pair_addr_type = cmd.pair.addr_type;
             char addr_str[18];
             format_addr(cmd.pair.addr, addr_str, sizeof(addr_str));
-            ble_addr_t peer_addr = {.type = BLE_ADDR_PUBLIC};
+             ble_addr_t peer_addr = {.type = stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.pair.addr_type))};
             memcpy(peer_addr.val, cmd.pair.addr, sizeof(peer_addr.val));
             struct ble_gap_conn_params params = {
                 .scan_itvl = BLE_GAP_INITIAL_CONN_ITVL_MIN, .scan_window = BLE_GAP_INITIAL_CONN_ITVL_MIN,
@@ -392,7 +519,7 @@ static void ble_mgr_task(void *arg)
                 .min_ce_len = 0, .max_ce_len = 0,
             };
             s_pair_inflight = true;
-            int rc = ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &peer_addr, BLE_HS_FOREVER,
+             int rc = ble_gap_connect(s_own_addr_type, &peer_addr, BLE_HS_FOREVER,
                                      &params, ble_gap_event_cb, (void *)(uintptr_t)token);
             if (rc != 0) {
                 s_pair_inflight = false;
@@ -403,16 +530,49 @@ static void ble_mgr_task(void *arg)
         }
         case BLE_MGR_CMD_PASSKEY_REPLY: {
             if (cmd.token == 0 || !s_pair_inflight || cmd.token != s_pair_token ||
-                cmd.token != s_dispatch.active_pair_token()) break;
+                 cmd.token != s_dispatch.active_pair_token() || cmd.token != s_auth_token ||
+                 s_auth_conn == BLE_HS_CONN_HANDLE_NONE || cmd.passkey.io_action != s_auth_action ||
+                 cmd.passkey.addr_type != s_auth_addr_type ||
+                 memcmp(cmd.passkey.addr, s_auth_addr, sizeof(s_auth_addr)) != 0) break;
             struct ble_sm_io pkey = {0};
-            pkey.action = BLE_SM_IOACT_INPUT;
-            pkey.passkey = cmd.passkey.passkey;
-            if (cmd.passkey.passkey >= cyberdeck_ble::k_passkey_modulus ||
-                s_auth_conn == BLE_HS_CONN_HANDLE_NONE) {
+            bool valid = false;
+            switch (cmd.passkey.io_action) {
+            case BLE_MGR_AUTH_IO_DISP:
+                if (cmd.passkey.passkey >= cyberdeck_ble::k_passkey_modulus) break;
+                pkey.action = BLE_SM_IOACT_DISP;
+                pkey.passkey = cmd.passkey.passkey;
+                valid = true;
+                break;
+            case BLE_MGR_AUTH_IO_INPUT:
+                if (cmd.passkey.passkey >= cyberdeck_ble::k_passkey_modulus) break;
+                pkey.action = BLE_SM_IOACT_INPUT;
+                pkey.passkey = cmd.passkey.passkey;
+                valid = true;
+                break;
+            case BLE_MGR_AUTH_IO_NUMCMP:
+                if (!cmd.passkey.numcmp_accept ||
+                    cmd.passkey.numcmp >= cyberdeck_ble::k_passkey_modulus) break;
+                pkey.action = BLE_SM_IOACT_NUMCMP;
+                pkey.numcmp_accept = 1;
+                valid = true;
+                break;
+            default:
+                break;
+            }
+            if (!valid || cmd.passkey.io_action > BLE_MGR_AUTH_IO_NUMCMP) {
                 ESP_LOGW(TAG, "Rejected invalid BLE authentication response");
                 break;
             }
-            int rc = ble_sm_inject_io(s_auth_conn, &pkey);
+            const uint16_t auth_conn = s_auth_conn;
+            /* Consume the challenge before calling NimBLE.  A retry must be
+             * driven by a fresh PASSKEY_ACTION callback, never by a stale UI
+             * command or a duplicate queue item. */
+            s_auth_conn = BLE_HS_CONN_HANDLE_NONE;
+            s_auth_token = 0;
+            s_auth_action = BLE_MGR_AUTH_IO_INPUT;
+            memset(s_auth_addr, 0, sizeof(s_auth_addr));
+            s_auth_addr_type = 0;
+            int rc = ble_sm_inject_io(auth_conn, &pkey);
             if (rc != 0) {
                 ESP_LOGW(TAG, "ble_sm_inject_io failed: %d", rc);
             }
@@ -438,11 +598,13 @@ static void ble_mgr_task(void *arg)
             if (cmd.token == 0 || cmd.token <= s_connection_token) break;
             char address[18];
             format_addr(cmd.connect.addr, address, sizeof(address));
-            uint64_t token = s_connection_token = s_dispatch.begin_connection(
-                cmd.token, address, cmd.connect.automatic);
+             const auto addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
+             uint64_t token = s_connection_token = s_dispatch.begin_connection(
+                 cmd.token, address, addr_type, cmd.connect.automatic);
             if (token == 0) break;
             s_connection_automatic = cmd.connect.automatic;
-            strlcpy(s_connection_address, address, sizeof(s_connection_address));
+             strlcpy(s_connection_address, address, sizeof(s_connection_address));
+             s_connection_addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
             s_connection_gap_token = token;
             s_connection_conn = BLE_HS_CONN_HANDLE_NONE;
             s_auth_conn = BLE_HS_CONN_HANDLE_NONE;
@@ -467,9 +629,9 @@ static void ble_mgr_task(void *arg)
                 .min_ce_len = 0,
                 .max_ce_len = 0,
             };
-            ble_addr_t peer_addr = {.type = BLE_ADDR_PUBLIC};
+             ble_addr_t peer_addr = {.type = stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type))};
             memcpy(peer_addr.val, cmd.connect.addr, 6);
-            int rc = ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &peer_addr, BLE_HS_FOREVER, &conn_params, ble_gap_event_cb, (void *)(uintptr_t)token);
+             int rc = ble_gap_connect(s_own_addr_type, &peer_addr, BLE_HS_FOREVER, &conn_params, ble_gap_event_cb, (void *)(uintptr_t)token);
             if (rc != 0) {
                 ESP_LOGE(TAG, "ble_gap_connect failed: %d", rc);
                 s_dispatch.publish_disconnected(token);
@@ -484,21 +646,25 @@ static void ble_mgr_task(void *arg)
                 (void)ble_gap_terminate(s_pair_conn, BLE_ERR_REM_USER_CONN_TERM);
             if (s_connection_conn != BLE_HS_CONN_HANDLE_NONE)
                 (void)ble_gap_terminate(s_connection_conn, BLE_ERR_REM_USER_CONN_TERM);
+            s_hid.active = false;
+            ++s_hid.generation;
             break;
         }
         case BLE_MGR_CMD_RECONNECT: {
             if (cmd.token == 0 || cmd.token <= s_connection_token) break;
             char address[18];
             format_addr(cmd.connect.addr, address, sizeof(address));
-            uint64_t token = s_connection_token = s_dispatch.begin_connection(cmd.token, address, true);
+             const auto addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
+             uint64_t token = s_connection_token = s_dispatch.begin_connection(cmd.token, address, addr_type, true);
             if (token == 0) break;
             s_connection_automatic = true;
-            strlcpy(s_connection_address, address, sizeof(s_connection_address));
+             strlcpy(s_connection_address, address, sizeof(s_connection_address));
+             s_connection_addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
             s_connection_gap_token = token;
             s_connection_conn = BLE_HS_CONN_HANDLE_NONE;
             s_pair_conn = BLE_HS_CONN_HANDLE_NONE;
             s_auth_conn = BLE_HS_CONN_HANDLE_NONE;
-            ble_addr_t peer_addr = {.type = BLE_ADDR_PUBLIC};
+             ble_addr_t peer_addr = {.type = stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type))};
             memcpy(peer_addr.val, cmd.connect.addr, sizeof(peer_addr.val));
             struct ble_gap_conn_params params = {
                 .scan_itvl = BLE_GAP_INITIAL_CONN_ITVL_MIN, .scan_window = BLE_GAP_INITIAL_CONN_ITVL_MIN,
@@ -506,7 +672,7 @@ static void ble_mgr_task(void *arg)
                 .latency = 0, .supervision_timeout = BLE_GAP_INITIAL_SUPERVISION_TIMEOUT,
                 .min_ce_len = 0, .max_ce_len = 0,
             };
-            int rc = ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &peer_addr, BLE_HS_FOREVER,
+             int rc = ble_gap_connect(s_own_addr_type, &peer_addr, BLE_HS_FOREVER,
                                      &params, ble_gap_event_cb, (void *)(uintptr_t)token);
             if (rc != 0) s_dispatch.publish_disconnected(token);
             drain_dispatch_events();
@@ -533,21 +699,53 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 
     if (s_dispatch_mutex == NULL ||
         xSemaphoreTake(s_dispatch_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        if (event->type == BLE_GAP_EVENT_DISC) {
+            ++s_scan_stats.mutex_dropped;
+        }
         ESP_LOGW(TAG, "BLE dispatch mutex unavailable; GAP event dropped");
         return 0;
     }
 
     switch (event->type) {
     case BLE_GAP_EVENT_DISC: {
+        ++s_scan_stats.gap_disc;
         if (token == 0 || token != s_scan_token ||
-            token != s_dispatch.active_scan_token()) break;
-        if (event->disc.event_type == BLE_HCI_ADV_RPT_EVTYPE_ADV_IND ||
-            event->disc.event_type == BLE_HCI_ADV_RPT_EVTYPE_SCAN_RSP) {
+            token != s_dispatch.active_scan_token()) {
+            ++s_scan_stats.token_dropped;
+            break;
+        }
+        switch (event->disc.event_type) {
+        case BLE_HCI_ADV_RPT_EVTYPE_ADV_IND:
+            ++s_scan_stats.accepted_adv;
             scan_report_adv(&event->disc);
+            break;
+        case BLE_HCI_ADV_RPT_EVTYPE_DIR_IND:
+            ++s_scan_stats.accepted_dir;
+            scan_report_adv(&event->disc);
+            break;
+        case BLE_HCI_ADV_RPT_EVTYPE_SCAN_IND:
+            ++s_scan_stats.accepted_scan;
+            scan_report_adv(&event->disc);
+            break;
+        case BLE_HCI_ADV_RPT_EVTYPE_NONCONN_IND:
+            ++s_scan_stats.accepted_nonconn;
+            scan_report_adv(&event->disc);
+            break;
+        case BLE_HCI_ADV_RPT_EVTYPE_SCAN_RSP:
+            ++s_scan_stats.accepted_rsp;
+            scan_report_adv(&event->disc);
+            break;
+        default:
+            /* Ignore non-advertising GAP reports. */
+            ++s_scan_stats.ignored;
+            break;
         }
         break;
     }
     case BLE_GAP_EVENT_DISC_COMPLETE: {
+        ESP_LOGI(TAG, "BLE GAP discovery complete token=%llu cb_arg=%p reason=%d active=%d",
+                 static_cast<unsigned long long>(token), arg,
+                 event->disc_complete.reason, ble_gap_disc_active());
         if (token == 0 || token != s_scan_token ||
             token != s_dispatch.active_scan_token()) break;
         handle_scan_finished(event->disc_complete.reason);
@@ -577,6 +775,10 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
         break;
     }
     case BLE_GAP_EVENT_DISCONNECT: {
+        if (s_hid.active && event->disconnect.conn.conn_handle == s_hid.conn_handle) {
+            s_hid.active = false;
+            ++s_hid.generation;
+        }
         if (s_pair_inflight && token == s_pair_token &&
             token == s_dispatch.active_pair_token() &&
             event->disconnect.conn.conn_handle == s_pair_conn) {
@@ -618,17 +820,36 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
             token != s_dispatch.active_pair_token()) break;
         if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
             uint32_t passkey = event->passkey.params.numcmp;
-            s_dispatch.publish_auth_request(token, cyberdeck_ble::auth_request_kind::passkey, passkey);
+            struct ble_gap_conn_desc desc;
+            if (ble_gap_conn_find(event->passkey.conn_handle, &desc) != 0) break;
+            memcpy(s_auth_addr, desc.peer_id_addr.val, sizeof(s_auth_addr));
+            s_auth_addr_type = s_pair_addr_type;
+            s_auth_conn = event->passkey.conn_handle; s_auth_token = token; s_auth_action = BLE_MGR_AUTH_IO_DISP;
+            s_dispatch.publish_auth_request(token, cyberdeck_ble::auth_request_kind::passkey, passkey,
+                                            cyberdeck_ble::auth_io_action::display);
         } else if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
-            s_dispatch.publish_auth_request(token, cyberdeck_ble::auth_request_kind::numeric_compare, event->passkey.params.numcmp);
+            struct ble_gap_conn_desc desc;
+            if (ble_gap_conn_find(event->passkey.conn_handle, &desc) != 0) break;
+            memcpy(s_auth_addr, desc.peer_id_addr.val, sizeof(s_auth_addr));
+            s_auth_addr_type = s_pair_addr_type;
+            s_auth_conn = event->passkey.conn_handle; s_auth_token = token; s_auth_action = BLE_MGR_AUTH_IO_NUMCMP;
+            s_dispatch.publish_auth_request(token, cyberdeck_ble::auth_request_kind::numeric_compare,
+                                            event->passkey.params.numcmp,
+                                            cyberdeck_ble::auth_io_action::numeric_compare);
         } else if (event->passkey.params.action == BLE_SM_IOACT_OOB) {
             /* OOB material is not provisioned by this product.  Never turn an
              * unsupported request into a user-confirmable one. */
             (void)ble_gap_terminate(event->passkey.conn_handle, BLE_ERR_AUTH_FAIL);
             if (s_pair_inflight) handle_pair_result(BLE_HS_EAUTHEN);
         } else if (event->passkey.params.action == BLE_SM_IOACT_INPUT) {
+            struct ble_gap_conn_desc desc;
+            if (ble_gap_conn_find(event->passkey.conn_handle, &desc) != 0) break;
+            memcpy(s_auth_addr, desc.peer_id_addr.val, sizeof(s_auth_addr));
+            s_auth_addr_type = s_pair_addr_type;
             s_auth_conn = event->passkey.conn_handle;
-            s_dispatch.publish_auth_request(token, cyberdeck_ble::auth_request_kind::passkey, 0);
+            s_auth_token = token; s_auth_action = BLE_MGR_AUTH_IO_INPUT;
+            s_dispatch.publish_auth_request(token, cyberdeck_ble::auth_request_kind::passkey, 0,
+                                            cyberdeck_ble::auth_io_action::input);
         }
         drain_dispatch_events();
         break;
@@ -656,12 +877,269 @@ static void format_addr(const uint8_t *addr, char *out, size_t out_len)
              addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 }
 
+static cyberdeck_ble::address_type peer_address_type(const ble_addr_t *addr)
+{
+    if (addr == nullptr || addr->type == BLE_ADDR_PUBLIC) return cyberdeck_ble::address_type::public_address;
+    if (BLE_ADDR_IS_STATIC(addr)) return cyberdeck_ble::address_type::random_static;
+    if (BLE_ADDR_IS_RPA(addr)) return cyberdeck_ble::address_type::random_resolvable;
+    if (BLE_ADDR_IS_NRPA(addr)) return cyberdeck_ble::address_type::random_non_resolvable;
+    return cyberdeck_ble::address_type::random_non_resolvable;
+}
+
+static uint8_t stack_address_type(cyberdeck_ble::address_type type)
+{
+    return type == cyberdeck_ble::address_type::public_address ? BLE_ADDR_PUBLIC : BLE_ADDR_RANDOM;
+}
+
 static void copy_address_to_buffer(const std::string &address, char *out, size_t out_len)
 {
     if (out_len == 0) {
         return;
     }
     strlcpy(out, address.c_str(), out_len);
+}
+
+static bool hid_callback_is_current(uint16_t conn_handle, void *arg)
+{
+    const uint64_t generation = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(arg));
+    return s_hid.active && generation != 0 && generation == s_hid.generation &&
+           conn_handle == s_hid.conn_handle;
+}
+
+static bool hid_is_relevant(uint16_t uuid)
+{
+    switch (uuid) {
+    case 0x2a4a: /* HID Information */
+    case k_hid_report_map_uuid:
+    case 0x2a4c: /* HID Control Point */
+    case k_hid_report_uuid:
+    case k_hid_protocol_mode_uuid:
+    case k_hid_boot_keyboard_input_uuid:
+    case 0x2a32: /* Boot Keyboard Output */
+    case 0x2a33: /* Boot Mouse Input */
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void start_next_hid_descriptor()
+{
+    while (s_hid.cccd_index < s_hid.characteristic_count &&
+           s_hid.cccd_scheduled < s_hid.cccd_target_count &&
+           !(s_hid.characteristics[s_hid.cccd_index].properties &
+             (BLE_GATT_CHR_PROP_NOTIFY | BLE_GATT_CHR_PROP_INDICATE))) {
+        ++s_hid.cccd_index;
+    }
+    if (s_hid.cccd_index >= s_hid.characteristic_count) {
+        finish_hid_discovery(true);
+        return;
+    }
+    const hid_characteristic &chr = s_hid.characteristics[s_hid.cccd_index];
+    ++s_hid.cccd_scheduled;
+    const int rc = ble_gattc_disc_all_dscs(s_hid.conn_handle, chr.value_handle,
+                                           s_hid.service_end, hid_descriptor_cb,
+                                           reinterpret_cast<void *>(static_cast<uintptr_t>(s_hid.generation)));
+    if (rc != 0) finish_hid_discovery(false);
+}
+
+static void start_hid_discovery(uint16_t conn_handle, uint64_t token)
+{
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE || token == 0) return;
+    s_hid = {};
+    s_hid.active = true;
+    s_hid.generation = token;
+    s_hid.token = token;
+    s_hid.conn_handle = conn_handle;
+    s_hid.deadline_us = esp_timer_get_time() + k_hid_discovery_deadline_us;
+    const int rc = ble_gattc_disc_all_svcs(conn_handle, hid_service_cb,
+        reinterpret_cast<void *>(static_cast<uintptr_t>(s_hid.generation)));
+    ESP_LOGI(TAG, "BLE HID discovery start token=%llu conn=%u rc=%d",
+             static_cast<unsigned long long>(token), static_cast<unsigned>(conn_handle), rc);
+    if (rc != 0) finish_hid_discovery(false);
+}
+
+static void finish_hid_discovery(bool success)
+{
+    if (!s_hid.active) return;
+    cyberdeck_ble::ble_event::hid_snapshot snapshot;
+    snapshot.conn_handle = s_hid.conn_handle;
+    snapshot.success = success && s_hid.service_start != 0;
+    snapshot.hid_service = s_hid.service_start != 0;
+    snapshot.service_start = s_hid.service_start;
+    snapshot.service_end = s_hid.service_end;
+    snapshot.characteristic_count = static_cast<uint8_t>(s_hid.characteristic_count);
+    snapshot.cccd_count = static_cast<uint8_t>(s_hid.cccd_count);
+    for (size_t i = 0; i < s_hid.characteristic_count; ++i) {
+        const hid_characteristic &chr = s_hid.characteristics[i];
+        switch (chr.uuid) {
+        case k_hid_report_map_uuid: snapshot.report_map_handle = chr.value_handle; break;
+        case k_hid_protocol_mode_uuid: snapshot.protocol_mode_handle = chr.value_handle; break;
+        case k_hid_boot_keyboard_input_uuid:
+            snapshot.boot_keyboard_input_handle = chr.value_handle;
+            snapshot.boot_keyboard_input_cccd = chr.cccd;
+            break;
+        case k_hid_report_uuid:
+            snapshot.report_input_handle = chr.value_handle;
+            snapshot.report_input_cccd = chr.cccd;
+            break;
+        default: break;
+        }
+    }
+    const uint64_t token = s_hid.token;
+    ESP_LOGI(TAG, "BLE HID discovery finish token=%llu conn=%u hid=%u chars=%u cccds=%u ok=%u",
+             static_cast<unsigned long long>(token), static_cast<unsigned>(snapshot.conn_handle),
+             snapshot.hid_service ? 1U : 0U, static_cast<unsigned>(snapshot.characteristic_count),
+             static_cast<unsigned>(snapshot.cccd_count), snapshot.success ? 1U : 0U);
+    s_hid.active = false;
+    bool published = s_dispatch.publish_hid_discovery(token, snapshot);
+    if (!published) {
+        /* Preserve the capability terminal event when scan/auth traffic has
+         * temporarily filled the bounded observer queue. */
+        drain_dispatch_events();
+        published = s_dispatch.publish_hid_discovery(token, snapshot);
+    }
+    if (!published) {
+        ESP_LOGW(TAG, "BLE HID discovery result dropped token=%llu", static_cast<unsigned long long>(token));
+    }
+    drain_dispatch_events();
+}
+
+static void poll_hid_discovery()
+{
+    if (s_hid.active && esp_timer_get_time() >= s_hid.deadline_us) {
+        ESP_LOGW(TAG, "BLE HID discovery timeout token=%llu conn=%u",
+                 static_cast<unsigned long long>(s_hid.token), static_cast<unsigned>(s_hid.conn_handle));
+        finish_hid_discovery(false);
+    }
+}
+
+static int hid_service_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
+                          const struct ble_gatt_svc *service, void *arg)
+{
+    /* NimBLE invokes GATT callbacks from ble_host, while the discovery context
+     * and dispatch queue are owned by ble_mgr.  Keep the stale check first so
+     * an old callback never waits on, or touches, a newer generation. */
+    if (!hid_callback_is_current(conn_handle, arg)) return 0;
+    if (s_dispatch_mutex == NULL ||
+        xSemaphoreTake(s_dispatch_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        ESP_LOGW(TAG, "BLE HID service callback mutex timeout");
+        return 0;
+    }
+    if (!hid_callback_is_current(conn_handle, arg)) {
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    const int status = error != nullptr ? error->status : 0;
+    /* BLE_HS_EDONE with a NULL object is the normal terminal callback for
+     * NimBLE discovery.  Every other non-zero status is a hard failure. */
+    if (status != 0 && !(status == BLE_HS_EDONE && service == nullptr)) {
+        finish_hid_discovery(false);
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    if (service != nullptr) {
+        if (ble_uuid_u16(&service->uuid.u) == k_hid_service_uuid && s_hid.service_start == 0) {
+            s_hid.service_start = service->start_handle;
+            s_hid.service_end = service->end_handle;
+        }
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    if (s_hid.service_start == 0) {
+        finish_hid_discovery(false);
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    const int rc = ble_gattc_disc_all_chrs(conn_handle, s_hid.service_start, s_hid.service_end,
+                                           hid_characteristic_cb, arg);
+    if (rc != 0) finish_hid_discovery(false);
+    xSemaphoreGive(s_dispatch_mutex);
+    return 0;
+}
+
+static int hid_characteristic_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
+                                 const struct ble_gatt_chr *chr, void *arg)
+{
+    if (!hid_callback_is_current(conn_handle, arg)) return 0;
+    if (s_dispatch_mutex == NULL ||
+        xSemaphoreTake(s_dispatch_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        ESP_LOGW(TAG, "BLE HID characteristic callback mutex timeout");
+        return 0;
+    }
+    if (!hid_callback_is_current(conn_handle, arg)) {
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    const int status = error != nullptr ? error->status : 0;
+    if (status != 0 && !(status == BLE_HS_EDONE && chr == nullptr)) {
+        finish_hid_discovery(false);
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    if (chr != nullptr) {
+        const uint16_t uuid = ble_uuid_u16(&chr->uuid.u);
+        if (hid_is_relevant(uuid) && s_hid.characteristic_count < k_hid_max_characteristics) {
+            hid_characteristic &slot = s_hid.characteristics[s_hid.characteristic_count++];
+            slot.value_handle = chr->val_handle;
+            slot.properties = chr->properties;
+            slot.uuid = uuid;
+        }
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    s_hid.cccd_index = 0;
+    s_hid.cccd_target_count = 0;
+    s_hid.cccd_scheduled = 0;
+    s_hid.cccd_count = 0;
+    for (size_t i = 0; i < s_hid.characteristic_count; ++i) {
+        if (s_hid.characteristics[i].properties & (BLE_GATT_CHR_PROP_NOTIFY | BLE_GATT_CHR_PROP_INDICATE)) {
+            if (s_hid.cccd_target_count < k_hid_max_cccd) ++s_hid.cccd_target_count;
+        }
+    }
+    start_next_hid_descriptor();
+    xSemaphoreGive(s_dispatch_mutex);
+    return 0;
+}
+
+static int hid_descriptor_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
+                             uint16_t chr_val_handle, const struct ble_gatt_dsc *dsc, void *arg)
+{
+    if (!hid_callback_is_current(conn_handle, arg)) return 0;
+    if (s_dispatch_mutex == NULL ||
+        xSemaphoreTake(s_dispatch_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        ESP_LOGW(TAG, "BLE HID descriptor callback mutex timeout");
+        return 0;
+    }
+    if (!hid_callback_is_current(conn_handle, arg)) {
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    const int status = error != nullptr ? error->status : 0;
+    if (status != 0 && !(status == BLE_HS_EDONE && dsc == nullptr)) {
+        finish_hid_discovery(false);
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    if (dsc != nullptr && ble_uuid_u16(&dsc->uuid.u) == k_cccd_uuid) {
+        if (s_hid.cccd_count < s_hid.cccd_target_count) {
+            for (size_t i = 0; i < s_hid.characteristic_count; ++i) {
+                if (s_hid.characteristics[i].value_handle == chr_val_handle) {
+                    s_hid.characteristics[i].cccd = dsc->handle;
+                    ++s_hid.cccd_count;
+                    break;
+                }
+            }
+        }
+        xSemaphoreGive(s_dispatch_mutex);
+        return 0;
+    }
+    if (dsc == nullptr) {
+        ++s_hid.cccd_index;
+        start_next_hid_descriptor();
+    }
+    xSemaphoreGive(s_dispatch_mutex);
+    return 0;
 }
 
 static void sanitize_name_to_buffer(const char *raw, size_t len, char *out, size_t out_len)
@@ -712,15 +1190,33 @@ static int pair_outcome_to_int(cyberdeck_ble::pair_outcome o)
 
 static void publish_event_to_observers(const ble_mgr_event_t *event)
 {
-    if (xSemaphoreTake(s_ble_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+    if (event == NULL || s_ble_mutex == NULL) {
+        ESP_LOGW(TAG, "BLE event publication unavailable kind=%d", event != NULL ? (int)event->kind : -1);
         return;
     }
+    if (xSemaphoreTake(s_ble_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        ESP_LOGW(TAG, "BLE event publication mutex timeout kind=%d", (int)event->kind);
+        return;
+    }
+    struct observer_snapshot {
+        ble_mgr_observer_cb_t cb;
+        void *user_ctx;
+    } snapshots[BLE_MGR_MAX_OBSERVERS] = {};
+    int count = 0;
     for (int i = 0; i < BLE_MGR_MAX_OBSERVERS; ++i) {
         if (s_observers[i].active && s_observers[i].cb) {
-            s_observers[i].cb(event, s_observers[i].user_ctx);
+            snapshots[count++] = {s_observers[i].cb, s_observers[i].user_ctx};
         }
     }
     xSemaphoreGive(s_ble_mutex);
+    if (count == 0) {
+        ESP_LOGW(TAG, "BLE event has no observer kind=%d token=%llu", (int)event->kind,
+                 (unsigned long long)event->token);
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        snapshots[i].cb(event, snapshots[i].user_ctx);
+    }
 }
 
 static void load_bonds_from_nvs()
@@ -731,15 +1227,23 @@ static void load_bonds_from_nvs()
         return;
     }
 
+    const char *key = BLE_MGR_NVS_KEY_V2;
+    bool legacy_key = false;
     size_t required_size = 0;
-    err = nvs_get_blob(handle, BLE_MGR_NVS_KEY, NULL, &required_size);
+    err = nvs_get_blob(handle, key, NULL, &required_size);
+    if (err != ESP_OK) {
+        key = BLE_MGR_NVS_KEY;
+        legacy_key = true;
+        required_size = 0;
+        err = nvs_get_blob(handle, key, NULL, &required_size);
+    }
     if (err != ESP_OK || required_size == 0 || required_size > cyberdeck_ble::k_max_store_bytes) {
         nvs_close(handle);
         return;
     }
 
     std::vector<char> buffer(required_size + 1);
-    err = nvs_get_blob(handle, BLE_MGR_NVS_KEY, buffer.data(), &required_size);
+    err = nvs_get_blob(handle, key, buffer.data(), &required_size);
     nvs_close(handle);
 
     if (err != ESP_OK) {
@@ -747,8 +1251,23 @@ static void load_bonds_from_nvs()
     }
     buffer[required_size] = '\0';
 
+    if (legacy_key && cyberdeck_ble::is_legacy_bond_blob(buffer.data(), required_size)) {
+        ESP_LOGW(TAG, "Discarding legacy BLE bond blob without addr_type; new pairing is required (erase NVS key %s)", key);
+        nvs_handle_t erase_handle;
+        if (nvs_open(BLE_MGR_NVS_NAMESPACE, NVS_READWRITE, &erase_handle) == ESP_OK) {
+            const esp_err_t erase_err = nvs_erase_key(erase_handle, key);
+            const esp_err_t commit_err = (erase_err == ESP_OK || erase_err == ESP_ERR_NVS_NOT_FOUND)
+                ? nvs_commit(erase_handle) : erase_err;
+            nvs_close(erase_handle);
+            if (commit_err != ESP_OK) ESP_LOGE(TAG, "Legacy BLE bond erase failed; retry after reboot: %s", esp_err_to_name(commit_err));
+        } else {
+            ESP_LOGE(TAG, "Legacy BLE bond erase could not open NVS; retry after reboot");
+        }
+        s_store.clear();
+        return;
+    }
     if (!s_store.deserialize(buffer.data(), required_size)) {
-        ESP_LOGW(TAG, "Failed to deserialize bonds from NVS");
+        ESP_LOGW(TAG, "Failed to deserialize versioned BLE bonds from NVS; bonds ignored, pairing is required");
         return;
     }
 
@@ -770,7 +1289,7 @@ static void save_bonds_to_nvs()
         return;
     }
 
-    err = nvs_set_blob(handle, BLE_MGR_NVS_KEY, serialized.c_str(), serialized.size());
+    err = nvs_set_blob(handle, BLE_MGR_NVS_KEY_V2, serialized.c_str(), serialized.size());
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to write bonds to NVS: %s", esp_err_to_name(err));
     } else {
@@ -787,54 +1306,58 @@ static void scan_report_adv(const struct ble_gap_disc_desc *disc)
         return;
     }
 
+    if (disc == nullptr || disc->length_data > BLE_HS_ADV_MAX_SZ ||
+        (disc->length_data != 0 && disc->data == nullptr)) {
+        ++s_scan_stats.malformed;
+        return;
+    }
     char addr_str[18];
     format_addr(disc->addr.val, addr_str, sizeof(addr_str));
 
-    char name_buf[33] = {0};
-    strlcpy(name_buf, cyberdeck_ble::k_unnamed_placeholder, sizeof(name_buf));
-    uint16_t appearance = 0;
-    bool malformed = disc->data == nullptr && disc->length_data != 0;
-    bool name_found = false;
-    size_t i = 0;
-    while (!malformed && i < disc->length_data) {
-        const size_t remaining = disc->length_data - i;
-        const uint8_t len = disc->data[i];
-        if (len == 0) {
-            break;
-        }
-        // The length byte itself is not included in len.  Validate the
-        // complete AD structure before reading its type/payload or moving on.
-        if (static_cast<size_t>(len) >= remaining) {
-            malformed = true;
-            break;
-        }
-        const uint8_t type = disc->data[i + 1];
-        const uint8_t *payload = disc->data + i + 2;
-        const size_t payload_len = static_cast<size_t>(len) - 1;
-        if (type == 0x19 && payload_len >= 2) {
-            appearance = static_cast<uint16_t>(payload[0]) |
-                         (static_cast<uint16_t>(payload[1]) << 8);
-        } else if (type == 0x09 || (type == 0x08 && !name_found)) {
-            sanitize_name_to_buffer(reinterpret_cast<const char *>(payload), payload_len,
-                                    name_buf, sizeof(name_buf));
-            name_found = true;
-        }
-        i += static_cast<size_t>(len) + 1;
+    struct ble_hs_adv_fields fields = {};
+    if (ble_hs_adv_parse_fields(&fields, disc->data, disc->length_data) != 0) {
+        ++s_scan_stats.malformed;
+        return;
     }
-    if (malformed) {
-        appearance = 0;
-        strlcpy(name_buf, cyberdeck_ble::k_unnamed_placeholder, sizeof(name_buf));
+    const cyberdeck_ble::address_type addr_type = peer_address_type(&disc->addr);
+    std::size_t peer_index = s_scan_peer_count;
+    for (std::size_t i = 0; i < s_scan_peer_count; ++i) {
+        if (s_scan_peers[i].record.address == addr_str &&
+            s_scan_peers[i].record.addr_type == addr_type) { peer_index = i; break; }
     }
-
-    cyberdeck_ble::device device;
-    device.address = addr_str;
-    device.rssi = cyberdeck_ble::clamp_rssi(disc->rssi);
-    device.connectable = (disc->event_type != BLE_HCI_ADV_RPT_EVTYPE_NONCONN_IND);
-    device.name = name_buf;
-    device.kind = cyberdeck_ble::kind_from_appearance(appearance);
-    device.paired = s_store.find(addr_str) != nullptr;
-
-    s_dispatch.publish_scan_result(token, device);
+    if (peer_index == s_scan_peer_count) {
+        if (s_scan_peer_count >= s_scan_peers.size()) return;
+        scan_peer &peer = s_scan_peers[s_scan_peer_count++];
+        peer = {};
+        peer.record.address = addr_str;
+        peer.record.addr_type = addr_type;
+        peer.record.name.clear();
+        peer.record.rssi = cyberdeck_ble::clamp_rssi(disc->rssi);
+        peer.record.connectable = false;
+        peer.record.paired = s_store.find(addr_str, addr_type) != nullptr;
+    }
+    scan_peer &peer = s_scan_peers[peer_index];
+    peer.record.rssi = std::max(peer.record.rssi, cyberdeck_ble::clamp_rssi(disc->rssi));
+    if (fields.name != nullptr && fields.name_len != 0)
+        peer.record.name = cyberdeck_ble::sanitize_name(reinterpret_cast<const char *>(fields.name), fields.name_len);
+    if (fields.appearance_is_present)
+        peer.record.kind = cyberdeck_ble::kind_from_appearance(fields.appearance);
+    const bool primary = disc->event_type != BLE_HCI_ADV_RPT_EVTYPE_SCAN_RSP;
+    if (primary) {
+        peer.primary_seen = true;
+        peer.record.connectable = disc->event_type == BLE_HCI_ADV_RPT_EVTYPE_ADV_IND ||
+                                  disc->event_type == BLE_HCI_ADV_RPT_EVTYPE_DIR_IND;
+        if (disc->event_type == BLE_HCI_ADV_RPT_EVTYPE_SCAN_IND ||
+            disc->event_type == BLE_HCI_ADV_RPT_EVTYPE_NONCONN_IND)
+            peer.record.connectable = false;
+    }
+    /* Do not expose a scan response as an independently connectable peer. */
+    if (!primary && !peer.primary_seen) return;
+    if (s_dispatch.publish_scan_result(token, peer.record)) {
+        ++s_scan_stats.published;
+    } else {
+        ++s_scan_stats.dispatch_dropped;
+    }
 
     drain_dispatch_events();
 }
@@ -846,7 +1369,36 @@ static void handle_scan_finished(int status)
         outcome = cyberdeck_ble::notice::failed;
     }
     uint64_t token = s_scan_token;
-    s_dispatch.publish_scan_finished(token, outcome);
+    ESP_LOGI(TAG, "BLE scan finish token=%llu status=%d disc=%lu adv=%lu dir=%lu scan=%lu nonconn=%lu rsp=%lu ignored=%lu token_drop=%lu mutex_drop=%lu published=%lu dispatch_drop=%lu malformed=%lu",
+             static_cast<unsigned long long>(token), status,
+             static_cast<unsigned long>(s_scan_stats.gap_disc),
+             static_cast<unsigned long>(s_scan_stats.accepted_adv),
+             static_cast<unsigned long>(s_scan_stats.accepted_dir),
+             static_cast<unsigned long>(s_scan_stats.accepted_scan),
+             static_cast<unsigned long>(s_scan_stats.accepted_nonconn),
+             static_cast<unsigned long>(s_scan_stats.accepted_rsp),
+             static_cast<unsigned long>(s_scan_stats.ignored),
+             static_cast<unsigned long>(s_scan_stats.token_dropped),
+             static_cast<unsigned long>(s_scan_stats.mutex_dropped),
+             static_cast<unsigned long>(s_scan_stats.published),
+             static_cast<unsigned long>(s_scan_stats.dispatch_dropped),
+             static_cast<unsigned long>(s_scan_stats.malformed));
+    bool published = s_dispatch.publish_scan_finished(token, outcome);
+    if (!published) {
+        /* A burst of reports can fill the pure dispatch queue before the
+         * terminal GAP event is handled.  Drain once, then retry the terminal
+         * event; losing it leaves the UI waiting forever. */
+        ESP_LOGW(TAG, "BLE scan terminal queue full token=%llu pending=%u; draining before retry",
+                 static_cast<unsigned long long>(token),
+                 static_cast<unsigned>(s_dispatch.pending()));
+        drain_dispatch_events();
+        published = s_dispatch.publish_scan_finished(token, outcome);
+    }
+    if (!published) {
+        ESP_LOGE(TAG, "BLE scan terminal event dropped token=%llu pending=%u",
+                 static_cast<unsigned long long>(token),
+                 static_cast<unsigned>(s_dispatch.pending()));
+    }
 
     drain_dispatch_events();
 }
@@ -880,13 +1432,18 @@ static void handle_connection_result(int status)
     const std::string active_address = s_connection_address;
     if (connected) {
         cyberdeck_ble::bond_record record;
-        const cyberdeck_ble::bond_record *existing = s_store.find(active_address);
+        const cyberdeck_ble::bond_record *existing = s_store.find(active_address, s_connection_addr_type);
         if (existing != nullptr) record = *existing;
         record.address = active_address;
+        record.addr_type = s_connection_addr_type;
         record.last_connected = true;
         if (existing != nullptr) s_store.update(record);
         else s_store.add(record);
         save_bonds_to_nvs();
+        /* GATT discovery is deliberately independent of CONNECTED.  It is a
+         * host-side asynchronous procedure and never gates or tears down the
+         * authenticated link. */
+        start_hid_discovery(s_connection_conn, token);
     }
     drain_dispatch_events();
 }
@@ -904,8 +1461,9 @@ static void drain_dispatch_events()
             out.kind = BLE_MGR_EVT_SCAN_STARTED; break;
         case cyberdeck_ble::ble_event_kind::scan_result:
             out.kind = BLE_MGR_EVT_SCAN_RESULT;
-            copy_address_to_buffer(in.device_record.address, out.scan_result.address,
-                                   sizeof(out.scan_result.address));
+             copy_address_to_buffer(in.device_record.address, out.scan_result.address,
+                                    sizeof(out.scan_result.address));
+             out.scan_result.addr_type = static_cast<uint8_t>(in.device_record.addr_type);
             copy_address_to_buffer(in.device_record.name, out.scan_result.name,
                                    sizeof(out.scan_result.name));
             out.scan_result.rssi = in.device_record.rssi;
@@ -919,20 +1477,39 @@ static void drain_dispatch_events()
         case cyberdeck_ble::ble_event_kind::auth_request:
             out.kind = BLE_MGR_EVT_AUTH_REQUEST;
             out.auth_request.kind = auth_kind_to_int(in.auth_kind);
-            out.auth_request.passkey = in.passkey; break;
+            out.auth_request.passkey = in.passkey;
+            out.auth_request.io_action = static_cast<uint8_t>(in.auth_action); break;
         case cyberdeck_ble::ble_event_kind::pair_finished:
             out.kind = BLE_MGR_EVT_PAIR_FINISHED;
             out.pair_finished.outcome = pair_outcome_to_int(in.pair_result); break;
         case cyberdeck_ble::ble_event_kind::connected:
             out.kind = BLE_MGR_EVT_CONNECTED;
-            copy_address_to_buffer(in.address, out.connection.address,
-                                   sizeof(out.connection.address));
+             copy_address_to_buffer(in.address, out.connection.address,
+                                    sizeof(out.connection.address));
+             out.connection.addr_type = static_cast<uint8_t>(in.addr_type);
             out.connection.automatic = in.automatic; break;
         case cyberdeck_ble::ble_event_kind::disconnected:
             out.kind = BLE_MGR_EVT_DISCONNECTED;
-            copy_address_to_buffer(in.address, out.connection.address,
-                                   sizeof(out.connection.address));
+             copy_address_to_buffer(in.address, out.connection.address,
+                                    sizeof(out.connection.address));
+             out.connection.addr_type = static_cast<uint8_t>(in.addr_type);
             out.connection.automatic = in.automatic; break;
+        case cyberdeck_ble::ble_event_kind::hid_discovery:
+            out.kind = BLE_MGR_EVT_HID_DISCOVERY;
+            out.hid_discovery.conn_handle = in.hid.conn_handle;
+            out.hid_discovery.success = in.hid.success;
+            out.hid_discovery.hid_service = in.hid.hid_service;
+            out.hid_discovery.service_start = in.hid.service_start;
+            out.hid_discovery.service_end = in.hid.service_end;
+            out.hid_discovery.characteristic_count = in.hid.characteristic_count;
+            out.hid_discovery.cccd_count = in.hid.cccd_count;
+            out.hid_discovery.report_map_handle = in.hid.report_map_handle;
+            out.hid_discovery.protocol_mode_handle = in.hid.protocol_mode_handle;
+            out.hid_discovery.boot_keyboard_input_handle = in.hid.boot_keyboard_input_handle;
+            out.hid_discovery.boot_keyboard_input_cccd = in.hid.boot_keyboard_input_cccd;
+            out.hid_discovery.report_input_handle = in.hid.report_input_handle;
+            out.hid_discovery.report_input_cccd = in.hid.report_input_cccd;
+            break;
         }
         publish_event_to_observers(&out);
     }

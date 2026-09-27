@@ -29,7 +29,7 @@ store_result bond_store::add(const bond_record &record)
         return store_result::invalid;
     }
     for (const auto &r : pimpl_->records) {
-        if (r.address == normalized.address) {
+        if (r.address == normalized.address && r.addr_type == normalized.addr_type) {
             return store_result::duplicate;
         }
     }
@@ -47,7 +47,7 @@ store_result bond_store::update(const bond_record &record)
         return store_result::invalid;
     }
     for (auto &r : pimpl_->records) {
-        if (r.address == normalized.address) {
+        if (r.address == normalized.address && r.addr_type == normalized.addr_type) {
             r = std::move(normalized);
             return store_result::ok;
         }
@@ -81,6 +81,15 @@ const bond_record *bond_store::find(const std::string &address) const
             return &r;
         }
     }
+    return nullptr;
+}
+
+const bond_record *bond_store::find(const std::string &address, address_type type) const
+{
+    std::string normalized;
+    if (!normalize_record_address(address, normalized)) return nullptr;
+    for (const auto &r : pimpl_->records)
+        if (r.address == normalized && r.addr_type == type) return &r;
     return nullptr;
 }
 
@@ -141,7 +150,7 @@ bool bond_store::deserialize(const char *text, std::size_t len)
             return false;
         }
         for (const auto &existing : parsed) {
-            if (existing.address == record.address) {
+            if (existing.address == record.address && existing.addr_type == record.addr_type) {
                 return false;
             }
         }
@@ -222,8 +231,8 @@ std::string encode_bond(const bond_record &record)
     std::string kind = kind_to_token(record.kind);
 
     char buf[128];
-    int written = std::snprintf(buf, sizeof(buf), "CDB1;addr=%s;name=%s;kind=%s;last=%d\n",
-                                address.c_str(), name.c_str(), kind.c_str(),
+    int written = std::snprintf(buf, sizeof(buf), "CDB1;addr=%s;addr_type=%u;name=%s;kind=%s;last=%d\n",
+                                address.c_str(), static_cast<unsigned>(record.addr_type), name.c_str(), kind.c_str(),
                                 record.last_connected ? 1 : 0);
     if (written <= 0 || static_cast<std::size_t>(written) > k_max_record_bytes) {
         return "";
@@ -260,9 +269,9 @@ bool decode_bond(const char *text, std::size_t len, bond_record &out)
     if (end > pos && end[-1] == '\n') {
         --end;
     }
-    std::string addr, name, kind_str, last_str;
-    const char *prefixes[] = {"addr=", "name=", "kind=", "last="};
-    std::string *values[] = {&addr, &name, &kind_str, &last_str};
+    std::string addr, addr_type_str, name, kind_str, last_str;
+    const char *prefixes[] = {"addr=", "addr_type=", "name=", "kind=", "last="};
+    std::string *values[] = {&addr, &addr_type_str, &name, &kind_str, &last_str};
     std::size_t field = 0;
 
     while (pos < end) {
@@ -271,7 +280,7 @@ bool decode_bond(const char *text, std::size_t len, bond_record &out)
             field_end = end;
         }
 
-        if (field >= 4 || !parse_field(pos, field_end, prefixes[field], *values[field])) {
+        if (field >= 5 || !parse_field(pos, field_end, prefixes[field], *values[field])) {
             return false;
         }
         ++field;
@@ -282,7 +291,7 @@ bool decode_bond(const char *text, std::size_t len, bond_record &out)
         pos = field_end + 1;
     }
 
-    if (field != 4) {
+    if (field != 5) {
         return false;
     }
 
@@ -291,6 +300,9 @@ bool decode_bond(const char *text, std::size_t len, bond_record &out)
         return false;
     }
 
+    if (addr_type_str.size() != 1 || addr_type_str[0] < '0' || addr_type_str[0] > '3') {
+        return false;
+    }
     if (name.size() > k_max_name_bytes) {
         return false;
     }
@@ -312,11 +324,31 @@ bool decode_bond(const char *text, std::size_t len, bond_record &out)
 
     bond_record decoded;
     decoded.address = std::move(normalized_address);
+    decoded.addr_type = static_cast<address_type>(addr_type_str[0] - '0');
     decoded.name = std::move(name);
     decoded.kind = kind;
     decoded.last_connected = last;
     out = std::move(decoded);
     return true;
+}
+
+bool is_legacy_bond_blob(const char *text, std::size_t len)
+{
+    if (text == nullptr || len == 0 || len > k_max_store_bytes) return false;
+    std::size_t pos = 0;
+    while (pos < len) {
+        const char *start = text + pos;
+        const char *line_end = static_cast<const char *>(memchr(start, '\n', len - pos));
+        const std::size_t line_len = line_end ? static_cast<std::size_t>(line_end - start) : len - pos;
+        if (line_len >= 5 && std::strncmp(start, "CDB1;", 5) == 0) {
+            const char *end = start + line_len;
+            const char *field = std::search(start, end, "addr_type=", "addr_type=" + 10);
+            if (field == end) return true;
+        }
+        if (!line_end) break;
+        pos = static_cast<std::size_t>(line_end - text) + 1;
+    }
+    return false;
 }
 
 } // namespace cyberdeck_ble

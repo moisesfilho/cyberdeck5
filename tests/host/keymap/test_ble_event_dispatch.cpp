@@ -282,6 +282,29 @@ void test_pairing_generation_and_auth_request()
     }
 }
 
+void test_auth_event_preserves_io_action_and_peer_identity()
+{
+    using cyberdeck_ble::address_type;
+    event_dispatch dispatch;
+    const std::uint64_t token = dispatch.begin_pairing("AA:BB:CC:DD:EE:01");
+    CHECK(dispatch.publish_auth_request(token, auth_request_kind::numeric_compare,
+                                       kSecretPasskey,
+                                       cyberdeck_ble::auth_io_action::numeric_compare));
+    const std::vector<ble_event> events = drain_all(dispatch);
+    CHECK_EQ(events.size(), std::size_t(1));
+    if (events.size() == 1) {
+        CHECK(events[0].auth_action == cyberdeck_ble::auth_io_action::numeric_compare);
+        CHECK_EQ(events[0].passkey, kSecretPasskey);
+    }
+
+    const std::uint64_t connection = dispatch.begin_connection(
+        41, "AA:BB:CC:DD:EE:01", address_type::random_non_resolvable, false);
+    CHECK(dispatch.publish_connected(connection));
+    ble_event connected[1];
+    CHECK_EQ(dispatch.drain(connected, 1), std::size_t(1));
+    CHECK(connected[0].addr_type == address_type::random_non_resolvable);
+}
+
 void test_connection_generation_distinguishes_manual_from_automatic()
 {
     event_dispatch dispatch;
@@ -308,6 +331,82 @@ void test_connection_generation_distinguishes_manual_from_automatic()
     CHECK(!dispatch.publish_connected(automatic));
     CHECK(dispatch.publish_disconnected(next));
     CHECK_EQ(dispatch.pending(), std::size_t(1));
+}
+
+void test_connection_address_type_survives_event_generation()
+{
+    using cyberdeck_ble::address_type;
+    event_dispatch dispatch;
+    const std::uint64_t token = dispatch.begin_connection(
+        41, "AA:BB:CC:DD:EE:01", address_type::random_resolvable, true);
+    CHECK(token != 0);
+    CHECK(dispatch.publish_connected(token));
+    ble_event event[1];
+    CHECK_EQ(dispatch.drain(event, 1), std::size_t(1));
+    CHECK(event[0].addr_type == address_type::random_resolvable);
+    CHECK(event[0].automatic);
+    CHECK_STR(event[0].address, "AA:BB:CC:DD:EE:01");
+}
+
+void test_hid_discovery_is_additional_bounded_and_stale_safe()
+{
+    event_dispatch dispatch;
+    const std::uint64_t token = dispatch.begin_connection(
+        41, "AA:BB:CC:DD:EE:01", cyberdeck_ble::address_type::random_static, false);
+
+    ble_event::hid_snapshot snapshot;
+    snapshot.conn_handle = 41;
+    snapshot.success = true;
+    snapshot.hid_service = true;
+    snapshot.service_start = 10;
+    snapshot.service_end = 40;
+    snapshot.characteristic_count = 8;
+    snapshot.cccd_count = 4;
+    snapshot.report_map_handle = 11;
+    snapshot.boot_keyboard_input_handle = 12;
+    snapshot.boot_keyboard_input_cccd = 13;
+    snapshot.report_input_handle = 14;
+    snapshot.report_input_cccd = 15;
+
+    /* HID readiness is a second event; CONNECTED remains independently queued. */
+    CHECK(dispatch.publish_connected(token));
+    CHECK(dispatch.publish_hid_discovery(token, snapshot));
+    ble_event events[2];
+    CHECK_EQ(dispatch.drain(events, 2), std::size_t(2));
+    CHECK(events[0].kind == ble_event_kind::connected);
+    CHECK(events[1].kind == ble_event_kind::hid_discovery);
+    CHECK(events[1].hid.success && events[1].hid.conn_handle == 41);
+    CHECK_EQ(events[1].hid.characteristic_count, std::uint8_t(8));
+    CHECK_EQ(events[1].hid.cccd_count, std::uint8_t(4));
+
+    /* A new connection generation invalidates a late HID callback publication. */
+    const std::uint64_t next = dispatch.begin_connection(
+        42, "AA:BB:CC:DD:EE:02", cyberdeck_ble::address_type::public_address, true);
+    CHECK(!dispatch.publish_hid_discovery(token, snapshot));
+    CHECK(dispatch.publish_hid_discovery(next, snapshot));
+
+    /* HID events share the same bounded hand-off and overflow fail-closed. */
+    dispatch.drain(events, 2);
+    for (std::size_t i = 0; i < dispatch.capacity(); ++i) {
+        CHECK(dispatch.publish_hid_discovery(next, snapshot));
+    }
+    CHECK(!dispatch.publish_hid_discovery(next, snapshot));
+    CHECK_EQ(dispatch.pending(), dispatch.capacity());
+    dispatch.reset();
+    CHECK(!dispatch.publish_hid_discovery(next, snapshot));
+}
+
+void test_hid_summary_contains_capability_only()
+{
+    event_dispatch dispatch;
+    ble_event event;
+    event.kind = ble_event_kind::hid_discovery;
+    event.hid.success = true;
+    event.hid.report_map_handle = 0x1234;
+    const std::string summary = dispatch.event_summary(event);
+    CHECK_STR(summary, "BLE HID discovery ready");
+    CHECK(summary.find("1234") == std::string::npos);
+    CHECK(summary.find("passkey") == std::string::npos);
 }
 
 void test_drop_stale_discards_superseded_generations()
@@ -425,7 +524,11 @@ int main()
     test_queue_is_bounded_and_overflow_is_fail_closed();
     test_drain_preserves_publication_order_and_ownership();
     test_pairing_generation_and_auth_request();
+    test_auth_event_preserves_io_action_and_peer_identity();
     test_connection_generation_distinguishes_manual_from_automatic();
+    test_connection_address_type_survives_event_generation();
+    test_hid_discovery_is_additional_bounded_and_stale_safe();
+    test_hid_summary_contains_capability_only();
     test_drop_stale_discards_superseded_generations();
     test_event_summary_never_carries_a_secret();
     test_bounded_name_in_a_snapshot_cannot_inject_control_characters();

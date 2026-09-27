@@ -17,9 +17,11 @@ inline constexpr std::size_t k_max_store_bytes = 2048;
 /* Every encoded record starts with this marker so a truncated or foreign blob
  * is detected instead of being parsed field by field. */
 inline constexpr const char *k_bond_magic = "CDB1";
+inline constexpr const char *k_bond_store_version = "v2";
 
 struct bond_record {
     std::string address; /* normalized uppercase MAC */
+    address_type addr_type = address_type::public_address;
     std::string name;    /* sanitized and bounded; may be "" */
     device_kind kind = device_kind::unknown;
     bool last_connected = false;
@@ -36,7 +38,7 @@ enum class store_result {
 
 /*
  * Deterministic single-record encoding.  Field order is fixed:
- *   CDB1;addr=<address>;name=<name>;kind=<kind>;last=<0|1>\n
+ *   CDB1;addr=<address>;addr_type=<0..3>;name=<name>;kind=<kind>;last=<0|1>\n
  * The name is sanitized, the address is normalized and the kind is the stable
  * lowercase token.  A trailing LF is always present.
  */
@@ -49,6 +51,7 @@ std::string encode_bond(const bond_record &record);
  * value.  On any failure `out` is left unchanged.
  */
 bool decode_bond(const char *text, std::size_t len, bond_record &out);
+bool is_legacy_bond_blob(const char *text, std::size_t len);
 
 class bond_store {
 public:
@@ -62,6 +65,7 @@ public:
     bool remove(const std::string &address);
 
     const bond_record *find(const std::string &address) const;
+    const bond_record *find(const std::string &address, address_type type) const;
     std::size_t size() const;
     std::size_t capacity() const;
 

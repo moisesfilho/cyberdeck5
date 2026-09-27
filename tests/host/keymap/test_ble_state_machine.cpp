@@ -56,6 +56,7 @@ const char *kSecretDigits = "246813";
 
 using cyberdeck_ble::action;
 using cyberdeck_ble::action_kind;
+using cyberdeck_ble::address_type;
 using cyberdeck_ble::auth_request_kind;
 using cyberdeck_ble::device;
 using cyberdeck_ble::device_kind;
@@ -66,10 +67,12 @@ using cyberdeck_ble::screen;
 using cyberdeck_ble::state_machine;
 
 device make_device(const char *address, const char *name, int rssi,
-                   device_kind kind, bool connectable = true)
+                   device_kind kind, bool connectable = true,
+                   address_type addr_type = address_type::public_address)
 {
     device item;
     item.address = address;
+    item.addr_type = addr_type;
     item.name = name == nullptr ? std::string() : std::string(name);
     item.rssi = rssi;
     item.kind = kind;
@@ -393,6 +396,27 @@ void test_navigation_and_enter_from_results()
     CHECK(listing.take_actions().empty());
 }
 
+void test_enter_preserves_exact_peer_address_type()
+{
+    for (const address_type type : {address_type::public_address,
+                                    address_type::random_static}) {
+        state_machine machine;
+        machine.begin_search();
+        machine.take_actions();
+        machine.scan_finished(machine.active_scan_token(), {
+            make_device("AA:BB:CC:DD:EE:01", "Keyboard", -40,
+                        device_kind::keyboard, true, type)});
+        machine.press(key::enter);
+        const std::vector<action> actions = machine.take_actions();
+        CHECK_EQ(actions.size(), std::size_t(1));
+        if (!actions.empty()) {
+            CHECK(actions[0].kind == action_kind::pair);
+            CHECK_STR(actions[0].address, "AA:BB:CC:DD:EE:01");
+            CHECK(actions[0].addr_type == type);
+        }
+    }
+}
+
 void test_enter_refuses_an_empty_or_non_connectable_selection()
 {
     {
@@ -415,6 +439,12 @@ void test_enter_refuses_an_empty_or_non_connectable_selection()
         machine.press(key::enter);
         CHECK(machine.take_actions().empty());
         CHECK(machine.current_screen() == screen::results);
+        CHECK(machine.current_notice() == notice::not_connectable);
+        CHECK_STR(machine.notice_text(), cyberdeck_ble::k_msg_not_connectable);
+        CHECK(machine.notice_text().size() < 128);
+        machine.press(key::enter);
+        CHECK(machine.take_actions().empty());
+        CHECK_STR(machine.notice_text(), cyberdeck_ble::k_msg_not_connectable);
     }
     {
         /* Up/Down/Enter/Escape are all inert while a scan is running. */
@@ -507,7 +537,7 @@ void test_interactive_passkey_is_shown_on_auth_and_never_logged()
     CHECK(machine.active_pair_token() != 0);
 
     machine.auth_requested(machine.active_pair_token(), auth_request_kind::passkey,
-                           kSecretPasskey);
+                           kSecretPasskey, cyberdeck_ble::auth_io_action::display);
     CHECK(machine.current_screen() == screen::auth);
     CHECK_EQ(machine.displayed_passkey(), kSecretPasskey);
     CHECK(machine.pending_auth_kind() == auth_request_kind::passkey);
@@ -521,17 +551,8 @@ void test_interactive_passkey_is_shown_on_auth_and_never_logged()
     CHECK_STR(machine.notice_text(), "");
     CHECK(machine.notice_text().find(kSecretDigits) == std::string::npos);
 
-    /* A wrong passkey forwards nothing and keeps the auth screen. */
-    machine.submit_auth(0);
-    CHECK(machine.take_actions().empty());
-    CHECK(machine.current_screen() == screen::auth);
-    machine.submit_auth(246814);
-    CHECK(machine.take_actions().empty());
-    CHECK(machine.current_screen() == screen::auth);
-    CHECK_EQ(machine.displayed_passkey(), kSecretPasskey);
-
-    /* The accepted passkey is forwarded exactly once. */
-    machine.submit_auth(kSecretPasskey);
+    /* The model forwards a user response; NimBLE decides authentication. */
+    machine.press(key::enter);
     const std::vector<action> submitted = machine.take_actions();
     CHECK_EQ(submitted.size(), std::size_t(1));
     if (!submitted.empty()) {
@@ -550,7 +571,8 @@ void test_interactive_passkey_is_shown_on_auth_and_never_logged()
     state_machine via_enter;
     prepare_pairing(via_enter, "AA:BB:CC:DD:EE:01", "Teclado");
     via_enter.auth_requested(via_enter.active_pair_token(),
-                             auth_request_kind::passkey, kSecretPasskey);
+                             auth_request_kind::passkey, kSecretPasskey,
+                             cyberdeck_ble::auth_io_action::display);
     via_enter.press(key::enter);
     const std::vector<action> entered = via_enter.take_actions();
     CHECK_EQ(entered.size(), std::size_t(1));
@@ -565,27 +587,101 @@ void test_interactive_passkey_is_shown_on_auth_and_never_logged()
 
 void test_non_passkey_authorization_forwards_no_secret()
 {
-    for (int variant = 0; variant < 2; ++variant) {
-        const auth_request_kind kind =
-            variant == 0 ? auth_request_kind::confirm
-                         : auth_request_kind::numeric_compare;
+    state_machine machine;
+    prepare_pairing(machine, "AA:BB:CC:DD:EE:01", "Teclado");
+    machine.auth_requested(machine.active_pair_token(), auth_request_kind::numeric_compare,
+                           kSecretPasskey, cyberdeck_ble::auth_io_action::numeric_compare);
+    CHECK(machine.current_screen() == screen::auth);
+    CHECK_EQ(machine.displayed_passkey(), kSecretPasskey);
+    CHECK(machine.pending_auth_kind() == auth_request_kind::numeric_compare);
+    CHECK(machine.status_line().find(kSecretDigits) != std::string::npos);
+
+    /* NUMCMP confirmation is a bool decision, never a passkey submission. */
+    machine.submit_auth(0);
+    const std::vector<action> submitted = machine.take_actions();
+    CHECK_EQ(submitted.size(), std::size_t(1));
+    if (!submitted.empty()) {
+        CHECK(submitted[0].kind == action_kind::submit_auth);
+        CHECK(submitted[0].auth_action == cyberdeck_ble::auth_io_action::numeric_compare);
+        CHECK_EQ(submitted[0].passkey, std::uint32_t(0));
+    }
+    CHECK_EQ(machine.displayed_passkey(), std::uint32_t(0));
+}
+
+void test_auth_io_action_is_preserved_and_numbers_are_not_reinterpreted()
+{
+    struct auth_case {
+        auth_request_kind kind;
+        cyberdeck_ble::auth_io_action io_action;
+        std::uint32_t challenge;
+        const char *status;
+    };
+    const auth_case cases[] = {
+        {auth_request_kind::passkey, cyberdeck_ble::auth_io_action::display,
+         kSecretPasskey, kSecretDigits},
+        {auth_request_kind::passkey, cyberdeck_ble::auth_io_action::input,
+         0, "Enter the passkey"},
+        {auth_request_kind::numeric_compare,
+         cyberdeck_ble::auth_io_action::numeric_compare, kSecretPasskey,
+         cyberdeck_ble::k_status_numeric_compare},
+    };
+    for (const auth_case &item : cases) {
         state_machine machine;
         prepare_pairing(machine, "AA:BB:CC:DD:EE:01", "Teclado");
-        machine.auth_requested(machine.active_pair_token(), kind, 0);
+        machine.auth_requested(machine.active_pair_token(), item.kind,
+                               item.challenge, item.io_action);
         CHECK(machine.current_screen() == screen::auth);
-        CHECK_EQ(machine.displayed_passkey(), std::uint32_t(0));
-        CHECK(machine.pending_auth_kind() == kind);
-        CHECK(!machine.status_line().empty());
-        CHECK(machine.status_line().find(kSecretDigits) == std::string::npos);
-
-        machine.submit_auth(0);
-        const std::vector<action> submitted = machine.take_actions();
-        CHECK_EQ(submitted.size(), std::size_t(1));
-        if (!submitted.empty()) {
-            CHECK(submitted[0].kind == action_kind::submit_auth);
-            CHECK_EQ(submitted[0].passkey, std::uint32_t(0));
+        CHECK(machine.pending_auth_kind() == item.kind);
+        CHECK(machine.pending_auth_action() == item.io_action);
+        CHECK(machine.status_line().find(item.status) != std::string::npos);
+        if (item.kind == auth_request_kind::numeric_compare) {
+            CHECK_EQ(machine.displayed_passkey(), kSecretPasskey);
+        } else {
+            CHECK_EQ(machine.displayed_passkey(),
+                     item.io_action == cyberdeck_ble::auth_io_action::display
+                         ? kSecretPasskey : std::uint32_t(0));
         }
-        CHECK_EQ(machine.displayed_passkey(), std::uint32_t(0));
+        if (item.io_action == cyberdeck_ble::auth_io_action::input) {
+            /* The UI owns the incremental six-digit buffer; the pure model
+             * receives its parsed value only after a valid Enter. */
+            machine.submit_auth(kSecretPasskey);
+        } else {
+            machine.press(key::enter);
+        }
+        const std::vector<action> actions = machine.take_actions();
+        CHECK_EQ(actions.size(), std::size_t(1));
+        if (!actions.empty()) {
+            CHECK(actions[0].kind == action_kind::submit_auth);
+            CHECK(actions[0].auth_action == item.io_action);
+            CHECK_EQ(actions[0].passkey,
+                      item.io_action == cyberdeck_ble::auth_io_action::numeric_compare
+                         ? std::uint32_t(0) :
+                           (item.io_action == cyberdeck_ble::auth_io_action::input
+                                ? kSecretPasskey : item.challenge));
+        }
+    }
+}
+
+void test_numeric_comparison_is_a_boolean_decision_with_display_only_number()
+{
+    state_machine machine;
+    prepare_pairing(machine, "AA:BB:CC:DD:EE:01", "Teclado");
+    const std::uint32_t displayed_number = 246814u;
+    machine.auth_requested(machine.active_pair_token(),
+                           auth_request_kind::numeric_compare,
+                           displayed_number,
+                           cyberdeck_ble::auth_io_action::numeric_compare);
+    CHECK_EQ(machine.displayed_passkey(), displayed_number);
+    machine.press(key::enter);
+    const std::vector<action> accepted = machine.take_actions();
+    CHECK_EQ(accepted.size(), std::size_t(1));
+    if (!accepted.empty()) {
+        CHECK(accepted[0].auth_action == cyberdeck_ble::auth_io_action::numeric_compare);
+        CHECK(accepted[0].numcmp_accept);
+        CHECK_EQ(accepted[0].passkey, std::uint32_t(0));
+        /* The comparison number is UI-only; the adapter receives the boolean
+         * decision and never a host-derived numeric credential. */
+        CHECK_EQ(accepted[0].numcmp, std::uint32_t(0));
     }
 }
 
@@ -607,7 +703,7 @@ void test_auth_request_validation_and_stale_tokens()
         prepare_pairing(machine, "AA:BB:CC:DD:EE:01", "Teclado");
         const std::uint64_t token = machine.active_pair_token();
         machine.auth_requested(token + 999, auth_request_kind::passkey,
-                               kSecretPasskey);
+                               kSecretPasskey, cyberdeck_ble::auth_io_action::display);
         CHECK(machine.current_screen() == screen::pairing);
         CHECK_EQ(machine.displayed_passkey(), std::uint32_t(0));
         CHECK(machine.status_line().find(kSecretDigits) == std::string::npos);
@@ -651,8 +747,9 @@ void test_pair_and_auth_deadlines()
     {
         state_machine machine;
         prepare_pairing(machine, "AA:BB:CC:DD:EE:01", "Teclado");
-        machine.auth_requested(machine.active_pair_token(),
-                               auth_request_kind::passkey, kSecretPasskey);
+         machine.auth_requested(machine.active_pair_token(),
+                                auth_request_kind::passkey, kSecretPasskey,
+                                cyberdeck_ble::auth_io_action::display);
         machine.advance_time(cyberdeck_ble::k_auth_timeout_ms - 1);
         CHECK(machine.current_screen() == screen::auth);
         machine.advance_time(1);
@@ -689,8 +786,9 @@ void test_escape_cancels_the_pairing_attempt_only()
     {
         state_machine machine;
         prepare_pairing(machine, "AA:BB:CC:DD:EE:01", "Teclado");
-        machine.auth_requested(machine.active_pair_token(),
-                               auth_request_kind::passkey, kSecretPasskey);
+         machine.auth_requested(machine.active_pair_token(),
+                                auth_request_kind::passkey, kSecretPasskey,
+                                cyberdeck_ble::auth_io_action::display);
         machine.press(key::escape);
         CHECK(machine.current_screen() == screen::results);
         CHECK(machine.current_notice() == notice::cancelled);
@@ -774,29 +872,155 @@ void test_successful_bond_then_connection()
                                pair_outcome::bonded);
     connected.take_actions();
     connected.connection_finished(connected.active_connection_token(), true);
-    CHECK(connected.current_screen() == screen::connected);
+    /* A successful connection releases the transient BLE screen.  The
+     * authenticated link remains owned by ble_mgr; the model must not turn
+     * this completion into a user-visible disconnect lifecycle. */
+    CHECK(connected.current_screen() == screen::idle);
+    CHECK(!connected.owns_input());
     CHECK(connected.current_notice() == notice::none);
     CHECK_STR(connected.notice_text(), "");
-    CHECK(connected.status_line().find("Teclado") != std::string::npos);
+    CHECK_STR(connected.status_line(), "");
     CHECK(connected.take_actions().empty());
 
-    /* A stale connect completion cannot un-connect a live session. */
+    /* A physical disconnect after the UI was released is terminal but does
+     * not synthesize a disconnect action or a failed-connection notice. */
+    const std::uint64_t established = connected.active_connection_token();
+    connected.connection_finished(established, false);
+    CHECK(connected.current_screen() == screen::idle);
+    CHECK(!connected.owns_input());
+    CHECK(connected.current_notice() == notice::none);
+    CHECK(connected.take_actions().empty());
+
+    /* A stale completion from that old generation cannot affect a new one. */
+    connected.schedule_reconnect(make_device("AA:BB:CC:DD:EE:01", "Teclado", -50,
+                                             device_kind::keyboard));
+    const std::uint64_t next_generation = connected.active_connection_token();
+    CHECK(next_generation != established);
+    connected.take_actions();
     connected.connection_finished(1, false);
-    CHECK(connected.current_screen() == screen::connected);
+    CHECK(connected.active_connection_token() == next_generation);
+    CHECK(connected.current_screen() == screen::connecting);
     CHECK(connected.current_notice() == notice::none);
 
     /* Escape disconnects. */
-    const std::uint64_t session = connected.active_connection_token();
-    connected.press(key::escape);
-    const std::vector<action> disconnect = connected.take_actions();
-    CHECK_EQ(disconnect.size(), std::size_t(1));
-    if (!disconnect.empty()) {
-        CHECK(disconnect[0].kind == action_kind::disconnect);
-        CHECK_STR(disconnect[0].address, "AA:BB:CC:DD:EE:01");
-        CHECK_EQ(disconnect[0].token, session);
-    }
+    connected.connection_finished(next_generation, true);
     CHECK(connected.current_screen() == screen::idle);
-    CHECK(connected.current_notice() == notice::none);
+    CHECK(connected.take_actions().empty());
+}
+
+void test_connection_success_does_not_clear_identity_contract_in_model()
+{
+    const address_type type = address_type::random_static;
+    state_machine machine;
+    machine.set_paired_devices({make_device("AA:BB:CC:DD:EE:09", "Keyboard", -40,
+                                             device_kind::keyboard, true, type)});
+    machine.begin_paired();
+    machine.press(key::enter);
+    const std::vector<action> connect = machine.take_actions();
+    CHECK_EQ(connect.size(), std::size_t(1));
+    const std::uint64_t token = machine.active_connection_token();
+    CHECK(token != 0);
+    CHECK(!connect.empty() && connect[0].addr_type == type);
+
+    machine.connection_finished(token, true);
+    CHECK(machine.current_screen() == screen::idle);
+    CHECK(machine.active_connection_token() == token);
+    CHECK(!machine.owns_input());
+    CHECK(machine.take_actions().empty());
+
+    /* A new reconnect is a new generation and carries the same peer identity;
+     * an old completion must not report a failure for it. */
+    machine.schedule_reconnect(make_device("AA:BB:CC:DD:EE:09", "Keyboard", -40,
+                                            device_kind::keyboard, true, type));
+    const std::vector<action> reconnect = machine.take_actions();
+    CHECK_EQ(reconnect.size(), std::size_t(1));
+    if (!reconnect.empty()) {
+        CHECK(reconnect[0].kind == action_kind::reconnect);
+        CHECK(reconnect[0].token != token);
+        CHECK(reconnect[0].addr_type == type);
+    }
+    machine.connection_finished(token, false);
+    CHECK(machine.current_screen() == screen::connecting);
+    CHECK(machine.current_notice() == notice::none);
+    CHECK(machine.take_actions().empty());
+}
+
+void test_connect_reconnect_and_cancellation_preserve_address_type()
+{
+    const address_type type = address_type::random_static;
+    state_machine machine;
+    machine.set_paired_devices({
+        make_device("AA:BB:CC:DD:EE:01", "Keyboard", -40,
+                    device_kind::keyboard, true, type)});
+    machine.begin_paired();
+    machine.press(key::enter);
+    std::vector<action> actions = machine.take_actions();
+    CHECK_EQ(actions.size(), std::size_t(1));
+    if (!actions.empty()) {
+        CHECK(actions[0].kind == action_kind::connect);
+        CHECK(actions[0].addr_type == type);
+    }
+    machine.press(key::escape);
+    actions = machine.take_actions();
+    CHECK_EQ(actions.size(), std::size_t(1));
+    if (!actions.empty()) {
+        CHECK(actions[0].kind == action_kind::cancel_connect);
+        CHECK(actions[0].addr_type == type);
+    }
+
+    state_machine reconnecting;
+    const device item = make_device("AA:BB:CC:DD:EE:02", "Mouse", -41,
+                                    device_kind::mouse, true, type);
+    reconnecting.set_paired_devices({item});
+    reconnecting.schedule_reconnect(item);
+    actions = reconnecting.take_actions();
+    CHECK_EQ(actions.size(), std::size_t(1));
+    if (!actions.empty()) {
+        CHECK(actions[0].kind == action_kind::reconnect);
+        CHECK(actions[0].addr_type == type);
+    }
+    reconnecting.press(key::escape);
+    actions = reconnecting.take_actions();
+    CHECK_EQ(actions.size(), std::size_t(1));
+    if (!actions.empty()) {
+        CHECK(actions[0].kind == action_kind::cancel_connect);
+        CHECK(actions[0].addr_type == type);
+    }
+
+    state_machine pairing;
+    pairing.begin_search();
+    pairing.scan_finished(pairing.active_scan_token(), {item});
+    pairing.press(key::enter);
+    pairing.take_actions();
+    pairing.press(key::escape);
+    actions = pairing.take_actions();
+    CHECK_EQ(actions.size(), std::size_t(1));
+    if (!actions.empty()) {
+        CHECK(actions[0].kind == action_kind::cancel_pair);
+        CHECK(actions[0].addr_type == type);
+    }
+}
+
+void test_submit_auth_preserves_active_address_type()
+{
+    const address_type type = address_type::random_static;
+    state_machine machine;
+    machine.begin_search();
+    machine.scan_finished(machine.active_scan_token(), {
+        make_device("AA:BB:CC:DD:EE:03", "Keyboard", -40,
+                    device_kind::keyboard, true, type)});
+    machine.press(key::enter);
+    machine.take_actions();
+    machine.auth_requested(machine.active_pair_token(), auth_request_kind::numeric_compare,
+                           kSecretPasskey, cyberdeck_ble::auth_io_action::numeric_compare);
+    machine.submit_auth(0);
+    const std::vector<action> actions = machine.take_actions();
+    CHECK_EQ(actions.size(), std::size_t(1));
+    if (!actions.empty()) {
+        CHECK(actions[0].kind == action_kind::submit_auth);
+        CHECK(actions[0].addr_type == type);
+        CHECK_STR(actions[0].address, "AA:BB:CC:DD:EE:03");
+    }
 }
 
 void test_connection_failure_and_cancellation()
@@ -907,7 +1131,7 @@ void test_automatic_reconnection_gives_up_after_the_cap()
     const std::vector<action> manual = machine.take_actions();
     CHECK_EQ(count_actions(manual, action_kind::connect), std::size_t(1));
     machine.connection_finished(machine.active_connection_token(), true);
-    CHECK(machine.current_screen() == screen::connected);
+    CHECK(machine.current_screen() == screen::idle);
 
     state_machine rearmed;
     rearmed.set_paired_devices({
@@ -951,15 +1175,16 @@ void test_scan_and_reconnect_do_not_corrupt_each_other()
     CHECK(machine.current_screen() == screen::searching);
     CHECK_EQ(machine.active_connection_token(), reconnect_token);
 
-    /* The reconnection completion still lands: it owns its own generation. */
+    /* The reconnection completion still lands: it owns its own generation and
+     * releases the transient screen without handing the link to the model. */
     machine.connection_finished(reconnect_token, true);
-    CHECK(machine.current_screen() == screen::connected);
+    CHECK(machine.current_screen() == screen::idle);
     CHECK(machine.current_notice() == notice::none);
 
-    /* The late scan result cannot clobber the connected session. */
+    /* The late scan result cannot clobber the released connection session. */
     machine.scan_finished(scan_token, {
         make_device("AA:BB:CC:DD:EE:02", "Outro", -40, device_kind::mouse)});
-    CHECK(machine.current_screen() == screen::connected);
+    CHECK(machine.current_screen() == screen::idle);
     CHECK(machine.current_notice() == notice::none);
     CHECK_EQ(machine.devices().size(), std::size_t(0));
 
@@ -972,9 +1197,9 @@ void test_scan_and_reconnect_do_not_corrupt_each_other()
                                          device_kind::headset));
     other.take_actions();
     other.connection_finished(other.active_connection_token(), true);
-    CHECK(other.current_screen() == screen::connected);
+    CHECK(other.current_screen() == screen::idle);
     other.scan_finished(live, {});
-    CHECK(other.current_screen() == screen::connected);
+    CHECK(other.current_screen() == screen::idle);
     CHECK(other.current_notice() == notice::none);
 }
 
@@ -1003,8 +1228,7 @@ void test_status_lines_never_leak_and_are_bounded()
     CHECK(pairing.status_line().find("Teclado") != std::string::npos);
 
     pairing.connection_finished(pairing.active_connection_token(), true);
-    CHECK(pairing.status_line().find("Connected to ") == 0);
-    CHECK(pairing.status_line().back() == '.');
+    CHECK_STR(pairing.status_line(), "");
     /* A bounded, display-safe name can never inject a line break. */
     CHECK(pairing.status_line().find('\n') == std::string::npos);
     CHECK(pairing.status_line().size() < 128);
@@ -1023,15 +1247,21 @@ int main()
     test_scan_ownership_covers_active_empty_and_nonempty_paths();
     test_stale_scan_tokens_cannot_mutate_the_visible_list();
     test_navigation_and_enter_from_results();
+    test_enter_preserves_exact_peer_address_type();
     test_enter_refuses_an_empty_or_non_connectable_selection();
     test_a_device_that_vanishes_cannot_be_paired();
     test_interactive_passkey_is_shown_on_auth_and_never_logged();
     test_non_passkey_authorization_forwards_no_secret();
+    test_auth_io_action_is_preserved_and_numbers_are_not_reinterpreted();
+    test_numeric_comparison_is_a_boolean_decision_with_display_only_number();
     test_auth_request_validation_and_stale_tokens();
     test_pair_and_auth_deadlines();
     test_escape_cancels_the_pairing_attempt_only();
     test_pair_outcomes_are_distinct();
     test_successful_bond_then_connection();
+    test_connection_success_does_not_clear_identity_contract_in_model();
+    test_connect_reconnect_and_cancellation_preserve_address_type();
+    test_submit_auth_preserves_active_address_type();
     test_connection_failure_and_cancellation();
     test_paired_list_enters_a_connection_without_re_pairing();
     test_automatic_reconnection_gives_up_after_the_cap();

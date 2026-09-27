@@ -24,10 +24,14 @@ struct state_machine::State {
     std::uint32_t connect_deadline = 0;
 
     std::string pairing_address;
+    address_type pairing_addr_type = address_type::public_address;
     std::string connecting_address;
+    address_type connecting_addr_type = address_type::public_address;
     std::string active_reconnect_address;
     bool connection_in_flight = false;
+    bool connection_established = false;
     auth_request_kind pending_auth = auth_request_kind::passkey;
+    auth_io_action pending_io = auth_io_action::input;
     std::uint32_t displayed_passkey = 0;
 
     std::uint32_t reconnect_attempts = 0;
@@ -62,7 +66,9 @@ struct state_machine::State {
         active_notice = notice::none;
         clear_deadlines();
         pairing_address.clear();
+        pairing_addr_type = address_type::public_address;
         connecting_address.clear();
+        connecting_addr_type = address_type::public_address;
         displayed_passkey = 0;
         reconnect_attempts = 0;
         active_reconnect_address.clear();
@@ -75,14 +81,31 @@ struct state_machine::State {
         rejected_from_pairing = false;
         reconnect_gave_up = false;
         connection_in_flight = false;
+        connection_established = false;
     }
 
-    void emit_action(action_kind kind, const std::string &addr = "", std::uint32_t pk = 0, std::uint64_t tok = 0)
+    void emit_action(action_kind kind, const std::string &addr = "", std::uint32_t pk = 0,
+                     std::uint64_t tok = 0,
+                     address_type addr_type = address_type::public_address)
     {
         action a;
         a.kind = kind;
         a.address = addr;
-        a.passkey = pk;
+        if (!addr.empty()) {
+            const device *known = devices_.find(addr);
+            if (known == nullptr) {
+                for (const device &candidate : paired_devices) {
+                    if (candidate.address == addr) { known = &candidate; break; }
+                }
+            }
+            if (known != nullptr) a.addr_type = known->addr_type;
+        }
+        if (!addr.empty()) a.addr_type = addr_type;
+    a.passkey = pk;
+    a.numcmp = (kind == action_kind::submit_auth && pending_io == auth_io_action::numeric_compare)
+                   ? displayed_passkey : 0;
+    a.numcmp_accept = (kind == action_kind::submit_auth && pending_io == auth_io_action::numeric_compare);
+    a.auth_action = (kind == action_kind::submit_auth) ? pending_io : auth_io_action::input;
         if (tok != 0) {
             a.token = tok;
         } else {
@@ -214,6 +237,9 @@ void state_machine::pairing_started(std::uint64_t token, const std::string &addr
         return;
     }
     state_->pairing_address = address;
+    if (const device *known = state_->devices_.find(address)) {
+        state_->pairing_addr_type = known->addr_type;
+    }
     state_->current = screen::pairing;
     state_->active_notice = notice::none;
     state_->timed_out_from_pairing = false;
@@ -227,19 +253,40 @@ void state_machine::pairing_started(std::uint64_t token, const std::string &addr
 }
 
 void state_machine::auth_requested(std::uint64_t token, auth_request_kind kind,
-                                   std::uint32_t passkey)
+                                   std::uint32_t passkey, auth_io_action io_action)
 {
     if (state_->current != screen::pairing || token != state_->pair_token) {
         return;
     }
-    if (kind == auth_request_kind::passkey) {
+    if (io_action == auth_io_action::display || io_action == auth_io_action::input) {
+        if (kind != auth_request_kind::passkey ||
+            (io_action == auth_io_action::display && passkey >= k_passkey_modulus) ||
+            (io_action == auth_io_action::input && passkey != 0)) {
+            return;
+        }
+    } else if (io_action == auth_io_action::numeric_compare) {
+        if (kind != auth_request_kind::numeric_compare || passkey >= k_passkey_modulus) return;
+    } else {
+        return;
+    }
+    if (io_action == auth_io_action::display) {
+        state_->displayed_passkey = passkey;
+    } else if (io_action == auth_io_action::numeric_compare) {
+        state_->displayed_passkey = passkey;
+    } else {
+        state_->displayed_passkey = 0;
+    }
+    state_->pending_io = io_action;
+    /* The old kind-only branch is intentionally gone: the stack action is the
+     * authority and is never inferred from the presence of a number. */
+    /* if (kind == auth_request_kind::passkey) {
         if (passkey >= k_passkey_modulus) {
             return;
         }
         state_->displayed_passkey = passkey;
     } else {
         state_->displayed_passkey = 0;
-    }
+    } */
     state_->pending_auth = kind;
     state_->current = screen::auth;
     state_->timed_out_from_pairing = false;
@@ -263,12 +310,15 @@ void state_machine::pairing_finished(std::uint64_t token, pair_outcome outcome)
     case pair_outcome::bonded:
         state_->current = screen::connecting;
         state_->connecting_address = state_->pairing_address;
+        state_->connecting_addr_type = state_->pairing_addr_type;
         state_->connect_token = state_->next_token();
         state_->connection_in_flight = true;
+        state_->connection_established = false;
         state_->connect_deadline = k_connect_timeout_ms;
         state_->reconnect_attempts = 0;
         state_->active_reconnect_address = state_->pairing_address;
-        state_->emit_action(action_kind::connect, state_->connecting_address, 0, state_->connect_token);
+        state_->emit_action(action_kind::connect, state_->connecting_address, 0, state_->connect_token,
+                            state_->connecting_addr_type);
         break;
     case pair_outcome::rejected:
         state_->current = screen::results;
@@ -324,12 +374,19 @@ void state_machine::pairing_finished(std::uint64_t token, pair_outcome outcome)
 
 void state_machine::connection_finished(std::uint64_t token, bool connected)
 {
-    if (!state_->connection_in_flight || token == 0 || token != state_->connect_token) {
+    if (token == 0 || token != state_->connect_token ||
+        (!state_->connection_in_flight && !state_->connection_established)) {
         return;
     }
-    state_->connection_in_flight = false;
+    if (connected && !state_->connection_in_flight) {
+        return;
+    }
     if (connected) {
-        state_->current = screen::connected;
+        state_->connection_in_flight = false;
+        state_->connection_established = true;
+        /* ble_mgr keeps the authenticated link.  The model only releases the
+         * interactive screen so the local shell can resume. */
+        state_->current = screen::idle;
         state_->active_notice = notice::none;
         state_->reconnect_attempts = 0;
         state_->timed_out_from_pairing = false;
@@ -341,6 +398,17 @@ void state_machine::connection_finished(std::uint64_t token, bool connected)
         state_->reconnect_gave_up = false;
         state_->clear_deadlines();
     } else {
+        const bool was_established = state_->connection_established;
+        state_->connection_in_flight = false;
+        state_->connection_established = false;
+        if (was_established) {
+            /* ble_mgr already performed the physical teardown.  Do not emit a
+             * synthetic disconnect or report a failed connection. */
+            state_->current = screen::idle;
+            state_->active_notice = notice::none;
+            state_->clear_deadlines();
+            return;
+        }
         state_->current = screen::results;
         state_->active_notice = notice::failed;
         state_->failed_from_connect = true;
@@ -370,9 +438,11 @@ void state_machine::schedule_reconnect(const device &item)
     state_->reconnect_attempts++;
     state_->current = screen::connecting;
     state_->connecting_address = item.address;
+    state_->connecting_addr_type = item.addr_type;
     state_->active_reconnect_address = item.address;
     state_->connect_token = state_->next_token();
     state_->connection_in_flight = true;
+    state_->connection_established = false;
     state_->connect_deadline = k_connect_timeout_ms;
     state_->timed_out_from_pairing = false;
     state_->timed_out_from_connect = false;
@@ -380,7 +450,7 @@ void state_machine::schedule_reconnect(const device &item)
     state_->failed_from_connect = false;
     state_->cancelled_from_pairing = false;
     state_->cancelled_from_connect = false;
-    state_->emit_action(action_kind::reconnect, item.address, 0, state_->connect_token);
+    state_->emit_action(action_kind::reconnect, item.address, 0, state_->connect_token, item.addr_type);
 }
 
 void state_machine::advance_time(std::uint32_t elapsed_ms)
@@ -402,7 +472,7 @@ void state_machine::advance_time(std::uint32_t elapsed_ms)
                 const std::string address = state_->pairing_address;
                 const std::uint64_t token = state_->pair_token;
                 pairing_finished(token, pair_outcome::timed_out);
-                state_->emit_action(action_kind::cancel_pair, address, 0, token);
+                state_->emit_action(action_kind::cancel_pair, address, 0, token, state_->pairing_addr_type);
             }
         } else {
             state_->pair_deadline -= elapsed_ms;
@@ -415,7 +485,7 @@ void state_machine::advance_time(std::uint32_t elapsed_ms)
                 const std::string address = state_->pairing_address;
                 const std::uint64_t token = state_->pair_token;
                 pairing_finished(token, pair_outcome::timed_out);
-                state_->emit_action(action_kind::cancel_pair, address, 0, token);
+                state_->emit_action(action_kind::cancel_pair, address, 0, token, state_->pairing_addr_type);
             }
         } else {
             state_->auth_deadline -= elapsed_ms;
@@ -431,7 +501,8 @@ void state_machine::advance_time(std::uint32_t elapsed_ms)
                 state_->active_notice = notice::timed_out;
                 state_->timed_out_from_connect = true;
                 state_->failed_from_connect = false;
-                state_->emit_action(action_kind::cancel_connect, address, 0, token);
+                state_->emit_action(action_kind::cancel_connect, address, 0, token,
+                                    state_->connecting_addr_type);
             }
         } else {
             state_->connect_deadline -= elapsed_ms;
@@ -461,10 +532,13 @@ void state_machine::press(key pressed)
             const device *sel = state_->devices_.selected();
             if (sel && sel->connectable) {
                 state_->pairing_address = sel->address;
+                state_->pairing_addr_type = sel->addr_type;
                 state_->pair_token = state_->next_token();
                 state_->pair_deadline = k_pair_timeout_ms;
-                state_->emit_action(action_kind::pair, sel->address, 0, state_->pair_token);
+                state_->emit_action(action_kind::pair, sel->address, 0, state_->pair_token, sel->addr_type);
                 state_->current = screen::pairing;
+            } else if (sel) {
+                state_->active_notice = notice::not_connectable;
             }
         } else if (pressed == key::escape) {
             state_->current = screen::idle;
@@ -481,13 +555,16 @@ void state_machine::press(key pressed)
             if (sel) {
                 state_->reconnect_attempts = 0;
                 state_->connecting_address = sel->address;
+                state_->connecting_addr_type = sel->addr_type;
                 state_->connect_token = state_->next_token();
                 state_->connection_in_flight = true;
+                state_->connection_established = false;
                 state_->connect_deadline = k_connect_timeout_ms;
                 state_->active_reconnect_address = sel->address;
                 state_->reconnect_gave_up = false;
                 state_->current = screen::connecting;
-                state_->emit_action(action_kind::connect, sel->address, 0, state_->connect_token);
+                state_->emit_action(action_kind::connect, sel->address, 0, state_->connect_token,
+                                    sel->addr_type);
             }
         } else if (pressed == key::escape) {
             state_->current = screen::idle;
@@ -508,10 +585,12 @@ void state_machine::press(key pressed)
                 state_->pairing_address.clear();
                 state_->displayed_passkey = 0;
                 state_->clear_deadlines();
-                state_->emit_action(action_kind::cancel_pair, addr, 0, state_->pair_token);
+                state_->emit_action(action_kind::cancel_pair, addr, 0, state_->pair_token,
+                                    state_->pairing_addr_type);
             }
         } else if (pressed == key::enter) {
-            submit_auth(state_->displayed_passkey);
+            if (state_->pending_io != auth_io_action::input)
+                submit_auth(state_->displayed_passkey);
         }
         break;
     case screen::connecting:
@@ -526,7 +605,8 @@ void state_machine::press(key pressed)
                 std::string addr = state_->connecting_address;
                 state_->connecting_address.clear();
                 state_->clear_deadlines();
-                state_->emit_action(action_kind::cancel_connect, addr, 0, state_->connect_token);
+                state_->emit_action(action_kind::cancel_connect, addr, 0, state_->connect_token,
+                                    state_->connecting_addr_type);
                 state_->connection_in_flight = false;
             }
         }
@@ -546,7 +626,8 @@ void state_machine::press(key pressed)
             state_->cancelled_from_pairing = false;
             state_->cancelled_from_connect = false;
             state_->clear_deadlines();
-            state_->emit_action(action_kind::disconnect, address, 0, state_->connect_token);
+            state_->emit_action(action_kind::disconnect, address, 0, state_->connect_token,
+                                state_->connecting_addr_type);
             state_->connection_in_flight = false;
         }
         break;
@@ -558,16 +639,17 @@ void state_machine::submit_auth(std::uint32_t passkey)
     if (state_->current != screen::auth) {
         return;
     }
-    if (state_->pending_auth == auth_request_kind::passkey) {
-        if (passkey != state_->displayed_passkey) {
-            return;
-        }
-    }
+    if (state_->pending_io == auth_io_action::input && passkey >= k_passkey_modulus) return;
+    if (state_->pending_io != auth_io_action::input &&
+        state_->displayed_passkey >= k_passkey_modulus) return;
     state_->displayed_passkey = 0;
     state_->current = screen::pairing;
     state_->pair_deadline = k_pair_timeout_ms;
     state_->auth_deadline = 0;
-    state_->emit_action(action_kind::submit_auth, state_->pairing_address, passkey, state_->pair_token);
+    const std::uint32_t injected_passkey =
+        state_->pending_io == auth_io_action::numeric_compare ? 0 : passkey;
+    state_->emit_action(action_kind::submit_auth, state_->pairing_address, injected_passkey, state_->pair_token,
+                        state_->pairing_addr_type);
 }
 
 screen state_machine::current_screen() const
@@ -635,6 +717,8 @@ std::string state_machine::notice_text() const
             return k_msg_pair_cancelled;
         }
         return k_msg_connect_cancelled;
+    case notice::not_connectable:
+        return k_msg_not_connectable;
     default:
         return "";
     }
@@ -656,13 +740,15 @@ std::string state_machine::status_line() const
     }
     case screen::auth: {
         std::string out;
-        if (state_->pending_auth == auth_request_kind::passkey) {
+        if (state_->pending_io == auth_io_action::input) {
+            out = "Enter the passkey: ";
+        } else if (state_->pending_io == auth_io_action::display) {
             out = k_status_enter_passkey;
             out += format_passkey(state_->displayed_passkey);
-        } else if (state_->pending_auth == auth_request_kind::confirm) {
-            out = k_status_confirm;
         } else {
             out = k_status_numeric_compare;
+            out += " Number: ";
+            out += format_passkey(state_->displayed_passkey);
         }
         return out;
     }
@@ -705,6 +791,11 @@ std::uint32_t state_machine::displayed_passkey() const
 auth_request_kind state_machine::pending_auth_kind() const
 {
     return state_->pending_auth;
+}
+
+auth_io_action state_machine::pending_auth_action() const
+{
+    return state_->pending_io;
 }
 
 std::string state_machine::active_address() const

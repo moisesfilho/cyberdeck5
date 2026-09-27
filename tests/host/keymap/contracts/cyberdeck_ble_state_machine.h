@@ -53,10 +53,10 @@ enum class key { up, down, enter, escape };
 /* The four approved terminal message classes (REQ-BLE-009) plus the "nothing
  * to say" sentinel.  Each non-none value maps to exactly one notice text for
  * its current screen; notice_text() is the only message the UI logs. */
-enum class notice { none, empty, failed, timed_out, cancelled };
+ enum class notice { none, empty, failed, timed_out, cancelled, not_connectable };
 
 /* How the peer asked the user to authenticate interactively. */
-enum class auth_request_kind { passkey, numeric_compare, confirm };
+  enum class auth_request_kind { passkey, numeric_compare };
 
 /* Terminal result of a pairing attempt. */
 enum class pair_outcome { bonded, rejected, cancelled, timed_out, failed };
@@ -92,6 +92,7 @@ inline constexpr const char *k_msg_connect_failed = "Bluetooth connection failed
 inline constexpr const char *k_msg_connect_timeout = "Bluetooth connection timed out.";
 inline constexpr const char *k_msg_connect_cancelled = "Bluetooth connection cancelled.";
 inline constexpr const char *k_msg_reconnect_gave_up = "Bluetooth reconnection failed.";
+inline constexpr const char *k_msg_not_connectable = "Selected Bluetooth device is not connectable.";
 inline constexpr const char *k_status_scanning = "Scanning Bluetooth devices...";
 inline constexpr const char *k_status_pairing_prefix = "Pairing with ";
 inline constexpr const char *k_status_enter_passkey = "Enter the passkey shown on your device: ";
@@ -111,6 +112,7 @@ inline constexpr const char *k_status_connected_suffix = ".";
 struct action {
     action_kind kind = action_kind::start_scan;
     std::string address;
+    address_type addr_type = address_type::public_address;
     std::uint32_t passkey = 0;
     std::uint64_t token = 0;
 };

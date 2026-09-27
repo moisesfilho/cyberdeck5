@@ -22,6 +22,7 @@ enum class ble_event_kind {
     pair_finished,
     connected,
     disconnected,
+    hid_discovery,
 };
 
 /*
@@ -42,13 +43,31 @@ struct ble_event {
     /* auth_request */
     auth_request_kind auth_kind = auth_request_kind::passkey;
     std::uint32_t passkey = 0;
+    auth_io_action auth_action = auth_io_action::input;
 
     /* pair_finished */
     pair_outcome pair_result = pair_outcome::bonded;
 
     /* connected / disconnected */
     std::string address;
+    address_type addr_type = address_type::public_address;
     bool automatic = false; /* true for an automatic reconnection attempt */
+
+    struct hid_snapshot {
+        std::uint16_t conn_handle = 0xffff;
+        bool success = false;
+        bool hid_service = false;
+        std::uint16_t service_start = 0;
+        std::uint16_t service_end = 0;
+        std::uint8_t characteristic_count = 0;
+        std::uint8_t cccd_count = 0;
+        std::uint16_t report_map_handle = 0;
+        std::uint16_t protocol_mode_handle = 0;
+        std::uint16_t boot_keyboard_input_handle = 0;
+        std::uint16_t boot_keyboard_input_cccd = 0;
+        std::uint16_t report_input_handle = 0;
+        std::uint16_t report_input_cccd = 0;
+    } hid;
 };
 
 class event_dispatch {
@@ -67,6 +86,7 @@ public:
     std::uint64_t begin_pairing(std::uint64_t token, std::string_view address);
     std::uint64_t begin_connection(std::string_view address, bool automatic);
     std::uint64_t begin_connection(std::uint64_t token, std::string_view address, bool automatic);
+    std::uint64_t begin_connection(std::uint64_t token, std::string_view address, address_type type, bool automatic);
 
     std::uint64_t active_scan_token() const;
     std::uint64_t active_pair_token() const;
@@ -80,10 +100,12 @@ public:
     bool publish_scan_result(std::uint64_t token, const device &item);
     bool publish_scan_finished(std::uint64_t token, notice outcome);
     bool publish_auth_request(std::uint64_t token, auth_request_kind kind,
-                              std::uint32_t passkey);
+                              std::uint32_t passkey,
+                              auth_io_action io_action = auth_io_action::input);
     bool publish_pair_finished(std::uint64_t token, pair_outcome outcome);
     bool publish_connected(std::uint64_t token);
     bool publish_disconnected(std::uint64_t token);
+    bool publish_hid_discovery(std::uint64_t token, const ble_event::hid_snapshot &snapshot);
 
     /* ---- consumption ----------------------------------------------------- */
     std::size_t pending() const;

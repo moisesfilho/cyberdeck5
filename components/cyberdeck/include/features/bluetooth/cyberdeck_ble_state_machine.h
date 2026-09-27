@@ -35,10 +35,14 @@ enum class key { up, down, enter, escape };
 /* The four approved terminal message classes (REQ-BLE-009) plus the "nothing
  * to say" sentinel.  Each non-none value maps to exactly one notice text for
  * its current screen; notice_text() is the only message the UI logs. */
-enum class notice { none, empty, failed, timed_out, cancelled };
+enum class notice { none, empty, failed, timed_out, cancelled, not_connectable };
 
 /* How the peer asked the user to authenticate interactively. */
-enum class auth_request_kind { passkey, numeric_compare, confirm };
+enum class auth_request_kind { passkey, numeric_compare };
+
+/* Exact NimBLE IO request.  This value is deliberately carried to the
+ * adapter; the UI must not reinterpret DISP as INPUT (or NUMCMP as either). */
+enum class auth_io_action { display, input, numeric_compare };
 
 /* Terminal result of a pairing attempt. */
 enum class pair_outcome { bonded, rejected, cancelled, timed_out, failed };
@@ -74,11 +78,10 @@ inline constexpr const char *k_msg_connect_failed = "Bluetooth connection failed
 inline constexpr const char *k_msg_connect_timeout = "Bluetooth connection timed out.";
 inline constexpr const char *k_msg_connect_cancelled = "Bluetooth connection cancelled.";
 inline constexpr const char *k_msg_reconnect_gave_up = "Bluetooth reconnection failed.";
+inline constexpr const char *k_msg_not_connectable = "Selected Bluetooth device is not connectable.";
 inline constexpr const char *k_status_scanning = "Scanning Bluetooth devices...";
 inline constexpr const char *k_status_pairing_prefix = "Pairing with ";
 inline constexpr const char *k_status_enter_passkey = "Enter the passkey shown on your device: ";
-inline constexpr const char *k_status_confirm =
-    "Confirm the pairing request on your device (ENTER to accept, ESC to cancel).";
 inline constexpr const char *k_status_numeric_compare =
     "Compare the number shown on your device and confirm (ENTER to accept, ESC to cancel).";
 inline constexpr const char *k_status_connecting_prefix = "Connecting to ";
@@ -93,7 +96,11 @@ inline constexpr const char *k_status_connected_suffix = ".";
 struct action {
     action_kind kind = action_kind::start_scan;
     std::string address;
+    address_type addr_type = address_type::public_address;
     std::uint32_t passkey = 0;
+    std::uint32_t numcmp = 0;
+    bool numcmp_accept = false;
+    auth_io_action auth_action = auth_io_action::input;
     std::uint64_t token = 0;
 };
 
@@ -128,9 +135,11 @@ public:
      *   pairing ---bonded----------> connecting (action connect)
      *   pairing ---other outcome---> results   (notice per outcome)
      *   pairing/auth/connecting --escape------> results (action cancel_*)
-     *   connecting --connected-----> connected
+     *   connecting --connected-----> idle      (link remains owned by ble_mgr)
      *   connecting --failed--------> results   (notice::failed)
      *   connected --escape---------> idle      (action disconnect)
+     * A later physical disconnect for the established token is accepted
+     * without emitting a second disconnect action.
      * A new scan_finished resets the selection to 0 and the visible list, so a
      * device that stopped advertising can never be paired by a stale index.
      */
@@ -146,7 +155,8 @@ public:
      * A passkey challenge outside 0..k_passkey_modulus is dropped (the bond
      * deadline keeps running) and no fabricated value is ever displayed. */
     void auth_requested(std::uint64_t token, auth_request_kind kind,
-                        std::uint32_t passkey);
+                        std::uint32_t passkey,
+                        auth_io_action io_action = auth_io_action::input);
     void pairing_finished(std::uint64_t token, pair_outcome outcome);
 
     void connection_finished(std::uint64_t token, bool connected);
@@ -169,9 +179,9 @@ public:
 
     /*
      * Accepts the interactive authentication the peer asked for.  For a
-     * passkey challenge only the exact displayed value is forwarded; a wrong
-     * value forwards nothing and keeps the auth screen.  For a confirm or
-     * numeric comparison challenge the user accepted, so 0 is forwarded.
+     * passkey challenge only the entered six-digit value is forwarded.  For a
+     * numeric comparison challenge the displayed number and a separate
+     * acceptance decision are forwarded.
      *
      * On acceptance the machine returns to `pairing` (the bond is awaited),
      * clears the displayed passkey so it can no longer leak, and re-arms the
@@ -200,6 +210,7 @@ public:
     /* Displayed passkey for the auth screen, 0 when none is displayed. */
     std::uint32_t displayed_passkey() const;
     auth_request_kind pending_auth_kind() const;
+    auth_io_action pending_auth_action() const;
 
     /* Address of the bonded device the machine is currently working on, or
      * "" when idle. */

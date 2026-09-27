@@ -72,6 +72,7 @@ lv_obj_t *s_keyboard = nullptr;
 lv_timer_t *s_battery_timer = nullptr;
 std::string s_output;
 std::string s_line;
+std::string s_ble_auth_input;
 cyberdeck_edit_line s_editor;
 cyberdeck_history s_history;
 cyberdeck_terminal_filter s_ssh_output_filter;
@@ -112,9 +113,39 @@ ble_mgr_observer_handle_t s_ble_observer = nullptr;
 cyberdeck_ble::state_machine s_ble_model;
 cyberdeck_ble::device_list s_ble_scan_devices;
 std::string s_ble_last_notice;
+bool s_ble_transient_active = false;
+bool s_ble_transient_committed = false;
 
 void append_line(const std::string &line);
+void append_output(const char *data, size_t len);
 void render_terminal();
+void zero_string(std::string &s);
+
+bool ble_list_is_visible()
+{
+    const cyberdeck_ble::screen current = s_ble_model.current_screen();
+    return s_ble_model.owns_input() &&
+           (current == cyberdeck_ble::screen::results ||
+            current == cyberdeck_ble::screen::paired);
+}
+
+void sync_ble_transient_block()
+{
+    if (ble_list_is_visible()) {
+        s_ble_transient_active = true;
+        return;
+    }
+    if (!s_ble_transient_active) return;
+
+    /* Keep the interactive list out of terminal history while it owns the
+     * navigation keys. Commit its last model-backed rendering once ownership
+     * ends, so later repaints cannot duplicate it. */
+    s_ble_transient_active = false;
+    if (s_ble_transient_committed) return;
+    s_ble_transient_committed = true;
+    const std::string rendered = s_ble_model.devices().render();
+    if (!rendered.empty()) append_output(rendered.data(), rendered.size());
+}
 
 bool ble_address_bytes(const std::string &address, uint8_t out[6])
 {
@@ -128,7 +159,7 @@ bool ble_address_bytes(const std::string &address, uint8_t out[6])
 
 void ble_submit_actions()
 {
-    for (const cyberdeck_ble::action &action : s_ble_model.take_actions()) {
+    for (cyberdeck_ble::action &action : s_ble_model.take_actions()) {
         ble_mgr_cmd_t cmd{};
         cmd.token = action.token;
         switch (action.kind) {
@@ -142,24 +173,64 @@ void ble_submit_actions()
         case cyberdeck_ble::action_kind::cancel_connect: cmd.kind = BLE_MGR_CMD_DISCONNECT; break;
         case cyberdeck_ble::action_kind::reconnect: cmd.kind = BLE_MGR_CMD_RECONNECT; break;
         }
-        if (!action.address.empty() && !ble_address_bytes(action.address, cmd.connect.addr)) continue;
+        uint8_t address[6] = {};
+        if (!action.address.empty() && !ble_address_bytes(action.address, address)) continue;
+        if (!action.address.empty() &&
+            s_ble_scan_devices.find(action.address, action.addr_type) == nullptr &&
+            s_ble_model.devices().find(action.address, action.addr_type) == nullptr &&
+            (action.kind == cyberdeck_ble::action_kind::pair ||
+             action.kind == cyberdeck_ble::action_kind::connect ||
+             action.kind == cyberdeck_ble::action_kind::reconnect)) continue;
+        const uint8_t addr_type = static_cast<uint8_t>(action.addr_type);
         if (action.kind == cyberdeck_ble::action_kind::submit_auth) {
-            std::memcpy(cmd.passkey.addr, cmd.connect.addr, sizeof(cmd.passkey.addr));
+            std::memcpy(cmd.passkey.addr, address, sizeof(cmd.passkey.addr));
+            cmd.passkey.addr_type = addr_type;
             cmd.passkey.passkey = action.passkey;
+            cmd.passkey.numcmp = action.numcmp;
+            cmd.passkey.numcmp_accept = action.numcmp_accept;
+            switch (action.auth_action) {
+            case cyberdeck_ble::auth_io_action::display: cmd.passkey.io_action = BLE_MGR_AUTH_IO_DISP; break;
+            case cyberdeck_ble::auth_io_action::input: cmd.passkey.io_action = BLE_MGR_AUTH_IO_INPUT; break;
+            case cyberdeck_ble::auth_io_action::numeric_compare: cmd.passkey.io_action = BLE_MGR_AUTH_IO_NUMCMP; break;
+            }
         }
         if (action.kind == cyberdeck_ble::action_kind::pair ||
-            action.kind == cyberdeck_ble::action_kind::cancel_pair)
-            std::memcpy(cmd.pair.addr, cmd.connect.addr, sizeof(cmd.pair.addr));
+            action.kind == cyberdeck_ble::action_kind::cancel_pair) {
+            std::memcpy(cmd.pair.addr, address, sizeof(cmd.pair.addr));
+            cmd.pair.addr_type = addr_type;
+        }
         if (action.kind == cyberdeck_ble::action_kind::connect ||
-            action.kind == cyberdeck_ble::action_kind::reconnect)
+            action.kind == cyberdeck_ble::action_kind::reconnect) {
+            std::memcpy(cmd.connect.addr, address, sizeof(cmd.connect.addr));
+            cmd.connect.addr_type = addr_type;
             cmd.connect.automatic = action.kind == cyberdeck_ble::action_kind::reconnect;
+        }
         (void)ble_mgr_enqueue_cmd(&cmd, 0);
+        /* The command queue owns the transient transport copy; do not retain
+         * the passkey in the model action or UI-side vector after submission. */
+        action.passkey = 0;
     }
 }
 
 void on_ble_event(const ble_mgr_event_t *event, void *)
 {
-    if (event != nullptr && s_ble_event_queue != nullptr) (void)xQueueSend(s_ble_event_queue, event, 0);
+    if (event == nullptr || s_ble_event_queue == nullptr) return;
+    if (xQueueSend(s_ble_event_queue, event, 0) == pdTRUE) return;
+    /* A bounded scan may produce more reports than the UI can consume.  The
+     * terminal outcome is never optional: evict one queued scan report to
+     * reserve its slot, while leaving auth/connection completions intact. */
+    if (event->kind == BLE_MGR_EVT_SCAN_FINISHED) {
+        ble_mgr_event_t retained[9]{};
+        std::size_t count = 0;
+        bool evicted = false;
+        ble_mgr_event_t queued{};
+        while (count < 9 && xQueueReceive(s_ble_event_queue, &queued, 0) == pdTRUE) {
+            if (!evicted && queued.kind == BLE_MGR_EVT_SCAN_RESULT) { evicted = true; continue; }
+            retained[count++] = queued;
+        }
+        for (std::size_t i = 0; i < count; ++i) (void)xQueueSend(s_ble_event_queue, &retained[i], 0);
+        if (evicted) (void)xQueueSend(s_ble_event_queue, event, 0);
+    }
 }
 
 void process_ble_events(lv_timer_t *)
@@ -167,19 +238,25 @@ void process_ble_events(lv_timer_t *)
     if (s_ble_observer == nullptr) {
         s_ble_observer = ble_mgr_register_observer(on_ble_event, nullptr);
     }
-    if (s_ble_event_queue == nullptr) return;
-    if (s_ble_model.owns_input()) {
-        s_ble_model.advance_time(100);
-        ble_submit_actions();
-    }
-    ble_mgr_event_t event{};
+    /* Snapshot ownership only for rendering.  Deadline advancement is a
+     * model concern and must run on every LVGL tick: shell-triggered scans
+     * must not depend on owns_input(), an observer callback, or the event
+     * queue being available. */
     bool changed = s_ble_model.owns_input();
-    while (xQueueReceive(s_ble_event_queue, &event, 0) == pdTRUE) {
+    s_ble_model.advance_time(100);
+    ble_submit_actions();
+
+    /* A missing terminal GAP callback is still bounded by the pure model
+     * deadline.  Keep processing the deadline even if queue setup failed. */
+    ble_mgr_event_t event{};
+    while (s_ble_event_queue != nullptr &&
+           xQueueReceive(s_ble_event_queue, &event, 0) == pdTRUE) {
         changed = true;
         switch (event.kind) {
         case BLE_MGR_EVT_SCAN_RESULT: {
             cyberdeck_ble::device item;
             item.address = event.scan_result.address;
+            item.addr_type = static_cast<cyberdeck_ble::address_type>(event.scan_result.addr_type);
             item.name = event.scan_result.name;
             item.rssi = event.scan_result.rssi;
             item.kind = static_cast<cyberdeck_ble::device_kind>(event.scan_result.kind);
@@ -199,12 +276,16 @@ void process_ble_events(lv_timer_t *)
                 s_ble_model.scan_finished(event.token, s_ble_scan_devices.snapshot());
             }
             s_ble_scan_devices.clear();
+            /* Successful scans have no notice text when they contain devices.
+             * Render the terminal result independently from notice deduplication. */
             break;
         }
         case BLE_MGR_EVT_AUTH_REQUEST:
             s_ble_model.auth_requested(event.token,
                 static_cast<cyberdeck_ble::auth_request_kind>(event.auth_request.kind),
-                event.auth_request.passkey);
+                event.auth_request.passkey,
+                static_cast<cyberdeck_ble::auth_io_action>(event.auth_request.io_action));
+            zero_string(s_ble_auth_input);
             break;
         case BLE_MGR_EVT_PAIR_FINISHED:
             s_ble_model.pairing_finished(event.token,
@@ -215,15 +296,13 @@ void process_ble_events(lv_timer_t *)
         default: break;
         }
     }
+    if (s_ble_model.current_screen() != cyberdeck_ble::screen::auth) zero_string(s_ble_auth_input);
     if (changed) {
         ble_submit_actions();
+        sync_ble_transient_block();
         const std::string notice = s_ble_model.notice_text();
         if (!notice.empty() && notice != s_ble_last_notice) {
             append_line(notice + "\n");
-            if (s_ble_model.current_screen() == cyberdeck_ble::screen::results ||
-                s_ble_model.current_screen() == cyberdeck_ble::screen::paired) {
-                append_line(s_ble_model.devices().render());
-            }
         }
         s_ble_last_notice = notice;
         render_terminal();
@@ -378,6 +457,13 @@ void process_keyboard_event_async(void *)
     lv_display_trigger_activity(lv_disp_get_default());
     if (s_keyboard) hidden(s_keyboard, true);
     if (event->text[0] != '\0' && event->length != 0) {
+        if (s_ble_model.current_screen() == cyberdeck_ble::screen::auth &&
+            s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
+            for (size_t i = 0; i < event->length && s_ble_auth_input.size() < cyberdeck_ble::k_passkey_digits; ++i) {
+                if (event->text[i] >= '0' && event->text[i] <= '9') s_ble_auth_input.push_back(event->text[i]);
+            }
+            render_terminal();
+        } else {
         sync_editor();
         if (event->modifier & 0x01U && event->length == 1) {
             std::string seq = cyberdeck_encode_ssh_key(
@@ -386,6 +472,7 @@ void process_keyboard_event_async(void *)
         } else if (s_editor.insert_physical(event->text, event->length)) {
             sync_line();
             render_terminal();
+        }
         }
     } else if (event->special_key) {
         local_key(event->special_key);
@@ -870,6 +957,21 @@ std::string get_rendered_output() {
             output += "Press ENTER again to forget, ESC to keep.\n";
         }
     }
+    if (ble_list_is_visible()) output += s_ble_model.devices().render();
+    const cyberdeck_ble::screen ble_screen = s_ble_model.current_screen();
+    if (ble_screen == cyberdeck_ble::screen::pairing ||
+        ble_screen == cyberdeck_ble::screen::auth ||
+        ble_screen == cyberdeck_ble::screen::connecting ||
+        ble_screen == cyberdeck_ble::screen::connected) {
+        output += s_ble_model.status_line();
+        output += "\n";
+        if (ble_screen == cyberdeck_ble::screen::auth &&
+            s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
+            output += "Passkey input: ";
+            output.append(s_ble_auth_input.size(), '*');
+            output += "\n";
+        }
+    }
     if (output.size() > available) output = truncate_left_utf8(output, available);
     return output;
 }
@@ -1182,14 +1284,16 @@ void execute_line(bool line_already_sent = false) {
     case CYBERDECK_CMD_BLUETOOTH_SEARCH:
         s_ble_last_notice.clear();
         s_ble_scan_devices.clear();
+        s_ble_transient_committed = false;
         s_ble_model.begin_search();
         ble_submit_actions();
         append_line("Bluetooth search started.\n");
         break;
     case CYBERDECK_CMD_BLUETOOTH_PAIRED:
         s_ble_last_notice.clear();
+        s_ble_transient_committed = false;
         s_ble_model.begin_paired();
-        append_line(s_ble_model.devices().render());
+        sync_ble_transient_block();
         break;
     case CYBERDECK_CMD_WIFI_SAVED: {
         s_wifi_model.begin_saved();
@@ -1248,6 +1352,25 @@ void move_history(int direction) {
 
 void local_key(uint32_t key) {
     if (s_ble_model.owns_input()) {
+        if (s_ble_model.current_screen() == cyberdeck_ble::screen::auth) {
+            if (key == LV_KEY_BACKSPACE || key == LV_KEY_DEL) {
+                if (!s_ble_auth_input.empty()) s_ble_auth_input.pop_back();
+                render_terminal();
+                return;
+            }
+            if (key == LV_KEY_ENTER &&
+                s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
+                std::uint32_t value = 0;
+                if (s_ble_auth_input.size() == cyberdeck_ble::k_passkey_digits &&
+                    cyberdeck_ble::parse_passkey(s_ble_auth_input.data(), s_ble_auth_input.size(), value)) {
+                    s_ble_model.submit_auth(value);
+                    zero_string(s_ble_auth_input);
+                    ble_submit_actions();
+                }
+                render_terminal();
+                return;
+            }
+        }
         cyberdeck_ble::key ble_key;
         if (key == LV_KEY_UP) ble_key = cyberdeck_ble::key::up;
         else if (key == LV_KEY_DOWN) ble_key = cyberdeck_ble::key::down;
@@ -1256,6 +1379,7 @@ void local_key(uint32_t key) {
         else goto not_ble_key;
         s_ble_model.press(ble_key);
         ble_submit_actions();
+        sync_ble_transient_block();
         render_terminal();
         return;
     }
@@ -1453,6 +1577,17 @@ void terminal_insert(lv_event_t *event) {
     const char *inserted = static_cast<const char *>(lv_event_get_param(event));
     if (!inserted || !*inserted) return;
 
+    if (s_ble_model.current_screen() == cyberdeck_ble::screen::auth &&
+        s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
+        for (const char *p = inserted; *p != '\0'; ++p) {
+            if (*p == '\n' || *p == '\r') local_key(LV_KEY_ENTER);
+            else if (*p >= '0' && *p <= '9' && s_ble_auth_input.size() < cyberdeck_ble::k_passkey_digits)
+                s_ble_auth_input.push_back(*p);
+        }
+        render_terminal();
+        return;
+    }
+
     // The virtual keyboard reports editing keys through INSERT as a single
     // control byte.  They are actions, not text: route them through the same
     // UTF-8-aware editor used by the physical keyboard.
@@ -1562,7 +1697,7 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
             destroy_ui_resource_handles();
              return ESP_ERR_NO_MEM;
          }
-         s_ble_event_queue = xQueueCreate(8, sizeof(ble_mgr_event_t));
+         s_ble_event_queue = xQueueCreate(9, sizeof(ble_mgr_event_t));
          if (s_ble_event_queue == nullptr) {
              destroy_ui_resource_handles();
              return ESP_ERR_NO_MEM;
@@ -1649,9 +1784,11 @@ s_last_clock_text.clear();
       lv_timer_create(process_wifi_audit, 100, nullptr);
       s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
      s_terminal = lv_textarea_create(s_menu); lv_obj_set_width(s_terminal, LV_PCT(100)); lv_obj_set_flex_grow(s_terminal, 1); style_base(s_terminal, SURFACE, WHITE); lv_obj_set_style_border_width(s_terminal, 1, 0); lv_obj_set_style_border_color(s_terminal, BORDER, 0); lv_obj_set_style_pad_all(s_terminal, 12, 0); lv_textarea_set_one_line(s_terminal, false); lv_textarea_set_max_length(s_terminal, TERMINAL_LIMIT); lv_obj_set_scroll_dir(s_terminal, LV_DIR_ALL); lv_obj_set_scroll_chain(s_terminal, false); lv_obj_set_scrollbar_mode(s_terminal, LV_SCROLLBAR_MODE_OFF); lv_obj_add_event_cb(s_terminal, focused, LV_EVENT_FOCUSED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_insert, LV_EVENT_INSERT, nullptr); lv_obj_add_event_cb(s_terminal, terminal_changed, LV_EVENT_VALUE_CHANGED, nullptr); lv_obj_add_event_cb(s_terminal, terminal_key, LV_EVENT_KEY, nullptr);
-    reset_ssh_output_filter();
-    discard_ssh_line_composer();
-    s_output = "CYBERDECK5 READY\n"; render_terminal();
+     reset_ssh_output_filter();
+     discard_ssh_line_composer();
+     s_ble_transient_active = false;
+     s_ble_transient_committed = false;
+     s_output = "CYBERDECK5 READY\n"; render_terminal();
 
      s_keyboard = lv_keyboard_create(s_screen); hidden(s_keyboard, true); lv_keyboard_set_textarea(s_keyboard, s_terminal); lv_obj_add_event_cb(s_keyboard, virtual_keyboard_changed, LV_EVENT_VALUE_CHANGED, nullptr);
     disable_scrolling(s_keyboard);

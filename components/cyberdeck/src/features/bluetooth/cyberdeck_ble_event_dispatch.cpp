@@ -31,6 +31,7 @@ struct event_dispatch::State {
     std::uint64_t previous_pair_generation = 0;
     std::uint64_t previous_connect_generation = 0;
     std::string connection_address;
+    address_type connection_addr_type = address_type::public_address;
     bool connection_automatic = false;
 
     std::uint64_t next_token()
@@ -74,6 +75,7 @@ struct event_dispatch::State {
                    queued.pair_gen != previous_pair_generation;
         case ble_event_kind::connected:
         case ble_event_kind::disconnected:
+        case ble_event_kind::hid_discovery:
             return queued.connect_gen != 0 &&
                    queued.connect_gen != connect_generation &&
                    queued.connect_gen != previous_connect_generation;
@@ -153,12 +155,19 @@ std::uint64_t event_dispatch::begin_connection(std::string_view address, bool au
 
 std::uint64_t event_dispatch::begin_connection(std::uint64_t token, std::string_view address, bool automatic)
 {
+    return begin_connection(token, address, address_type::public_address, automatic);
+}
+
+std::uint64_t event_dispatch::begin_connection(std::uint64_t token, std::string_view address,
+                                               address_type type, bool automatic)
+{
     if (token == 0) return 0;
     state_->previous_connect_generation = state_->connect_generation;
     state_->connect_generation = token;
     state_->active_connection_token = token;
     state_->token_counter = std::max(state_->token_counter, token);
     state_->connection_address.assign(address.data(), address.size());
+    state_->connection_addr_type = type;
     state_->connection_automatic = automatic;
     return state_->active_connection_token;
 }
@@ -217,7 +226,7 @@ bool event_dispatch::publish_scan_finished(std::uint64_t token, notice outcome)
 }
 
 bool event_dispatch::publish_auth_request(std::uint64_t token, auth_request_kind kind,
-                                          std::uint32_t passkey)
+                                          std::uint32_t passkey, auth_io_action io_action)
 {
     if (token != state_->active_pair_token || token == 0) {
         return false;
@@ -227,6 +236,7 @@ bool event_dispatch::publish_auth_request(std::uint64_t token, auth_request_kind
     evt.event.token = token;
     evt.event.auth_kind = kind;
     evt.event.passkey = passkey;
+    evt.event.auth_action = io_action;
     evt.pair_gen = state_->pair_generation;
     return state_->enqueue(evt);
 }
@@ -253,6 +263,7 @@ bool event_dispatch::publish_connected(std::uint64_t token)
     evt.event.kind = ble_event_kind::connected;
     evt.event.token = token;
     evt.event.address = state_->connection_address;
+    evt.event.addr_type = state_->connection_addr_type;
     evt.event.automatic = state_->connection_automatic;
     evt.connect_gen = state_->connect_generation;
     return state_->enqueue(evt);
@@ -267,7 +278,20 @@ bool event_dispatch::publish_disconnected(std::uint64_t token)
     evt.event.kind = ble_event_kind::disconnected;
     evt.event.token = token;
     evt.event.address = state_->connection_address;
+    evt.event.addr_type = state_->connection_addr_type;
     evt.event.automatic = state_->connection_automatic;
+    evt.connect_gen = state_->connect_generation;
+    return state_->enqueue(evt);
+}
+
+bool event_dispatch::publish_hid_discovery(std::uint64_t token,
+                                           const ble_event::hid_snapshot &snapshot)
+{
+    if (token != state_->active_connection_token || token == 0) return false;
+    State::QueuedEvent evt;
+    evt.event.kind = ble_event_kind::hid_discovery;
+    evt.event.token = token;
+    evt.event.hid = snapshot;
     evt.connect_gen = state_->connect_generation;
     return state_->enqueue(evt);
 }
@@ -317,6 +341,7 @@ void event_dispatch::reset()
     state_->previous_pair_generation = 0;
     state_->previous_connect_generation = 0;
     state_->connection_address.clear();
+    state_->connection_addr_type = address_type::public_address;
     state_->connection_automatic = false;
 }
 
@@ -358,7 +383,7 @@ std::string event_dispatch::event_summary(const ble_event &event)
         } else if (event.auth_kind == auth_request_kind::numeric_compare) {
             out += "numeric_compare";
         } else {
-            out += "confirm";
+            out += "unknown";
         }
         break;
     case ble_event_kind::pair_finished:
@@ -380,6 +405,9 @@ std::string event_dispatch::event_summary(const ble_event &event)
         out = "BLE disconnected: ";
         out += event.address;
         if (event.automatic) out += " (auto)";
+        break;
+    case ble_event_kind::hid_discovery:
+        out = event.hid.success ? "BLE HID discovery ready" : "BLE HID discovery unavailable";
         break;
     }
     return out;
