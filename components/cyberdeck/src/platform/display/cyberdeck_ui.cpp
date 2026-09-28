@@ -59,11 +59,21 @@ const lv_color_t SURFACE = lv_color_hex(0x0A0A0A);
 const lv_color_t BORDER = lv_color_hex(0x2A2A2A);
 const lv_color_t WHITE = lv_color_hex(0xF2F2F2);
 const lv_color_t MUTED = lv_color_hex(0x8A8A8A);
+/* Deslocamento vertical do glyph Bluetooth dentro da celula wrapper de 42 px.
+ * BUG_EVIDENCE: screen.dump mediu Bluetooth y=14..32 (centro 23) contra
+ * Wi-Fi y=25..41 (centro 33) com ambas as celulas em y=12,h=42: o label
+ * direto de 42 px centralizava a caixa de texto, nao o desenho. O icone
+ * Wi-Fi ocupa visualmente ~12,5..30,0 px (centro ~21,3) na caixa de 42 px;
+ * o glyph U+F293 (caixa 14x19 na linha de 22 px) centralizado em y=10 ocupa
+ * ~12..31 px (centro ~21,5), diferenca <=1 px do centro visual do Wi-Fi. */
+constexpr int32_t CYBERDECK_BLE_HEADER_Y_OFFSET = 10;
 
 lv_obj_t *s_screen = nullptr;
 lv_obj_t *s_menu = nullptr;
 lv_obj_t *s_terminal = nullptr;
 lv_obj_t *s_clock_status = nullptr;
+lv_obj_t *s_ble_status = nullptr;
+lv_obj_t *s_ble_cell = nullptr;
 lv_obj_t *s_wifi_status = nullptr;
 lv_obj_t *s_battery_status = nullptr;
 lv_obj_t *s_battery_symbol = nullptr;
@@ -120,6 +130,7 @@ void append_line(const std::string &line);
 void append_output(const char *data, size_t len);
 void render_terminal();
 void zero_string(std::string &s);
+void refresh_ble_status();
 
 bool ble_list_is_visible()
 {
@@ -297,6 +308,7 @@ void process_ble_events(lv_timer_t *)
         }
     }
     if (s_ble_model.current_screen() != cyberdeck_ble::screen::auth) zero_string(s_ble_auth_input);
+    refresh_ble_status();
     if (changed) {
         ble_submit_actions();
         sync_ble_transient_block();
@@ -652,6 +664,23 @@ const char *battery_indicator_symbol(cyberdeck_battery_view::power_glyph value)
     case cyberdeck_battery_view::power_glyph::none:
     default:
         return "";
+    }
+}
+
+void refresh_ble_status()
+{
+    if (s_ble_status == nullptr || s_ble_cell == nullptr) return;
+    /* The header shows the standard Bluetooth glyph only while a BLE link is
+     * established.  The model owns the connection state; the LVGL layer only
+     * applies its read-only is_connected() decision.  Visibility is toggled
+     * on the wrapper cell so the inner y offset (visual centering on the
+     * Wi-Fi axis) is preserved. */
+    if (s_ble_model.is_connected()) {
+        lv_obj_clear_flag(s_ble_status, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_ble_cell, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_ble_status, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_ble_cell, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -1742,6 +1771,31 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
                           LV_FLEX_ALIGN_CENTER);
     disable_scrolling(header_right);
 
+    /* Celula wrapper compacta de 42 px: mantem a ordem BT->Wi-Fi->bateria sem
+     * roubar largura e posiciona o glyph internamente no centro visual do
+     * Wi-Fi (diferente da caixa de texto do label direto). O layout fica
+     * manual (none) para que lv_obj_set_y seja respeitado dentro da celula. */
+    lv_obj_t *ble_cell = lv_obj_create(header_right);
+    s_ble_cell = ble_cell;
+    lv_obj_set_size(ble_cell, LV_SIZE_CONTENT, 42);
+    lv_obj_set_layout(ble_cell, LV_LAYOUT_NONE);
+    lv_obj_set_flex_grow(ble_cell, 0);
+    lv_obj_set_style_pad_all(ble_cell, 0, 0);
+    lv_obj_set_style_pad_right(ble_cell, 4, 0);
+    style_base(ble_cell, BLACK, WHITE);
+    lv_obj_set_style_bg_opa(ble_cell, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ble_cell, 0, 0);
+    disable_scrolling(ble_cell);
+    s_ble_status = lv_label_create(ble_cell);
+    lv_label_set_text(s_ble_status, LV_SYMBOL_BLUETOOTH);
+    lv_obj_set_size(s_ble_status, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    style_base(s_ble_status, BLACK, WHITE);
+    lv_obj_set_style_bg_opa(s_ble_status, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_ble_status, 0, 0);
+    lv_obj_set_y(s_ble_status, CYBERDECK_BLE_HEADER_Y_OFFSET);
+    lv_obj_add_flag(s_ble_status, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ble_cell, LV_OBJ_FLAG_HIDDEN);
+
     s_wifi_status = cyberdeck_wifi_icon_create(header_right);
     lv_obj_set_width(
         s_wifi_status,
@@ -1755,7 +1809,7 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     style_base(s_battery_status, BLACK, WHITE);
     lv_obj_set_style_bg_opa(s_battery_status, LV_OPA_TRANSP, 0);
     lv_obj_set_style_pad_all(s_battery_status, 0, 0);
-    lv_obj_set_style_pad_left(s_battery_status, 4, 0);
+    lv_obj_set_style_pad_left(s_battery_status, 11, 0);
     lv_obj_set_flex_flow(s_battery_status, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(s_battery_status, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);

@@ -162,6 +162,16 @@ def small_style_value(arguments: list[str], description: str, maximum: int = 4) 
             f"{description} must remain a small gap (0..{maximum}px)")
 
 
+def exact_style_value(arguments: list[str], description: str, expected: int) -> None:
+    require(len(arguments) >= 2, f"{description} must provide a value")
+    value = re.sub(r"\s+", "", arguments[1])
+    match = re.fullmatch(r"(\d+)(?:[uUlL]+)?", value)
+    require(match is not None, f"{description} must use an integer pixel value")
+    assert match is not None
+    require(int(match.group(1)) == expected,
+            f"{description} must be exactly {expected}px")
+
+
 def geometry_expressions(expression: str, source: str) -> list[str]:
     """Return direct or named-constant expressions tied to icon geometry."""
     candidates = [expression]
@@ -273,17 +283,24 @@ def main() -> int:
                     for expression in battery_width_expressions),
             "battery must not reclaim a 30% cell")
 
-    # Keep the nested flex gap bounded; large theme/default padding would move
-    # the compact cluster back to the old, visibly sparse header.
+    # Keep the nested flex gaps bounded; large theme/default spacing would move
+    # the compact cluster back to the old, visibly sparse header.  The battery
+    # left pad is an explicit 11px contract: with the compact Wi-Fi geometry it
+    # produces the approved 15px visual gap.
     for api, object_name, description in (
             ("lv_obj_set_style_pad_column", "header_right", "header_right gap"),
             ("lv_obj_set_style_pad_row", "header_right", "header_right row gap"),
-            ("lv_obj_set_style_pad_left", "s_battery_status", "battery left pad"),
             ("lv_obj_set_style_pad_column", "s_battery_status", "battery column gap")):
         style_calls = list(calls_for_object(init, api, object_name))
         require(style_calls, f"{description} must be explicit")
         for style_call in style_calls:
             small_style_value(style_call, description)
+
+    battery_left_pad_calls = list(calls_for_object(
+        init, "lv_obj_set_style_pad_left", "s_battery_status"))
+    require(battery_left_pad_calls, "battery left pad must be explicit")
+    for style_call in battery_left_pad_calls:
+        exact_style_value(style_call, "battery left pad", 11)
 
     # Layout is updated before the icon's explicit width-based repositioning;
     # state and LV_EVENT_SIZE_CHANGED callbacks remain part of the integration.

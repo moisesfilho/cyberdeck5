@@ -876,6 +876,7 @@ void test_successful_bond_then_connection()
      * authenticated link remains owned by ble_mgr; the model must not turn
      * this completion into a user-visible disconnect lifecycle. */
     CHECK(connected.current_screen() == screen::idle);
+    CHECK(connected.is_connected());
     CHECK(!connected.owns_input());
     CHECK(connected.current_notice() == notice::none);
     CHECK_STR(connected.notice_text(), "");
@@ -887,6 +888,7 @@ void test_successful_bond_then_connection()
     const std::uint64_t established = connected.active_connection_token();
     connected.connection_finished(established, false);
     CHECK(connected.current_screen() == screen::idle);
+    CHECK(!connected.is_connected());
     CHECK(!connected.owns_input());
     CHECK(connected.current_notice() == notice::none);
     CHECK(connected.take_actions().empty());
@@ -906,6 +908,35 @@ void test_successful_bond_then_connection()
     connected.connection_finished(next_generation, true);
     CHECK(connected.current_screen() == screen::idle);
     CHECK(connected.take_actions().empty());
+}
+
+void test_is_connected_is_false_until_matching_connected_event()
+{
+    state_machine machine;
+    CHECK(!machine.is_connected());
+
+    /* An invalid/stale completion must not fabricate a visible link. */
+    machine.connection_finished(1, true);
+    CHECK(!machine.is_connected());
+
+    prepare_pairing(machine, "AA:BB:CC:DD:EE:10", "Mouse");
+    machine.pairing_finished(machine.active_pair_token(), pair_outcome::bonded);
+    machine.take_actions();
+    const std::uint64_t token = machine.active_connection_token();
+    CHECK(!machine.is_connected());
+
+    machine.connection_finished(token + 1, true);
+    CHECK(!machine.is_connected());
+    machine.connection_finished(token, true);
+    CHECK(machine.is_connected());
+
+    /* Repeated CONNECTED and stale DISCONNECTED events are harmless. */
+    machine.connection_finished(token, true);
+    CHECK(machine.is_connected());
+    machine.connection_finished(token + 1, false);
+    CHECK(machine.is_connected());
+    machine.connection_finished(token, false);
+    CHECK(!machine.is_connected());
 }
 
 void test_connection_success_does_not_clear_identity_contract_in_model()
@@ -1259,6 +1290,7 @@ int main()
     test_escape_cancels_the_pairing_attempt_only();
     test_pair_outcomes_are_distinct();
     test_successful_bond_then_connection();
+    test_is_connected_is_false_until_matching_connected_event();
     test_connection_success_does_not_clear_identity_contract_in_model();
     test_connect_reconnect_and_cancellation_preserve_address_type();
     test_submit_auth_preserves_active_address_type();

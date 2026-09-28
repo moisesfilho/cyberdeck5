@@ -197,6 +197,9 @@ public:
     /* Whether BLE currently owns the four navigation keys. */
     bool owns_input() const;
 
+    /* Whether a BLE link is currently established (read-only). */
+    bool is_connected() const;
+
     /* Exact single-line user message for the current notice, "" for none. */
     std::string notice_text() const;
 

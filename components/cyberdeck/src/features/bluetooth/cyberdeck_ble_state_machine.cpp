@@ -680,6 +680,11 @@ bool state_machine::owns_input() const
     return false;
 }
 
+bool state_machine::is_connected() const
+{
+    return state_->connection_established;
+}
+
 std::string state_machine::notice_text() const
 {
     switch (state_->active_notice) {

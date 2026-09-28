@@ -28,6 +28,7 @@ tests/host/**/test_*
 !tests/host/keymap/test_battery_view.cpp
 !tests/host/keymap/test_battery_view_contract.py
 !tests/host/keymap/test_battery_protection.cpp
+!tests/host/keymap/test_ble_header_contract.py
 !tests/host/keymap/test_battery_protection_contract.py
 !tests/host/keymap/test_screen_protection.cpp
 !tests/host/keymap/test_screen_protection_contract.py
