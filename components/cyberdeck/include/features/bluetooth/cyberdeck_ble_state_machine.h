@@ -138,6 +138,7 @@ public:
      *   connecting --connected-----> idle      (link remains owned by ble_mgr)
      *   connecting --failed--------> results   (notice::failed)
      *   connected --escape---------> idle      (action disconnect)
+     *   idle (link up) --escape----> idle      (action disconnect, manual)
      * A later physical disconnect for the established token is accepted
      * without emitting a second disconnect action.
      * A new scan_finished resets the selection to 0 and the visible list, so a
@@ -214,6 +215,41 @@ public:
     std::uint32_t displayed_passkey() const;
     auth_request_kind pending_auth_kind() const;
     auth_io_action pending_auth_action() const;
+
+    /* Whether a spontaneous background reconnect cycle is armed.  Manual
+     * disconnect (Escape on `connected` or on idle while the link is up)
+     * clears it until the next explicit action; a spontaneous
+     * link loss keeps it armed so the background observer may retry. */
+    bool background_reconnect_armed() const;
+
+    /* Arm the background reconnect cycle for a known bond.  Called once at
+     * boot restore, after a spontaneous disconnect and after a successful
+     * (re)connect: emits nothing, never touches the visible screen, and
+     * clears any manual block so the observer may schedule `reconnect`
+     * while the budget (`k_max_reconnect_attempts` per cycle) is below
+     * the cap. */
+    void arm_background_reconnect(const device &item);
+
+    /* Block the background reconnect cycle after a manual disconnect.  The
+     * cycle stays blocked until an explicit Enter action re-arms it; fresh
+     * advertisements alone cannot clear a manual block. */
+    void block_background_reconnect();
+
+    /* Whether the last-connected bond identity is available for a first
+     * post-boot attempt (set by arm, cleared by manual action or cap). */
+    bool has_background_target() const;
+    device background_target() const;
+
+    /* Consume one budget slot of the current background cycle.  Returns false
+     * when the cap is reached or the cycle is blocked: the caller must then
+     * wait for a fresh advertisement (cap) or an explicit Enter (manual
+     * block) instead of emitting another `reconnect`. */
+    bool consume_background_attempt();
+
+    /* Reset the per-cycle attempt counter after a fresh advertisement, so a
+     * new announcement cycle gets a new budget of `k_max_reconnect_attempts`.
+     * Reopens a cycle closed by the cap; never clears a manual block. */
+    void reset_background_cycle();
 
     /* Address of the bonded device the machine is currently working on, or
      * "" when idle. */

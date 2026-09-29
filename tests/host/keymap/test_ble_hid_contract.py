@@ -34,6 +34,13 @@ def body(source: str, signature: str) -> str:
     raise AssertionError(f"unterminated {signature}")
 
 
+def switch_case(source: str, label: str, next_label: str) -> str:
+    """Return one case from the intended switch, not an earlier helper case."""
+    start = source.index(f"case {label}:")
+    end = source.index(f"case {next_label}:", start)
+    return source[start:end]
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
@@ -87,7 +94,8 @@ def main() -> int:
             "HID publication is not an additional dispatch event")
 
     # Disconnect and STOP invalidate the context; old callbacks cannot finish it.
-    stop = MGR[MGR.index("case BLE_MGR_CMD_STOP:"):MGR.index("case BLE_MGR_CMD_SCAN_START:")]
+    task = body(MGR, "static void ble_mgr_task(")
+    stop = switch_case(task, "BLE_MGR_CMD_STOP", "BLE_MGR_CMD_SCAN_START")
     disconnect = MGR[MGR.index("case BLE_GAP_EVENT_DISCONNECT:"):MGR.index("case BLE_GAP_EVENT_ENC_CHANGE:")]
     require("s_hid.active = false" in stop and "++s_hid.generation" in stop,
             "STOP does not invalidate HID discovery")
@@ -102,9 +110,18 @@ def main() -> int:
             "HID discovery can inject authentication input")
 
     # Existing auth/address-type contracts remain present in the same adapter.
+    gate = task.index("if (!s_host_synced && cmd.kind != BLE_MGR_CMD_STOP)")
+    switch = task.index("switch (cmd.kind)")
+    require(gate < switch and "reject_pre_sync_command(cmd)" in task[gate:switch],
+            "PASSKEY_REPLY is not covered by the central host_synced gate")
+    passkey = switch_case(task, "BLE_MGR_CMD_PASSKEY_REPLY", "BLE_MGR_CMD_PAIR_CANCEL")
     require("ble_sm_inject_io(auth_conn, &pkey)" in MGR and
             "cmd.passkey.addr_type" in MGR,
             "passkey/address-type path was lost")
+    reject_start = MGR.index("static void reject_pre_sync_command(const ble_mgr_cmd_t &cmd)\n{")
+    reject_end = MGR.index("static void start_scan_command(", reject_start)
+    require("BLE_MGR_CMD_PASSKEY_REPLY" in MGR[reject_start:reject_end],
+            "pre-sync rejection lost PASSKEY_REPLY")
     print("PASS: BLE HID discovery bounded lifecycle/publication contract")
     return 0
 

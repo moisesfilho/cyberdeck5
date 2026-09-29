@@ -5,6 +5,7 @@ The LVGL UI is device-only, so this inspects the production source without
 starting LVGL, a simulator, a radio, or the Serial Automation Bridge.
 """
 
+import re
 from pathlib import Path
 
 
@@ -35,6 +36,21 @@ def function_body(source: str, signature: str) -> str:
     raise AssertionError(f"unterminated {signature}")
 
 
+def assert_case_dispatch(body: str, event: str, call: str) -> None:
+    """Accept equivalent C++ whitespace and an optional case block."""
+    compact_call = re.sub(r"\s+", "", call)
+    match = re.search(
+        rf"case\s+{re.escape(event)}\s*:(?P<case_body>.*?\bbreak\s*;)",
+        body,
+        re.DOTALL,
+    )
+    assert match, f"missing {event} case with break"
+    compact_case = re.sub(r"[\s{}]", "", match.group("case_body"))
+    assert f"{compact_call};" in compact_case, (
+        f"missing {event} dispatch to {call}"
+    )
+
+
 def main() -> int:
     source = UI.read_text(encoding="utf-8")
     font = FONT.read_text(encoding="utf-8")
@@ -44,8 +60,16 @@ def main() -> int:
 
     # Pure model predicate: both link events reach the model, and refresh_ble_status
     # is performed after queue processing on every 100 ms BLE timer tick.
-    assert "case BLE_MGR_EVT_CONNECTED: s_ble_model.connection_finished(event.token, true); break;" in process
-    assert "case BLE_MGR_EVT_DISCONNECTED: s_ble_model.connection_finished(event.token, false); break;" in process
+    assert_case_dispatch(
+        process,
+        "BLE_MGR_EVT_CONNECTED",
+        "s_ble_model.connection_finished(event.token, true)",
+    )
+    assert_case_dispatch(
+        process,
+        "BLE_MGR_EVT_DISCONNECTED",
+        "s_ble_model.connection_finished(event.token, false)",
+    )
     assert process.count("s_ble_model.advance_time(100)") == 1
     assert process.index("s_ble_model.advance_time(100)") < process.index("while (s_ble_event_queue")
     assert process.index("refresh_ble_status();") > process.index("while (s_ble_event_queue")

@@ -125,6 +125,27 @@ cyberdeck_ble::device_list s_ble_scan_devices;
 std::string s_ble_last_notice;
 bool s_ble_transient_active = false;
 bool s_ble_transient_committed = false;
+/* Background observer: restores NVS bonds once at boot, then reconnects only
+ * known bonds after spontaneous loss.  Manual disconnect blocks the cycle
+ * until an explicit Enter re-arms it.  Bounded: at most one scan token and
+ * k_max_reconnect_attempts per announcement cycle. */
+bool s_ble_background_restored = false;
+std::uint8_t s_ble_background_restore_attempts = 0;
+bool s_ble_background_scan_active = false;
+uint64_t s_ble_background_scan_token = 0;
+uint64_t s_ble_background_abandoned_token = 0;
+std::uint32_t s_ble_background_wait_ms = 0;
+std::string s_ble_background_last_adv;
+cyberdeck_ble::address_type s_ble_background_last_adv_type =
+    cyberdeck_ble::address_type::public_address;
+uint64_t s_ble_background_last_gen = 0;
+bool s_ble_background_reconnect_pending = false;
+cyberdeck_ble::device s_ble_background_pending_device;
+
+constexpr std::uint8_t k_ble_background_restore_retry_limit = 3;
+
+constexpr std::uint32_t k_ble_background_window_interval_ms = 10000;
+constexpr std::uint64_t k_ble_background_token_base = (std::uint64_t{1} << 63);
 
 void append_line(const std::string &line);
 void append_output(const char *data, size_t len);
@@ -168,9 +189,238 @@ bool ble_address_bytes(const std::string &address, uint8_t out[6])
     return true;
 }
 
+void ble_restore_background_bonds_once()
+{
+    /* Restore persisted bonds exactly once at boot: copy identity snapshots
+     * from the adapter, seed the model target list, and arm the background
+     * cycle only when a last-connected bond exists.  Never scans, connects,
+     * or touches the visible screen here. */
+    if (s_ble_background_restored) {
+        return;
+    }
+    ble_bond_snapshot_t snapshots[16]{};
+    const size_t count = ble_bonds_copy(snapshots, 16);
+    if (count == 0) {
+        ++s_ble_background_restore_attempts;
+        if (s_ble_background_restore_attempts >= k_ble_background_restore_retry_limit) {
+            s_ble_background_restored = true;
+        }
+        return;
+    }
+    s_ble_background_restored = true;
+    std::vector<cyberdeck_ble::device> paired;
+    paired.reserve(count);
+    /* Index (not pointer): paired grows inside this loop, so a raw pointer
+     * to paired.back() could dangle after the next push_back. */
+    size_t last_connected_index = count;
+    for (size_t i = 0; i < count; ++i) {
+        cyberdeck_ble::device item;
+        item.address = snapshots[i].address;
+        item.addr_type = static_cast<cyberdeck_ble::address_type>(snapshots[i].addr_type);
+        item.name = snapshots[i].name;
+        item.rssi = cyberdeck_ble::k_min_rssi;
+        item.kind = static_cast<cyberdeck_ble::device_kind>(snapshots[i].kind);
+        item.paired = true;
+        item.connectable = true;
+        paired.push_back(item);
+        if (snapshots[i].last_connected) {
+            last_connected_index = paired.size() - 1;
+        }
+    }
+    if (paired.empty()) {
+        return;
+    }
+    s_ble_model.set_paired_devices(paired);
+    /* First post-boot reconnect targets only the last-connected bond. */
+    if (last_connected_index < paired.size()) {
+        const cyberdeck_ble::device last_connected_copy = paired[last_connected_index];
+        s_ble_model.arm_background_reconnect(last_connected_copy);
+    }
+}
+
+bool ble_background_address_known(const std::string &address,
+                                  cyberdeck_ble::address_type type)
+{
+    /* Reconnect only known bonds: the armed target or the restored list. */
+    if (s_ble_model.has_background_target()) {
+        const cyberdeck_ble::device target = s_ble_model.background_target();
+        if (target.address == address && target.addr_type == type) {
+            return true;
+        }
+    }
+    const cyberdeck_ble::device_list &known = s_ble_model.devices();
+    return known.find(address, type) != nullptr;
+}
+
+void ble_background_note_advertisement(const std::string &address,
+                                       cyberdeck_ble::address_type type,
+                                       bool connectable,
+                                       std::uint64_t generation)
+{
+    /* A fresh announcement from the armed target opens a new budget window
+     * (up to k_max_reconnect_attempts) after the previous cycle was
+     * exhausted.  Unknown peers and non-connectable reports never re-arm.
+     * A new generation (new scan token) also reopens the window without
+     * requiring manual re-arm; a manual disconnect block is never cleared
+     * here. */
+    if (!s_ble_model.has_background_target() || !connectable) {
+        return;
+    }
+    const cyberdeck_ble::device target = s_ble_model.background_target();
+    if (target.address != address || target.addr_type != type) {
+        return;
+    }
+    if (address != s_ble_background_last_adv || type != s_ble_background_last_adv_type ||
+        generation != s_ble_background_last_gen) {
+        s_ble_background_last_adv = address;
+        s_ble_background_last_adv_type = type;
+        s_ble_background_last_gen = generation;
+        s_ble_model.reset_background_cycle();
+    }
+}
+
+void ble_background_advance_target()
+{
+    if (!s_ble_model.has_background_target()) return;
+    const auto &known = s_ble_model.devices();
+    if (known.size() == 0) return;
+    const cyberdeck_ble::device current = s_ble_model.background_target();
+    std::size_t current_index = known.size();
+    for (std::size_t i = 0; i < known.size(); ++i) {
+        const cyberdeck_ble::device *candidate = known.at(i);
+        if (candidate != nullptr && candidate->address == current.address &&
+            candidate->addr_type == current.addr_type) {
+            current_index = i;
+            break;
+        }
+    }
+    if (current_index == known.size()) return;
+    for (std::size_t offset = 1; offset <= known.size(); ++offset) {
+        const cyberdeck_ble::device *candidate = known.at((current_index + offset) % known.size());
+        if (candidate != nullptr && candidate->paired && candidate->connectable) {
+            s_ble_model.arm_background_reconnect(*candidate);
+            return;
+        }
+    }
+}
+
+void ble_background_maybe_reconnect()
+{
+    /* Spontaneous loss starts the background scan; the scan itself never
+     * emits CONNECT.  Each matching advertisement consumes one budget slot
+     * and schedules a single `reconnect` via the model (max 3 per cycle).
+     * Manual disconnect keeps the cycle blocked until explicit Enter. */
+    if (!s_ble_model.background_reconnect_armed()) {
+        return;
+    }
+    if (s_ble_model.is_connected() || s_ble_model.owns_input()) {
+        return;
+    }
+    if (s_ble_background_wait_ms != 0) return;
+    if (!s_ble_background_scan_active) {
+        ble_mgr_cmd_t cmd{};
+        cmd.kind = BLE_MGR_CMD_SCAN_START;
+        cmd.token = s_ble_background_scan_token == 0
+                        ? k_ble_background_token_base
+                        : s_ble_background_scan_token + 1;
+        if (cmd.token < k_ble_background_token_base) cmd.token = k_ble_background_token_base;
+        if (ble_mgr_enqueue_cmd(&cmd, 0) == ESP_OK) {
+            s_ble_background_scan_token = cmd.token;
+            s_ble_background_scan_active = true;
+            s_ble_background_wait_ms = k_ble_background_window_interval_ms;
+        }
+        else {
+            /* A failed queue submission still consumes this window. */
+            s_ble_background_wait_ms = k_ble_background_window_interval_ms;
+        }
+    }
+}
+
+void ble_background_on_scan_result(const ble_mgr_event_t &event)
+{
+    if (!s_ble_background_scan_active || event.token != s_ble_background_scan_token) {
+        return;
+    }
+    if (!event.scan_result.connectable || !event.scan_result.paired) {
+        return;
+    }
+    const auto type = static_cast<cyberdeck_ble::address_type>(event.scan_result.addr_type);
+    ble_background_note_advertisement(event.scan_result.address, type,
+                                      event.scan_result.connectable, event.token);
+    if (!ble_background_address_known(event.scan_result.address, type)) {
+        return;
+    }
+    if (!s_ble_model.background_reconnect_armed()) {
+        return;
+    }
+    if (!s_ble_model.consume_background_attempt()) {
+        return;
+    }
+    /* Stop discovery before opening the connection. */
+    ble_mgr_cmd_t cancel{};
+    cancel.kind = BLE_MGR_CMD_SCAN_CANCEL;
+    cancel.token = s_ble_background_scan_token;
+    if (ble_mgr_enqueue_cmd(&cancel, 0) == ESP_OK) {
+        s_ble_background_abandoned_token = s_ble_background_scan_token;
+        s_ble_background_reconnect_pending = true;
+    } else {
+        /* Never connect while discovery may still be active. */
+        s_ble_background_wait_ms = k_ble_background_window_interval_ms;
+        return;
+    }
+    cyberdeck_ble::device item;
+    item.address = event.scan_result.address;
+    item.addr_type = type;
+    item.name = event.scan_result.name;
+    item.rssi = event.scan_result.rssi;
+    item.kind = static_cast<cyberdeck_ble::device_kind>(event.scan_result.kind);
+    item.paired = true;
+    item.connectable = true;
+    s_ble_background_pending_device = item;
+}
+
+void ble_background_on_scan_finished(const ble_mgr_event_t &event)
+{
+    if (!s_ble_background_scan_active || event.token != s_ble_background_scan_token) {
+        return;
+    }
+    s_ble_background_scan_active = false;
+    s_ble_background_wait_ms = k_ble_background_window_interval_ms;
+    const bool manually_preempted = s_ble_background_abandoned_token == event.token;
+    if (manually_preempted) {
+        s_ble_background_abandoned_token = 0;
+        s_ble_background_reconnect_pending = false;
+        s_ble_background_pending_device = {};
+    } else if (s_ble_background_reconnect_pending) {
+        s_ble_background_reconnect_pending = false;
+        if (event.scan_finished.outcome != static_cast<int>(cyberdeck_ble::notice::failed)) {
+            s_ble_model.schedule_reconnect(s_ble_background_pending_device);
+        }
+    } else {
+        /* Give every restored bond a bounded ten-second opportunity, while
+         * the last-connected bond remains the first target after boot. */
+        ble_background_advance_target();
+    }
+    s_ble_background_pending_device = {};
+}
+
 void ble_submit_actions()
 {
     for (cyberdeck_ble::action &action : s_ble_model.take_actions()) {
+        if ((action.kind == cyberdeck_ble::action_kind::start_scan ||
+             action.kind == cyberdeck_ble::action_kind::pair ||
+             action.kind == cyberdeck_ble::action_kind::connect) &&
+            s_ble_background_scan_active) {
+            ble_mgr_cmd_t cancel{};
+            cancel.kind = BLE_MGR_CMD_SCAN_CANCEL;
+            cancel.token = s_ble_background_scan_token;
+            if (ble_mgr_enqueue_cmd(&cancel, 0) == ESP_OK) {
+                s_ble_background_abandoned_token = s_ble_background_scan_token;
+                s_ble_background_reconnect_pending = false;
+                s_ble_background_pending_device = {};
+                s_ble_background_wait_ms = k_ble_background_window_interval_ms;
+            }
+        }
         ble_mgr_cmd_t cmd{};
         cmd.token = action.token;
         switch (action.kind) {
@@ -249,12 +499,16 @@ void process_ble_events(lv_timer_t *)
     if (s_ble_observer == nullptr) {
         s_ble_observer = ble_mgr_register_observer(on_ble_event, nullptr);
     }
+    /* Restore NVS bonds once at boot before any deadline or queue work. */
+    ble_restore_background_bonds_once();
     /* Snapshot ownership only for rendering.  Deadline advancement is a
      * model concern and must run on every LVGL tick: shell-triggered scans
      * must not depend on owns_input(), an observer callback, or the event
      * queue being available. */
     bool changed = s_ble_model.owns_input();
     s_ble_model.advance_time(100);
+    if (s_ble_background_wait_ms > 100) s_ble_background_wait_ms -= 100;
+    else s_ble_background_wait_ms = 0;
     ble_submit_actions();
 
     /* A missing terminal GAP callback is still bounded by the pure model
@@ -263,6 +517,12 @@ void process_ble_events(lv_timer_t *)
     while (s_ble_event_queue != nullptr &&
            xQueueReceive(s_ble_event_queue, &event, 0) == pdTRUE) {
         changed = true;
+        if (event.token != 0 && event.token == s_ble_background_abandoned_token &&
+            event.kind != BLE_MGR_EVT_SCAN_FINISHED) {
+            continue;
+        }
+        const bool background_event = s_ble_background_scan_active &&
+                                      event.token == s_ble_background_scan_token;
         switch (event.kind) {
         case BLE_MGR_EVT_SCAN_RESULT: {
             cyberdeck_ble::device item;
@@ -273,10 +533,18 @@ void process_ble_events(lv_timer_t *)
             item.kind = static_cast<cyberdeck_ble::device_kind>(event.scan_result.kind);
             item.connectable = event.scan_result.connectable;
             item.paired = event.scan_result.paired;
-            (void)s_ble_scan_devices.add(item);
+            if (!background_event) (void)s_ble_scan_devices.add(item);
+            /* Background scan reports never enter the interactive list: they
+             * only feed the spontaneous-loss reconnect scheduler. */
+            ble_background_on_scan_result(event);
             break;
         }
         case BLE_MGR_EVT_SCAN_FINISHED: {
+            if (background_event) {
+                ble_background_on_scan_finished(event);
+                s_ble_scan_devices.clear();
+                break;
+            }
             const cyberdeck_ble::notice outcome =
                 static_cast<cyberdeck_ble::notice>(event.scan_finished.outcome);
             if (outcome == cyberdeck_ble::notice::failed) {
@@ -302,11 +570,20 @@ void process_ble_events(lv_timer_t *)
             s_ble_model.pairing_finished(event.token,
                 static_cast<cyberdeck_ble::pair_outcome>(event.pair_finished.outcome));
             break;
-        case BLE_MGR_EVT_CONNECTED: s_ble_model.connection_finished(event.token, true); break;
-        case BLE_MGR_EVT_DISCONNECTED: s_ble_model.connection_finished(event.token, false); break;
+        case BLE_MGR_EVT_CONNECTED:
+            s_ble_model.connection_finished(event.token, true);
+            break;
+        case BLE_MGR_EVT_DISCONNECTED:
+            s_ble_model.connection_finished(event.token, false);
+            if (event.connection.automatic) ble_background_advance_target();
+            break;
         default: break;
         }
     }
+    /* When idle with an armed cycle (first boot or spontaneous loss with no
+     * pending event), keep the background observer progressing without
+     * touching the visible screen or the terminal. */
+    ble_background_maybe_reconnect();
     if (s_ble_model.current_screen() != cyberdeck_ble::screen::auth) zero_string(s_ble_auth_input);
     refresh_ble_status();
     if (changed) {
@@ -377,12 +654,9 @@ void destroy_ui_resource_handles()
     }
 }
 
-void zero_string(std::string &s);
-void append_line(const std::string &line);
 void hidden(lv_obj_t *obj, bool value);
 void sync_editor();
 void sync_line();
-void render_terminal();
 void execute_line(bool line_already_sent);
 void local_key(uint32_t key);
 
@@ -549,9 +823,6 @@ void sync_line()
     s_line = s_editor.line();
     s_cursor = s_editor.cursor();
 }
-
-void render_terminal();
-void append_line(const std::string &line);
 
 struct RenderGuard {
     RenderGuard() { s_rendering = true; }
@@ -923,8 +1194,6 @@ void on_wifi_state(const wifi_status_t *status, bool enabled, void *) {
      * context above. */
     (void)xQueueOverwrite(s_wifi_state_queue, &update);
 }
-
-void render_terminal();
 
 void on_wifi_scan_done(const wifi_ap_record_t *aps, int count, void *ctx) {
     wifi_scan_context *scan = static_cast<wifi_scan_context *>(ctx);
@@ -1318,12 +1587,34 @@ void execute_line(bool line_already_sent = false) {
         ble_submit_actions();
         append_line("Bluetooth search started.\n");
         break;
-    case CYBERDECK_CMD_BLUETOOTH_PAIRED:
+    case CYBERDECK_CMD_BLUETOOTH_PAIRED: {
         s_ble_last_notice.clear();
         s_ble_transient_committed = false;
+        /* Explicit action: refresh the restored bond list and keep the
+         * background cycle unblocked, so Enter on a listed bond reconnects
+         * (the same path re-arms inside the model on Enter). */
+        ble_bond_snapshot_t paired_snapshots[16]{};
+        const size_t paired_count = ble_bonds_copy(paired_snapshots, 16);
+        if (paired_count != 0) {
+            std::vector<cyberdeck_ble::device> paired;
+            paired.reserve(paired_count);
+            for (size_t i = 0; i < paired_count; ++i) {
+                cyberdeck_ble::device item;
+                item.address = paired_snapshots[i].address;
+                item.addr_type = static_cast<cyberdeck_ble::address_type>(paired_snapshots[i].addr_type);
+                item.name = paired_snapshots[i].name;
+                item.rssi = cyberdeck_ble::k_min_rssi;
+                item.kind = static_cast<cyberdeck_ble::device_kind>(paired_snapshots[i].kind);
+                item.paired = true;
+                item.connectable = true;
+                paired.push_back(item);
+            }
+            s_ble_model.set_paired_devices(paired);
+        }
         s_ble_model.begin_paired();
         sync_ble_transient_block();
         break;
+    }
     case CYBERDECK_CMD_WIFI_SAVED: {
         s_wifi_model.begin_saved();
         wifi_saved_list_t list;
@@ -1380,6 +1671,21 @@ void move_history(int direction) {
 }
 
 void local_key(uint32_t key) {
+    /* A successful BLE connection releases model ownership to idle while
+     * ble_mgr keeps the link.  Escape there is the explicit manual
+     * disconnect: route it to the model so the action reaches the manager
+     * and blocks the background cycle, then submit it like owned keys.
+     * Other modals (Wi-Fi/SSH/password) keep their own Escape handling. */
+    if (key == LV_KEY_ESC && !s_ble_model.owns_input() && s_ble_model.is_connected() &&
+        s_wifi_ui_state == wifi_ui_state_t::IDLE &&
+        ssh_client_get_state() != SSH_CLIENT_NEED_PASSWORD &&
+        ssh_client_get_state() != SSH_CLIENT_CONNECTED) {
+        s_ble_model.press(cyberdeck_ble::key::escape);
+        ble_submit_actions();
+        sync_ble_transient_block();
+        render_terminal();
+        return;
+    }
     if (s_ble_model.owns_input()) {
         if (s_ble_model.current_screen() == cyberdeck_ble::screen::auth) {
             if (key == LV_KEY_BACKSPACE || key == LV_KEY_DEL) {

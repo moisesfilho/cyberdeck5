@@ -170,6 +170,29 @@ typedef struct ble_mgr_event_s {
 } ble_mgr_event_t;
 
 /**
+ * Bounded snapshot of a persisted bond for background restore.
+ * Carries identity only (address + type + display hint); never key material.
+ * Read-only snapshot API: copies identity bytes into the caller buffer and
+ * never exposes the store or the stack.  Explicitly listed in the UI public
+ * bounded API allow-list next to the command queue and the observer.
+ */
+typedef struct {
+    char address[18];      /* "AA:BB:CC:DD:EE:FF" + NUL */
+    uint8_t addr_type;
+    char name[33];         /* sanitized, bounded, NUL-terminated; may be "" */
+    int kind;              /* cyberdeck_ble::device_kind as int */
+    bool last_connected;
+} ble_bond_snapshot_t;
+
+/**
+ * Copy persisted bonds (NVS `bonds_v2`) into the caller buffer.
+ * Thread-safe, non-blocking (short mutex wait), fail-closed on contention.
+ * Returns the number of records copied (0 when none or unavailable).
+ * The buffer must hold at least `capacity` entries; excess bonds are truncated.
+ */
+size_t ble_bonds_copy(ble_bond_snapshot_t *out, size_t capacity);
+
+/**
  * Register an observer for BLE events.
  * The observer receives a copy of each event published by the BLE manager.
  * Returns a handle that must be passed to ble_mgr_unregister_observer().

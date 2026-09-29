@@ -45,4 +45,6 @@ tests/host/**/test_*
 !tests/host/keymap/test_ble_review_regressions.py
 !tests/host/keymap/test_ble_runtime_regressions.py
 !tests/host/keymap/test_ble_ui_render_contract.py
+!tests/host/keymap/test_ble_background_contract.py
+!tests/host/keymap/test_ble_bond_name_contract.py
 !tests/host/keymap/test_ble_hid_contract.py

@@ -41,19 +41,44 @@ def main() -> int:
     ui = UI.read_text(encoding="utf-8")
 
     task = function_body(mgr, "static void ble_mgr_task(")
+    start_helper = function_body(mgr, "static void start_scan_command(")
+    sync = function_body(mgr, "ble_hs_cfg.sync_cb = []()")
     start = task[task.index("case BLE_MGR_CMD_SCAN_START:"):]
     start = start[:start.index("case BLE_MGR_CMD_SCAN_CANCEL:")]
     cancel = "(void)ble_gap_disc_cancel();"
-    assert start.count(cancel) == 1, "scan preemption must have one cancel site"
-    cancel_at = start.index(cancel)
+    assert start.count("ble_gap_disc_cancel()") == 1, "scan preemption must have one cancel site"
+    cancel_at = start.index("ble_gap_disc_cancel()")
     active_guard = start.rfind("if (ble_gap_disc_active())", 0, cancel_at)
     assert active_guard >= 0, "preemption cancel must be guarded by active scan state"
-    assert start[active_guard:cancel_at].count("{") == 1
+    assert "s_scan_cancel_pending = true" in start
+    assert start.index("if (ble_gap_disc_active())") < start.index("start_scan_command(cmd)")
+    assert "s_scan_cancel_pending ||" in start_helper
+    assert "s_scan_next_generation_ready = false" in start_helper
+    assert "ble_hs_id_infer_auto(0, &s_own_addr_type)" in sync
+    assert sync.index("ble_hs_id_infer_auto") < sync.index("s_host_synced = true")
+    assert "ble_gap_" not in sync
+
+    # Every GAP command is stopped by the central radio-ready gate. This
+    # contract intentionally does not require a duplicate gate in the scan
+    # helper, which only owns discovery start and preemption ordering.
+    gate = task.index("if (!s_host_synced && cmd.kind != BLE_MGR_CMD_STOP)")
+    switch = task.index("switch (cmd.kind)", gate)
+    assert task.index("reject_pre_sync_command(cmd);", gate, switch) < switch
+    assert task.index("continue;", gate, switch) < switch
+    for command in (
+        "SCAN_START", "SCAN_CANCEL", "PAIR", "PASSKEY_REPLY",
+        "PAIR_CANCEL", "CONNECT", "DISCONNECT", "RECONNECT",
+    ):
+        assert f"case BLE_MGR_CMD_{command}:" in task[switch:], command
+    assert task.count("s_scan_start_pending && s_scan_next_generation_ready") == 2
 
     gap_complete = function_body(mgr, "case BLE_GAP_EVENT_DISC_COMPLETE:")
     assert "BLE GAP discovery complete" in gap_complete
     assert "event->disc_complete.reason" in gap_complete
-    assert "handle_scan_finished(event->disc_complete.reason)" in gap_complete
+    assert "handle_scan_finished(token, event->disc_complete.reason)" in gap_complete
+    assert gap_complete.index("handle_scan_finished") < gap_complete.index(
+        "s_scan_next_generation_ready = true"
+    )
 
     finish = function_body(mgr, "static void handle_scan_finished(")
     first_publish = finish.index("s_dispatch.publish_scan_finished(token, outcome)")
@@ -61,6 +86,12 @@ def main() -> int:
     retry = finish.index("s_dispatch.publish_scan_finished(token, outcome)", drain)
     assert first_publish < drain < retry, "terminal event must retry after dispatch recovery"
     assert "s_dispatch.pending()" in finish
+
+    cancel_case = task[task.index("case BLE_MGR_CMD_SCAN_CANCEL:"):]
+    cancel_case = cancel_case[:cancel_case.index("case BLE_MGR_CMD_PAIR:")]
+    assert "const bool scan_active = ble_gap_disc_active()" in cancel_case
+    assert "scan_active ? ble_gap_disc_cancel() : BLE_HS_EALREADY" in cancel_case
+    assert "if (rc == BLE_HS_EALREADY && !scan_active)" in cancel_case
 
     # Only fixed-width counters/identifiers may occur in scan terminal logs;
     # no advertising bytes, names, SSIDs, passkeys, or key material.

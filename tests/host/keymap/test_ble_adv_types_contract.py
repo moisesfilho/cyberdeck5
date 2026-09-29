@@ -41,11 +41,14 @@ def function_body(source: str, signature: str) -> str:
     raise AssertionError(f"unterminated function {signature!r}")
 
 
-def scan_case_body(source: str) -> str:
-    body = function_body(source, "static void ble_mgr_task(")
-    marker = body.index("case BLE_MGR_CMD_SCAN_START:")
-    end = body.index("case BLE_MGR_CMD_SCAN_CANCEL:", marker)
-    return body[marker:end]
+def scan_command_body(source: str) -> str:
+    """Return the implementation that owns the GAP discovery start."""
+    return function_body(source, "static void start_scan_command(")
+
+
+def manager_task_body(source: str) -> str:
+    """Return the central command dispatcher, not a GAP-specific helper."""
+    return function_body(source, "static void ble_mgr_task(")
 
 
 def log_lines(source: str):
@@ -56,26 +59,61 @@ def log_lines(source: str):
 def main() -> int:
     source = BLE_MGR.read_text(encoding="utf-8")
     callback = function_body(source, "static int ble_gap_event_cb(")
-    discovery = callback[callback.index("switch (event->disc.event_type)"):]
-    switch_end = discovery.index("        }\n        break;")
-    report_switch = discovery[:switch_end]
+    # GAP callbacks only copy bounded snapshots.  They must not contend for
+    # the dispatcher mutex or call GAP/dispatch code from the NimBLE task.
+    assert "s_dispatch_mutex" not in callback
+    assert "s_dispatch." not in callback
+    assert "ble_gap_" not in callback
+    assert "gap_event_snapshot snapshot = {}" in callback
+    assert "snapshot.event = *event" in callback
+    assert "s_gap_terminal_queue" in callback
+    assert "xQueueOverwrite(queue, &snapshot)" in callback
+    assert "xQueueSend(queue, &snapshot, 0)" in callback
+
+    # Reports and the terminal discovery snapshot are processed by the real
+    # manager-side queues, with DISC_COMPLETE reserved in its own slot.
+    report = function_body(source, "static void process_gap_event(")
+    report_switch = report[report.index("switch (event->disc.event_type)"):]
     for adv_type in EXPECTED_TYPES:
         assert report_switch.count(f"case {adv_type}:") == 1, adv_type
     assert report_switch.count("scan_report_adv(&event->disc);") == len(EXPECTED_TYPES)
     assert "default:" in report_switch
     assert "Ignore non-advertising GAP reports" in report_switch
+    queues = source[source.index("#define BLE_MGR_GAP_EVENT_QUEUE_SIZE"):source.index("struct gap_event_snapshot")]
+    assert "BLE_MGR_GAP_EVENT_QUEUE_SIZE 16" in queues
+    assert "BLE_MGR_GAP_TERMINAL_QUEUE_SIZE 1" in queues
+    gap_pump = function_body(source, "static void process_gap_events(")
+    assert gap_pump.index("s_gap_event_queue") < gap_pump.index("s_gap_terminal_queue")
+    assert "DISC_COMPLETE remains the terminal event" in gap_pump
 
-    # Regression: infer the local address type in the scan command itself and
-    # pass that result to GAP.  A fixed PUBLIC address is not portable across
-    # NimBLE configurations and must not become the scan argument.
-    scan = scan_case_body(source)
-    infer = scan.index("ble_hs_id_infer_auto(0, &own_addr_type)")
+    # Regression: infer the local address type during host sync and retain it
+    # for scan. A fixed PUBLIC address is not portable across NimBLE
+    # configurations and must not become the scan argument.
+    sync = function_body(source, "ble_hs_cfg.sync_cb = []()")
+    infer = sync.index("ble_hs_id_infer_auto(0, &s_own_addr_type)")
+    assert infer < sync.index("s_host_synced = true")
+    assert "ble_gap_" not in sync
+    scan = scan_command_body(source)
     gap_disc = scan.index("ble_gap_disc(")
-    assert infer < gap_disc, "address type must be inferred before scan starts"
+    assert "const uint8_t own_addr_type = s_own_addr_type" in scan
     assert "ble_gap_disc(own_addr_type," in scan
     assert "ble_gap_disc(BLE_OWN_ADDR_PUBLIC," not in scan
-    assert "if (rc != 0)" in scan[infer:gap_disc]
-    assert "handle_scan_finished(rc)" in scan[infer:gap_disc]
+
+    # The radio-ready gate belongs to the central command dispatcher. Keep
+    # this contract independent from the scan-specific helper.
+    task = manager_task_body(source)
+    gate = task.index("if (!s_host_synced && cmd.kind != BLE_MGR_CMD_STOP)")
+    switch = task.index("switch (cmd.kind)", gate)
+    assert task.index("reject_pre_sync_command(cmd);", gate, switch) < switch
+    assert task.index("continue;", gate, switch) < switch
+    for command in (
+        "SCAN_START", "SCAN_CANCEL", "PAIR", "PASSKEY_REPLY",
+        "PAIR_CANCEL", "CONNECT", "DISCONNECT", "RECONNECT",
+    ):
+        assert f"case BLE_MGR_CMD_{command}:" in task[switch:], command
+    assert "xSemaphoreTake(s_dispatch_mutex" not in task
+    assert "xSemaphoreGive(s_dispatch_mutex)" not in task
+    assert "ble_gap_disc_active()" in task
 
     # The scan diagnostic is a fixed, bounded summary: counters and status
     # only.  It must not print advertisement buffers, names, addresses, or

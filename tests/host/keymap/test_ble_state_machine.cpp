@@ -1266,6 +1266,88 @@ void test_status_lines_never_leak_and_are_bounded()
     CHECK(pairing.status_line().find('\x1b') == std::string::npos);
 }
 
+void test_background_bond_reconnect_cycles_are_bounded_and_explicit()
+{
+    const address_type type = address_type::random_resolvable;
+    const device bond = make_device("AA:BB:CC:DD:EE:42", "Keyboard", -45,
+                                    device_kind::keyboard, true, type);
+    state_machine machine;
+    machine.set_paired_devices({bond});
+
+    /* Boot restoration is silent and preserves the complete bond identity. */
+    machine.arm_background_reconnect(bond);
+    CHECK(machine.current_screen() == screen::idle);
+    CHECK(machine.current_notice() == notice::none);
+    CHECK(machine.take_actions().empty());
+    CHECK(machine.background_reconnect_armed());
+    CHECK(machine.has_background_target());
+    CHECK_STR(machine.background_target().address, bond.address);
+    CHECK(machine.background_target().addr_type == type);
+
+    /* A spontaneous loss keeps the observer armed; no synthetic disconnect. */
+    CHECK(machine.consume_background_attempt());
+    machine.schedule_reconnect(bond);
+    const std::uint64_t first_token = machine.active_connection_token();
+    CHECK(machine.take_actions().size() == 1);
+    machine.connection_finished(first_token, true);
+    CHECK(machine.is_connected());
+    CHECK(machine.background_reconnect_armed());
+    machine.connection_finished(first_token, false);
+    CHECK(!machine.is_connected());
+    CHECK(machine.background_reconnect_armed());
+    CHECK(machine.take_actions().empty());
+
+    /* Exactly three attempts are available in one announcement cycle. */
+    machine.reset_background_cycle();
+    for (std::uint32_t attempt = 0;
+         attempt < cyberdeck_ble::k_max_reconnect_attempts; ++attempt) {
+        CHECK(machine.consume_background_attempt());
+    }
+    CHECK(!machine.consume_background_attempt());
+    CHECK(!machine.background_reconnect_armed());
+
+    /* A fresh announcement from the same peer opens a new cycle without
+     * re-arming the bond or changing its address type. */
+    machine.reset_background_cycle();
+    CHECK(machine.background_reconnect_armed());
+    CHECK(machine.consume_background_attempt());
+    machine.schedule_reconnect(bond);
+    const std::uint64_t second_token = machine.active_connection_token();
+    CHECK(second_token != first_token);
+    const std::vector<action> second_attempt = machine.take_actions();
+    CHECK_EQ(count_actions(second_attempt, action_kind::reconnect), std::size_t(1));
+    if (!second_attempt.empty()) {
+        CHECK(second_attempt[0].token == second_token);
+        CHECK(second_attempt[0].addr_type == type);
+        CHECK_STR(second_attempt[0].address, bond.address);
+    }
+    machine.connection_finished(first_token, false);
+    CHECK(machine.current_screen() == screen::connecting);
+    CHECK(machine.active_connection_token() == second_token);
+    machine.connection_finished(second_token, false);
+
+    /* Manual disconnect blocks background work until explicit Enter. */
+    machine.begin_paired();
+    machine.press(key::enter);
+    machine.take_actions();
+    const std::uint64_t manual_token = machine.active_connection_token();
+    machine.connection_finished(manual_token, true);
+    machine.press(key::escape);
+    const std::vector<action> disconnected = machine.take_actions();
+    CHECK_EQ(count_actions(disconnected, action_kind::disconnect), std::size_t(1));
+    CHECK(!machine.background_reconnect_armed());
+    CHECK(!machine.consume_background_attempt());
+    /* A matching fresh announcement cannot clear a manual block. */
+    machine.reset_background_cycle();
+    CHECK(!machine.background_reconnect_armed());
+    CHECK(!machine.consume_background_attempt());
+
+    machine.begin_paired();
+    machine.press(key::enter);
+    CHECK(machine.background_reconnect_armed());
+    CHECK_EQ(count_actions(machine.take_actions(), action_kind::connect), std::size_t(1));
+}
+
 } // namespace
 
 int main()
@@ -1299,6 +1381,7 @@ int main()
     test_automatic_reconnection_gives_up_after_the_cap();
     test_scan_and_reconnect_do_not_corrupt_each_other();
     test_status_lines_never_leak_and_are_bounded();
+    test_background_bond_reconnect_cycles_are_bounded_and_explicit();
 
     std::printf("ble state machine contract: %d checks, %d failures\n",
                 checks, failures);

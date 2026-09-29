@@ -48,7 +48,14 @@ def main() -> int:
     for arguments in connects:
         assert re.match(r"\s*s_own_addr_type\s*,", arguments), arguments
         assert "BLE_OWN_ADDR_PUBLIC" not in arguments, arguments
-    assert task.count("ble_hs_id_infer_auto") >= 1
+    # The safe implementation infers the local type during host sync and
+    # reuses that state for scan and all three connection paths.
+    sync = function_body(mgr, "ble_hs_cfg.sync_cb = []()")
+    assert "ble_hs_id_infer_auto(0, &s_own_addr_type)" in sync
+    assert sync.index("ble_hs_id_infer_auto") < sync.index("s_host_synced = true")
+    assert "ble_gap_" not in sync
+    scan_start = function_body(mgr, "static void start_scan_command(")
+    assert "const uint8_t own_addr_type = s_own_addr_type" in scan_start
 
     # A full UI queue may lose a visual scan result, but never its terminal
     # outcome.  The adapter also drains after publishing the terminal event.
