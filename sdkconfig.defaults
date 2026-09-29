@@ -70,3 +70,10 @@ CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_TRANSPORT_UART=n
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
+# Persist the NimBLE bonding keys (LTK/IRK) in NVS.  Without this the host
+# stack keeps the keys only in RAM, so a bond created in a previous session
+# survives in the application store but can never resume encryption: every
+# ble_gap_connect to an already paired peer times out and the device looks
+# like it is trying to pair again.  Must match the real teardown of the
+# keyboard: the peer stores the same keys at pairing time.
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
