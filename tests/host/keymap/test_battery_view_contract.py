@@ -36,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[3]
 VIEW_SRC = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_battery_view.cpp"
 VIEW_HDR = ROOT / "components/cyberdeck/include/platform/display/cyberdeck_battery_view.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+HEADER_VIEW = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp"
 POLICY_HDR = ROOT / "components/cyberdeck/include/platform/sensors/cyberdeck_battery_protection.h"
 ADAPTER_HDR = ROOT / "components/cyberdeck/include/platform/sensors/battery_protection.h"
 CMAKE = ROOT / "components/cyberdeck/CMakeLists.txt"
@@ -140,6 +141,7 @@ def check_ui_delegates_to_the_view(ui: str) -> None:
             "the UI must include the pure battery view header")
 
     refresh = function_body(ui, "refresh_battery_status")
+    render = function_body(ui, "void view::update_battery")
 
     # The UI consumes the adapter's pure policy snapshot, not the shell-facing
     # charge_class projection, and never the reader itself.
@@ -172,28 +174,28 @@ def check_ui_delegates_to_the_view(ui: str) -> None:
 
     # The result is applied as-is: hidden when not visible, empty percentage
     # when the view withholds it.
-    require(re.search(r"!\s*\w+\.visible", refresh) is not None,
+    require(re.search(r"!\s*\w+\.visible", render) is not None,
             "the UI must hide the group when the view is not visible")
     hidden_return = re.search(
-        r"!\s*\w+\.visible\s*\)\s*\{[^}]*LV_OBJ_FLAG_HIDDEN", refresh, re.DOTALL)
+        r"!\s*\w+\.visible\s*\)\s*\{[^}]*set_hidden", render, re.DOTALL)
     require(hidden_return is not None,
             "a not-visible presentation must use the explicit LVGL hidden state")
     require(re.search(
-        r"lv_label_set_text\s*\([^;]*?\.show_percentage\s*\?", refresh) is not None,
+        r"lv_label_set_text\s*\([^;]*?\.show_percentage\s*\?", render) is not None,
         "the percentage label must be gated by the view's show_percentage")
     require(re.search(
-        r"\?\s*percentage_text\s*:\s*\"\"", refresh) is not None,
+        r"\?\s*percentage\s*:\s*\"\"", render) is not None,
         "an absent source must render an empty percentage label")
-    require(re.search(r"lv_obj_clear_flag\s*\([^;]*LV_OBJ_FLAG_HIDDEN", refresh)
+    require(re.search(r"lv_obj_set_hidden\s*\([^;]*false", render)
             is not None,
             "a visible presentation must clear the hidden state")
 
     # Exactly one semantic glyph label and one numeric percentage label, and no
     # textual state word.
     for state_word in ("charging", "discharging", "neutral", "unavailable", "absent"):
-        require(f'"{state_word}"' not in refresh and f"'{state_word}'" not in refresh,
+        require(f'"{state_word}"' not in render and f"'{state_word}'" not in render,
                 f"the UI must not render the textual state {state_word!r}")
-    require(re.search(r"snprintf\s*\([^;]*%d%%", refresh) is not None,
+    require(re.search(r"snprintf\s*\([^;]*%d%%", render) is not None,
             "the UI must format the numeric percentage supplied by the view")
 
 
@@ -223,7 +225,7 @@ def check_glyph_table(ui: str) -> None:
 
     # The glyph table is the single source of pictograms: the refresh path may
     # not hardcode one of its own.
-    refresh = function_body(ui, "refresh_battery_status")
+    refresh = function_body(ui, "void view::update_battery")
     require(not re.search(r"\bLV_SYMBOL_[A-Z0-9_]+\b", refresh),
             "refresh_battery_status must use the glyph table, not a literal symbol")
     require("battery_indicator_symbol" in refresh,
@@ -266,6 +268,7 @@ def main() -> int:
     view_src = strip_comments(VIEW_SRC.read_text(encoding="utf-8"))
     view_hdr = strip_comments(VIEW_HDR.read_text(encoding="utf-8"))
     ui = strip_comments(UI.read_text(encoding="utf-8"))
+    ui += "\n" + strip_comments(HEADER_VIEW.read_text(encoding="utf-8"))
     cmake = strip_comments(CMAKE.read_text(encoding="utf-8"))
     makefile = strip_comments(MAKEFILE_PATH.read_text(encoding="utf-8"))
     codemap = strip_comments(CODEMAP.read_text(encoding="utf-8"))

@@ -26,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+HEADER_VIEW = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp"
 WIFI_ICON = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp"
 WIFI_ICON_HDR = ROOT / "components/cyberdeck/include/platform/display/cyberdeck_wifi_icon.h"
 APP = ROOT / "main/app_main.cpp"
@@ -188,13 +189,15 @@ def geometry_expressions(expression: str, source: str) -> list[str]:
 
 def main() -> int:
     ui = strip_comments(UI.read_text(encoding="utf-8"))
+    header_view = strip_comments(HEADER_VIEW.read_text(encoding="utf-8"))
+    ui += "\n" + header_view
     wifi_icon = strip_comments(WIFI_ICON.read_text(encoding="utf-8"))
     wifi_icon_header = strip_comments(WIFI_ICON_HDR.read_text(encoding="utf-8"))
     app = strip_comments(APP.read_text(encoding="utf-8"))
     makefile = strip_comments(MAKEFILE_PATH.read_text(encoding="utf-8"))
     codemap = strip_comments(CODEMAP.read_text(encoding="utf-8"))
 
-    init = function_body(ui, "cyberdeck_ui_init")
+    init = function_body(ui, "cyberdeck_ui_init") + "\n" + header_view
 
     # The header must remain a direct three-cell row, with the approved ratio.
     require(re.search(r"LV_FLEX_FLOW_ROW", init), "header must use a direct row layout")
@@ -202,16 +205,15 @@ def main() -> int:
     require(re.search(r"LV_PCT\s*\(\s*40\s*\)", init), "header must define the 40% cell")
     require(len(re.findall(r"LV_PCT\s*\(\s*30\s*\)", init)) == 2,
             "header must define two direct 30% cells")
-    header_start = init.find("header")
-    header_end = init.find("s_terminal", header_start)
-    header_block = init[header_start:header_end if header_end >= 0 else len(init)]
+    header_start = header_view.find("lv_obj_t *header")
+    header_block = header_view[header_start:]
     widths = [int(value) for value in re.findall(r"LV_PCT\s*\(\s*(\d+)\s*\)", header_block)]
     require(widths[:3] == [30, 40, 30],
             "header direct grid must be exactly 30/40/30 in order")
 
     # Wi-Fi must precede the battery in source/child order.
-    wifi = init.find("cyberdeck_wifi_icon_create")
-    battery = init.find("battery")
+    wifi = header_view.find("cyberdeck_wifi_icon_create")
+    battery = header_view.find("s_battery_status")
     require(wifi >= 0, "header must retain the Wi-Fi icon")
     require(battery >= 0, "header must integrate the battery indicator")
     require(wifi < battery, "Wi-Fi must be created before the battery in the header")
@@ -225,7 +227,7 @@ def main() -> int:
                 f"Wi-Fi header width must use the public {token} constant")
     require(not re.search(r"\bHEADER_WIFI_CELL_WIDTH\s*=\s*216\b", ui),
             "header must not retain HEADER_WIFI_CELL_WIDTH=216")
-    wifi_width_calls = list(calls_for_object(init, "lv_obj_set_width", "s_wifi_status"))
+    wifi_width_calls = list(calls_for_object(header_view, "lv_obj_set_width", "s_wifi_status"))
     require(wifi_width_calls, "Wi-Fi child must have an explicit compact width")
     for width_call in wifi_width_calls:
         width_expression = width_call[1] if len(width_call) > 1 else ""
@@ -250,7 +252,11 @@ def main() -> int:
     # flex growth implicitly.
     for object_name, description in (("s_wifi_status", "Wi-Fi"),
                                      ("s_battery_status", "battery")):
-        grow_calls = list(calls_for_object(init, "lv_obj_set_flex_grow", object_name))
+        grow_calls = list(calls_for_object(header_view, "lv_obj_set_flex_grow", object_name))
+        if not grow_calls and object_name == "s_wifi_status":
+            grow_calls = [[object_name, "0"]] if re.search(
+                r"lv_obj_set_flex_grow\s*\(\s*s_wifi_status\s*,\s*0\s*\)",
+                header_view) else []
         require(grow_calls, f"{description} must explicitly set flex_grow")
         for grow_call in grow_calls:
             require(len(grow_call) >= 2 and is_zero_literal(grow_call[1]),
@@ -258,7 +264,7 @@ def main() -> int:
 
     # The right cell owns the compact cluster and aligns it at its end; the
     # battery remains intrinsic rather than filling the cell.
-    align_calls = list(calls_for_object(init, "lv_obj_set_flex_align", "header_right"))
+    align_calls = list(calls_for_object(header_view, "lv_obj_set_flex_align", "right"))
     require(len(align_calls) == 1,
             "header_right must have one explicit flex alignment")
     if align_calls:
@@ -270,8 +276,8 @@ def main() -> int:
                 align_args[3] == "LV_FLEX_ALIGN_CENTER",
                 "header_right must keep centered cross-axis alignment")
 
-    battery_width_calls = list(calls_for_object(init, "lv_obj_set_width", "s_battery_status"))
-    battery_size_calls = list(calls_for_object(init, "lv_obj_set_size", "s_battery_status"))
+    battery_width_calls = list(calls_for_object(header_view, "lv_obj_set_width", "s_battery_status"))
+    battery_size_calls = list(calls_for_object(header_view, "lv_obj_set_size", "s_battery_status"))
     battery_width_expressions = [call[1] for call in battery_width_calls]
     battery_width_expressions += [call[1] for call in battery_size_calls]
     require(battery_width_expressions,
@@ -291,13 +297,13 @@ def main() -> int:
             ("lv_obj_set_style_pad_column", "header_right", "header_right gap"),
             ("lv_obj_set_style_pad_row", "header_right", "header_right row gap"),
             ("lv_obj_set_style_pad_column", "s_battery_status", "battery column gap")):
-        style_calls = list(calls_for_object(init, api, object_name))
+        style_calls = list(calls_for_object(header_view, api, "right" if object_name == "header_right" else object_name))
         require(style_calls, f"{description} must be explicit")
         for style_call in style_calls:
             small_style_value(style_call, description)
 
     battery_left_pad_calls = list(calls_for_object(
-        init, "lv_obj_set_style_pad_left", "s_battery_status"))
+        header_view, "lv_obj_set_style_pad_left", "s_battery_status"))
     require(battery_left_pad_calls, "battery left pad must be explicit")
     for style_call in battery_left_pad_calls:
         exact_style_value(style_call, "battery left pad", 11)
@@ -305,10 +311,10 @@ def main() -> int:
     # Layout is updated before the icon's explicit width-based repositioning;
     # state and LV_EVENT_SIZE_CHANGED callbacks remain part of the integration.
     update_header = re.search(
-        r"lv_obj_update_layout\s*\(\s*header\s*\)", init)
+        r"lv_obj_update_layout\s*\(\s*header\s*\)", header_view)
     update_right = re.search(
-        r"lv_obj_update_layout\s*\(\s*header_right\s*\)", init)
-    icon_update = re.search(r"cyberdeck_wifi_icon_update_layout", init)
+        r"lv_obj_update_layout\s*\(\s*right\s*\)", header_view)
+    icon_update = re.search(r"cyberdeck_wifi_icon_update_layout", header_view)
     require(update_header is not None and update_right is not None and
             icon_update is not None,
             "header/right-cell layout and Wi-Fi update_layout must be retained")
@@ -316,7 +322,7 @@ def main() -> int:
             "Wi-Fi update_layout must run after both parent layout updates")
     require(re.search(
         r"cyberdeck_wifi_icon_update_layout\s*\(\s*s_wifi_status\s*,\s*"
-        r"lv_obj_get_width\s*\(\s*s_wifi_status\s*\)\s*\)", init, re.DOTALL) is not None,
+        r"lv_obj_get_width\s*\(\s*s_wifi_status\s*\)\s*\)", header_view, re.DOTALL) is not None,
         "Wi-Fi resize must use the actual child width")
     require(re.search(r"wifi_mgr_set_state_callback\s*\(\s*on_wifi_state\s*,",
                       init) is not None,
@@ -333,6 +339,7 @@ def main() -> int:
     # every level variant stays forbidden and nothing may select a glyph from
     # the percentage.
     refresh = function_body(ui, "refresh_battery_status")
+    battery_view = function_body(header_view, "void view::update_battery")
     glyph_table = function_body(ui, "battery_indicator_symbol")
     require("battery_level_symbol" not in ui,
             "battery UI must not select a glyph from percentage level")
@@ -341,19 +348,19 @@ def main() -> int:
             f"no battery level pictogram may be rendered, found {sorted(set(level_glyphs))}")
     require(not re.search(r"percentage[^;]*\?\s*LV_SYMBOL_|"
                           r"LV_SYMBOL_[A-Z0-9_]+\s*\?[^;]*percentage",
-                          glyph_table + refresh, re.DOTALL),
+                           glyph_table + battery_view, re.DOTALL),
             "the battery glyph must never be chosen by the percentage")
     require("cyberdeck_battery_view::power_glyph" in glyph_table,
             "the glyph table must switch on the view's semantic glyph")
     require(re.search(r"lv_label_set_text\s*\(\s*s_battery_symbol\s*,\s*"
-                      r"battery_indicator_symbol\s*\(", refresh) is not None,
-            "battery refresh must apply the shared glyph table")
-    require(not re.search(r"\bLV_SYMBOL_[A-Z0-9_]+\b", refresh),
+                       r"battery_indicator_symbol\s*\(", battery_view) is not None,
+            "battery view must apply the shared glyph table")
+    require(not re.search(r"\bLV_SYMBOL_[A-Z0-9_]+\b", battery_view),
             "battery refresh must not hardcode a pictogram")
 
     battery_label_updates = re.findall(
         r"lv_label_set_text(?:_fmt)?\s*\(\s*(s_battery_[A-Za-z0-9_]+)",
-        refresh)
+        battery_view)
     require(len(battery_label_updates) >= 2,
             "battery refresh must update one icon label and one percentage label")
     icon_updates = [handle for handle in battery_label_updates
@@ -368,23 +375,23 @@ def main() -> int:
     # REQ-BAT-UI-003/004: the state -> visible/percentage/glyph rule moved to the
     # pure view, so the LVGL layer must apply it and must not re-implement it.
     # The old `charge_class::` branch selection is therefore forbidden here.
-    require(re.search(r"\bcharge_class::", refresh) is None,
+    require(re.search(r"\bcharge_class::", battery_view) is None,
             "battery UI must not classify the state itself (charge_class::)")
     for enum_token in ("battery_state::", "charge_signal::", "power_glyph::"):
-        require(enum_token not in refresh,
+        require(enum_token not in battery_view,
                 f"battery UI must not classify the state itself ({enum_token})")
     require("cyberdeck_battery_view::from_snapshot" in refresh and
             re.search(r"cyberdeck_battery_view::resolve\s*\(", refresh) is not None,
             "battery UI must delegate the mapping to the pure view")
-    require(re.search(r"lv_obj_add_flag\s*\([^;]*LV_OBJ_FLAG_HIDDEN", refresh)
+    require(re.search(r"lv_obj_set_hidden\s*\([^;]*true", battery_view)
             is not None,
             "a not-visible presentation must hide the battery group")
-    require(re.search(r"lv_obj_clear_flag\s*\([^;]*LV_OBJ_FLAG_HIDDEN", refresh)
+    require(re.search(r"lv_obj_set_hidden\s*\([^;]*false", battery_view)
             is not None,
             "a visible presentation must clear the hidden state")
-    require(re.search(r"\.show_percentage\s*\?", refresh) is not None,
+    require(re.search(r"\.show_percentage\s*\?", battery_view) is not None,
             "the percentage label must be gated by the view's show_percentage")
-    require(re.search(r"\?\s*percentage_text\s*:\s*\"\"", refresh) is not None,
+    require(re.search(r"\?\s*percentage\s*:\s*\"\"", battery_view) is not None,
             "an absent source must render an empty percentage label")
     require(re.search(r"\bLV_SYMBOL_WIFI\b", ui) or "cyberdeck_wifi_icon" in ui,
             "header must retain the LVGL Wi-Fi indicator")
@@ -398,7 +405,7 @@ def main() -> int:
     require(re.search(r"battery.*percent|percent.*battery|percentage", ui,
                       re.IGNORECASE),
             "header battery path must include percentage state")
-    require(re.search(r"snprintf\s*\([^;]*%|%[0-9]*d", refresh),
+    require(re.search(r"snprintf\s*\([^;]*%|%[0-9]*d", battery_view),
             "header must format a numeric battery percentage")
     for state_word in ("charging", "discharging", "neutral", "unavailable", "absent"):
         require(f'"{state_word}"' not in refresh and
@@ -411,10 +418,10 @@ def main() -> int:
     require(re.search(r"(?:battery|charge)[^;]*(?:hidden|hide)|lv_obj_(?:add_flag|set_hidden)[^;]*battery",
                       ui, re.IGNORECASE | re.DOTALL),
             "battery failure path must hide the battery indicator")
-    require(re.search(r"\.\s*visible", refresh) is not None,
+    require(re.search(r"\.\s*visible", battery_view) is not None,
             "UI must apply the view's visible decision")
     require(re.search(r"value\.available|charge_class::(?:absent|unavailable)",
-                      refresh) is None,
+                       refresh) is None,
             "UI must not derive visibility itself; the pure view owns it")
     require(re.search(r"lv_obj_add_flag\s*\([^;]*LV_OBJ_FLAG_HIDDEN|lv_obj_set_hidden\s*\([^;]*true",
                       ui, re.DOTALL),

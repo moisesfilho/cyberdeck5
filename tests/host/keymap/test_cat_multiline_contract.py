@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+TERMINAL_VIEW = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp"
 WORKER = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp"
 
 
@@ -15,13 +16,14 @@ def require(condition: bool, message: str) -> None:
 
 def main() -> int:
     ui = UI.read_text(encoding="utf-8")
+    terminal_view = TERMINAL_VIEW.read_text(encoding="utf-8")
     worker = WORKER.read_text(encoding="utf-8")
 
     require("constexpr size_t TERMINAL_LIMIT = 12288" in ui,
             "UI terminal limit must be explicit and equal to the cat byte budget")
-    require("lv_textarea_set_one_line(s_terminal, false)" in ui,
+    require("lv_textarea_set_one_line(s_terminal, false)" in terminal_view,
             "cat output must target an explicitly multiline textarea")
-    require("lv_textarea_set_max_length(s_terminal, TERMINAL_LIMIT)" in ui,
+    require("max_length" in terminal_view and "lv_textarea_set_max_length" in terminal_view,
             "textarea must enforce the explicit terminal limit")
 
     # The worker must hand the complete owned string to the callback.  A C

@@ -25,6 +25,16 @@ display, sensores, logging e networking. Os headers espelham essa árvore em
 `include/features/` e `include/platform/`. A lógica pura deve permanecer
 host-testável; `app_main` é o ponto de composição das partes concretas.
 
+### Camada visual
+
+Os widgets LVGL são mantidos separados dos serviços e comandos. `cyberdeck_ui.cpp`
+é a fachada de composição e orquestra callbacks, estado de entrada e serviços;
+`cyberdeck_header_view.cpp` cria e atualiza exclusivamente o header; e
+`cyberdeck_terminal_view.cpp` cria o textarea e o teclado virtual. Esses views
+recebem dados já resolvidos e callbacks de interação, mas não incluem
+`wifi_mgr`, `ssh_client`, `ble_mgr`, shell, NVS, I2C ou persistência. Serviços e
+modelos de produto permanecem em `src/features/`, sem dependência de LVGL.
+
 `managed_components/`, incluindo `m5stack_tab5` e `sock_utils`, permanece fora
 dessa reorganização e continua sendo gerenciado pelo ESP-IDF.
 

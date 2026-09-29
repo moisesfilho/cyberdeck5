@@ -1,6 +1,8 @@
 idf_component_register(
     SRCS
         "src/platform/display/cyberdeck_ui.cpp"
+        "src/platform/display/cyberdeck_header_view.cpp"
+        "src/platform/display/cyberdeck_terminal_view.cpp"
         "src/features/shell/cyberdeck_edit_line.cpp"
         "src/platform/networking/cyberdeck_net_coordinator.cpp"
         "src/features/shell/cyberdeck_terminal_filter.cpp"
