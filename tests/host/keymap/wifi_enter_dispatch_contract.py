@@ -37,13 +37,13 @@ def function_body(source: str, signature: str) -> str:
 
 def main() -> int:
     source = UI.read_text(encoding="utf-8")
-    async_consumer = function_body(source, "void process_keyboard_event_async(")
+    async_consumer = function_body(source, "void on_keyboard_event(")
     terminal_changed = function_body(source, "void terminal_changed(")
     local_key = function_body(source, "void local_key(uint32_t key)")
 
     # Enter must reach the stateful Wi-Fi menu handler instead of executing an
     # empty shell line. Password entry remains handled by execute_line().
-    require("local_key(event->special_key)" in async_consumer,
+    require("local_key(special_key)" in async_consumer,
             "physical special keys must reach local_key")
     require("if (event->special_key == LV_KEY_ENTER) execute_line(false);" not in async_consumer,
             "physical Enter must not bypass local_key")

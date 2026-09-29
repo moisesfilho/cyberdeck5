@@ -443,12 +443,12 @@ imu_sensor_contract: imu_sensor_contract.py ../../../components/cyberdeck/src/pl
 # Structural host-side TDD contract for the physical keyboard/UI seam.  The
 # UI is not linkable on host; this test checks the real source and intentionally
 # remains RED until the bounded lv_async_call handoff is implemented.
-test_keyboard_input_contract: test_keyboard_input_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+test_keyboard_input_contract: test_keyboard_input_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
 	$(PYTHON) test_keyboard_input_contract.py
 
 # Structural host-side contract for every partial cyberdeck_ui_init resource
 # allocation path.  It checks complete cleanup and zeroing of all handles.
-test_ui_resource_contract: test_ui_resource_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+test_ui_resource_contract: test_ui_resource_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
 	$(PYTHON) test_ui_resource_contract.py
 
 test_local_prompt_contract: local_prompt_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
@@ -481,10 +481,10 @@ local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../compo
 test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 	$(PYTHON) test_prompt_behavior.py
 
-test_wifi_dispatch_contract: test_wifi_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+test_wifi_dispatch_contract: test_wifi_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
 	$(PYTHON) test_wifi_dispatch_contract.py
 
-wifi_enter_dispatch_contract: wifi_enter_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+wifi_enter_dispatch_contract: wifi_enter_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
 	$(PYTHON) wifi_enter_dispatch_contract.py
 
 test_wifi_enter_routing_contract: test_wifi_enter_routing_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp

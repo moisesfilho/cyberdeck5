@@ -31,6 +31,12 @@ recebem dados já resolvidos e callbacks de interação, mas não incluem
 `wifi_mgr`, `ssh_client`, `ble_mgr`, shell, NVS, I2C ou persistência. Serviços e
 modelos de produto permanecem em `src/features/`, sem dependência de LVGL.
 
+O handoff do teclado físico fica isolado em `cyberdeck_keyboard_dispatch.cpp`.
+Ele possui a fila bounded de snapshots, o mutex de enqueue/rollback e o
+agendamento por `lv_async_call`. O callback da UI continua interpretando texto
+e teclas especiais; o dispatcher não conhece sessões de shell, SSH, Wi-Fi ou
+BLE.
+
 `managed_components/`, incluindo `m5stack_tab5` e `sock_utils`, permanece fora
 desta reorganização e continua sendo gerenciado pelo ESP-IDF.
 

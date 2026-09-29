@@ -6,6 +6,7 @@
 #include "bsp/esp-bsp.h"
 #include "features/ssh/ssh_client.h"
 #include "platform/input/tab5_keyboard.h"
+#include "platform/input/cyberdeck_keyboard_dispatch.h"
 #include "features/wifi/wifi_mgr.h"
 #include "platform/display/cyberdeck_wifi_indicator.h"
 #include "platform/display/cyberdeck_wifi_icon.h"
@@ -53,7 +54,6 @@ enum class wifi_ui_state_t {
 };
 
 constexpr size_t TERMINAL_LIMIT = 12288;
-constexpr UBaseType_t KEYBOARD_EVENT_QUEUE_CAPACITY = 8;
 constexpr UBaseType_t CAT_WORK_QUEUE_CAPACITY = 8;
 static_assert(CAT_WORK_QUEUE_CAPACITY == 8, "cat handoff capacity is bounded");
 const lv_color_t BLACK = lv_color_hex(0x000000);
@@ -104,8 +104,7 @@ struct wifi_scan_result {
 };
 QueueHandle_t s_wifi_scan_queue = nullptr;
 SemaphoreHandle_t s_wifi_scan_context_mutex = nullptr;
-QueueHandle_t s_keyboard_event_queue = nullptr;
-SemaphoreHandle_t s_keyboard_async_mutex = nullptr;
+cyberdeck_keyboard_dispatch::dispatcher s_keyboard_dispatch;
 QueueHandle_t s_ble_event_queue = nullptr;
 ble_mgr_observer_handle_t s_ble_observer = nullptr;
 cyberdeck_ble::state_machine s_ble_model;
@@ -586,29 +585,6 @@ void process_ble_events(lv_timer_t *)
     }
 }
 
-struct keyboard_event_context {
-    size_t length;
-    uint8_t modifier;
-    uint32_t special_key;
-    char text[];
-};
-
-void discard_keyboard_event_from_queue(keyboard_event_context *event)
-{
-    keyboard_event_context *pending[KEYBOARD_EVENT_QUEUE_CAPACITY]{};
-    UBaseType_t pending_count = 0;
-
-    while (pending_count < KEYBOARD_EVENT_QUEUE_CAPACITY &&
-           xQueueReceive(s_keyboard_event_queue, &pending[pending_count], 0) == pdTRUE) {
-        ++pending_count;
-    }
-
-    for (UBaseType_t i = 0; i < pending_count; ++i) {
-        if (pending[i] == event) continue;
-        (void)xQueueSend(s_keyboard_event_queue, &pending[i], 0);
-    }
-}
-
 void destroy_ui_resource_handles()
 {
     s_wifi_audit.teardown();
@@ -632,14 +608,7 @@ void destroy_ui_resource_handles()
         vQueueDelete(s_wifi_state_queue);
         s_wifi_state_queue = nullptr;
     }
-    if (s_keyboard_async_mutex != nullptr) {
-        vSemaphoreDelete(s_keyboard_async_mutex);
-        s_keyboard_async_mutex = nullptr;
-    }
-    if (s_keyboard_event_queue != nullptr) {
-        vQueueDelete(s_keyboard_event_queue);
-        s_keyboard_event_queue = nullptr;
-    }
+    s_keyboard_dispatch.stop();
 }
 
 void hidden(lv_obj_t *obj, bool value);
@@ -709,49 +678,35 @@ bool is_cat_help_request(const std::string &line)
     return end == std::string::npos || line.find_first_not_of(" \t", end) == std::string::npos;
 }
 
-void process_keyboard_event_async(void *)
+void on_keyboard_event(const char *text, size_t length, uint8_t modifier,
+                       uint32_t special_key, void *)
 {
-    keyboard_event_context *event = nullptr;
-    if (s_keyboard_event_queue == nullptr || s_keyboard_async_mutex == nullptr) {
-        return;
-    }
-
-    /* The producer keeps this mutex across enqueue + lv_async_call().  Do
-     * not let this callback dequeue the snapshot until lv_async_call() has
-     * returned; otherwise a failed scheduling call could roll back an event
-     * that this callback has already consumed and freed. */
-    if (xSemaphoreTake(s_keyboard_async_mutex, portMAX_DELAY) != pdTRUE) return;
-    const BaseType_t received = xQueueReceive(s_keyboard_event_queue, &event, 0);
-    xSemaphoreGive(s_keyboard_async_mutex);
-    if (received != pdTRUE || event == nullptr) return;
-
     /* lv_async_call invokes this on the LVGL task.  In particular, do not
      * acquire bsp_display_lock here: this callback is already in that
      * context, and some of the paths below can synchronously render. */
     lv_display_trigger_activity(lv_disp_get_default());
     if (s_keyboard) hidden(s_keyboard, true);
-    if (event->text[0] != '\0' && event->length != 0) {
+    if (text != nullptr && text[0] != '\0' && length != 0) {
         if (s_ble_model.current_screen() == cyberdeck_ble::screen::auth &&
             s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
-            for (size_t i = 0; i < event->length && s_ble_auth_input.size() < cyberdeck_ble::k_passkey_digits; ++i) {
-                if (event->text[i] >= '0' && event->text[i] <= '9') s_ble_auth_input.push_back(event->text[i]);
+            for (size_t i = 0; i < length && s_ble_auth_input.size() < cyberdeck_ble::k_passkey_digits; ++i) {
+                if (text[i] >= '0' && text[i] <= '9') s_ble_auth_input.push_back(text[i]);
             }
             render_terminal();
         } else {
         sync_editor();
-        if (event->modifier & 0x01U && event->length == 1) {
+        if (modifier & 0x01U && length == 1) {
             std::string seq = cyberdeck_encode_ssh_key(
-                static_cast<uint8_t>(event->text[0]), event->modifier);
+                static_cast<uint8_t>(text[0]), modifier);
             if (!seq.empty()) ssh_client_send_data(seq.data(), seq.size());
-        } else if (s_editor.insert_physical(event->text, event->length)) {
+        } else if (s_editor.insert_physical(text, length)) {
             sync_line();
             render_terminal();
         }
         }
-    } else if (event->special_key) {
-        local_key(event->special_key);
+    } else if (special_key) {
+        local_key(special_key);
     }
-    free(event);
 }
 
 bool begin_ui_wifi_connection(const char *ssid, const char *password)
@@ -1942,20 +1897,7 @@ void terminal_key(lv_event_t *event) {
 } // namespace
 
 extern "C" esp_err_t cyberdeck_ui_init(void) {
-       s_keyboard_event_queue = xQueueCreate(KEYBOARD_EVENT_QUEUE_CAPACITY,
-                                             sizeof(keyboard_event_context *));
-       s_keyboard_async_mutex = xSemaphoreCreateMutex();
-       if (s_keyboard_event_queue == nullptr || s_keyboard_async_mutex == nullptr) {
-           if (s_keyboard_event_queue != nullptr) {
-               vQueueDelete(s_keyboard_event_queue);
-               s_keyboard_event_queue = nullptr;
-           }
-           if (s_keyboard_async_mutex != nullptr) {
-               vSemaphoreDelete(s_keyboard_async_mutex);
-               s_keyboard_async_mutex = nullptr;
-           }
-           return ESP_ERR_NO_MEM;
-       }
+       if (!s_keyboard_dispatch.start(on_keyboard_event, nullptr)) return ESP_ERR_NO_MEM;
        s_wifi_state_queue = xQueueCreate(1, sizeof(wifi_state_update));
        if (s_wifi_state_queue == nullptr) {
            destroy_ui_resource_handles();
@@ -2011,34 +1953,5 @@ extern "C" void cyberdeck_ui_deinit(void)
 }
 
 extern "C" void cyberdeck_keyboard_input(const char *text, size_t length, uint8_t modifier, uint32_t special_key) {
-     const size_t payload_length = text != nullptr ? length : 0;
-     if (payload_length == 0 && special_key == 0) return;
-     keyboard_event_context *event = static_cast<keyboard_event_context *>(
-         malloc(sizeof(keyboard_event_context) + payload_length + 1));
-     if (event == nullptr) return;
-     event->length = payload_length;
-     event->modifier = modifier;
-     event->special_key = special_key;
-     if (payload_length != 0) memcpy(event->text, text, payload_length);
-     event->text[payload_length] = '\0';
-
-     /* The queue is bounded and owns accepted snapshots.  Serialize the
-      * short LVGL enqueue, not the eventual UI work. */
-     if (s_keyboard_async_mutex == nullptr ||
-         xSemaphoreTake(s_keyboard_async_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-         free(event);
-         return;
-     }
-     if (s_keyboard_event_queue == nullptr ||
-         xQueueSend(s_keyboard_event_queue, &event, 0) != pdTRUE) {
-         xSemaphoreGive(s_keyboard_async_mutex);
-         free(event);
-         return;
-     }
-      const lv_result_t async_result = lv_async_call(process_keyboard_event_async, nullptr);
-      if (async_result != LV_RESULT_OK) {
-          discard_keyboard_event_from_queue(event);
-          free(event);
-      }
-      xSemaphoreGive(s_keyboard_async_mutex);
+      s_keyboard_dispatch.submit(text, length, modifier, special_key);
 }

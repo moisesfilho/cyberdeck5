@@ -33,6 +33,7 @@ idf_component_register(
         "src/platform/display/screen_off.cpp"
         "src/features/ssh/ssh_client.cpp"
         "src/platform/input/tab5_keyboard.cpp"
+        "src/platform/input/cyberdeck_keyboard_dispatch.cpp"
         "src/platform/input/tab5_keyboard_event.cpp"
         "src/platform/input/tab5_keyboard_keys.cpp"
         "src/features/wifi/wifi_mgr.cpp"
