@@ -96,6 +96,26 @@ def main() -> int:
     connected = body(mgr, "static void handle_connection_result")
     assert "record.name = scan_name_for_peer(active_address, s_connection_addr_type)" in connected
     assert connected.index("record.name = scan_name_for_peer") < connected.index("save_bonds_to_nvs()")
+
+    # The scan classifies the peer from its HID appearance, so the bond must
+    # keep that kind.  Otherwise a paired keyboard is restored as "unknown"
+    # and the `bluetooth paired` list misreports it as an unclassified device.
+    kind_lookup = body(mgr, "static cyberdeck_ble::device_kind scan_kind_for_peer")
+    assert "peer.record.address == address && peer.record.addr_type == type" in kind_lookup
+    assert "return peer.record.kind" in kind_lookup
+    assert "return cyberdeck_ble::device_kind::unknown" in kind_lookup
+    assert "scan_kind_for_peer(active_address, s_connection_addr_type)" in connected
+    assert "record.kind = discovered_kind" in connected
+    # A discovered kind refines the bond; it must never downgrade a stored one
+    # to unknown when the scan had nothing to say.
+    assert "if (discovered_kind != cyberdeck_ble::device_kind::unknown)" in connected
+    assert connected.index("record.kind = discovered_kind") < connected.index("save_bonds_to_nvs()")
+    assert "kind=" in body(store, "std::string encode_bond")
+    assert 'kind_str == "keyboard"' in body(store, "bool decode_bond")
+    assert "slot.kind = kind_to_int(record.kind)" in body(mgr, "size_t ble_bonds_copy")
+    assert "item.kind = static_cast<cyberdeck_ble::device_kind>(paired_snapshots[i].kind)" in \
+        body(session, "case CYBERDECK_CMD_BLUETOOTH_PAIRED:")
+
     assert "strlcpy(slot.name, record.name.c_str(), sizeof(slot.name))" in body(mgr, "size_t ble_bonds_copy")
     # The `bluetooth paired` command switch moved to the extracted session.
     paired = body(session, "case CYBERDECK_CMD_BLUETOOTH_PAIRED:")

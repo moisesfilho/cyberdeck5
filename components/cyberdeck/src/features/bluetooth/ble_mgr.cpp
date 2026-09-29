@@ -185,6 +185,8 @@ static cyberdeck_ble::address_type peer_address_type(const ble_addr_t *addr);
 static uint8_t stack_address_type(cyberdeck_ble::address_type type);
 static std::string scan_name_for_peer(const std::string &address,
                                       cyberdeck_ble::address_type type);
+static cyberdeck_ble::device_kind scan_kind_for_peer(const std::string &address,
+                                                    cyberdeck_ble::address_type type);
 static void handle_scan_finished(uint64_t token, int status);
 static void start_scan_command(const ble_mgr_cmd_t &cmd);
 static void reject_pre_sync_command(const ble_mgr_cmd_t &cmd);
@@ -1630,6 +1632,17 @@ static std::string scan_name_for_peer(const std::string &address,
     return {};
 }
 
+static cyberdeck_ble::device_kind scan_kind_for_peer(const std::string &address,
+                                                    cyberdeck_ble::address_type type)
+{
+    for (std::size_t i = 0; i < s_scan_peer_count; ++i) {
+        const scan_peer &peer = s_scan_peers[i];
+        if (peer.record.address == address && peer.record.addr_type == type)
+            return peer.record.kind;
+    }
+    return cyberdeck_ble::device_kind::unknown;
+}
+
 static void handle_scan_finished(uint64_t token, int status)
 {
     cyberdeck_ble::notice outcome = cyberdeck_ble::notice::empty;
@@ -1712,6 +1725,14 @@ static void handle_connection_result(int status)
         record.addr_type = s_connection_addr_type;
         if (record.name.empty()) {
             record.name = scan_name_for_peer(active_address, s_connection_addr_type);
+        }
+        /* The scan already classified the peer from its HID appearance; keep
+         * that on the bond so a later restore does not fall back to unknown
+         * and misreport a paired keyboard as an unclassified device. */
+        const cyberdeck_ble::device_kind discovered_kind =
+            scan_kind_for_peer(active_address, s_connection_addr_type);
+        if (discovered_kind != cyberdeck_ble::device_kind::unknown) {
+            record.kind = discovered_kind;
         }
         record.last_connected = true;
         if (existing != nullptr) s_store.update(record);
