@@ -98,6 +98,8 @@ BLE_EVENTS_HDR    := ../../../components/cyberdeck/include/features/bluetooth/cy
 BLE_STORE_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_store.h
 BLE_MGR_SRC       := ../../../components/cyberdeck/src/features/bluetooth/ble_mgr.cpp
 BLE_MGR_HDR       := ../../../components/cyberdeck/include/features/bluetooth/ble_mgr.h
+BLE_BACKGROUND_SRC := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp
+BLE_BACKGROUND_HDR := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_background.h
 BLE_TYPES_CONTRACT_HDR     := contracts/cyberdeck_ble_types.h
 BLE_STATE_CONTRACT_HDR     := contracts/cyberdeck_ble_state_machine.h
 BLE_EVENTS_CONTRACT_HDR    := contracts/cyberdeck_ble_event_dispatch.h
@@ -588,10 +590,10 @@ test_ble_hid_contract: test_ble_hid_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(
 test_ble_connection_lifecycle_contract: test_ble_connection_lifecycle_contract.py $(BLE_MGR_SRC) $(BLE_STATE_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
 	$(PYTHON) test_ble_connection_lifecycle_contract.py
 
-test_ble_background_contract: test_ble_background_contract.py $(BLE_MGR_SRC) $(BLE_STATE_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
+test_ble_background_contract: test_ble_background_contract.py $(BLE_MGR_SRC) $(BLE_STATE_SRC) $(BLE_BACKGROUND_SRC) $(BLE_BACKGROUND_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
 	$(PYTHON) test_ble_background_contract.py
 
-test_ble_bond_name_contract: test_ble_bond_name_contract.py $(BLE_MGR_SRC) $(BLE_TYPES_SRC) $(BLE_STORE_SRC) $(BLE_EVENTS_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
+test_ble_bond_name_contract: test_ble_bond_name_contract.py $(BLE_MGR_SRC) $(BLE_TYPES_SRC) $(BLE_STORE_SRC) $(BLE_EVENTS_SRC) $(BLE_BACKGROUND_SRC) $(BLE_BACKGROUND_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
 	$(PYTHON) test_ble_bond_name_contract.py
 
 # Focused aggregate for the boot/reconnect/name requirements; intentionally

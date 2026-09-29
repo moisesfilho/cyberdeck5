@@ -41,6 +41,15 @@ agendamento por `lv_async_call`. O callback da UI continua interpretando texto
 e teclas especiais; o dispatcher não conhece sessões de shell, SSH, Wi-Fi ou
 BLE.
 
+O agendamento da reconexão BLE em background fica isolado em
+`cyberdeck_ble_background.cpp` (`scheduler`): restauração de bonds no boot,
+janela periódica de 10 s, matching por endereço+`addr_type`, teto de 3
+tentativas por ciclo e preempção manual. Ele opera sobre o
+`state_machine` BLE e enfileira comandos `ble_mgr`, sem tocar LVGL ou
+terminal. A UI mantém apenas o pump de eventos (`on_ble_event`,
+`process_ble_events`, `ble_submit_actions`) e roteia eventos e preempção
+para o scheduler.
+
 `managed_components/`, incluindo `m5stack_tab5` e `sock_utils`, permanece fora
 dessa reorganização e continua sendo gerenciado pelo ESP-IDF.
 

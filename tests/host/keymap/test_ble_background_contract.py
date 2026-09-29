@@ -7,6 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 MGR = ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+BG = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp"
+BG_HDR = ROOT / "components/cyberdeck/include/features/bluetooth/cyberdeck_ble_background.h"
 STATE = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 
@@ -36,16 +38,20 @@ def body(source: str, signature: str) -> str:
 def main() -> int:
     mgr = MGR.read_text(encoding="utf-8")
     ui = UI.read_text(encoding="utf-8")
+    bg = BG.read_text(encoding="utf-8")
+    bg_hdr = BG_HDR.read_text(encoding="utf-8")
     state = STATE.read_text(encoding="utf-8")
     makefile = MAKEFILE.read_text(encoding="utf-8")
 
     # The periodic observer is a 10 s window, not a per-tick retry loop.
-    assert "k_ble_background_window_interval_ms = 10000" in ui
+    # Scheduling state lives in the background service; the UI tick only
+    # consumes one window slice before progressing the observer.
+    assert "k_window_interval_ms = 10000" in bg_hdr
+    assert "k_ble_background_window_interval_ms" not in ui
     process = body(ui, "void process_ble_events(")
-    assert "if (s_ble_background_wait_ms > 100) s_ble_background_wait_ms -= 100" in process
-    assert "else s_ble_background_wait_ms = 0" in process
-    assert process.index("s_ble_background_wait_ms") < process.index(
-        "ble_background_maybe_reconnect()"
+    assert "s_ble_background.tick(100)" in process
+    assert process.index("s_ble_background.tick(100)") < process.index(
+        "s_ble_background.maybe_reconnect(s_ble_model)"
     )
 
     load = body(mgr, "static void load_bonds_from_nvs")
@@ -53,9 +59,9 @@ def main() -> int:
     assert "s_store.deserialize(buffer.data(), required_size)" in mgr
     assert "new pairing is required" in mgr
 
-    restore = body(ui, "void ble_restore_background_bonds_once")
+    restore = body(bg, "void scheduler::restore_bonds_once")
     assert "ble_bonds_copy(snapshots, 16)" in restore
-    assert "s_ble_model.set_paired_devices(paired)" in restore
+    assert "model.set_paired_devices(paired)" in restore
     assert "arm_background_reconnect(last_connected_copy)" in restore
     assert "last_connected_index" in restore
     assert "&paired.back()" not in restore
@@ -77,30 +83,30 @@ def main() -> int:
     assert "xSemaphoreTake(s_dispatch_mutex" not in dispatcher
     assert "xSemaphoreGive(s_dispatch_mutex)" not in dispatcher
 
-    scan = body(ui, "bool ble_background_address_known")
+    scan = body(bg, "bool scheduler::address_known")
     assert "target.address == address && target.addr_type == type" in scan
     assert "known.find(address, type)" in scan
-    note = body(ui, "void ble_background_note_advertisement")
+    note = body(bg, "void scheduler::note_advertisement")
     assert "reset_background_cycle" in note
     assert "generation" in note
-    assert "generation != s_ble_background_last_gen" in note
+    assert "generation != last_gen_" in note
     assert "target.addr_type != type" in note
     assert "reset_background_cycle" in note
-    result = body(ui, "void ble_background_on_scan_result")
+    result = body(bg, "void scheduler::on_scan_result")
     assert "!event.scan_result.connectable || !event.scan_result.paired" in result
-    assert "!ble_background_address_known" in result
+    assert "!address_known" in result
     assert "consume_background_attempt" in result
     # A matching advertisement reserves an attempt and requests cancellation;
     # reconnect is not queued until the terminal scan callback confirms it.
     assert "schedule_reconnect(item)" not in result
-    assert "s_ble_background_abandoned_token = s_ble_background_scan_token" in result
-    assert "cancel.token = s_ble_background_scan_token" in result
+    assert "abandoned_token_ = scan_token_" in result
+    assert "cancel.token = scan_token_" in result
 
-    finished = body(ui, "void ble_background_on_scan_finished")
-    assert "!s_ble_background_scan_active || event.token != s_ble_background_scan_token" in finished
-    assert "s_ble_background_scan_active = false" in finished
-    assert "s_ble_background_wait_ms = k_ble_background_window_interval_ms" in finished
-    assert "s_ble_background_reconnect_pending" in finished
+    finished = body(bg, "void scheduler::on_scan_finished")
+    assert "!scan_active_ || event.token != scan_token_" in finished
+    assert "scan_active_ = false" in finished
+    assert "wait_ms_ = k_window_interval_ms" in finished
+    assert "reconnect_pending_" in finished
     assert "event.scan_finished.outcome != static_cast<int>(cyberdeck_ble::notice::failed)" in finished
     assert finished.index("event.scan_finished.outcome") < finished.index("schedule_reconnect")
 
@@ -131,8 +137,8 @@ def main() -> int:
 
     # Snapshot contention retries are bounded, and restoration cannot remain
     # pending forever when the adapter never yields a snapshot.
-    assert "k_ble_background_restore_retry_limit = 3" in ui
-    assert "s_ble_background_restore_attempts >= k_ble_background_restore_retry_limit" in restore
+    assert "k_restore_retry_limit = 3" in bg_hdr
+    assert "restore_attempts_ >= k_restore_retry_limit" in restore
 
     # A successful connection clears every previous marker before setting the
     # current typed bond as the sole last-connected record.
@@ -146,27 +152,30 @@ def main() -> int:
     assert "s_connection_addr_type" in connection_result
     assert "s_store.find(active_address, s_connection_addr_type)" in connection_result
 
-    observer = body(ui, "void ble_background_maybe_reconnect")
-    assert "s_ble_model.is_connected() || s_ble_model.owns_input()" in observer
+    observer = body(bg, "void scheduler::maybe_reconnect")
+    assert "model.is_connected() || model.owns_input()" in observer
     assert "BLE_MGR_CMD_SCAN_START" in observer
     assert "BLE_MGR_CMD_RECONNECT" not in observer
-    assert "s_ble_model.is_connected() || s_ble_model.owns_input()" in observer
+    assert "model.is_connected() || model.owns_input()" in observer
 
     # Manual scans/pair/connect preempt only an active background discovery;
-    # their callbacks remain on the normal model path.
+    # their callbacks remain on the normal model path.  The scheduler owns the
+    # abandoned token; the UI only routes the preemption request.
+    assert "void scheduler::preempt_for_manual" in bg
     submit = body(ui, "void ble_submit_actions")
-    assert "s_ble_background_scan_active" in submit
+    assert "s_ble_background.scan_active()" in submit
+    assert "s_ble_background.preempt_for_manual()" in submit
     assert "BLE_MGR_CMD_SCAN_CANCEL" in submit
     assert "action.kind == cyberdeck_ble::action_kind::start_scan" in submit
     assert "action.kind == cyberdeck_ble::action_kind::pair" in submit
     assert "action.kind == cyberdeck_ble::action_kind::connect" in submit
-    assert "s_ble_background_abandoned_token = s_ble_background_scan_token" in submit
+    assert "s_ble_background_scan_token" not in submit
 
     # Background events are isolated by active token; abandoned callbacks are
     # dropped before the normal scan result/terminal handling.
     event_loop = process
-    assert "event.token == s_ble_background_abandoned_token" in event_loop
-    assert event_loop.index("s_ble_background_abandoned_token") < event_loop.index(
+    assert "event.token == s_ble_background.abandoned_token()" in event_loop
+    assert event_loop.index("s_ble_background.abandoned_token()") < event_loop.index(
         "const bool background_event"
     )
     assert "if (background_event)" in event_loop

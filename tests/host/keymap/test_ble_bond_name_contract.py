@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 MGR = ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+BG = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp"
 TYPES = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_types.cpp"
 STORE = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_store.cpp"
 EVENTS = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp"
@@ -37,11 +38,12 @@ def body(source: str, signature: str) -> str:
 def main() -> int:
     mgr = MGR.read_text(encoding="utf-8")
     ui = UI.read_text(encoding="utf-8")
+    bg = BG.read_text(encoding="utf-8")
     types = TYPES.read_text(encoding="utf-8")
     store = STORE.read_text(encoding="utf-8")
     events = EVENTS.read_text(encoding="utf-8")
 
-    restore = body(ui, "void ble_restore_background_bonds_once")
+    restore = body(bg, "void scheduler::restore_bonds_once")
     assert "ble_bonds_copy(snapshots, 16)" in restore
     assert "for (size_t i = 0; i < count; ++i)" in restore
     assert "item.name = snapshots[i].name" in restore
@@ -53,24 +55,24 @@ def main() -> int:
 
     # Every restored bond gets a bounded background opportunity; last_connected
     # is only the first target, not the only bond eligible after a window ends.
-    advance = body(ui, "void ble_background_advance_target")
+    advance = body(bg, "void scheduler::advance_target")
     assert "for (std::size_t offset = 1; offset <= known.size(); ++offset)" in advance
     assert "candidate->paired && candidate->connectable" in advance
-    finished = body(ui, "void ble_background_on_scan_finished")
-    assert "ble_background_advance_target()" in finished
+    finished = body(bg, "void scheduler::on_scan_finished")
+    assert "advance_target(model)" in finished
 
     # Five-second discovery windows, bounded retries, and no auto-pair path.
     task = body(mgr, "static void ble_mgr_task")
     scan_start = body(mgr, "static void start_scan_command(")
     assert "ble_gap_disc(own_addr_type, 5000" in scan_start
     assert "filter_duplicates = 1" in scan_start
-    result = body(ui, "void ble_background_on_scan_result")
+    result = body(bg, "void scheduler::on_scan_result")
     assert "!event.scan_result.connectable || !event.scan_result.paired" in result
     assert "consume_background_attempt()" in result
     assert "BLE_MGR_CMD_PAIR" not in result
     assert "BLE_MGR_CMD_RECONNECT" not in result
     assert "BLE_MGR_CMD_SCAN_CANCEL" in result
-    assert "s_ble_background_reconnect_pending = true" in result
+    assert "reconnect_pending_ = true" in result
     assert "event.scan_finished.outcome != static_cast<int>(cyberdeck_ble::notice::failed)" in finished
 
     # Identity matching includes resolved RPA and address type, so equal address
@@ -82,8 +84,8 @@ def main() -> int:
     assert "s_store.find(addr_str, addr_type)" in scan
     assert "if (!primary && !peer.primary_seen) return" in scan
     assert "peer.record.connectable = disc->event_type" in scan
-    assert "target.addr_type != type" in body(ui, "void ble_background_note_advertisement")
-    assert "find(address, type)" in body(ui, "bool ble_background_address_known")
+    assert "target.addr_type != type" in body(bg, "void scheduler::note_advertisement")
+    assert "find(address, type)" in body(bg, "bool scheduler::address_known")
 
     # ADV and SCAN_RSP names are sanitized before they enter bounded snapshots;
     # empty names stay empty in storage and are rendered as unnamed by the model.

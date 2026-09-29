@@ -49,6 +49,7 @@ idf_component_register(
         "src/features/bluetooth/cyberdeck_ble_types.cpp"
         "src/features/bluetooth/cyberdeck_ble_state_machine.cpp"
         "src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp"
+        "src/features/bluetooth/cyberdeck_ble_background.cpp"
         "src/features/bluetooth/cyberdeck_ble_store.cpp"
         "src/features/bluetooth/ble_mgr.cpp"
         "src/platform/display/cyberdeck_font.c"
