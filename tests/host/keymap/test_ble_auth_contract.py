@@ -76,18 +76,26 @@ def main() -> int:
 
     # UI input is exactly six decimal digits, incrementally bounded, supports
     # backspace and Enter, and clears the transient buffer on every exit path.
-    require("s_ble_auth_input.size() < cyberdeck_ble::k_passkey_digits" in AUTH_PATH,
+    require("ble_auth_input_.size() >= cyberdeck_ble::k_passkey_digits" in SESSION and
+            "append_ble_auth_digit" in SESSION,
             "auth input is not bounded to six digits")
-    require("text[i] >= '0' && text[i] <= '9'" in AUTH_PATH,
-            "physical auth input accepts non-digits")
-    require("auth_input.pop_back()" in SESSION,
+    require("if (digit < '0' || digit > '9') return;" in SESSION,
+            "auth input accepts non-digits")
+    # A bare pop_back() only shrinks the string: the removed digit would stay
+    # resident in the capacity.  The byte must be wiped before the shrink.
+    backspace = re.search(
+        r"if \(!ble_auth_input_\.empty\(\)\).*?\}", SESSION, re.S)
+    require(backspace is not None and "ble_auth_input_.pop_back()" in backspace.group(0),
             "auth backspace is missing")
-    require("auth_input.size() == cyberdeck_ble::k_passkey_digits" in SESSION,
+    require(backspace is not None and "wipe_string(ble_auth_input_)" in backspace.group(0),
+            "auth backspace must wipe the removed digit instead of only shrinking")
+    require("ble_auth_input_.size() == cyberdeck_ble::k_passkey_digits" in SESSION,
             "Enter does not reject incomplete passkeys")
-    require("zero_string(s_ble_auth_input)" in UI and
-            "wipe_string(auth_input)" in SESSION and
-            AUTH_PATH.count("zero_string(s_ble_auth_input)") >= 2,
+    require("clear_ble_auth_input()" in SESSION and
+            "s_shell_session.clear_ble_auth_input()" in UI,
             "transient auth input is not cleared across lifecycle paths")
+    require("s_ble_auth_input" not in UI,
+            "the passkey buffer must be owned by the session, not the UI")
     require("pending_auth_action() == cyberdeck_ble::auth_io_action::input" in AUTH_PATH,
             "only INPUT may open passkey entry")
     require("auth_request_kind::numeric_compare" in STATE and
@@ -101,7 +109,7 @@ def main() -> int:
     require(oob is not None and "ble_gap_terminate" in oob.group(0) and
             "BLE_ERR_AUTH_FAIL" in oob.group(0),
             "OOB authentication must fail closed")
-    require("k_passkey_digits" in UI and "k_passkey_modulus" in MGR,
+    require("k_passkey_digits" in AUTH_PATH and "k_passkey_modulus" in MGR,
             "passkey format bounds are missing")
 
     # Existing navigation/deadline paths remain model-owned. HID is a separate

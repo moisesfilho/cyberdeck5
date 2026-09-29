@@ -106,10 +106,16 @@ def preservation_contract(source: str, session: str) -> None:
             "UI facade must delegate execute_line to the extracted session")
     require("history_.reset_position()" in execute and "history_.add(" in execute,
             "local command execution must preserve history lifecycle")
-    require("SSH_CLIENT_NEED_PASSWORD" in execute and "ssh_composer" in execute,
+    require("cyberdeck_session_state::PASSWORD" in execute and "ssh_composer" in execute,
             "password flow must remain separate from local command flow")
-    require("SSH_CLIENT_CONNECTED" in execute and "ssh_composer" in execute,
+    require("host_.ssh_send_password(" in execute,
+            "the password must be sent through the host port")
+    require("ssh_client_" not in execute,
+            "the session must not call the global SSH client directly")
+    require("cyberdeck_session_state::CONNECTED" in execute and "ssh_composer" in execute,
             "connected SSH flow must remain separate from local command flow")
+    require("host_.ssh_send_data(" in execute,
+            "the connected command must be sent through the host port")
 
 
 def truncation_contract(source: str) -> None:

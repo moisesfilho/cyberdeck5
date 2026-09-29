@@ -142,13 +142,14 @@ def check_standard_flow_has_no_io(session: str) -> None:
     require_absent(branch, ("append_output_line", "render_terminal"),
                    "the audit command must not publish the collecting snapshot; "
                    "the LVGL timer is the sole state-to-output gate")
-    require("audit.begin(" in branch,
-            "the audit command must start a versioned audit request")
+    require("wifi_audit_begin()" in branch,
+            "the audit command must start a versioned audit request through the host port")
 
 
 def check_save_flow_is_explicit(session: str) -> None:
     save_branch = block_after(session, "case CYBERDECK_CMD_WIFI_AUDIT_SAVE:")
-    require(first_index_any(save_branch, ("enqueue_save", "enqueue_export", "save_audit")) >= 0,
+    require(first_index_any(save_branch, ("wifi_audit_save", "enqueue_save",
+                                         "enqueue_export", "save_audit")) >= 0,
             "wifi audit save must hand off to the explicit save worker")
     require("drain_save" not in save_branch and "drain_export" not in save_branch,
             "the command path must not synchronously wait for persistence")

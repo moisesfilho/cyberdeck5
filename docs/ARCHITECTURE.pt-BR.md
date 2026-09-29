@@ -46,6 +46,14 @@ serviços de Wi-Fi/SSH/cat, shell local e BLE. `cyberdeck_ui.cpp` fica como
 fachada: constrói e atualiza widgets, traduz `lv_key_t` para
 `cyberdeck_shell_session::key`, mantém o pump de eventos e implementa o `host`.
 
+O estado da sessão também é dela por completo: linha, cursor, histórico, SSID
+pendente, editor por contexto, buffer de passkey BLE e os dois tokens de
+conexão Wi-Fi. Nenhuma API de plataforma é chamada diretamente; a sessão usa
+apenas as portas declaradas em `host`. Isso permite linká-la no host contra um
+`host` falso, e `tests/host/keymap/test_shell_session.cpp` exercita o
+comportamento de `handle_key`, `execute_line` e da inserção de texto dessa
+forma.
+
 O agendamento da reconexão BLE em background fica isolado em
 `cyberdeck_ble_background.cpp` (`scheduler`): restauração de bonds no boot,
 janela periódica de 10 s, matching por endereço+`addr_type`, teto de 3

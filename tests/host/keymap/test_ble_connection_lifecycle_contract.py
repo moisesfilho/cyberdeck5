@@ -78,7 +78,7 @@ def main() -> int:
     assert "ssh_client_get_state" in terminal
     execute = body(session, "void session::execute_line(bool line_already_sent)")
     assert "CYBERDECK_CMD_WIFI" in execute
-    assert "ssh_client_send_data" in execute
+    assert "host_.ssh_send_data" in execute
     assert "local_shell().execute" in execute
 
     print("PASS: BLE connection lifecycle/token identity and UI availability contract")

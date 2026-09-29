@@ -62,7 +62,6 @@ lv_obj_t *s_terminal = nullptr;
 lv_obj_t *s_keyboard = nullptr;
 lv_timer_t *s_battery_timer = nullptr;
 std::string s_output;
-std::string s_ble_auth_input;
 
 cyberdeck_terminal_filter s_ssh_output_filter;
 cyberdeck_ssh_line_composer s_ssh_line_composer;
@@ -80,8 +79,6 @@ cyberdeck_wifi::state_machine s_wifi_model;
  cyberdeck_wifi_audit::audit_controller s_wifi_audit;
   std::uint64_t s_wifi_audit_reported_token = 0;
   cyberdeck_wifi_audit::state s_wifi_audit_reported_state = cyberdeck_wifi_audit::state::unavailable;
-std::uint64_t s_wifi_connection_token = 0;
-std::uint64_t s_wifi_model_connection_token = 0;
 struct wifi_state_update {
     wifi_status_t status;
     bool enabled;
@@ -120,27 +117,47 @@ struct shell_session_host final : public cyberdeck_shell_session::host {
     void render() override;
     cyberdeck_ble::state_machine &ble_model() override;
     cyberdeck_ble::device_list &ble_scan_devices() override;
-    std::string &ble_auth_input() override;
     void clear_ble_notice() override;
     void mark_ble_transient_uncommitted() override;
     void submit_ble_actions() override;
     void sync_ble_transient() override;
+    std::size_t copy_ble_bonds(ble_bond_snapshot_t *out, std::size_t capacity) override;
     cyberdeck_shell_session::wifi_ui_state_t &wifi_state() override;
     cyberdeck_wifi::state_machine &wifi_model() override;
     cyberdeck_wifi_search_menu &wifi_search_menu() override;
     cyberdeck_wifi_saved_menu &wifi_saved_menu() override;
     std::uint64_t &wifi_scan_generation() override;
-    std::uint64_t &wifi_connection_token() override;
-    std::uint64_t &wifi_model_connection_token() override;
     bool wifi_begin_scan(std::uint64_t generation) override;
     void wifi_cancel_scan() override;
     std::string build_wifi_audit_save_path() override;
-    cyberdeck_wifi_audit::audit_controller &wifi_audit() override;
+    void wifi_audit_begin() override;
+    bool wifi_audit_save(const std::string &path) override;
+    esp_err_t wifi_connect(const char *ssid, const char *password) override;
+    esp_err_t wifi_cancel_connection() override;
+    void wifi_forget(const char *ssid) override;
+    bool wifi_enabled() const override;
+    std::uint64_t wifi_current_token() const override;
+    bool wifi_status(wifi_status_t *out) override;
+    bool wifi_storage_ready() override;
+    bool wifi_storage_load_all(wifi_saved_list_t *list) override;
+    bool wifi_storage_find(const char *ssid, char *out_password, std::size_t max_len) override;
+    cyberdeck_session_state ssh_phase() const override;
+    esp_err_t ssh_send_data(const char *data, std::size_t length) override;
+    esp_err_t ssh_send_password(const char *password) override;
+    void ssh_accept_host_key() override;
     void set_ssh_visible(bool visible) override;
     void reset_ssh_filter() override;
     void discard_ssh_composer() override;
     cyberdeck_ssh_line_composer &ssh_composer() override;
     esp_err_t ssh_connect(const char *user, const char *host, int port) override;
+    void screen_turn_on() override;
+    void screen_turn_off() override;
+    esp_err_t screen_set_timeout_minutes(std::uint16_t minutes) override;
+    bool battery_protection_set_enabled(bool enabled) override;
+    bool battery_protection_started() const override;
+    bool battery_protection_snapshot(cyberdeck_battery_protection::snapshot *out) const override;
+    void log_event(char level, const char *tag, const char *message) override;
+    std::string recent_events(std::size_t count) override;
     bool cat_enqueue(const char *cwd, const char *line) override;
     cyberdeck_local_shell &local_shell() override;
 };
@@ -346,7 +363,7 @@ void process_ble_events(lv_timer_t *)
                 static_cast<cyberdeck_ble::auth_request_kind>(event.auth_request.kind),
                 event.auth_request.passkey,
                 static_cast<cyberdeck_ble::auth_io_action>(event.auth_request.io_action));
-            zero_string(s_ble_auth_input);
+            s_shell_session.clear_ble_auth_input();
             break;
         case BLE_MGR_EVT_PAIR_FINISHED:
             s_ble_model.pairing_finished(event.token,
@@ -366,7 +383,7 @@ void process_ble_events(lv_timer_t *)
      * pending event), keep the background observer progressing without
      * touching the visible screen or the terminal. */
     s_ble_background.maybe_reconnect(s_ble_model);
-    if (s_ble_model.current_screen() != cyberdeck_ble::screen::auth) zero_string(s_ble_auth_input);
+    if (s_ble_model.current_screen() != cyberdeck_ble::screen::auth) s_shell_session.clear_ble_auth_input();
     refresh_ble_status();
     if (changed) {
         ble_submit_actions();
@@ -383,7 +400,7 @@ void process_ble_events(lv_timer_t *)
 void destroy_ui_resource_handles()
 {
     /* A deinit during BLE authentication must not leave the passkey resident. */
-    zero_string(s_ble_auth_input);
+    s_shell_session.clear_ble_auth_input();
     s_wifi_audit.teardown();
     if (s_ble_observer != nullptr) {
         ble_mgr_unregister_observer(s_ble_observer);
@@ -467,22 +484,12 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier,
     lv_display_trigger_activity(lv_disp_get_default());
     if (s_keyboard) hidden(s_keyboard, true);
     if (text != nullptr && text[0] != '\0' && length != 0) {
-        if (s_ble_model.current_screen() == cyberdeck_ble::screen::auth &&
-            s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
-            for (size_t i = 0; i < length && s_ble_auth_input.size() < cyberdeck_ble::k_passkey_digits; ++i) {
-                if (text[i] >= '0' && text[i] <= '9') s_ble_auth_input.push_back(text[i]);
-            }
-            render_terminal();
-        } else {
-        sync_editor();
+        /* A modified key is an SSH escape sequence, not text.  The session
+         * owns that decision; the UI only reports the modifier. */
         if (modifier & 0x01U && length == 1) {
-            std::string seq = cyberdeck_encode_ssh_key(
-                static_cast<uint8_t>(text[0]), modifier);
-            if (!seq.empty()) ssh_client_send_data(seq.data(), seq.size());
-        } else if (s_shell_session.editor().insert_physical(text, length)) {
-            sync_line();
-            render_terminal();
-        }
+            (void)s_shell_session.insert_modified_key(text[0], modifier);
+        } else {
+            (void)s_shell_session.insert_physical_text(text, length);
         }
     } else if (special_key) {
         local_key(special_key);
@@ -650,28 +657,26 @@ void process_wifi_state(lv_timer_t *) {
     const bool enabled = update.enabled;
     s_latest_wifi_status = *status;
     if (s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::CONNECTING &&
-        s_wifi_model.active_connection_token() == s_wifi_model_connection_token &&
-        status->connection_token == s_wifi_connection_token) {
+        s_wifi_model.active_connection_token() == s_shell_session.wifi_model_connection_token() &&
+        status->connection_token == s_shell_session.wifi_connection_token()) {
         if (status->connected && status->has_ip) {
-            s_wifi_model.connection_callback(s_wifi_model_connection_token,
+            s_wifi_model.connection_callback(s_shell_session.wifi_model_connection_token(),
                                              cyberdeck_wifi::connection_event::connected);
-            s_wifi_model.connection_callback(s_wifi_model_connection_token,
+            s_wifi_model.connection_callback(s_shell_session.wifi_model_connection_token(),
                                              cyberdeck_wifi::connection_event::has_ip);
             auto completed_actions = s_wifi_model.take_actions();
             wipe_wifi_actions(completed_actions);
-            s_wifi_model_connection_token = 0;
-            s_wifi_connection_token = 0;
+            s_shell_session.invalidate_wifi_connection();
             append_line("Wi-Fi connected.\n");
             s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
             s_shell_session.clear_editor();
             render_terminal();
         } else if (!status->connected) {
-            s_wifi_model.connection_callback(s_wifi_model_connection_token,
+            s_wifi_model.connection_callback(s_shell_session.wifi_model_connection_token(),
                                              cyberdeck_wifi::connection_event::failed);
             auto failed_actions = s_wifi_model.take_actions();
             wipe_wifi_actions(failed_actions);
-            s_wifi_model_connection_token = 0;
-            s_wifi_connection_token = 0;
+            s_shell_session.invalidate_wifi_connection();
             append_line("Wi-Fi connection failed or timed out.\n");
             s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
             s_shell_session.clear_editor();
@@ -876,7 +881,7 @@ std::string get_rendered_output() {
         if (ble_screen == cyberdeck_ble::screen::auth &&
             s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
             output += "Passkey input: ";
-            output.append(s_ble_auth_input.size(), '*');
+            output.append(s_shell_session.ble_auth_input().size(), '*');
             output += "\n";
         }
     }
@@ -1008,65 +1013,12 @@ void terminal_insert(lv_event_t *event) {
     const char *inserted = static_cast<const char *>(lv_event_get_param(event));
     if (!inserted || !*inserted) return;
 
-    if (s_ble_model.current_screen() == cyberdeck_ble::screen::auth &&
-        s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
-        for (const char *p = inserted; *p != '\0'; ++p) {
-            if (*p == '\n' || *p == '\r') local_key(LV_KEY_ENTER);
-            else if (*p >= '0' && *p <= '9' && s_ble_auth_input.size() < cyberdeck_ble::k_passkey_digits)
-                s_ble_auth_input.push_back(*p);
-        }
-        render_terminal();
-        return;
-    }
-
-    // The virtual keyboard reports editing keys through INSERT as a single
-    // control byte.  They are actions, not text: route them through the same
-    // UTF-8-aware editor used by the physical keyboard.
-    uint32_t editing_key = 0;
-    if (inserted[1] == '\0') {
-        if (static_cast<unsigned char>(inserted[0]) == 0x7F) editing_key = LV_KEY_BACKSPACE;
-        else if (static_cast<unsigned char>(inserted[0]) == 0x08) editing_key = LV_KEY_DEL;
-    }
-
-    // LVGL edits the textarea as part of this event.  Keep the edit state in
-    // the session instead; render_terminal() will restore the widget afterwards.
-    if (editing_key) {
-        local_key(editing_key);
-        return;
-    }
-
-    /* LVGL may deliver a paste/chunk containing one or more newlines.  Keep
-     * every part of the chunk and execute each line exactly once instead of
-     * dropping the complete insertion. */
-    sync_editor();
-    const char *part = inserted;
-    bool had_newline = false;
-    while (*part != '\0') {
-        const char *newline = strchr(part, '\n');
-        const size_t length = newline != nullptr
-                            ? static_cast<size_t>(newline - part)
-                            : strlen(part);
-        if (length != 0 && s_shell_session.editor().insert_virtual(part, length)) sync_line();
-        if (newline == nullptr) break;
-        had_newline = true;
-        execute_line();
-        part = newline + 1;
-        sync_editor();
-        /* A paste may contain several newlines, but CONNECTED can have only
-         * one line in flight.  Stop after the first Enter while its echo is
-         * pending, retaining the next pasted line for editing instead of
-         * turning it into another send. */
-        if (ssh_client_get_state() == SSH_CLIENT_CONNECTED &&
-            s_ssh_line_composer.active()) {
-            const char *next_newline = strchr(part, '\n');
-            const size_t remainder = next_newline != nullptr
-                                   ? static_cast<size_t>(next_newline - part)
-                                   : strlen(part);
-            if (remainder != 0 && s_shell_session.editor().insert_virtual(part, remainder)) sync_line();
-            break;
-        }
-    }
-    s_virtual_enter_handled = had_newline && part == inserted + strlen(inserted);
+    /* Editing keys, passkey digits and multi-newline pastes are all session
+     * decisions.  LVGL edits the textarea as part of this event, so the
+     * session re-renders and the widget is restored afterwards. */
+    bool virtual_enter_handled = false;
+    (void)s_shell_session.insert_virtual_text(inserted, &virtual_enter_handled);
+    s_virtual_enter_handled = virtual_enter_handled;
     render_terminal();
 }
 
@@ -1113,7 +1065,10 @@ void shell_session_host::clear_output() { s_output.clear(); }
 void shell_session_host::render() { render_terminal(); }
 cyberdeck_ble::state_machine &shell_session_host::ble_model() { return s_ble_model; }
 cyberdeck_ble::device_list &shell_session_host::ble_scan_devices() { return s_ble_scan_devices; }
-std::string &shell_session_host::ble_auth_input() { return s_ble_auth_input; }
+std::size_t shell_session_host::copy_ble_bonds(ble_bond_snapshot_t *out, std::size_t capacity)
+{
+    return ble_bonds_copy(out, capacity);
+}
 void shell_session_host::clear_ble_notice() { s_ble_last_notice.clear(); }
 void shell_session_host::mark_ble_transient_uncommitted() { s_ble_transient_committed = false; }
 void shell_session_host::submit_ble_actions() { ble_submit_actions(); }
@@ -1123,10 +1078,23 @@ cyberdeck_wifi::state_machine &shell_session_host::wifi_model() { return s_wifi_
 cyberdeck_wifi_search_menu &shell_session_host::wifi_search_menu() { return s_wifi_search_menu; }
 cyberdeck_wifi_saved_menu &shell_session_host::wifi_saved_menu() { return s_wifi_saved_menu; }
 std::uint64_t &shell_session_host::wifi_scan_generation() { return s_wifi_scan_generation; }
-std::uint64_t &shell_session_host::wifi_connection_token() { return s_wifi_connection_token; }
-std::uint64_t &shell_session_host::wifi_model_connection_token()
+esp_err_t shell_session_host::wifi_connect(const char *ssid, const char *password)
 {
-    return s_wifi_model_connection_token;
+    return wifi_mgr_connect(ssid, password);
+}
+esp_err_t shell_session_host::wifi_cancel_connection() { return wifi_mgr_cancel_connection(); }
+void shell_session_host::wifi_forget(const char *ssid) { wifi_mgr_forget(ssid); }
+bool shell_session_host::wifi_enabled() const { return wifi_mgr_is_enabled(); }
+std::uint64_t shell_session_host::wifi_current_token() const { return wifi_mgr_connection_token(); }
+bool shell_session_host::wifi_status(wifi_status_t *out) { return wifi_mgr_get_status(out) == ESP_OK; }
+bool shell_session_host::wifi_storage_ready() { return wifi_storage_mount() == ESP_OK; }
+bool shell_session_host::wifi_storage_load_all(wifi_saved_list_t *list)
+{
+    return ::wifi_storage_load_all(list) == ESP_OK;
+}
+bool shell_session_host::wifi_storage_find(const char *ssid, char *out_password, std::size_t max_len)
+{
+    return ::wifi_storage_find(ssid, out_password, max_len);
 }
 bool shell_session_host::wifi_begin_scan(std::uint64_t generation)
 {
@@ -1165,7 +1133,15 @@ void shell_session_host::wifi_cancel_scan()
     xSemaphoreGive(s_wifi_scan_context_mutex);
 }
 std::string shell_session_host::build_wifi_audit_save_path() { return wifi_audit_save_path(); }
-cyberdeck_wifi_audit::audit_controller &shell_session_host::wifi_audit() { return s_wifi_audit; }
+void shell_session_host::wifi_audit_begin()
+{
+    if (!s_wifi_audit.initialized()) s_wifi_audit.initialize();
+    (void)s_wifi_audit.begin({false, {}, {}, {}});
+}
+bool shell_session_host::wifi_audit_save(const std::string &path)
+{
+    return s_wifi_audit.enqueue_save(s_wifi_audit.snapshot_view().token, path);
+}
 void shell_session_host::set_ssh_visible(bool visible) { show_ssh(visible); }
 void shell_session_host::reset_ssh_filter() { reset_ssh_output_filter(); }
 void shell_session_host::discard_ssh_composer() { discard_ssh_line_composer(); }
@@ -1173,6 +1149,58 @@ cyberdeck_ssh_line_composer &shell_session_host::ssh_composer() { return s_ssh_l
 esp_err_t shell_session_host::ssh_connect(const char *user, const char *host, int port)
 {
     return ssh_client_connect(user, host, port, on_ssh_data, on_ssh_state);
+}
+cyberdeck_session_state shell_session_host::ssh_phase() const
+{
+    switch (ssh_client_get_state()) {
+    case SSH_CLIENT_NEED_PASSWORD: return cyberdeck_session_state::PASSWORD;
+    case SSH_CLIENT_NEED_HOST_KEY: return cyberdeck_session_state::HOST_KEY;
+    case SSH_CLIENT_CONNECTED: return cyberdeck_session_state::CONNECTED;
+    default: return cyberdeck_session_state::MENU;
+    }
+}
+esp_err_t shell_session_host::ssh_send_data(const char *data, std::size_t length)
+{
+    return ssh_client_send_data(data, length);
+}
+esp_err_t shell_session_host::ssh_send_password(const char *password)
+{
+    return ssh_client_send_password(password);
+}
+void shell_session_host::ssh_accept_host_key() { ssh_client_accept_host_key(); }
+void shell_session_host::screen_turn_on() { screen_off_turn_on(); }
+void shell_session_host::screen_turn_off() { screen_off_turn_off(); }
+esp_err_t shell_session_host::screen_set_timeout_minutes(std::uint16_t minutes)
+{
+    return screen_off_set_timeout_minutes(minutes);
+}
+bool shell_session_host::battery_protection_set_enabled(bool enabled)
+{
+    return ::battery_protection_set_enabled(enabled);
+}
+bool shell_session_host::battery_protection_started() const
+{
+    return ::battery_protection_started();
+}
+bool shell_session_host::battery_protection_snapshot(
+    cyberdeck_battery_protection::snapshot *out) const
+{
+    return ::battery_protection_get_policy_snapshot(out);
+}
+void shell_session_host::log_event(char level, const char *tag, const char *message)
+{
+    event_log_write(level, tag, message);
+}
+std::string shell_session_host::recent_events(std::size_t count)
+{
+    std::string logged;
+    event_log_latest(count, [](const char *event, void *ctx) {
+        if (event == nullptr || ctx == nullptr) return;
+        auto *out = static_cast<std::string *>(ctx);
+        out->append(event);
+        out->append("\n");
+    }, &logged);
+    return logged;
 }
 bool shell_session_host::cat_enqueue(const char *cwd, const char *line)
 {

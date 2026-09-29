@@ -5,17 +5,8 @@
 #include <string>
 #include <vector>
 
-#include "features/bluetooth/ble_mgr.h"
-#include "features/shell/cyberdeck_cat_worker.h"
 #include "features/shell/cyberdeck_shell_utils.h"
-#include "features/ssh/ssh_client.h"
-#include "features/wifi/cyberdeck_wifi_audit.h"
-#include "features/wifi/wifi_mgr.h"
-#include "features/wifi/wifi_storage.h"
 #include "platform/display/cyberdeck_screen_protection.h"
-#include "platform/display/screen_off.h"
-#include "platform/logging/event_log.h"
-#include "platform/sensors/battery_protection.h"
 
 namespace cyberdeck_shell_session {
 namespace {
@@ -46,14 +37,6 @@ struct string_wiper {
     ~string_wiper() { wipe_string(value); }
 };
 
-cyberdeck_session_state editor_session(ssh_client_state_t state)
-{
-    if (state == SSH_CLIENT_NEED_PASSWORD) return cyberdeck_session_state::PASSWORD;
-    if (state == SSH_CLIENT_NEED_HOST_KEY) return cyberdeck_session_state::HOST_KEY;
-    if (state == SSH_CLIENT_CONNECTED) return cyberdeck_session_state::CONNECTED;
-    return cyberdeck_session_state::MENU;
-}
-
 bool is_cat_request(const std::string &line)
 {
     const size_t first = line.find_first_not_of(" \t");
@@ -79,7 +62,7 @@ session::session(host &host) : host_(host) {}
 
 void session::sync_editor()
 {
-    editor_.set_session(editor_session(ssh_client_get_state()));
+    editor_.set_session(host_.ssh_phase());
     line_ = editor_.line();
     cursor_ = editor_.cursor();
 }
@@ -95,6 +78,24 @@ void session::clear_editor()
     wipe_string(line_);
     editor_.clear();
     cursor_ = 0;
+}
+
+void session::clear_ble_auth_input()
+{
+    wipe_string(ble_auth_input_);
+}
+
+void session::append_ble_auth_digit(char digit)
+{
+    if (ble_auth_input_.size() >= cyberdeck_ble::k_passkey_digits) return;
+    if (digit < '0' || digit > '9') return;
+    ble_auth_input_.push_back(digit);
+}
+
+void session::invalidate_wifi_connection()
+{
+    wifi_model_connection_token_ = 0;
+    wifi_connection_token_ = 0;
 }
 
 void session::move_history(int direction)
@@ -114,29 +115,28 @@ bool session::begin_wifi_connection(const char *ssid, const char *password)
     cyberdeck_wifi::state_machine &wifi = host_.wifi_model();
     wifi.begin_connection(ssid, password != nullptr ? password : "");
     auto actions = wifi.take_actions();
-    if (actions.empty() || actions.front().kind != cyberdeck_wifi::action_kind::connect) return false;
-    const std::uint64_t model_token = actions.front().token;
-    if (wifi_mgr_connect(ssid, password) != ESP_OK) {
-        wifi.connection_callback(model_token, cyberdeck_wifi::connection_event::failed);
-        auto failed_actions = wifi.take_actions();
-        for (auto &action : failed_actions) wipe_string(action.password);
-        failed_actions.clear();
-        host_.wifi_state() = wifi_ui_state_t::IDLE;
-        host_.wifi_model_connection_token() = 0;
-        host_.wifi_connection_token() = 0;
-        wipe_string(line_);
-        editor_.clear();
-        cursor_ = 0;
-        host_.append_output_line("Wi-Fi connection could not be started.\n");
-        for (auto &action : actions) wipe_string(action.password);
-        actions.clear();
+    if (actions.empty() || actions.front().kind != cyberdeck_wifi::action_kind::connect) {
+        /* An unexpected action may still carry a password; never leave it
+         * resident on the early return. */
+        wipe_wifi_actions(actions);
         return false;
     }
-    host_.wifi_model_connection_token() = model_token;
-    host_.wifi_connection_token() = wifi_mgr_connection_token();
+    const std::uint64_t model_token = actions.front().token;
+    if (host_.wifi_connect(ssid, password) != ESP_OK) {
+        wifi.connection_callback(model_token, cyberdeck_wifi::connection_event::failed);
+        auto failed_actions = wifi.take_actions();
+        wipe_wifi_actions(failed_actions);
+        host_.wifi_state() = wifi_ui_state_t::IDLE;
+        invalidate_wifi_connection();
+        clear_editor();
+        host_.append_output_line("Wi-Fi connection could not be started.\n");
+        wipe_wifi_actions(actions);
+        return false;
+    }
+    wifi_model_connection_token_ = model_token;
+    wifi_connection_token_ = host_.wifi_current_token();
     host_.wifi_state() = wifi_ui_state_t::CONNECTING;
-    for (auto &action : actions) wipe_string(action.password);
-    actions.clear();
+    wipe_wifi_actions(actions);
     return true;
 }
 
@@ -150,9 +150,9 @@ void session::execute_line(bool line_already_sent)
     (void)k_battery_prot_off;
     (void)k_battery_prot_status;
 
-    const ssh_client_state_t state = ssh_client_get_state();
+    const cyberdeck_session_state state = host_.ssh_phase();
     /* enter() clears the editor, so reject a connected Enter first. */
-    if (state == SSH_CLIENT_CONNECTED && host_.ssh_composer().active()) {
+    if (state == cyberdeck_session_state::CONNECTED && host_.ssh_composer().active()) {
         host_.render();
         return;
     }
@@ -161,27 +161,26 @@ void session::execute_line(bool line_already_sent)
     string_wiper entered_wiper{entered.payload};
     std::string line = entered.payload;
     string_wiper line_wiper{line};
-    wipe_string(line_);
-    cursor_ = 0;
+    clear_editor();
     history_.reset_position();
 
-    if (state == SSH_CLIENT_NEED_HOST_KEY) {
-        event_log_write('I', "shell", "host key accepted");
-        ssh_client_accept_host_key();
+    if (state == cyberdeck_session_state::HOST_KEY) {
+        host_.log_event('I', "shell", "host key accepted");
+        host_.ssh_accept_host_key();
         host_.render();
         return;
     }
-    if (state == SSH_CLIENT_CONNECTED) {
+    if (state == cyberdeck_session_state::CONNECTED) {
         if (entered.action == cyberdeck_enter_action::SEND_LINE_NEWLINE ||
             entered.action == cyberdeck_enter_action::SEND_NEWLINE) {
-            event_log_write('I', "ssh", "command sent to interactive session");
+            host_.log_event('I', "ssh", "command sent to interactive session");
             host_.reset_ssh_filter();
             const size_t command_length = entered.payload.empty() ? 0 : entered.payload.size() - 1;
             std::string local(command_length + 1, '\0');
             const size_t local_size = host_.ssh_composer().begin(
                 entered.payload.data(), command_length, &local[0], local.size());
             host_.write_output(local.data(), local_size);
-            if (ssh_client_send_data(entered.payload.data(), entered.payload.size()) != ESP_OK) {
+            if (host_.ssh_send_data(entered.payload.data(), entered.payload.size()) != ESP_OK) {
                 host_.discard_ssh_composer();
             }
         } else {
@@ -195,9 +194,9 @@ void session::execute_line(bool line_already_sent)
         host_.render();
         return;
     }
-    if (state == SSH_CLIENT_NEED_PASSWORD) {
+    if (state == cyberdeck_session_state::PASSWORD) {
         if (entered.action == cyberdeck_enter_action::SEND_PASSWORD)
-            ssh_client_send_password(line.c_str());
+            host_.ssh_send_password(line.c_str());
         wipe_string(line);
         host_.render();
         return;
@@ -214,7 +213,7 @@ void session::execute_line(bool line_already_sent)
     }
     if (entered.action != cyberdeck_enter_action::LOCAL_COMMAND) { host_.render(); return; }
     host_.append_output_line(entered.echo);
-    event_log_write('I', "shell", line.c_str());
+    host_.log_event('I', "shell", line.c_str());
     history_.add(line);
     /* cat is the only local command whose file I/O is deliberately moved off
      * the LVGL task.  CAT_WORK_QUEUE_CAPACITY is bounded in the worker. */
@@ -244,11 +243,11 @@ void session::execute_line(bool line_already_sent)
             host_.discard_ssh_composer();
             break;
     case CYBERDECK_CMD_SCREEN_ON:
-        screen_off_turn_on();
+        host_.screen_turn_on();
         host_.append_output_line("screen on\n");
         break;
     case CYBERDECK_CMD_SCREEN_OFF:
-        screen_off_turn_off();
+        host_.screen_turn_off();
         host_.append_output_line("screen off\n");
         break;
     case CYBERDECK_CMD_SCREEN_TIMEOUT: {
@@ -259,7 +258,7 @@ void session::execute_line(bool line_already_sent)
             host_.append_output_line("screen timeout: expected an integer from 0 to 1440\n");
             break;
         }
-        if (screen_off_set_timeout_minutes(minutes) != ESP_OK) {
+        if (host_.screen_set_timeout_minutes(minutes) != ESP_OK) {
             host_.append_output_line("screen timeout: unable to persist setting\n");
             break;
         }
@@ -275,13 +274,13 @@ void session::execute_line(bool line_already_sent)
     }
     case CYBERDECK_CMD_WIFI: {
         wifi_status_t st = {};
-        if (wifi_mgr_get_status(&st) == ESP_OK) {
-            char out[128]; snprintf(out, sizeof(out), "wifi: %s%s%s\n", wifi_mgr_is_enabled() ? "enabled" : "disabled", st.connected ? " connected " : " disconnected", st.connected ? st.ip : ""); host_.append_output_line(out);
+        if (host_.wifi_status(&st)) {
+            char out[128]; snprintf(out, sizeof(out), "wifi: %s%s%s\n", host_.wifi_enabled() ? "enabled" : "disabled", st.connected ? " connected " : " disconnected", st.connected ? st.ip : ""); host_.append_output_line(out);
         } else host_.append_output_line("wifi: unavailable\n");
         break;
     }
     case CYBERDECK_CMD_WIFI_SEARCH: {
-        if (!wifi_mgr_is_enabled()) {
+        if (!host_.wifi_enabled()) {
             host_.append_output_line("wifi: disabled\n");
             break;
         }
@@ -297,16 +296,12 @@ void session::execute_line(bool line_already_sent)
         break;
     }
     case CYBERDECK_CMD_WIFI_AUDIT: {
-        cyberdeck_wifi_audit::audit_controller &audit = host_.wifi_audit();
-        if (!audit.initialized()) audit.initialize();
-        (void)audit.begin({false, {}, {}, {}});
+        host_.wifi_audit_begin();
         break;
     }
     case CYBERDECK_CMD_WIFI_AUDIT_SAVE: {
-        cyberdeck_wifi_audit::audit_controller &audit = host_.wifi_audit();
-        const auto value = audit.snapshot_view();
         const std::string path = host_.build_wifi_audit_save_path();
-        if (!path.empty() && audit.enqueue_save(value.token, path)) {
+        if (!path.empty() && host_.wifi_audit_save(path)) {
             host_.append_output_line("wifi audit save requested\n");
         } else {
             host_.append_output_line("wifi audit save unavailable\n");
@@ -314,7 +309,7 @@ void session::execute_line(bool line_already_sent)
         break;
     }
     case CYBERDECK_CMD_BATTERY_PROTECTION_ON: { // "battery protection on"
-        if (battery_protection_set_enabled(true)) {
+        if (host_.battery_protection_set_enabled(true)) {
             host_.append_output_line("battery protection enabled\n");
         } else {
             host_.append_output_line("battery protection unavailable\n");
@@ -322,7 +317,7 @@ void session::execute_line(bool line_already_sent)
         break;
     }
     case CYBERDECK_CMD_BATTERY_PROTECTION_OFF: { // "battery protection off"
-        if (battery_protection_set_enabled(false)) {
+        if (host_.battery_protection_set_enabled(false)) {
             host_.append_output_line("battery protection disabled\n");
         } else {
             host_.append_output_line("battery protection unavailable\n");
@@ -330,13 +325,12 @@ void session::execute_line(bool line_already_sent)
         break;
     }
     case CYBERDECK_CMD_BATTERY_PROTECTION_STATUS: { // "battery protection status"
-        const bool started = battery_protection_started();
-        if (!started) {
+        if (!host_.battery_protection_started()) {
             host_.append_output_line("battery protection unavailable\n");
             break;
         }
         cyberdeck_battery_protection::snapshot value{};
-        if (!battery_protection_get_policy_snapshot(&value)) {
+        if (!host_.battery_protection_snapshot(&value)) {
             value.available = false;
         }
         char buf[256] = {};
@@ -359,7 +353,7 @@ void session::execute_line(bool line_already_sent)
          * background cycle unblocked, so Enter on a listed bond reconnects
          * (the same path re-arms inside the model on Enter). */
         ble_bond_snapshot_t paired_snapshots[16]{};
-        const size_t paired_count = ble_bonds_copy(paired_snapshots, 16);
+        const size_t paired_count = host_.copy_ble_bonds(paired_snapshots, 16);
         if (paired_count != 0) {
             std::vector<cyberdeck_ble::device> paired;
             paired.reserve(paired_count);
@@ -384,7 +378,7 @@ void session::execute_line(bool line_already_sent)
         cyberdeck_wifi::state_machine &wifi = host_.wifi_model();
         wifi.begin_saved();
         wifi_saved_list_t list;
-        if (wifi_storage_mount() != ESP_OK || wifi_storage_load_all(&list) != ESP_OK || list.count == 0) {
+        if (!host_.wifi_storage_ready() || !host_.wifi_storage_load_all(&list) || list.count == 0) {
             host_.append_output_line("No saved Wi-Fi networks.\n");
             break;
         }
@@ -397,17 +391,9 @@ void session::execute_line(bool line_already_sent)
     }
     case CYBERDECK_CMD_LOG: {
         host_.append_output_line("ultimos eventos:\n");
-        std::string logged;
-        const size_t count = event_log_latest(10, [](const char *event, void *ctx) {
-            if (event == nullptr || ctx == nullptr) return;
-            auto *out = static_cast<std::string *>(ctx);
-            out->append(event);
-            out->append("\n");
-        }, &logged);
+        const std::string logged = host_.recent_events(10);
         if (!logged.empty()) host_.write_output(logged.data(), logged.size());
-        if (count == 0) {
-            host_.append_output_line("(nenhum evento disponivel)\n");
-        }
+        else host_.append_output_line("(nenhum evento disponivel)\n");
         break;
     }
     case CYBERDECK_CMD_SSH: {
@@ -420,7 +406,7 @@ void session::execute_line(bool line_already_sent)
             const char *error = "[ERROR] unable to start SSH session";
             host_.append_output_line(error);
             host_.append_output_line("\n");
-            event_log_write('E', "ssh", error);
+            host_.log_event('E', "ssh", error);
         }
         break;
     }
@@ -441,8 +427,8 @@ void session::handle_key(key pressed)
      * Other modals (Wi-Fi/SSH/password) keep their own Escape handling. */
     if (pressed == key::esc && !ble.owns_input() && ble.is_connected() &&
         wifi_state == wifi_ui_state_t::IDLE &&
-        ssh_client_get_state() != SSH_CLIENT_NEED_PASSWORD &&
-        ssh_client_get_state() != SSH_CLIENT_CONNECTED) {
+        host_.ssh_phase() != cyberdeck_session_state::PASSWORD &&
+        host_.ssh_phase() != cyberdeck_session_state::CONNECTED) {
         ble.press(cyberdeck_ble::key::escape);
         host_.submit_ble_actions();
         host_.sync_ble_transient();
@@ -452,19 +438,22 @@ void session::handle_key(key pressed)
     if (ble.owns_input()) {
         if (ble.current_screen() == cyberdeck_ble::screen::auth) {
             if (pressed == key::backspace || pressed == key::del) {
-                std::string &auth_input = host_.ble_auth_input();
-                if (!auth_input.empty()) auth_input.pop_back();
+                /* pop_back() would only shrink the string; the removed digit
+                 * would stay resident in the capacity, so wipe it first. */
+                if (!ble_auth_input_.empty()) {
+                    ble_auth_input_.pop_back();
+                    wipe_string(ble_auth_input_);
+                }
                 host_.render();
                 return;
             }
             if (pressed == key::enter &&
                 ble.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
-                std::string &auth_input = host_.ble_auth_input();
                 std::uint32_t value = 0;
-                if (auth_input.size() == cyberdeck_ble::k_passkey_digits &&
-                    cyberdeck_ble::parse_passkey(auth_input.data(), auth_input.size(), value)) {
+                if (ble_auth_input_.size() == cyberdeck_ble::k_passkey_digits &&
+                    cyberdeck_ble::parse_passkey(ble_auth_input_.data(), ble_auth_input_.size(), value)) {
                     ble.submit_auth(value);
-                    wipe_string(auth_input);
+                    clear_ble_auth_input();
                     host_.submit_ble_actions();
                 }
                 host_.render();
@@ -511,7 +500,7 @@ not_ble_key:
                     (void)begin_wifi_connection(ap->ssid, "");
                 } else {
                     char saved_pwd[65] = "";
-                    bool has_saved = wifi_storage_find(ap->ssid, saved_pwd, sizeof(saved_pwd));
+                    bool has_saved = host_.wifi_storage_find(ap->ssid, saved_pwd, sizeof(saved_pwd));
                     if (has_saved) {
                         char msg[128];
                         snprintf(msg, sizeof(msg), "Connecting to %s...\n", ap->ssid);
@@ -523,7 +512,7 @@ not_ble_key:
                         snprintf(prompt, sizeof(prompt), "Password for %s:\n", ap->ssid);
                         host_.append_output_line(prompt);
                         wifi_state = wifi_ui_state_t::SEARCH_PASSWORD;
-                        wipe_string(line_); editor_.clear(); cursor_ = 0;
+                        clear_editor();
                     }
                 }
             } else {
@@ -564,7 +553,7 @@ not_ble_key:
         } else if (pressed == key::enter) {
             std::string ssid_to_forget = host_.wifi_saved_menu().selected_ssid();
             if (!ssid_to_forget.empty()) {
-                wifi_mgr_forget(ssid_to_forget.c_str());
+                host_.wifi_forget(ssid_to_forget.c_str());
                 char msg[128];
                 snprintf(msg, sizeof(msg), "Forgot network '%s'.\n", ssid_to_forget.c_str());
                 host_.append_output_line(msg);
@@ -584,8 +573,7 @@ not_ble_key:
             host_.wifi_model().press(cyberdeck_wifi::key::escape);
             host_.wifi_cancel_scan();
             wifi_state = wifi_ui_state_t::IDLE;
-            host_.wifi_model_connection_token() = 0;
-            host_.wifi_connection_token() = 0;
+            invalidate_wifi_connection();
             host_.append_output_line("Wi-Fi search cancelled.\n");
             host_.render();
             return;
@@ -597,22 +585,23 @@ not_ble_key:
             wipe_wifi_actions(actions);
             host_.append_output_line("\nWi-Fi connect cancelled.\n");
             wifi_state = wifi_ui_state_t::IDLE;
-            host_.wifi_model_connection_token() = 0;
-            host_.wifi_connection_token() = 0;
-            wipe_string(line_); editor_.clear(); cursor_ = 0;
+            invalidate_wifi_connection();
+            clear_editor();
             host_.render();
             return;
         }
     }
 
     if (wifi_state == wifi_ui_state_t::CONNECTING && pressed == key::esc) {
-        ++host_.wifi_connection_token(); /* invalidate callbacks before the worker runs */
+        /* Invalidate both tokens before the worker runs, so a late callback
+         * cannot be matched against this cancelled attempt. */
+        invalidate_wifi_connection();
         host_.wifi_model().cancel_connection();
         auto cancelled_actions = host_.wifi_model().take_actions();
         wipe_wifi_actions(cancelled_actions);
-        (void)wifi_mgr_cancel_connection();
+        (void)host_.wifi_cancel_connection();
         wifi_state = wifi_ui_state_t::IDLE;
-        wipe_string(line_); editor_.clear(); cursor_ = 0;
+        clear_editor();
         host_.append_output_line("Wi-Fi connect cancelled.\n");
         host_.render();
         return;
@@ -635,6 +624,105 @@ not_ble_key:
     else if (pressed == key::down) move_history(1);
     sync_line();
     host_.render();
+}
+
+bool session::insert_physical_text(const char *text, std::size_t length)
+{
+    if (text == nullptr || text[0] == '\0' || length == 0) return false;
+    /* While the BLE auth screen owns input, only decimal digits reach the
+     * bounded passkey buffer; everything else is rejected. */
+    cyberdeck_ble::state_machine &ble = host_.ble_model();
+    if (ble.current_screen() == cyberdeck_ble::screen::auth &&
+        ble.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
+        for (std::size_t i = 0; i < length; ++i) append_ble_auth_digit(text[i]);
+        host_.render();
+        return false;
+    }
+    sync_editor();
+    if (!editor_.insert_physical(text, length)) return false;
+    sync_line();
+    host_.render();
+    return true;
+}
+
+bool session::insert_modified_key(char character, std::uint8_t modifier)
+{
+    /* A modified key is an SSH escape sequence, not editor text.  It only
+     * applies to an interactive session; the menu owns plain text. */
+    if (host_.ssh_phase() != cyberdeck_session_state::CONNECTED) return false;
+    const std::string sequence = cyberdeck_encode_ssh_key(
+        static_cast<std::uint8_t>(character), modifier);
+    if (sequence.empty()) return false;
+    return host_.ssh_send_data(sequence.data(), sequence.size()) == ESP_OK;
+}
+
+bool session::insert_virtual_text(const char *text, bool *virtual_enter_handled)
+{
+    if (virtual_enter_handled != nullptr) *virtual_enter_handled = false;
+    if (text == nullptr || *text == '\0') return false;
+    /* The virtual keyboard reports editing keys through a single control
+     * byte.  They are actions, not text, so route them as keys instead of
+     * inserting them. */
+    if (text[1] == '\0') {
+        const unsigned char control = static_cast<unsigned char>(text[0]);
+        key editing = key::unknown;
+        if (control == 0x7F) editing = key::backspace;
+        else if (control == 0x08) editing = key::del;
+        if (editing != key::unknown) {
+            handle_key(editing);
+            return true;
+        }
+    }
+    cyberdeck_ble::state_machine &ble = host_.ble_model();
+    if (ble.current_screen() == cyberdeck_ble::screen::auth &&
+        ble.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
+        for (const char *p = text; *p != '\0'; ++p) {
+            if (*p == '\n' || *p == '\r') handle_key(key::enter);
+            else append_ble_auth_digit(*p);
+        }
+        host_.render();
+        return false;
+    }
+    /* A paste may carry several newlines.  Keep every part of the chunk and
+     * execute each line exactly once instead of dropping the insertion. */
+    sync_editor();
+    const char *part = text;
+    bool inserted_any = false;
+    while (*part != '\0') {
+        const char *newline = strchr(part, '\n');
+        const std::size_t length = newline != nullptr
+                                 ? static_cast<std::size_t>(newline - part)
+                                 : strlen(part);
+        if (length != 0 && editor_.insert_virtual(part, length)) {
+            sync_line();
+            inserted_any = true;
+        }
+        if (newline == nullptr) break;
+        execute_line();
+        part = newline + 1;
+        sync_editor();
+        /* CONNECTED can have only one line in flight.  Stop after the first
+         * Enter while its echo is pending, retaining the next pasted line for
+         * editing instead of turning it into another send. */
+        if (host_.ssh_phase() == cyberdeck_session_state::CONNECTED &&
+            host_.ssh_composer().active()) {
+            const char *next_newline = strchr(part, '\n');
+            const std::size_t remainder = next_newline != nullptr
+                                       ? static_cast<std::size_t>(next_newline - part)
+                                       : strlen(part);
+            if (remainder != 0 && editor_.insert_virtual(part, remainder)) {
+                sync_line();
+                inserted_any = true;
+            }
+            break;
+        }
+    }
+    if (virtual_enter_handled != nullptr) {
+        const char *last_newline = strrchr(text, '\n');
+        *virtual_enter_handled = last_newline != nullptr && last_newline[1] == '\0';
+    }
+    host_.render();
+    return inserted_any;
 }
 
 } // namespace cyberdeck_shell_session

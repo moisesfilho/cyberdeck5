@@ -104,10 +104,11 @@ def main() -> int:
     # no auth request is routed through notice/history/output persistence.
     auth_block = rendered[rendered.index("if (ble_screen == cyberdeck_ble::screen::auth"):]
     assert 'output += "Passkey input: ";' in auth_block
-    assert "output.append(s_ble_auth_input.size(), '*');" in auth_block
+    assert "output.append(s_shell_session.ble_auth_input().size(), '*');" in auth_block
     assert "ble_screen == cyberdeck_ble::screen::auth &&" in auth_block
     assert "s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input" in auth_block
-    assert "zero_string(s_ble_auth_input);" in process
+    assert "clear_ble_auth_input()" in process
+    assert "s_ble_auth_input" not in source, "the passkey buffer must belong to the session"
     assert "append_line(notice + \"\\n\")" in process
     auth_event = process[process.index("case BLE_MGR_EVT_AUTH_REQUEST:"):process.index("case BLE_MGR_EVT_PAIR_FINISHED:")]
     assert "append_line" not in auth_event

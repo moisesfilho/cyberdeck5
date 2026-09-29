@@ -256,21 +256,23 @@ def check_ui_routing(ui: str, session: str) -> None:
             "CYBERDECK_CMD_SCREEN_TIMEOUT" in execute,
             "session command switch must route all screen commands")
 
+    # The session reaches the screen through the host port; the UI host
+    # implementation is the single place that calls the real adapter.
     on_case = switch_case(execute, "case CYBERDECK_CMD_SCREEN_ON:")
-    require("screen_off_turn_on" in on_case,
-            "screen on must call the real screen adapter")
+    require("host_.screen_turn_on()" in on_case,
+            "screen on must go through the screen port")
 
     off_case = switch_case(execute, "case CYBERDECK_CMD_SCREEN_OFF:")
-    require("screen_off_turn_off" in off_case,
-            "screen off must call the real screen adapter")
+    require("host_.screen_turn_off()" in off_case,
+            "screen off must go through the screen port")
 
     timeout_case = switch_case(execute, "case CYBERDECK_CMD_SCREEN_TIMEOUT:")
     require("parse_timeout_minutes" in timeout_case,
             "UI must validate timeout through the pure strict parser")
-    require("screen_off_set_timeout_minutes" in timeout_case,
-            "UI must apply a valid timeout through the screen adapter")
+    require("host_.screen_set_timeout_minutes(" in timeout_case,
+            "a valid timeout must go through the screen port")
     require_before(timeout_case, "parse_timeout_minutes",
-                   "screen_off_set_timeout_minutes",
+                   "host_.screen_set_timeout_minutes",
                    "timeout must be parsed before it mutates screen state")
     require("append_output_line" in timeout_case,
             "timeout command must report validation/persistence outcome")

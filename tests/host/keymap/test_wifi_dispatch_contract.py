@@ -113,7 +113,7 @@ def test_wifi_search_select_contract(session: str) -> None:
     # Protected new network password prompt
     require("wifi_ui_state_t::SEARCH_PASSWORD" in search_body,
             "SEARCH_SELECT Enter on unauthenticated protected AP must transition to SEARCH_PASSWORD")
-    require("wipe_string(line_)" in search_body and "editor_.clear()" in search_body,
+    require("clear_editor()" in search_body,
             "SEARCH_SELECT password prompt must clear editor and line buffers")
 
 
@@ -125,8 +125,10 @@ def test_wifi_password_and_connecting_contract(session: str) -> None:
     pwd_body = state_body(handle_key, "SEARCH_PASSWORD")
     require("pressed == key::esc" in pwd_body and "wifi_state = wifi_ui_state_t::IDLE" in pwd_body,
             "SEARCH_PASSWORD must handle ESC to cancel")
-    require("wipe_string(line_)" in pwd_body and "editor_.clear()" in pwd_body,
+    require("clear_editor()" in pwd_body,
             "SEARCH_PASSWORD cancellation must wipe secret from the session line")
+    require("invalidate_wifi_connection()" in pwd_body,
+            "SEARCH_PASSWORD cancellation must clear the connection tokens")
 
     # SEARCH_PASSWORD Enter submits password in execute_line
     exec_body = state_body(execute_fn, "SEARCH_PASSWORD")
@@ -138,8 +140,12 @@ def test_wifi_password_and_connecting_contract(session: str) -> None:
     # CONNECTING state handling
     require("wifi_state == wifi_ui_state_t::CONNECTING && pressed == key::esc" in handle_key,
             "CONNECTING state must support ESC cancellation")
-    require("wifi_mgr_cancel_connection()" in handle_key,
-            "CONNECTING ESC must cancel Wi-Fi manager connection")
+    require("host_.wifi_cancel_connection()" in handle_key,
+            "CONNECTING ESC must cancel through the host port")
+    require("wifi_mgr_" not in handle_key,
+            "the session must not call the Wi-Fi manager directly")
+    require("invalidate_wifi_connection()" in handle_key,
+            "CONNECTING ESC must invalidate both connection tokens")
 
 
 def test_saved_networks_menu_contract(session: str) -> None:
@@ -150,8 +156,17 @@ def test_saved_networks_menu_contract(session: str) -> None:
             "SAVED_SELECT on Enter must transition to SAVED_CONFIRM")
 
     # SAVED_CONFIRM forget action on Enter
-    require("wifi_mgr_forget(" in handle_key,
-            "SAVED_CONFIRM on Enter must forget network")
+    require("host_.wifi_forget(" in handle_key,
+            "SAVED_CONFIRM on Enter must forget through the host port")
+
+    # An unexpected connect action may still carry a password, so the early
+    # return must wipe the taken actions instead of dropping them.
+    connect = function_body(session, "bool session::begin_wifi_connection(")
+    early = connect[connect.index("take_actions()"):connect.index("const std::uint64_t model_token")]
+    require("wipe_wifi_actions(actions)" in early,
+            "an unexpected connect action must have its password wiped")
+    require("take_actions" in early and "return false" in early,
+            "begin_wifi_connection must keep the guarded early return")
 
 
 def test_ui_delegates_to_session(source: str) -> None:

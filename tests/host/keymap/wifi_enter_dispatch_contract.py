@@ -70,13 +70,17 @@ def main() -> int:
     # identifies the attempt; conflating them strands the UI in CONNECTING
     # because later status callbacks no longer match.
     connect = function_body(session, "bool session::begin_wifi_connection(")
-    require("host_.wifi_model_connection_token() = model_token;" in connect,
+    require("wifi_model_connection_token_ = model_token;" in connect,
             "the model connection token must be the attempt token")
-    require("host_.wifi_connection_token() = wifi_mgr_connection_token();" in connect,
-            "the UI connection token must come from wifi_mgr, not the model token")
+    require("wifi_connection_token_ = host_.wifi_current_token();" in connect,
+            "the connection token must come from the manager, not the model token")
     pump = function_body(source, "void process_wifi_state(")
-    require("status->connection_token == s_wifi_connection_token" in pump,
-            "manager status must be matched against the wifi_mgr-reported token")
+    require("status->connection_token == s_shell_session.wifi_connection_token()" in pump,
+            "manager status must be matched against the manager-reported token")
+    require("s_wifi_model.active_connection_token() == s_shell_session.wifi_model_connection_token()" in pump,
+            "the model token must be matched against the session attempt token")
+    require("invalidate_wifi_connection()" in connect,
+            "a refused connection must clear both tokens")
 
     print("PASS: Wi-Fi Enter dispatch contract")
     return 0

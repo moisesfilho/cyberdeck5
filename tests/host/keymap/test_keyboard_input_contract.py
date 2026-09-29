@@ -70,8 +70,16 @@ def main() -> int:
     consumer = function_body(ui, "void on_keyboard_event(")
     require("local_key(special_key)" in consumer,
             "special keys must remain routed through the UI local_key facade")
-    require("s_shell_session.editor().insert_physical(text, length)" in consumer,
-            "physical text must remain routed through the session editor")
+    require("s_shell_session.insert_physical_text(text, length)" in consumer,
+            "physical text must be routed through the session, which owns the decision")
+    require("s_shell_session.insert_modified_key(" in consumer,
+            "a modified physical key must be routed through the session")
+    require("insert_physical(" not in consumer and "insert_virtual(" not in consumer,
+            "the UI facade must not decide how text or a modified key is interpreted")
+    session_source = (ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp").read_text(encoding="utf-8")
+    require("insert_physical_text" in session_source and
+            "insert_modified_key" in session_source,
+            "the session must implement both physical input paths")
     # The facade definition must delegate to the session key handler; the
     # forward declaration (which has no body) is skipped explicitly.
     local_key_def = re.search(

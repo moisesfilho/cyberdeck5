@@ -39,7 +39,7 @@ PASSWORD_STATE = "SEARCH_PASSWORD"
 ENTER_LOCAL_TOKENS = {
     "SEARCH_SELECT": ("wifi_search_menu().selected_item()",),
     "SAVED_SELECT": ("wifi_saved_menu().selected_ssid()", "SAVED_CONFIRM"),
-    "SAVED_CONFIRM": ("wifi_mgr_forget(", "wifi_saved_menu().remove_selected()"),
+    "SAVED_CONFIRM": ("host_.wifi_forget(", "wifi_saved_menu().remove_selected()"),
 }
 
 
