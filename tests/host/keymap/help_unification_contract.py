@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SHELL_UTILS = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
 LOCAL_SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 CODE_MAP = ROOT / "code-map.md"
 SHELL_HELP = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_help.h"
@@ -73,6 +74,7 @@ def main() -> int:
         shell_source = strip_comments(SHELL_UTILS.read_text(encoding="utf-8"))
         local_source = strip_comments(LOCAL_SHELL.read_text(encoding="utf-8"))
         ui_source = strip_comments(UI.read_text(encoding="utf-8"))
+        session_source = strip_comments(SESSION.read_text(encoding="utf-8"))
         makefile = MAKEFILE.read_text(encoding="utf-8")
         code_map = CODE_MAP.read_text(encoding="utf-8")
         shell_help = strip_comments(SHELL_HELP.read_text(encoding="utf-8"))
@@ -115,8 +117,9 @@ def main() -> int:
             f"local_shell.cpp must not contain an independent help entry for '{description}'",
         )
         require(
-            ui_source.count(description) == 0,
-            f"cyberdeck_ui.cpp must not contain an independent help entry for '{description}'",
+            ui_source.count(description) == 0 and session_source.count(description) == 0,
+            f"the UI/session shell command path must not contain an independent "
+            f"help entry for '{description}'",
         )
 
     # This also catches a second table assembled with a different wording
@@ -126,8 +129,9 @@ def main() -> int:
         "local_shell.cpp contains a literal help/catalog row",
     )
     require(
-        not CATALOG_LITERAL.search(ui_source),
-        "cyberdeck_ui.cpp contains a literal help/catalog row",
+        not CATALOG_LITERAL.search(ui_source)
+        and not CATALOG_LITERAL.search(session_source),
+        "the UI/session shell command path contains a literal help/catalog row",
     )
 
     definitions = re.findall(
@@ -137,8 +141,9 @@ def main() -> int:
             "cyberdeck_help_text() must have one definition in shell_utils.cpp")
     require(not re.search(r"\bstd::string\s+cyberdeck_help_text\s*\(", local_source),
             "local_shell.cpp must not define a second help_text implementation")
-    require(not re.search(r"\bstd::string\s+cyberdeck_help_text\s*\(", ui_source),
-            "cyberdeck_ui.cpp must not define a second help_text implementation")
+    require(not re.search(r"\bstd::string\s+cyberdeck_help_text\s*\(", ui_source)
+            and not re.search(r"\bstd::string\s+cyberdeck_help_text\s*\(", session_source),
+            "the UI/session shell command path must not define a second help_text implementation")
 
     # The local and UI paths must consume the same public source.  The options
     # are still checked behaviorally; these source checks ensure they cannot
@@ -150,9 +155,9 @@ def main() -> int:
     require("cyberdeck_help_text()" in local_source,
             "local_shell.cpp must call cyberdeck_help_text()")
     require(
-        '#include "features/shell/cyberdeck_shell_utils.h"' in ui_source
-        and "cyberdeck_help_text()" in ui_source,
-        "cyberdeck_ui.cpp must consume cyberdeck_help_text()",
+        '#include "features/shell/cyberdeck_shell_utils.h"' in session_source
+        and "cyberdeck_help_text()" in session_source,
+        "cyberdeck_shell_session.cpp must consume cyberdeck_help_text()",
     )
     require(
         '"-h"' in local_source and '"--help"' in local_source,

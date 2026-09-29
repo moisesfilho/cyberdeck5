@@ -10,6 +10,9 @@ idf_component_register(
         # Stateful local/remote compositor; keep it in the firmware target so
         # cyberdeck_ui and the host-side contract use the same implementation.
         "src/features/shell/cyberdeck_ssh_line_composer.cpp"
+        # Stateful shell session (line dispatch + key routing); firmware-only,
+        # like cyberdeck_ui: the host suite pins it through structural contracts.
+        "src/features/shell/cyberdeck_shell_session.cpp"
         "src/platform/display/cyberdeck_wifi_indicator.cpp"
         "src/platform/display/cyberdeck_wifi_icon.cpp"
         "src/features/wifi/cyberdeck_wifi_menu.cpp"

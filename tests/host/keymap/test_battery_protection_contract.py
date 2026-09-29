@@ -22,6 +22,7 @@ ADAPTER_HEADER = INCLUDE_SENSOR_DIR / "battery_protection.h"
 READER_SOURCE = SENSOR_DIR / "ina226_reader.cpp"
 READER_HEADER = INCLUDE_SENSOR_DIR / "ina226_reader.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
 SHELL_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h"
 SERIAL = ROOT / "components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp"
@@ -297,18 +298,22 @@ def check_ui_shell_and_serial(failures: list[str]) -> None:
                                         shell_header, re.IGNORECASE) is not None,
                     "shell public contract must expose battery protection command")
 
-    execute = function_body(ui, "void execute_line(")
+    # The command switch moved to the extracted session; the UI only delegates.
+    session = strip_comments(read(SESSION, failures))
+    require_all(failures, "s_shell_session.execute_line(line_already_sent)" in ui,
+                "UI facade must delegate execute_line to the extracted session")
+    execute = function_body(session, "void session::execute_line(")
     require_all(failures, execute is not None,
-                "UI command dispatch seam is missing")
+                "session command dispatch seam is missing")
     if execute is not None:
         for command in ("battery protection on", "battery protection off",
-                        "battery protection status"):
+                         "battery protection status"):
             require_all(failures, command in execute,
-                        f"UI dispatch must expose {command}")
+                        f"session dispatch must expose {command}")
         require_all(failures, "battery_protection" in execute,
-                    "UI battery commands must call the protection adapter")
+                    "battery commands must call the protection adapter")
         require_all(failures, "i2c_" not in execute and "nvs_" not in execute,
-                    "UI command dispatch must not perform I2C/NVS directly")
+                    "command dispatch must not perform I2C/NVS directly")
 
     # ui.type remains the only serial route: no battery-specific serial side
     # channel is allowed, and the host protocol regression carries all forms.

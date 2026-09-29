@@ -7,6 +7,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 DISPATCH = ROOT / "components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp"
 
 
@@ -68,16 +69,27 @@ def main() -> int:
             "public physical input must only submit a snapshot")
     consumer = function_body(ui, "void on_keyboard_event(")
     require("local_key(special_key)" in consumer,
-            "special keys must remain routed through local_key")
-    require("s_editor.insert_physical(text, length)" in consumer,
-            "physical text must remain routed through the editor")
+            "special keys must remain routed through the UI local_key facade")
+    require("s_shell_session.editor().insert_physical(text, length)" in consumer,
+            "physical text must remain routed through the session editor")
+    # The facade definition must delegate to the session key handler; the
+    # forward declaration (which has no body) is skipped explicitly.
+    local_key_def = re.search(
+        r"void\s+local_key\s*\(\s*uint32_t\s+\w+\s*\)\s*\{[^}]*\}", ui)
+    require(local_key_def is not None and
+            "s_shell_session.handle_key(translate_session_key(key))" in local_key_def.group(0),
+            "local_key must delegate to the extracted session key handler")
 
     terminal_changed = function_body(ui, "void terminal_changed(")
     require("local_key(LV_KEY_ENTER)" in terminal_changed,
             "virtual Enter must remain routed through local_key")
-    for required in ("virtual_keyboard_changed", "terminal_insert", "s_local_shell.execute",
-                     "ssh_client_connect"):
-        require(required in ui, f"existing input path missing: {required}")
+    session = SESSION.read_text(encoding="utf-8")
+    for required in ("virtual_keyboard_changed", "terminal_insert", "ssh_client_connect"):
+        require(required in ui, f"existing UI input path missing: {required}")
+    # The shell command and local execution moved to the extracted session; the
+    # UI keeps only the SSH host seam.
+    require("local_shell().execute(line)" in session and "cat_enqueue(" in session,
+            "existing shell/local input path missing from the extracted session")
 
     print("PASS: keyboard async-dispatch contract")
     return 0

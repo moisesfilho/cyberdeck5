@@ -16,6 +16,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_session.h"
 LOCAL_SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp"
 LIMIT = 12288
 
@@ -97,17 +98,27 @@ int main() {
 '''
 
 
-def marker_harness(source: str) -> str:
+def marker_harness(source: str, session_header: str) -> str:
     """Compile the production marker expression with deterministic state."""
     render = function_body(source, "std::string get_rendered_output()")
     match = re.search(r"const std::string marker\s*=\s*(?P<expr>.*?);", render, re.S)
     assert match is not None
     expression = match.group("expr")
+    # The production expression is qualified with the extracted session enum.
+    # Copy that real enum block (the header itself is not host-linkable because
+    # it pulls in esp_err.h) so the harness exercises the real enumerators.
+    enum_match = re.search(
+        r"enum class wifi_ui_state_t\s*\{.*?\};", session_header, re.S)
+    assert enum_match is not None
+    wifi_enum = enum_match.group(0)
     return f'''#include <cassert>
 #include <string>
+namespace cyberdeck_shell_session {{
+{wifi_enum}
+}}
+using cyberdeck_shell_session::wifi_ui_state_t;
 struct shell {{ std::string value; std::string cwd() const {{ return value; }} }};
 struct ble_model {{ bool owned = false; bool owns_input() const {{ return owned; }} }};
-enum class wifi_ui_state_t {{ IDLE, SEARCH_SELECT, SAVED_SELECT, SAVED_CONFIRM }};
 shell s_local_shell;
 ble_model s_ble_model;
 wifi_ui_state_t s_wifi_ui_state = wifi_ui_state_t::IDLE;
@@ -145,12 +156,16 @@ def test_utf8_limits_and_cursor() -> None:
 
 def test_marker_matrix_executes_production_expression() -> None:
     source = UI.read_text(encoding="utf-8")
+    session_header = SESSION_HEADER.read_text(encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="cyberdeck-marker-") as directory:
         root = Path(directory)
         cpp = root / "marker.cpp"
         binary = root / "marker"
-        cpp.write_text(marker_harness(source), encoding="utf-8")
-        subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", str(cpp), "-o", str(binary)], check=True)
+        cpp.write_text(marker_harness(source, session_header), encoding="utf-8")
+        subprocess.run([
+            "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+            str(cpp), "-o", str(binary),
+        ], check=True)
         subprocess.run([str(binary)], check=True)
 
 

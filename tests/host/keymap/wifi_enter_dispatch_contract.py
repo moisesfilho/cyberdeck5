@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 
 
 def require(condition: bool, message: str) -> None:
@@ -37,9 +38,12 @@ def function_body(source: str, signature: str) -> str:
 
 def main() -> int:
     source = UI.read_text(encoding="utf-8")
+    session = SESSION.read_text(encoding="utf-8")
     async_consumer = function_body(source, "void on_keyboard_event(")
     terminal_changed = function_body(source, "void terminal_changed(")
-    local_key = function_body(source, "void local_key(uint32_t key)")
+    # Menu selection now lives in the extracted session key handler; the UI
+    # facade only translates LVGL key codes and delegates.
+    local_key = function_body(session, "void session::handle_key(")
 
     # Enter must reach the stateful Wi-Fi menu handler instead of executing an
     # empty shell line. Password entry remains handled by execute_line().
@@ -50,13 +54,29 @@ def main() -> int:
     require("local_key(LV_KEY_ENTER)" in terminal_changed,
             "virtual Enter must reach local_key")
 
-    # The existing local handler is the single owner of menu selection.
-    require("s_wifi_search_menu.selected_item()" in local_key,
+    # The session key handler is the single owner of menu selection, and the
+    # UI facade must delegate to it.
+    require("s_shell_session.handle_key(translate_session_key(key))" in source,
+            "UI local_key facade must delegate to the extracted session handler")
+    require("wifi_search_menu().selected_item()" in local_key,
             "search Enter must inspect the selected AP")
-    require("s_wifi_saved_menu.selected_ssid()" in local_key,
+    require("wifi_saved_menu().selected_ssid()" in local_key,
             "saved-menu Enter must inspect the selected SSID")
-    require("s_wifi_ui_state == wifi_ui_state_t::SEARCH_PASSWORD" in local_key,
+    require("wifi_state == wifi_ui_state_t::SEARCH_PASSWORD" in local_key,
             "password state must retain its cancellation path")
+
+    # Connection start must keep the two tokens distinct. The manager callback
+    # is matched against the token reported by wifi_mgr, while the model token
+    # identifies the attempt; conflating them strands the UI in CONNECTING
+    # because later status callbacks no longer match.
+    connect = function_body(session, "bool session::begin_wifi_connection(")
+    require("host_.wifi_model_connection_token() = model_token;" in connect,
+            "the model connection token must be the attempt token")
+    require("host_.wifi_connection_token() = wifi_mgr_connection_token();" in connect,
+            "the UI connection token must come from wifi_mgr, not the model token")
+    pump = function_body(source, "void process_wifi_state(")
+    require("status->connection_token == s_wifi_connection_token" in pump,
+            "manager status must be matched against the wifi_mgr-reported token")
 
     print("PASS: Wi-Fi Enter dispatch contract")
     return 0

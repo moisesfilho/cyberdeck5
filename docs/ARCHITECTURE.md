@@ -37,9 +37,18 @@ modelos de produto permanecem em `src/features/`, sem dependência de LVGL.
 
 O handoff do teclado físico fica isolado em `cyberdeck_keyboard_dispatch.cpp`.
 Ele possui a fila bounded de snapshots, o mutex de enqueue/rollback e o
-agendamento por `lv_async_call`. O callback da UI continua interpretando texto
-e teclas especiais; o dispatcher não conhece sessões de shell, SSH, Wi-Fi ou
-BLE.
+agendamento por `lv_async_call`. O dispatcher não conhece sessões de shell,
+SSH, Wi-Fi ou BLE.
+
+O estado de sessão e as decisões de entrada ficam em
+`src/features/shell/cyberdeck_shell_session.{h,cpp}`. A `session` é livre de
+LVGL e possui a linha corrente, o cursor, o histórico, o SSID Wi-Fi pendente, o
+`cyberdeck_edit_line` de cada contexto (menu, SSH, senha, host key), a chave de
+estado SSH e o buffer de passkey BLE. Ela decide o que cada tecla faz e executa
+os comandos, sempre através da interface `host`: saída de terminal, pumps,
+serviços de Wi-Fi/SSH/cat, shell local e BLE. `cyberdeck_ui.cpp` fica como
+fachada: constrói e atualiza widgets, traduz `lv_key_t` para
+`cyberdeck_shell_session::key`, mantém o pump de eventos e implementa o `host`.
 
 O agendamento da reconexão BLE em background fica isolado em
 `cyberdeck_ble_background.cpp` (`scheduler`): restauração de bonds no boot,

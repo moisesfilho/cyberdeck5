@@ -22,6 +22,7 @@ SHELL_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_she
 HELP_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_help.h"
 HELP_FIXTURE = ROOT / "tests/host/keymap/contracts/cyberdeck_help.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 SERIAL = ROOT / "components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp"
 APP = ROOT / "main/app_main.cpp"
 COMPONENT = ROOT / "components/cyberdeck/CMakeLists.txt"
@@ -244,12 +245,16 @@ def check_shared_help_catalog(help_header: str, help_fixture: str, shell: str,
             "test_shell_utils.cpp must assert the exact screen help row")
 
 
-def check_ui_routing(ui: str) -> None:
-    execute = function_body(ui, "void execute_line(")
+def check_ui_routing(ui: str, session: str) -> None:
+    # The command switch now lives in the extracted session; the UI facade only
+    # delegates execute_line to it.
+    execute = function_body(session, "void session::execute_line(")
+    require("s_shell_session.execute_line" in ui,
+            "UI facade must delegate execute_line to the extracted session")
     require("CYBERDECK_CMD_SCREEN_ON" in execute and
             "CYBERDECK_CMD_SCREEN_OFF" in execute and
             "CYBERDECK_CMD_SCREEN_TIMEOUT" in execute,
-            "UI command switch must route all screen commands")
+            "session command switch must route all screen commands")
 
     on_case = switch_case(execute, "case CYBERDECK_CMD_SCREEN_ON:")
     require("screen_off_turn_on" in on_case,
@@ -267,7 +272,7 @@ def check_ui_routing(ui: str) -> None:
     require_before(timeout_case, "parse_timeout_minutes",
                    "screen_off_set_timeout_minutes",
                    "timeout must be parsed before it mutates screen state")
-    require("append_line" in timeout_case,
+    require("append_output_line" in timeout_case,
             "timeout command must report validation/persistence outcome")
     require("nvs_" not in timeout_case,
             "UI command handling must not perform NVS I/O directly")
@@ -460,7 +465,7 @@ def main() -> int:
     check_pure_contract(state_source, state_header, component)
     check_command_parser(shell, shell_header)
     check_shared_help_catalog(help_header, help_fixture, shell, shell_test, help_test)
-    check_ui_routing(ui)
+    check_ui_routing(ui, SESSION.read_text(encoding="utf-8"))
     check_adapter(screen, screen_header, ui, app, component)
     check_serial_transitive_path(serial)
     check_wiring(contract)

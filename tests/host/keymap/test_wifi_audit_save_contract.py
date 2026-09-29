@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[3]
 SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
 SHELL_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
+SESSION_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_session.h"
 AUDIT = ROOT / "components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit.cpp"
 PERSISTENCE = ROOT / "components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit_persistence.cpp"
 PERSISTENCE_HEADER = ROOT / "components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit_persistence.h"
@@ -128,8 +130,8 @@ def check_direct_render(audit: str) -> None:
             "error rendering must expose a status-only error path")
 
 
-def check_standard_flow_has_no_io(ui: str) -> None:
-    branch = block_after(ui, "case CYBERDECK_CMD_WIFI_AUDIT:")
+def check_standard_flow_has_no_io(session: str) -> None:
+    branch = block_after(session, "case CYBERDECK_CMD_WIFI_AUDIT:")
     require_absent(
         branch,
         ("enqueue_export", "enqueue_save", "export_file", "open_exclusive",
@@ -137,15 +139,15 @@ def check_standard_flow_has_no_io(ui: str) -> None:
         "ordinary wifi audit must not perform persistence or filesystem I/O")
     require("drain_export" not in branch and "drain_save" not in branch,
             "ordinary wifi audit must not wait for or drain a save completion")
-    require_absent(branch, ("append_line", "render_terminal"),
+    require_absent(branch, ("append_output_line", "render_terminal"),
                    "the audit command must not publish the collecting snapshot; "
                    "the LVGL timer is the sole state-to-output gate")
-    require("s_wifi_audit.begin" in branch,
+    require("audit.begin(" in branch,
             "the audit command must start a versioned audit request")
 
 
-def check_save_flow_is_explicit(ui: str) -> None:
-    save_branch = block_after(ui, "case CYBERDECK_CMD_WIFI_AUDIT_SAVE:")
+def check_save_flow_is_explicit(session: str) -> None:
+    save_branch = block_after(session, "case CYBERDECK_CMD_WIFI_AUDIT_SAVE:")
     require(first_index_any(save_branch, ("enqueue_save", "enqueue_export", "save_audit")) >= 0,
             "wifi audit save must hand off to the explicit save worker")
     require("drain_save" not in save_branch and "drain_export" not in save_branch,
@@ -303,18 +305,23 @@ def main() -> int:
     shell = SHELL.read_text(encoding="utf-8")
     header = SHELL_HEADER.read_text(encoding="utf-8")
     ui = UI.read_text(encoding="utf-8")
+    session = SESSION.read_text(encoding="utf-8")
     audit = AUDIT.read_text(encoding="utf-8")
     persistence = PERSISTENCE.read_text(encoding="utf-8")
     persistence_header = PERSISTENCE_HEADER.read_text(encoding="utf-8")
     serial = SERIAL.read_text(encoding="utf-8")
     require("class audit_persistence" in persistence_header,
             "production persistence header must remain the host-testable seam")
+    require("cyberdeck_shell_session.h" in ui,
+            "the UI facade must include the extracted shell session")
+    require("class session" in SESSION_HEADER.read_text(encoding="utf-8"),
+            "the session header must declare the host-testable session seam")
     check_parser(shell, audit, header)
     check_direct_render(audit)
-    check_standard_flow_has_no_io(ui)
-    check_save_flow_is_explicit(ui)
+    check_standard_flow_has_no_io(session)
+    check_save_flow_is_explicit(session)
     check_process_wifi_audit_state_gate(ui)
-    check_directory_timestamp_and_collision(ui, audit, persistence)
+    check_directory_timestamp_and_collision(ui + "\n" + session, audit, persistence)
     check_ack_order(ui, persistence)
     check_serial_ui_compatibility(serial)
     check_wiring()

@@ -13,6 +13,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 AUDIT = ROOT / "components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit.cpp"
 PERSISTENCE = ROOT / "components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit_persistence.cpp"
 PERSISTENCE_HEADER = ROOT / "components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit_persistence.h"
@@ -100,14 +101,19 @@ def without_comments(source: str) -> str:
 
 def main() -> int:
     ui = UI.read_text(encoding="utf-8")
-    simplified_flow = "wifi audit save" in ui
-    require("wifi audit" in ui, "TUI must recognize wifi audit")
+    # The shell command switch moved to the extracted session; the UI keeps the
+    # LVGL timer that drains the completion and renders the ACK.
+    session = SESSION.read_text(encoding="utf-8")
+    simplified_flow = "wifi audit save" in session
+    require("wifi audit" in session, "TUI must recognize wifi audit")
+    require("s_shell_session.execute_line" in ui,
+            "the UI facade must delegate the command switch to the session")
     if simplified_flow:
-        require("wifi audit export" not in ui,
+        require("wifi audit export" not in session,
                 "simplified flow must retire the old export command")
     else:
-        require("wifi audit export" in ui, "legacy TUI must recognize audit export")
-        require("confirmed" in ui or "confirm" in ui,
+        require("wifi audit export" in session, "legacy TUI must recognize audit export")
+        require("confirmed" in session or "confirm" in session,
                 "legacy export needs explicit confirmation")
     require(PERSISTENCE.exists(), "audit persistence implementation is missing")
     require(PERSISTENCE_HEADER.exists(), "audit persistence public header is missing")
@@ -687,7 +693,7 @@ def main() -> int:
     # paths.  The legacy branch keeps its old checks; the approved simplified
     # branch only hands the explicit save request to a bounded worker.
     if simplified_flow:
-        request = block_after(ui, "case CYBERDECK_CMD_WIFI_AUDIT_SAVE:")
+        request = block_after(session, "case CYBERDECK_CMD_WIFI_AUDIT_SAVE:")
         require("cmd.confirmed" not in request,
                 "wifi audit save is explicit without a second confirmation verb")
         require("drain_save(" not in request and "drain_export(" not in request,
@@ -704,7 +710,7 @@ def main() -> int:
         require("portMAX_DELAY" not in request + audit_enqueue,
                 "UI save paths must not wait indefinitely for persistence")
     else:
-        request = block_after(ui, "case CYBERDECK_CMD_WIFI_AUDIT_EXPORT:")
+        request = block_after(session, "case CYBERDECK_CMD_WIFI_AUDIT_EXPORT:")
         require_before(request, "cmd.confirmed", "enqueue_export(",
                        "the UI must enforce explicit confirmation before enqueueing")
         require('"/sdcard/wifi-audit.txt"' in request,

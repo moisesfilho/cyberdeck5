@@ -12,6 +12,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 
 
 def require(condition: bool, message: str) -> None:
@@ -75,12 +76,14 @@ def marker_contract(source: str) -> None:
                 f"render route {index} must suppress the local prompt while BLE owns input")
 
 
-def preservation_contract(source: str) -> None:
+def preservation_contract(source: str, session: str) -> None:
     render = function_body(source, "void render_terminal()")
     require("lv_textarea_set_cursor_pos" in render,
             "render must restore the model cursor after setting textarea text")
-    require("s_cursor" in render and "utf8_char_count" in render,
+    require("s_shell_session.cursor()" in render and "utf8_char_count" in render,
             "cursor placement must remain UTF-8/codepoint aware")
+    require("s_shell_session.line().size()" in render,
+            "cursor clamping must use the session line, not a UI copy")
     require(re.search(
         r"const\s+size_t\s+line_start\s*=\s*visible_line\.size\(\)\s*-\s*fitted_line\.size\(\)\s*;",
         render,
@@ -96,12 +99,16 @@ def preservation_contract(source: str) -> None:
     require("s_line.substr(0, cursor_bytes)" not in render,
             "cursor must not count bytes from the hidden prefix")
 
-    execute = function_body(source, "void execute_line(bool line_already_sent = false)")
-    require("s_history.reset_position()" in execute and "s_history.add(line)" in execute,
+    # Command execution moved to the extracted session; the UI only delegates.
+    execute = function_body(session, "void session::execute_line(")
+    require("s_shell_session.execute_line(line_already_sent)" in
+            function_body(source, "void execute_line(bool line_already_sent)"),
+            "UI facade must delegate execute_line to the extracted session")
+    require("history_.reset_position()" in execute and "history_.add(" in execute,
             "local command execution must preserve history lifecycle")
-    require("SSH_CLIENT_NEED_PASSWORD" in execute and "ssh_client_send_password" in execute,
+    require("SSH_CLIENT_NEED_PASSWORD" in execute and "ssh_composer" in execute,
             "password flow must remain separate from local command flow")
-    require("SSH_CLIENT_CONNECTED" in execute and "ssh_client_send_data" in execute,
+    require("SSH_CLIENT_CONNECTED" in execute and "ssh_composer" in execute,
             "connected SSH flow must remain separate from local command flow")
 
 
@@ -118,8 +125,9 @@ def truncation_contract(source: str) -> None:
 def main() -> int:
     try:
         source = UI.read_text(encoding="utf-8")
+        session = SESSION.read_text(encoding="utf-8")
         marker_contract(source)
-        preservation_contract(source)
+        preservation_contract(source, session)
         truncation_contract(source)
     except (AssertionError, OSError, ValueError) as error:
         print(f"FAIL: {error}")

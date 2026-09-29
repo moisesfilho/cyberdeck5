@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 MGR = ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 BG = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp"
 TYPES = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_types.cpp"
 STORE = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_store.cpp"
@@ -38,6 +39,7 @@ def body(source: str, signature: str) -> str:
 def main() -> int:
     mgr = MGR.read_text(encoding="utf-8")
     ui = UI.read_text(encoding="utf-8")
+    session = SESSION.read_text(encoding="utf-8")
     bg = BG.read_text(encoding="utf-8")
     types = TYPES.read_text(encoding="utf-8")
     store = STORE.read_text(encoding="utf-8")
@@ -95,10 +97,11 @@ def main() -> int:
     assert "record.name = scan_name_for_peer(active_address, s_connection_addr_type)" in connected
     assert connected.index("record.name = scan_name_for_peer") < connected.index("save_bonds_to_nvs()")
     assert "strlcpy(slot.name, record.name.c_str(), sizeof(slot.name))" in body(mgr, "size_t ble_bonds_copy")
-    paired = body(ui, "case CYBERDECK_CMD_BLUETOOTH_PAIRED:")
+    # The `bluetooth paired` command switch moved to the extracted session.
+    paired = body(session, "case CYBERDECK_CMD_BLUETOOTH_PAIRED:")
     assert "item.name = paired_snapshots[i].name" in paired
-    assert "s_ble_model.set_paired_devices(paired)" in paired
-    assert "s_ble_model.begin_paired()" in paired
+    assert "host_.ble_model().set_paired_devices(paired)" in paired
+    assert "host_.ble_model().begin_paired()" in paired
     assert "return k_unnamed_placeholder" in body(types, "std::string display_name")
     assert "display_name(d)" in types
     assert "name=" in body(store, "std::string encode_bond")

@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 STATE = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp"
 EVENTS = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp"
 
@@ -39,13 +40,16 @@ def function_body(source: str, signature: str) -> str:
 
 def main() -> int:
     source = UI.read_text(encoding="utf-8")
+    # Key dispatch moved to the extracted session; the LVGL render/timer seams
+    # (list visibility, transient consolidation, event pump) stay in the UI.
+    session = SESSION.read_text(encoding="utf-8")
     state_source = STATE.read_text(encoding="utf-8")
     events_source = EVENTS.read_text(encoding="utf-8")
     visible = function_body(source, "bool ble_list_is_visible()")
     sync = function_body(source, "void sync_ble_transient_block()")
     rendered = function_body(source, "std::string get_rendered_output()")
     terminal = function_body(source, "void render_terminal() {")
-    key = function_body(source, "void local_key(uint32_t key)")
+    key = function_body(session, "void session::handle_key(")
     process = function_body(source, "void process_ble_events(lv_timer_t *)")
 
     assert "current == cyberdeck_ble::screen::results" in visible
@@ -58,7 +62,7 @@ def main() -> int:
     assert "notice != s_ble_last_notice" in process
     assert process.count("append_line(notice + \"\\n\")") == 1
     assert process.index("s_ble_model.advance_time(100)") < process.index("const std::string notice")
-    assert "LV_KEY_UP" in key and "LV_KEY_DOWN" in key
+    assert "pressed == key::up" in key and "pressed == key::down" in key
 
     # While owned, the list is transient.  On the first release only, its last
     # model-backed representation is appended to history; repainting is not a
@@ -119,14 +123,14 @@ def main() -> int:
     generic_ble_path = key[key.index("cyberdeck_ble::key ble_key;"):]
     # ENTER/UP/DOWN are routed to the state machine only while it owns input;
     # the model consequently resolves ENTER from its current selected item.
-    assert "key == LV_KEY_ENTER" in key
-    assert "s_ble_model.press(ble_key)" in generic_ble_path
-    assert generic_ble_path.index("s_ble_model.press(ble_key)") < generic_ble_path.index("return;")
-    assert "s_ble_model.selected()" not in key
+    assert "pressed == key::enter" in key
+    assert "ble.press(ble_key)" in generic_ble_path
+    assert generic_ble_path.index("ble.press(ble_key)") < generic_ble_path.index("return;")
+    assert "ble.selected()" not in key
 
     # Ownership release must synchronize before the repaint, allowing the
     # local marker to return without disturbing Wi-Fi/shell/SSH routing.
-    assert "sync_ble_transient_block();" in key
+    assert "host_.sync_ble_transient()" in key
     assert "s_ble_model.owns_input()" in terminal
     assert "s_wifi_ui_state" in terminal
     assert "ssh_client_get_state" in terminal

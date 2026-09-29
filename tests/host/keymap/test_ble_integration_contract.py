@@ -44,6 +44,7 @@ SHELL_UTILS_HDR = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_
 SHELL_UTILS = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
 SHELL_HELP = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_help.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
 UI_HDR = ROOT / "components/cyberdeck/include/platform/display/cyberdeck_ui.h"
 SERIAL = ROOT / "components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp"
 SERIAL_TEST = ROOT / "tests/host/keymap/test_serial_ndjson_dispatch.cpp"
@@ -379,20 +380,25 @@ def check_ui_routing(report: Report) -> None:
         report.require(notice_append >= 0 and notice_bookkeeping > notice_append,
                        "BLE notice must be appended before release bookkeeping")
 
-    local_key = function_body(ui, "void local_key(", report)
-    if local_key:
-        report.require("s_ble_model.owns_input()" in local_key,
+    # The shell command switch and key dispatch moved to the extracted session;
+    # the UI keeps the event pump and the host seams.
+    session = strip_comments(report.read(SESSION))
+    handle_key = function_body(session, "void session::handle_key(", report)
+    report.require("s_ble_model.owns_input()" in ui,
+                   "cyberdeck_ui.cpp must derive BLE ownership from the model")
+    if handle_key:
+        report.require("ble.owns_input()" in handle_key or "owns_input()" in handle_key,
                        "BLE key routing must consult model ownership at dispatch time")
     for token in ("CYBERDECK_CMD_BLUETOOTH_SEARCH", "CYBERDECK_CMD_BLUETOOTH_PAIRED"):
-        report.require(token in ui,
-                       f"cyberdeck_ui.cpp must route {token} to the BLE feature")
+        report.require(token in session,
+                       f"the shell session must route {token} to the BLE feature")
 
     # The key path: the four approved keys must reach the BLE model.  Reusing the
     # existing Wi-Fi style key enum is fine, but the BLE branch must exist.
     for token in ("cyberdeck_ble::key::up", "cyberdeck_ble::key::down",
                   "cyberdeck_ble::key::enter", "cyberdeck_ble::key::escape"):
-        report.require(token in ui,
-                       f"cyberdeck_ui.cpp must forward {token} to the BLE state machine")
+        report.require(token in session,
+                       f"the shell session must forward {token} to the BLE state machine")
 
     # Nothing scan-related may block the LVGL task: the UI may only ask the
     # adapter to start, never call a stack scan/connect API itself.  The real
