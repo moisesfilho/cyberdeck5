@@ -6,45 +6,11 @@ sdkconfig.old
 .cache/
 **/__pycache__/
 compile_commands.json
+# Artefatos compilados dos testes host sao executaveis sem extensao
+# (mesmo prefixo "test_" das fontes). Ignora o prefixo e reinsere as
+# extensoes de fonte, para que novos testes sejam rastreados sem precisar
+# de uma excecao por arquivo.
 tests/host/**/test_*
-!tests/host/**/test_local_shell.cpp
-!tests/host/**/test_keyboard_input_contract.py
-!tests/host/**/test_prompt_behavior.py
-!tests/host/keymap/test_wifi_audit.cpp
-!tests/host/keymap/test_wifi_audit_contract.py
-!tests/host/keymap/test_wifi_audit_persistence.cpp
-!tests/host/keymap/test_wifi_audit_persistence_contract.py
-!tests/host/keymap/test_wifi_audit_save.cpp
-!tests/host/keymap/test_wifi_audit_save_contract.py
-!tests/host/keymap/test_cat_multiline.cpp
-!tests/host/keymap/test_cat_multiline_contract.py
-!tests/host/keymap/test_serial_*.cpp
-!tests/host/keymap/test_fs_write_dispatch.cpp
-!tests/host/keymap/test_fs_write_cli.py
-!tests/host/keymap/test_fs_write_contract.py
-!tests/host/keymap/test_battery_contract.cpp
-!tests/host/keymap/test_battery_reader_contract.py
-!tests/host/keymap/test_battery_ui_contract.py
-!tests/host/keymap/test_battery_view.cpp
-!tests/host/keymap/test_battery_view_contract.py
-!tests/host/keymap/test_battery_protection.cpp
-!tests/host/keymap/test_ble_header_contract.py
-!tests/host/keymap/test_battery_protection_contract.py
-!tests/host/keymap/test_screen_protection.cpp
-!tests/host/keymap/test_screen_protection_contract.py
-!tests/host/keymap/test_help_unification.cpp
-!tests/host/keymap/test_ble_types.cpp
-!tests/host/keymap/test_ble_state_machine.cpp
-!tests/host/keymap/test_ble_event_dispatch.cpp
-!tests/host/keymap/test_ble_store.cpp
-!tests/host/keymap/test_ble_command_parse.cpp
-!tests/host/keymap/test_ble_integration_contract.py
-!tests/host/keymap/test_ble_ui_timeout_contract.py
-!tests/host/keymap/test_ble_adv_types_contract.py
-!tests/host/keymap/test_ble_scan_contract.py
-!tests/host/keymap/test_ble_review_regressions.py
-!tests/host/keymap/test_ble_runtime_regressions.py
-!tests/host/keymap/test_ble_ui_render_contract.py
-!tests/host/keymap/test_ble_background_contract.py
-!tests/host/keymap/test_ble_bond_name_contract.py
-!tests/host/keymap/test_ble_hid_contract.py
+!tests/host/**/*.cpp
+!tests/host/**/*.h
+!tests/host/**/*.py

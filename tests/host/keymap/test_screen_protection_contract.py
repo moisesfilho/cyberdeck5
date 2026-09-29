@@ -10,6 +10,7 @@ simulator, Serial Automation Bridge, or a display.
 """
 from pathlib import Path
 import re
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[3]
 STATE_SOURCE = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp"
@@ -28,7 +29,6 @@ APP = ROOT / "main/app_main.cpp"
 COMPONENT = ROOT / "components/cyberdeck/CMakeLists.txt"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
-GITIGNORE = ROOT / ".gitignore"
 SHELL_TEST = ROOT / "tests/host/keymap/test_shell_utils.cpp"
 HELP_TEST = ROOT / "tests/host/keymap/test_help_unification.cpp"
 SERIAL_TEST = ROOT / "tests/host/keymap/test_serial_ndjson_dispatch.cpp"
@@ -398,7 +398,6 @@ def check_serial_transitive_path(serial: str) -> None:
 def check_wiring(contract: str) -> None:
     makefile = MAKEFILE.read_text(encoding="utf-8")
     codemap = strip_comments(CODEMAP.read_text(encoding="utf-8"))
-    gitignore = GITIGNORE.read_text(encoding="utf-8")
 
     require("test_screen_protection:" in makefile and
             "test_screen_protection_contract:" in makefile,
@@ -409,9 +408,20 @@ def check_wiring(contract: str) -> None:
             "test_screen_protection_contract.py" in codemap and
             "cyberdeck_screen_protection.cpp" in codemap,
             "code-map must document the screen source and both tests")
-    require("!tests/host/keymap/test_screen_protection.cpp" in gitignore and
-            "!tests/host/keymap/test_screen_protection_contract.py" in gitignore,
-            "screen test sources must be trackable despite the host-test ignore rule")
+    # Assert the real ignore behavior; --no-index is required because an
+    # already-tracked file is never reported as ignored.
+    for source in ("test_screen_protection.cpp", "test_screen_protection_contract.py"):
+        visible = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", f"tests/host/keymap/{source}"],
+            cwd=str(ROOT), capture_output=True).returncode
+        require(visible != 0,
+                f"screen test sources must be trackable despite the host-test ignore rule: {source}")
+    for artifact in ("test_screen_protection", "test_screen_protection_contract"):
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", f"tests/host/keymap/{artifact}"],
+            cwd=str(ROOT), capture_output=True).returncode
+        require(ignored == 0,
+                f"compiled host-test artifacts must stay ignored: {artifact}")
     require("class state" in contract and "persisted_timeout" in contract,
             "test contract must retain the pure state/persistence ABI")
 

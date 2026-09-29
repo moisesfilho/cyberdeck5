@@ -8,6 +8,7 @@ I2C, a simulator, Serial Automation Bridge, a display, or a power rail.
 """
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -31,7 +32,6 @@ APP = ROOT / "main/app_main.cpp"
 COMPONENT = ROOT / "components/cyberdeck/CMakeLists.txt"
 RULES_PATH = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
-GITIGNORE = ROOT / ".gitignore"
 ARCHITECTURE = ROOT / "docs/ARCHITECTURE.md"
 ARCHITECTURE_PT_BR = ROOT / "docs/ARCHITECTURE.pt-BR.md"
 
@@ -332,7 +332,6 @@ def check_ui_shell_and_serial(failures: list[str]) -> None:
 def check_traceability(failures: list[str]) -> None:
     codemap = read(CODEMAP, failures)
     makefile = read(RULES_PATH, failures)
-    gitignore = read(GITIGNORE, failures)
     for token in (
         "test_battery_protection.cpp", "test_battery_protection_contract.py",
         "cyberdeck_battery_protection.cpp", "CHG_STAT", "CHG_EN",
@@ -346,12 +345,20 @@ def check_traceability(failures: list[str]) -> None:
     require_all(failures, "test_battery_protection.cpp" in makefile and
                 "test_battery_protection_contract.py" in makefile,
                 "Makefile must depend on both battery protection tests")
-    for exception in (
-        "!tests/host/keymap/test_battery_protection.cpp",
-        "!tests/host/keymap/test_battery_protection_contract.py",
-    ):
-        require_all(failures, exception in gitignore,
-                    f"gitignore must keep {exception} trackable")
+    # Assert the real ignore behavior; --no-index is required because an
+    # already-tracked file is never reported as ignored.
+    for source in ("test_battery_protection.cpp", "test_battery_protection_contract.py"):
+        visible = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", f"tests/host/keymap/{source}"],
+            cwd=str(ROOT), capture_output=True).returncode
+        require_all(failures, visible != 0,
+                    f"gitignore must keep tests/host/keymap/{source} trackable")
+    for artifact in ("test_battery_protection", "test_battery_protection_contract"):
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", f"tests/host/keymap/{artifact}"],
+            cwd=str(ROOT), capture_output=True).returncode
+        require_all(failures, ignored == 0,
+                    f"gitignore must keep the compiled {artifact} ignored")
 
     for path in (ARCHITECTURE, ARCHITECTURE_PT_BR):
         documentation = read(path, failures)

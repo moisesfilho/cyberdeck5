@@ -22,6 +22,7 @@ target stays RED until the coder finishes the feature.
 """
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -674,12 +675,25 @@ def check_registration_and_traceability(report: Report) -> None:
             report.require("$(BLE_STATE_HDR)" in dependencies,
                            "BLE integration contract must depend on the state-machine header")
 
-    gitignore = report.read(GITIGNORE)
-    if gitignore:
+    # Assert the real ignore behavior rather than the negation literals: the
+    # rule targets the extensionless compiled binaries and re-includes the
+    # source extensions.  --no-index is required because an already-tracked
+    # file is never reported as ignored.
+    if report.read(GITIGNORE):
         for name in HOST_TEST_FILES:
-            negated = f"!tests/host/keymap/{name}"
-            report.require(negated in gitignore,
-                           f".gitignore must keep the test source {name} via {negated}")
+            visible = subprocess.run(
+                ["git", "check-ignore", "-q", "--no-index", f"tests/host/keymap/{name}"],
+                cwd=str(ROOT), capture_output=True).returncode
+            report.require(visible != 0,
+                           f".gitignore must keep the test source {name} trackable")
+        for artifact in ("test_ble_types", "test_ble_state_machine",
+                         "test_ble_event_dispatch", "test_ble_store",
+                         "test_ble_command_parse"):
+            ignored = subprocess.run(
+                ["git", "check-ignore", "-q", "--no-index", f"tests/host/keymap/{artifact}"],
+                cwd=str(ROOT), capture_output=True).returncode
+            report.require(ignored == 0,
+                           f".gitignore must keep the compiled {artifact} ignored")
 
     code_map = report.read(CODE_MAP)
     if code_map:

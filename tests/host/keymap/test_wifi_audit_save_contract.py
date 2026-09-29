@@ -9,6 +9,7 @@ particular private helper name.
 """
 from pathlib import Path
 import re
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[3]
 SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
@@ -22,7 +23,6 @@ PERSISTENCE_HEADER = ROOT / "components/cyberdeck/include/features/wifi/cyberdec
 SERIAL = ROOT / "components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
-GITIGNORE = ROOT / ".gitignore"
 
 
 def require(condition: bool, message: str) -> None:
@@ -285,7 +285,6 @@ def check_serial_ui_compatibility(serial: str) -> None:
 def check_wiring() -> None:
     makefile = MAKEFILE.read_text(encoding="utf-8")
     codemap = CODEMAP.read_text(encoding="utf-8")
-    gitignore = GITIGNORE.read_text(encoding="utf-8")
     require("test_wifi_audit_save.cpp" in makefile,
             "Makefile must register the new behavioral save test")
     require("test_wifi_audit_save_contract.py" in makefile,
@@ -296,9 +295,23 @@ def check_wiring() -> None:
             "code-map.md must map the new save structural contract")
     require("process_wifi_audit" in codemap,
             "code-map.md must map the UI audit state gate")
-    require("!tests/host/keymap/test_wifi_audit_save.cpp" in gitignore and
-            "!tests/host/keymap/test_wifi_audit_save_contract.py" in gitignore,
-            "new test sources must be trackable despite the host test ignore rule")
+    # The host-test ignore rule targets the extensionless compiled binaries;
+    # the source extensions are re-included, so a new test is trackable without
+    # a per-file exception.  Assert the real behavior instead of literals.
+    # --no-index is required: an already-tracked file is never reported as
+    # ignored, so without it these checks would be no-ops.
+    for source in ("test_wifi_audit_save.cpp", "test_wifi_audit_save_contract.py"):
+        visible = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", f"tests/host/keymap/{source}"],
+            cwd=str(ROOT), capture_output=True).returncode
+        require(visible != 0,
+                f"new test sources must be trackable despite the host test ignore rule: {source}")
+    for artifact in ("test_wifi_audit_save", "test_wifi_audit_save_contract"):
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", f"tests/host/keymap/{artifact}"],
+            cwd=str(ROOT), capture_output=True).returncode
+        require(ignored == 0,
+                f"compiled host-test artifacts must stay ignored: {artifact}")
 
 
 def main() -> int:
