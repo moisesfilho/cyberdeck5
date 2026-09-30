@@ -15,6 +15,7 @@ const lv_color_t kMuted = lv_color_hex(0x8A8A8A);
 void disable_scrolling(lv_obj_t *object)
 {
     lv_obj_set_scroll_dir(object, LV_DIR_NONE);
+    lv_obj_set_scroll_chain(object, false);
     lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_OFF);
 }
 
