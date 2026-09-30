@@ -1,5 +1,6 @@
 #include "platform/logging/event_log.h"
 #include "platform/logging/event_log_recent.h"
+#include "platform/display/cyberdeck_clock.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -78,6 +79,40 @@ bool valid_record(const LogRecord &record)
            record.checksum;
 }
 
+bool sequence_is_newer(uint32_t candidate, uint32_t reference)
+{
+    return candidate != reference &&
+           static_cast<int32_t>(candidate - reference) > 0;
+}
+
+void insert_recent(LogRecord *records, size_t *count, const LogRecord &record)
+{
+    size_t position = 0;
+    while (position < *count &&
+           !sequence_is_newer(records[position].sequence, record.sequence)) {
+        ++position;
+    }
+
+    if (*count == RECENT_COUNT && position == 0) {
+        return;
+    }
+    if (*count < RECENT_COUNT) {
+        for (size_t index = *count; index > position; --index) {
+            records[index] = records[index - 1];
+        }
+        ++*count;
+    } else {
+        for (size_t index = 1; index < RECENT_COUNT; ++index) {
+            records[index - 1] = records[index];
+        }
+        --position;
+        for (size_t index = *count - 1; index > position; --index) {
+            records[index] = records[index - 1];
+        }
+    }
+    records[position] = record;
+}
+
 void copy_text(char *destination, size_t destination_size, const char *source)
 {
     if (source == nullptr) {
@@ -146,13 +181,14 @@ void remember_record(const LogRecord &record)
     xSemaphoreGive(s_recent_mutex);
 }
 
-int64_t find_latest_sequence(FILE *file, uint32_t *next_slot)
+bool rebuild_state(FILE *file, uint32_t *next_slot, uint32_t *next_sequence)
 {
     struct stat info;
     int fd = fileno(file);
     if (fstat(fd, &info) != 0) {
         *next_slot = 0;
-        return -1;
+        *next_sequence = 0;
+        return false;
     }
 
     const size_t slot_count = static_cast<size_t>(info.st_size / RECORD_SIZE);
@@ -160,6 +196,8 @@ int64_t find_latest_sequence(FILE *file, uint32_t *next_slot)
     uint32_t latest_sequence = 0;
     uint32_t latest_slot = 0;
     bool found = false;
+    LogRecord recent[RECENT_COUNT];
+    size_t recent_count = 0;
     LogRecord record;
 
     for (size_t slot = 0; slot < slots_to_scan; ++slot) {
@@ -167,15 +205,26 @@ int64_t find_latest_sequence(FILE *file, uint32_t *next_slot)
             fread(&record, sizeof(record), 1, file) != 1 || !valid_record(record)) {
             continue;
         }
-        if (!found || record.sequence > latest_sequence) {
+        if (!found || sequence_is_newer(record.sequence, latest_sequence)) {
             found = true;
             latest_sequence = record.sequence;
             latest_slot = static_cast<uint32_t>(slot);
         }
+        insert_recent(recent, &recent_count, record);
     }
 
     *next_slot = found ? (latest_slot + 1U) % LOG_CAPACITY : 0;
-    return found ? static_cast<int64_t>(latest_sequence) + 1 : 0;
+    *next_sequence = found ? latest_sequence + 1U : 0;
+
+    if (s_recent_mutex != nullptr && xSemaphoreTake(s_recent_mutex, portMAX_DELAY) == pdTRUE) {
+        s_recent_count = recent_count;
+        s_recent_next = recent_count == RECENT_COUNT ? 0 : recent_count;
+        for (size_t index = 0; index < recent_count; ++index) {
+            s_recent[index] = recent[index];
+        }
+        xSemaphoreGive(s_recent_mutex);
+    }
+    return true;
 }
 
 bool open_log_file(FILE **file, uint32_t *next_slot, uint32_t *next_sequence)
@@ -193,26 +242,28 @@ bool open_log_file(FILE **file, uint32_t *next_slot, uint32_t *next_sequence)
         return false;
     }
 
-    const int64_t sequence = find_latest_sequence(opened, next_slot);
-    if (sequence < 0) {
+    if (!rebuild_state(opened, next_slot, next_sequence)) {
         fclose(opened);
         return false;
     }
-    *next_sequence = static_cast<uint32_t>(sequence);
     *file = opened;
     return true;
 }
 
 bool write_record(FILE *file, LogRecord *record, uint32_t *next_slot, uint32_t *next_sequence)
 {
-    record->sequence = (*next_sequence)++;
-    record->checksum = crc32(reinterpret_cast<const uint8_t *>(record), RECORD_SIZE - sizeof(record->checksum));
+    LogRecord candidate = *record;
+    candidate.sequence = *next_sequence;
+    candidate.checksum = crc32(reinterpret_cast<const uint8_t *>(&candidate),
+                               RECORD_SIZE - sizeof(candidate.checksum));
 
     if (fseek(file, static_cast<long>(*next_slot * RECORD_SIZE), SEEK_SET) != 0 ||
-        fwrite(record, sizeof(*record), 1, file) != 1) {
+        fwrite(&candidate, sizeof(candidate), 1, file) != 1 ||
+        fflush(file) != 0 || fsync(fileno(file)) != 0) {
         return false;
     }
-    fflush(file);
+    *record = candidate;
+    *next_sequence = candidate.sequence + 1U;
     (*next_slot)++;
     if (*next_slot >= LOG_CAPACITY) {
         *next_slot = 0;
@@ -239,9 +290,8 @@ void log_task(void *)
             continue;
         }
 
-        remember_record(record);
-
         if (file == nullptr) {
+            remember_record(record);
             continue;
         }
 
@@ -249,7 +299,10 @@ void log_task(void *)
             fclose(file);
             file = nullptr;
             next_retry = xTaskGetTickCount() + RETRY_INTERVAL;
+            remember_record(record);
+            continue;
         }
+        remember_record(record);
     }
 }
 
@@ -328,12 +381,31 @@ extern "C" size_t event_log_latest(size_t max_events, event_log_line_callback_t 
 
         char timestamp[24];
         const time_t seconds = static_cast<time_t>(record.unix_us / 1000000LL);
-        if (seconds >= 1577836800) {
-            struct tm local_time;
-            localtime_r(&seconds, &local_time);
-            strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &local_time);
-        } else {
+        struct tm utc_time;
+        cyberdeck_clock_time_t utc = {};
+        cyberdeck_clock_time_t configured_time = {};
+        if (seconds >= 1577836800 && gmtime_r(&seconds, &utc_time) != nullptr) {
+            utc.year = static_cast<int16_t>(utc_time.tm_year + 1900);
+            utc.month = static_cast<uint8_t>(utc_time.tm_mon + 1);
+            utc.day = static_cast<uint8_t>(utc_time.tm_mday);
+            utc.hour = static_cast<uint8_t>(utc_time.tm_hour);
+            utc.minute = static_cast<uint8_t>(utc_time.tm_min);
+        }
+        if (!cyberdeck_clock_from_utc(&utc, CYBERDECK_CLOCK_GMT_MINUS_3_OFFSET_MIN,
+                                      &configured_time)) {
             snprintf(timestamp, sizeof(timestamp), "up:%" PRId64 "ms", record.uptime_us / 1000LL);
+        } else {
+            struct tm output_time = utc_time;
+            output_time.tm_year = configured_time.year - 1900;
+            output_time.tm_mon = configured_time.month - 1;
+            output_time.tm_mday = configured_time.day;
+            output_time.tm_hour = configured_time.hour;
+            output_time.tm_min = configured_time.minute;
+            if (strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S",
+                         &output_time) == 0) {
+                snprintf(timestamp, sizeof(timestamp), "up:%" PRId64 "ms",
+                         record.uptime_us / 1000LL);
+            }
         }
 
         char line[RECORD_SIZE];
