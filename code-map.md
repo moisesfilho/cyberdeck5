@@ -5,7 +5,7 @@ Mapa de navegacao do firmware monolitico ESP-IDF para o M5Stack Tab5
 
 ## Visao geral
 
-- Plataforma: ESP-IDF 5.5.5, LVGL 9.x, BSP `m5stack_tab5`.
+- Plataforma: ESP-IDF 5.5.5, LVGL >=9.6,<10.0, BSP `m5stack_tab5`.
 - Aplicacao: uma unica tela TUI LVGL, com header, relogio, indicador Wi-Fi, bateria e terminal.
 - Organizacao: `components/cyberdeck/src/features/` contem fluxos de produto;
   `components/cyberdeck/src/platform/` contem integracoes de hardware e runtime.
@@ -49,10 +49,10 @@ Ordem relevante de inicializacao:
 | Arquivo | Simbolos/funcao | Papel |
 | --- | --- | --- |
 | `tests/host/keymap/test_shell_session.cpp` + `tests/host/keymap/shim/esp_err.h`, `shim/esp_wifi_types.h`, `shim/freertos/FreeRTOS.h` | harness comportamental da sessão | Testa `handle_key`/`execute_line`/insercao de texto com um `host` falso: 98 checks sobre edicao e historico, comandos locais, portas de tela/Wi-Fi/bateria/log/SSH, tokens de conexao (inclusive a distincao entre token do gerenciador e do modelo), passe com varios newlines e buffer de passkey. Os shims sao minimos e nao espelham logica de producao. |
-| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, `shell_session_host`, callbacks de SSH/Wi-Fi/BLE/cat, `refresh_battery_status` | Fachada LVGL: constrói e atualiza widgets, mantém o pump de eventos e renderiza, mas não decide o que cada tecla faz. O estado de sessão (linha/cursor, histórico, SSID pendente, chave SSH pendente, buffer de passkey) e o roteamento de teclas/comandos vivem em `cyberdeck_shell_session::session`; a UI implementa a interface `host` (output, BLE, Wi-Fi, SSH, cat, shell local) e traduz `lv_key_t` para `cyberdeck_shell_session::key`. A construção visual do header e dos widgets terminal/teclado fica nos componentes `cyberdeck_header_view` e `cyberdeck_terminal_view`; a fila de entrada física fica no dispatcher `cyberdeck_keyboard_dispatch`; o pump de eventos BLE (`on_ble_event`/`process_ble_events`/`ble_submit_actions`) permanece na UI e delega o agendamento background ao `cyberdeck_ble_background::scheduler`. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, `shell_session_host`, callbacks de SSH/Wi-Fi/BLE/cat, `refresh_battery_status` | Fachada LVGL 9: constrói e atualiza widgets, usa as APIs dedicadas `lv_obj_set_hidden`/`lv_obj_set_scroll_chain` para visibilidade e rolagem, mantém o pump de eventos e renderiza, mas não decide o que cada tecla faz. O estado de sessão (linha/cursor, histórico, SSID pendente, chave SSH pendente, buffer de passkey) e o roteamento de teclas/comandos vivem em `cyberdeck_shell_session::session`; a UI implementa a interface `host` (output, BLE, Wi-Fi, SSH, cat, shell local) e traduz `lv_key_t` para `cyberdeck_shell_session::key`. A construção visual do header e dos widgets terminal/teclado fica nos componentes `cyberdeck_header_view` e `cyberdeck_terminal_view`; a fila de entrada física fica no dispatcher `cyberdeck_keyboard_dispatch`; o pump de eventos BLE (`on_ble_event`/`process_ble_events`/`ble_submit_actions`) permanece na UI e delega o agendamento background ao `cyberdeck_ble_background::scheduler`. |
 | `components/cyberdeck/include/features/shell/cyberdeck_shell_session.h`, `components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp` | `cyberdeck_shell_session::session`, `cyberdeck_shell_session::host`, `session::handle_key`, `session::execute_line`, `session::insert_physical_text`, `session::insert_modified_key`, `session::insert_virtual_text`, `session::clear_ble_auth_input`, `session::invalidate_wifi_connection`, `wifi_ui_state_t` | Sessão de shell extraída, sem LVGL e sem chamadas diretas a API de plataforma: possui a linha corrente, o cursor, o histórico, o SSID Wi-Fi pendente, o `cyberdeck_edit_line` por contexto, o buffer de passkey BLE e os dois tokens de conexão Wi-Fi (o do gerenciador, que o pump casa com os callbacks, e o da tentativa, do modelo). Decide o roteamento de teclas e a execução de comandos. Todo efeito externo passa pela interface `host`, que declara portas para saída de terminal, BLE, Wi-Fi (serviço, armazenamento e auditoria), SSH, proteção de tela, bateria e log de eventos. Por isso ela linka no host contra um host falso (`test_shell_session.cpp`). `execute_line` aceita `line_already_sent`; `insert_modified_key` trata tecla modificadora como sequência de escape SSH, nunca como texto; `insert_virtual_text` interpreta byte de controle isolado como ação de edição e executa cada linha de um paste com vários newlines exatamente uma vez. O buffer de passkey é zerado em todo caminho que encerra a posse, inclusive no deinit da UI. |
-| `components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_header_view.h` | `cyberdeck_header_view::view` | Componente visual do header: cria a grade 30/40/30 e os widgets Bluetooth, Wi-Fi e bateria; recebe somente estado/presentation já resolvidos e não conhece serviços, NVS, I2C ou modelos BLE/Wi-Fi. |
-| `components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_terminal_view.h` | `cyberdeck_terminal_view::view`, `cyberdeck_terminal_view::callbacks` | Componente visual do terminal e teclado virtual: cria textarea/teclado, aplica estilos, limites e registra callbacks fornecidos pela composição da UI; não implementa shell, SSH ou roteamento de comandos. |
+| `components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_header_view.h` | `cyberdeck_header_view::view` | Componente visual do header: cria a grade 30/40/30 e os widgets Bluetooth, Wi-Fi e bateria; usa `lv_obj_set_hidden` para ocultação e desativa rolagem; recebe somente estado/presentation já resolvidos e não conhece serviços, NVS, I2C ou modelos BLE/Wi-Fi. |
+| `components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_terminal_view.h` | `cyberdeck_terminal_view::view`, `cyberdeck_terminal_view::callbacks` | Componente visual do terminal e teclado virtual: cria textarea/teclado, aplica estilos, usa `lv_obj_set_hidden`/`lv_obj_set_scroll_chain`, limites e registra callbacks fornecidos pela composição da UI; não implementa shell, SSH ou roteamento de comandos. |
 | `components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp`, `components/cyberdeck/include/platform/input/cyberdeck_keyboard_dispatch.h` | `cyberdeck_keyboard_dispatch::dispatcher` | Infraestrutura de entrada física: copia snapshots, mantém fila bounded de capacidade 8, serializa enqueue/rollback com mutex e agenda processamento no contexto LVGL; não interpreta comandos nem conhece sessões da UI. |
 | `components/cyberdeck/include/platform/display/cyberdeck_ui.h` | API publica da UI | Contrato usado por `app_main` e pelo driver de teclado. |
 | `components/cyberdeck/src/platform/display/cyberdeck_font.c` | Fonte monoespaciada | Recurso visual do terminal/header, incluindo os simbolos LVGL de Wi-Fi, menos, carga e Bluetooth; o include LVGL permanece condicionado por `LV_LVGL_H_INCLUDE_SIMPLE` e usa `"lvgl.h"` em ambos os ramos. Os unicos codepoints FontAwesome disponiveis sao `0xF067` (mais), `0xF068` (menos), `0xF0E7` (carga), `0xF1EB` (Wi-Fi), `0xF293` (Bluetooth) e `0xF240..0xF244` (bateria), portanto nao ha glyph de tomada/USB/energia para o caso de alimentacao externa sem bateria. |
@@ -224,10 +224,13 @@ terminais; não esperam `s_dispatch_mutex` nem chamam dispatch/GAP. A task
 `ble_mgr.cpp` serializa preempcao de discovery como `SCAN_CANCEL -> DISC_COMPLETE
 -> SCAN_START`: enquanto o cancelamento GAP esta pendente, uma nova geracao nao
 inicia scan; `DISC_COMPLETE` valida o token capturado e a task libera
-explicitamente a proxima geracao. O caminho trata `EALREADY` apenas quando
-`ble_gap_disc_active()` e falso, preservando observer de 10 s, bonds/RPA/
-`addr_type`, nomes persistidos, tres tentativas, novo anuncio, bloqueio manual,
-filas bounded e callbacks.
+explicitamente a proxima geracao. Se `ble_gap_disc` retornar `EALREADY`, o
+adaptador tenta cancelar e consulta `ble_gap_disc_active()` antes de publicar o
+termino de falha do token atual. Cancelamento de token stale e ignorado porque o
+terminal da geracao anterior ja foi publicado; nenhum evento e emitido com token
+obsoleto e a geracao ativa nao e afetada.
+O caminho preserva observer de 10 s, bonds/RPA/`addr_type`, nomes persistidos,
+tres tentativas, novo anuncio, bloqueio manual, filas bounded e callbacks.
 
 Os contratos `test_ble_scan_contract.py` e `test_ble_runtime_regressions.py`
 cobrem a inferencia segura de `own_addr_type` no sync (fora do helper de start),
@@ -404,7 +407,8 @@ status`, sem tabelas locais nem getters live adicionais.
 `components/cyberdeck/CMakeLists.txt` registra todos os fontes de producao e
 declara dependencias de LVGL, BSP, I2C master, Wi-Fi, rede, FreeRTOS, SD/FATFS,
 libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
-`esp_hosted`, `esp_wifi_remote`, libssh e o override local de `sock_utils`. O
+LVGL diretamente na faixa `>=9.6.0,<10.0.0`, `esp_hosted`, `esp_wifi_remote`,
+libssh e o override local de `sock_utils`. O
 componente tambem expoe o include de configuracao do port NimBLE usado pelo
 adaptador. `sdkconfig.defaults` habilita `CONFIG_FATFS_FS_LOCK=5` (protege os cinco VFS FAT slots contra rename/unlink de <PII type="CASE_ID" id="198"/> abertos) e `CONFIG_FATFS_TIMEOUT_MS=1000`; a task `wifi_audit_io` ainda impõe deadline próprio de 2 s para chamadas SD/VFS.
 
@@ -539,6 +543,19 @@ helpers privados, entao a regra nao fixa a implementacao interna do adaptador.
 | `REQ-BAT-008` — battery/external/charging/absent/unknown thresholds e votos | `test_battery_protection.cpp`, `test_battery_protection_contract.py` |
 | `REQ-BAT-009` — 90/85 protection hysteresis e fail-safe state | `test_battery_protection.cpp`, `test_battery_protection_contract.py` |
 | `REQ-BAT-010` — NVS default/option, UI timer/snapshot, shell e ui.type | `test_battery_protection_contract.py` |
+
+### CI e cobertura host mensuravel
+
+| Arquivo | Simbolos/contrato | Papel |
+| --- | --- | --- |
+| `.clang-format`, `.github/workflows/quality-gate.yml` | `quality` | Gate deterministico de formatacao C++ (clang-format 18.1.8, todos os ranges de producao alterados em `ble_mgr.cpp`, estilo LLVM com indentacao de 4 espacos), lint, smells, Bandit, agregado host completo `make -C tests/host/keymap test` com `-O0 --coverage` e build ESP-IDF 5.5.5 depois dos checks host. A cobertura BLE exige 80% de linhas nos quatro modulos host-puros (`cyberdeck_ble_types`, `cyberdeck_ble_state_machine`, `cyberdeck_ble_event_dispatch`, `cyberdeck_ble_store`) e reporta branches sem threshold; cobertura global reporta linhas e branches, sem threshold, filtrada por `../../../components/cyberdeck/src/.*\\.cpp` e limitada às translation units de produção realmente compiladas/testadas pelo agregado host (sem contar C++ sem gcda; hardware/ESP-IDF, third-party, shims, testes e fixtures ficam fora). Não há exclusões de gcovr. As actions são pinadas por SHA exato: checkout v4.2.2 em `11bd71901bbe5b1630ceea73d27597364c9af683` e Espressif branch v1 tip em `8fc05d1470d5591417e7a3707a1f2bec178db4ae`; a validação de hardware BLE continua dependente do dispositivo. O workflow publica a saída gcovr no Step Summary. |
+
+Declaracao de validacao fisica reportada pelo usuario (REQ-HW-01): foram testados
+no firmware gravado `0202b2b` os cenarios de conexao Bluetooth, scan,
+pareamento/reconexao e recuperacao `EALREADY`. A data e o dispositivo nao foram
+registrados na declaracao; nao ha logs seriais, comandos ou capturas de tela
+registrados dessa acao do usuario. Esta declaracao nao substitui a validacao
+reproduzivel pelo roteiro `tests/manual/serial-bridge-validation.pt-BR.md`.
 
 Os cinco alvos de bateria agora exercitam a implementacao de producao: o reader
 continua sendo o unico proprietario da aquisicao I2C, mas app_main inicia o

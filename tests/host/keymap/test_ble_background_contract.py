@@ -123,6 +123,63 @@ def main() -> int:
     assert "cyberdeck_ble::notice::failed" in cancel
     assert "ble_gap_connect" not in cancel
 
+    # REQ-BLE-02/AC-BLE-02 (revisado): a cancel whose token is no longer the
+    # active generation is ignored. The dispatcher rejects events emitted
+    # with a non-active token, so publishing a terminal outcome for a stale
+    # generation would be rejected/no-op; the previous DISC_COMPLETE terminal
+    # remains the valid source. Mutation: drop the stale branch and the
+    # assertions below fail.
+    assert "cmd.token != s_scan_token" in cancel
+    assert "cmd.token != s_dispatch.active_scan_token()" in cancel
+    assert "BLE scan cancel stale token" in cancel
+    assert cancel.count("publish_scan_finished") >= 2
+    stale = cancel[cancel.index("cmd.token != s_scan_token"):cancel.index("const bool scan_active")]
+    assert "ignoring" in stale
+    assert "break" in stale
+    # TEST-BLE-04: stale branch ignores before any active cancel, publish,
+    # connect, or drain. No terminal event is emitted for the obsolete
+    # generation and the active generation is untouched.
+    assert "publish_scan_finished" not in stale
+    assert "notice::cancelled" not in stale
+    assert "cmd.token, cyberdeck_ble::notice::cancelled" not in stale
+    assert "drain_dispatch_events" not in stale
+    assert "ble_gap_disc_cancel" not in stale
+    assert "ble_gap_disc_active" not in stale
+    assert "ble_gap_connect" not in stale
+    assert "handle_scan_finished" not in stale
+    # TEST-BLE-04: zero-token cancel drops silently without terminal output.
+    zero_guard = cancel[:cancel.index("cmd.token != s_scan_token")]
+    assert "cmd.token == 0" in zero_guard
+    assert "publish_scan_finished" not in zero_guard
+    assert "drain_dispatch_events" not in zero_guard
+    assert "ble_gap_disc_cancel" not in zero_guard
+    # TEST-BLE-04/REQ-BLE-02: stale cancel must not invalidate active generation.
+    assert "s_scan_token =" not in stale
+    assert "s_scan_cancel_pending" not in stale
+    assert "s_scan_cancel_token" not in stale
+    assert "s_scan_next_generation_ready" not in stale
+
+    # ble_gap_disc returning EALREADY means a previous discovery is still
+    # active.  The manager must force a cancel to restore the GAP state
+    # instead of degrading permanently.  Mutation: remove the forced
+    # ble_gap_disc_cancel from the EALREADY recovery and this fails.
+    scan_cmd = body(mgr, "static void start_scan_command(const ble_mgr_cmd_t &cmd)\n{")
+    assert "BLE_HS_EALREADY" in scan_cmd
+    recovery = scan_cmd[scan_cmd.index("BLE_HS_EALREADY"):]
+    recovery = recovery[: recovery.index("if (rc != 0)")]
+    assert "ble_gap_disc_cancel" in recovery, (
+        "EALREADY from ble_gap_disc must force a cancel to clear stale discovery"
+    )
+    assert "ble_gap_disc_active" in recovery
+    assert recovery.index("ble_gap_disc_cancel") < recovery.index("ble_gap_disc_active")
+    # REQ-BLE-01/TEST-BLE-01+02: EALREADY stays terminal-coherent for the
+    # current generation via handle_scan_finished(token, rc). Host cannot
+    # simulate NimBLE timing, so next-window liveness remains a device gap.
+    assert scan_cmd.index("BLE_HS_EALREADY") < scan_cmd.index("if (rc != 0)")
+    terminal = scan_cmd[scan_cmd.index("if (rc != 0)"):]
+    assert "handle_scan_finished(token, rc)" in terminal
+    assert terminal.index("handle_scan_finished(token, rc)") < terminal.index("drain_dispatch_events")
+
     # Cancellation is serialized by the manager task and its terminal callback
     # is delivered through the dedicated DISC_COMPLETE snapshot slot (or the
     # already-stopped terminal branch).
