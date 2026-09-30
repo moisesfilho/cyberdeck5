@@ -37,12 +37,6 @@ jobs:
             --error-exitcode=1 --suppress=missingIncludeSystem \
             components/cyberdeck/src/features/bluetooth/cyberdeck_ble_*.cpp
           bandit -r tools -ll
-      - uses: espressif/install-esp-idf-action@v1
-        with:
-          version: v5.5.5
-      - name: Build firmware
-        id: firmware-build
-        run: idf.py build
       - name: Host contracts and tests (approved executable set)
         id: host-contracts
         working-directory: tests/host/keymap
@@ -71,6 +65,12 @@ jobs:
           ./test_ble_store
           gcovr --root ../../.. --filter '../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_(types|state_machine|event_dispatch|store)\.cpp' \
             --fail-under-line 80 --print-summary
+      - uses: espressif/install-esp-idf-action@v1
+        with:
+          version: v5.5.5
+      - name: Build firmware
+        id: firmware-build
+        run: idf.py build
       - name: Job summary
         if: always()
         run: |
