@@ -1,5 +1,10 @@
 #include "features/shell/cyberdeck_cat_worker.h"
 
+cyberdeck_local_shell_result cyberdeck_cat_worker_process_request(const char *host_root, const char *cwd,
+                                                                  const char *command) {
+    { return cyberdeck_local_shell_cat(host_root, cwd, command); }
+}
+
 #if defined(ESP_PLATFORM)
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -64,7 +69,7 @@ void cat_worker_task(void *)
             if (closing) break;
         }
         const cyberdeck_local_shell_result local =
-            cyberdeck_local_shell_cat(s_host_root, request.cwd, request.command);
+            cyberdeck_cat_worker_process_request(s_host_root, request.cwd, request.command);
         cat_result *result = new (std::nothrow) cat_result{local.output,
             local.status == cyberdeck_local_shell_status::handled, s_generation};
         if (result == nullptr) continue;

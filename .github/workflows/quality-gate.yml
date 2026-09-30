@@ -23,10 +23,16 @@ jobs:
           clang-format --version
           # The adapter predates this gate and intentionally retains its
           # existing layout; check every changed production range.
+           clang-format --dry-run --Werror \
+             --lines=589:600 \
+             --lines=684:690 \
+             components/cyberdeck/src/features/bluetooth/ble_mgr.cpp
           clang-format --dry-run --Werror \
-            --lines=589:600 \
-            --lines=684:690 \
-            components/cyberdeck/src/features/bluetooth/ble_mgr.cpp
+            --lines=9:15 \
+            components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h
+          clang-format --dry-run --Werror \
+            --lines=3:8 \
+            components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.
@@ -49,12 +55,22 @@ jobs:
           make CXXFLAGS='-std=c++17 -Wall -Wextra -Werror -O0 --coverage' \
             test
           echo '### Global host coverage (compiled/tested production C++)' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Report-only line and branch coverage; untested translation units without gcda are not counted.' >> "$GITHUB_STEP_SUMMARY"
-          gcovr --root ../../.. --filter '../../../components/cyberdeck/src/.*\.cpp' \
-            --branches --print-summary | tee -a "$GITHUB_STEP_SUMMARY"
-          echo '### BLE host line gate and branch report' >> "$GITHUB_STEP_SUMMARY"
-          gcovr --root ../../.. --filter '../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_(types|state_machine|event_dispatch|store)\.cpp' \
-            --fail-under-line 80 --branches --print-summary | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'Coverage gates: >=80% lines, >=94% functions, >=59% branches.' >> "$GITHUB_STEP_SUMMARY"
+          GCOVR_ARGS=(
+            --root ../../..
+            --filter '../../../components/cyberdeck/src/.*\.cpp'
+            --txt-metric branch
+            --json "$RUNNER_TEMP/cyberdeck-coverage.json"
+            --fail-under-line 80
+            --fail-under-function 94
+            --fail-under-branch 59
+            --print-summary
+          )
+          gcovr "${GCOVR_ARGS[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 ../../../tools/coverage_scope_guard.py \
+            --root ../../.. \
+            --source-root ../../../components/cyberdeck/src \
+            --gcovr-json "$RUNNER_TEMP/cyberdeck-coverage.json"
       - uses: espressif/install-esp-idf-action@8fc05d1470d5591417e7a3707a1f2bec178db4ae # branch v1 tip (immutable commit)
         with:
           version: v5.5.5
@@ -69,7 +85,6 @@ jobs:
             echo '| --- | --- |'
             echo '| ESP-IDF 5.5.5 build | ${{ steps.firmware-build.outcome }} |'
             echo '| Host aggregate and coverage | ${{ steps.host-coverage.outcome }} |'
-            echo '| Global host C++ coverage | report-only line+branch; compiled/tested translation units only |'
-            echo '| BLE host coverage | line gate >=80%; branch report-only |'
-            echo '| Hardware-only BLE adapter | excluded from host coverage; requires device validation |'
+            echo '| Global host C++ coverage | line >=80%; functions >=94%; branches >=59% |'
+            echo '| Coverage scope | fail-closed gcovr JSON guard; explicit hardware allowlist only |'
           } >> "$GITHUB_STEP_SUMMARY"

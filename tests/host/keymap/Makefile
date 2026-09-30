@@ -118,12 +118,18 @@ LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/features/shell/cyberdec
 CAT_MULTILINE_SRC := test_cat_multiline.cpp
 SHELL_TEST       := test_shell_utils.cpp
 SERIAL_TEST      := test_serial_ndjson_dispatch.cpp
+CAT_WORKER_SRC   := ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp
+BLE_BACKGROUND_SRC := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp
+KEYBOARD_DISPATCH_SRC := ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
+HEADER_VIEW_SRC  := ../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp
+TERMINAL_VIEW_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp
+SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_cat_worker test_ble_background test_keyboard_dispatch test_display_views $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
-.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect
+.PHONY: all test verify clean test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard
 
 all: test
 
@@ -517,20 +523,35 @@ test_wifi_audit_contract: test_wifi_audit_contract.py ../../../components/cyberd
 
 # USB Serial-JTAG NDJSON manual bridge (REQ-002/003/005/006/007/008/009) — TDD RED: produção ausente
 test_serial_ndjson_dispatch: test_serial_ndjson_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_serial_ndjson_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_ndjson_dispatch
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_ndjson_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_ndjson_dispatch
 
 test_serial_screen_dump: test_serial_screen_dump.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) $(SCREENSHOT_BMP_SRC)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_serial_screen_dump.cpp $(SERIAL_BRIDGE_SRC) $(SCREENSHOT_BMP_SRC) -o test_serial_screen_dump
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_screen_dump.cpp $(SERIAL_BRIDGE_SRC) $(SCREENSHOT_BMP_SRC) -o test_serial_screen_dump
 
 test_serial_cli_tolerance: test_serial_cli_tolerance.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_serial_cli_tolerance.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_cli_tolerance
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_cli_tolerance.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_cli_tolerance
 
 test_serial_sysinfo_wifi: test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_sysinfo_wifi
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_sysinfo_wifi
 
 # fs.write seguro (REQ-001..REQ-011) — TDD RED: produção ausente
 test_fs_write_dispatch: test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_fs_write_dispatch
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_fs_write_dispatch
+
+test_cat_worker: test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -I../../../components/cyberdeck/include test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) -o test_cat_worker
+
+test_ble_background: test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) $(BLE_BACKGROUND_HDR)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) -o test_ble_background
+
+test_keyboard_dispatch: test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) shim/full/lvgl.h shim/full/freertos/FreeRTOS.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) -o test_keyboard_dispatch
+
+test_display_views: test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) shim/full/lvgl.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) -o test_display_views
+
+test_coverage_scope_guard: $(SCOPE_GUARD_TEST) ../../../tools/coverage_scope_guard.py
+	$(PYTHON) $(SCOPE_GUARD_TEST)
 
 test_fs_write_cli: test_fs_write_cli.py ../../../tools/cyberdeck_cli.py
 	$(PYTHON) test_fs_write_cli.py
@@ -717,16 +738,26 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory wifi_enter_dispatch_contract
 	@echo "==> Executando contrato TDD da ponte manual USB Serial-JTAG NDJSON (REQ-002/003/005)"
 	@$(MAKE) --no-print-directory test_serial_ndjson_dispatch
+	@./test_serial_ndjson_dispatch
 	@echo "==> Executando contrato TDD do screen.dump byte-identical com chunks/CRC/end (REQ-006/007)"
 	@$(MAKE) --no-print-directory test_serial_screen_dump
+	@./test_serial_screen_dump
 	@echo "==> Executando contrato TDD da CLI tolerante a logs/leitura fragmentada (REQ-007/008)"
 	@$(MAKE) --no-print-directory test_serial_cli_tolerance
+	@./test_serial_cli_tolerance
 	@echo "==> Executando contrato TDD de sys.info/wifi sem hardware (REQ-008/009)"
 	@$(MAKE) --no-print-directory test_serial_sysinfo_wifi
+	@./test_serial_sysinfo_wifi
 	@echo "==> Executando contrato TDD do fs.write seguro (REQ-001..REQ-011)"
 	@$(MAKE) --no-print-directory test_fs_write_dispatch
+	@./test_fs_write_dispatch
 	@$(MAKE) --no-print-directory test_fs_write_cli
 	@$(MAKE) --no-print-directory test_fs_write_contract
+	@$(MAKE) --no-print-directory test_coverage_scope_guard
+	@./test_cat_worker
+	@./test_ble_background
+	@./test_keyboard_dispatch
+	@./test_display_views
 	@echo "==> Executando contratos de bateria (tensao/estados/UI)"
 	@./$(BATTERY_BIN)
 	@$(MAKE) --no-print-directory test_battery_reader_contract

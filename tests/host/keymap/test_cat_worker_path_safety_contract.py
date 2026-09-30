@@ -44,6 +44,7 @@ def main() -> int:
     header = SHELL_HEADER.read_text(encoding="utf-8")
 
     task = body(worker, "void cat_worker_task")
+    seam = body(worker, "cyberdeck_local_shell_result cyberdeck_cat_worker_process_request")
     # Do not ban the shared ``cyberdeck_local_shell_*`` identifier prefix: the
     # dedicated cat API intentionally has that prefix and is the required
     # worker seam.  Reject only construction/use of the generic shell/path
@@ -63,8 +64,14 @@ def main() -> int:
             "cat worker must not include the general local-shell API")
     require(re.search(r"cyberdeck_local_shell_result\s+cyberdeck_local_shell_cat\s*\(", header),
             "local shell must expose a cat-specific result API")
-    require("cyberdeck_local_shell_cat(" in task,
-            "cat worker must call the dedicated cat API")
+    require("cyberdeck_cat_worker_process_request(s_host_root, request.cwd, request.command)" in task,
+            "cat worker task must use the approved seam")
+    require("return cyberdeck_local_shell_cat(host_root, cwd, command);" in seam,
+            "cat worker seam must delegate to the real dedicated cat API")
+    for forbidden in ("std::filesystem::path", "std::vector",
+                      "cyberdeck_local_shell "):
+        require(forbidden not in seam,
+                f"cat worker seam must remain a thin dedicated-API adapter: {forbidden}")
     require("lv_async_call" in task,
             "cat worker must hand results back asynchronously")
 
