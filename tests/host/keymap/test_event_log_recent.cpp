@@ -10,7 +10,8 @@
  * implementacao de producao itere registro a registro, sem copiar o anel.
  *
  * Contrato sob teste (event_log_recent.h):
- *   - recent_count em 0..EVENT_LOG_RECENT_CAPACITY (10, paridade com
+ *   - recent_count em 0..EVENT_LOG_RECENT_CAPACITY (64 de capacidade maxima;
+ *     o default de exibicao continua 20, paridade com
  *     RECENT_COUNT de event_log.cpp via static_assert);
  *   - max_events (count) == 0 -> retorna 0 e nao escreve nada (paridade com
  *     event_log_latest(max_events = 0));
@@ -65,12 +66,11 @@ int s_checks = 0;
         }                                                                              \
     } while (0)
 
-/* Capacidade especificada pelo plano e pela producao (RECENT_COUNT = 10 em
- * event_log.cpp). O literal e o contrato: se a producao mudar, este
- * static_assert quebra o build e forcara revisao consciente. */
-constexpr size_t kSpecCapacity = 10;
-static_assert(EVENT_LOG_RECENT_CAPACITY == kSpecCapacity,
-              "RECENT_COUNT de event_log.cpp mudou: reveja o contrato e atualize os testes");
+/* A capacidade efetiva do anel de produção vem do Kconfig. O teste usa 20
+ * explicitamente para cobrir o default solicitado, sem depender do alias
+ * histórico EVENT_LOG_RECENT_CAPACITY do header host. */
+constexpr size_t kSpecCapacity = 20;
+constexpr size_t kMaxCapacity = 64;
 
 /* Canario: slots extras alem de capacity para detectar escrita fora do
  * contrato (alem de n). */
@@ -158,14 +158,14 @@ std::vector<size_t> expected_indices(size_t recent_count, size_t next, size_t ca
  *   - continuidade com wrap: out[i] == (out[0] + i) % capacity;
  *   - nenhuma escrita alem de n (canario intacto).
  *
- * capacity default = producao (10); aceita valores menores para o teste de
+ * capacity default = producao (20); aceita valores menores para o teste de
  * generalizacao do parametro.
  */
 void verify_state(size_t recent_count, size_t next, size_t count,
                   size_t capacity = kSpecCapacity)
 {
-    size_t buf[kSpecCapacity + kCanarySlots];
-    fill_sentinel(buf, kSpecCapacity + kCanarySlots);
+    size_t buf[kMaxCapacity + kCanarySlots];
+    fill_sentinel(buf, kMaxCapacity + kCanarySlots);
 
     const size_t n = event_log_recent_indices(recent_count, next, count, capacity, buf);
     const size_t expected_n = count < recent_count ? count : recent_count;
@@ -181,16 +181,16 @@ void verify_state(size_t recent_count, size_t next, size_t count,
         }
     }
     /* Nenhuma escrita alem de n (canario preservado). */
-    CHECK(suffix_untouched(buf, n, kSpecCapacity + kCanarySlots));
+    CHECK(suffix_untouched(buf, n, kMaxCapacity + kCanarySlots));
 }
 
 /* ----------------------------------------------------------------- testes */
 
 void test_capacity_parity()
 {
-    // Capacidade fixada pelo plano/producao (10). O static_assert acima ja
+    // Capacidade fixada pelo requisito/producao (20). O static_assert acima ja
     // pina o contrato; este CHECK registra o valor em runtime tambem.
-    CHECK(EVENT_LOG_RECENT_CAPACITY == 10);
+    CHECK(EVENT_LOG_RECENT_MAX_CAPACITY == 64);
 }
 
 void test_empty_ring_returns_zero()
@@ -235,13 +235,13 @@ void test_max_events_equals_recent_count_returns_all()
         }
     }
     // Casos explicitos para documentacao:
-    // recent_count 3, next 0: entradas nos slots 7,8,9.
+    // recent_count 3, next 0: entradas nos slots 17,18,19.
     {
         size_t buf[kSpecCapacity];
         CHECK_EQ_SIZE(event_log_recent_indices(3, 0, 3, kSpecCapacity, buf), 3);
-        CHECK_EQ_SIZE(buf[0], 7);
-        CHECK_EQ_SIZE(buf[1], 8);
-        CHECK_EQ_SIZE(buf[2], 9);
+        CHECK_EQ_SIZE(buf[0], 17);
+        CHECK_EQ_SIZE(buf[1], 18);
+        CHECK_EQ_SIZE(buf[2], 19);
     }
     // recent_count 3, next 7 (wrap): entradas nos slots 4,5,6.
     {
@@ -276,14 +276,14 @@ void test_max_events_less_than_recent_count_keeps_most_recent()
 {
     // count < recent_count: apenas os `count` mais recentes, descartando os
     // mais antigos, preservando a ordem cronologica dos selecionados.
-    // Anel cheio (10), next 0, count 3: os 3 mais recentes = slots 7,8,9.
+    // Anel cheio (20), next 0, count 3: os 3 mais recentes = slots 17,18,19.
     verify_state(kSpecCapacity, 0, 3);
     {
         size_t buf[kSpecCapacity];
         CHECK_EQ_SIZE(event_log_recent_indices(kSpecCapacity, 0, 3, kSpecCapacity, buf), 3);
-        CHECK_EQ_SIZE(buf[0], 7);
-        CHECK_EQ_SIZE(buf[1], 8);
-        CHECK_EQ_SIZE(buf[2], 9);
+        CHECK_EQ_SIZE(buf[0], 17);
+        CHECK_EQ_SIZE(buf[1], 18);
+        CHECK_EQ_SIZE(buf[2], 19);
     }
     // Anel parcial (5), next 8 (entradas 3,4,5,6,7), count 2: 6,7.
     verify_state(5, 8, 2);
@@ -293,12 +293,12 @@ void test_max_events_less_than_recent_count_keeps_most_recent()
         CHECK_EQ_SIZE(buf[0], 6);
         CHECK_EQ_SIZE(buf[1], 7);
     }
-    // Anel cheio com wrap: next 3, count 4 -> 9,0,1,2 (cruzando o wrap).
+    // Anel cheio com wrap: next 3, count 4 -> 19,0,1,2 (cruzando o wrap).
     verify_state(kSpecCapacity, 3, 4);
     {
         size_t buf[kSpecCapacity];
         CHECK_EQ_SIZE(event_log_recent_indices(kSpecCapacity, 3, 4, kSpecCapacity, buf), 4);
-        CHECK_EQ_SIZE(buf[0], 9);
+        CHECK_EQ_SIZE(buf[0], 19);
         CHECK_EQ_SIZE(buf[1], 0);
         CHECK_EQ_SIZE(buf[2], 1);
         CHECK_EQ_SIZE(buf[3], 2);
@@ -334,13 +334,13 @@ void test_full_ring_next_wraps_all_positions()
 
 void test_wrap_around_partial_ring()
 {
-    // recent_count 6, next 2: entradas 6,7,8,9,0,1 (mais antigo 6).
+    // recent_count 6, next 2: entradas 16,17,18,19,0,1 (mais antigo 16).
     verify_state(6, 2, 6);
-    verify_state(6, 2, 3); /* 3 mais recentes: 9,0,1 (cruzando o wrap) */
+    verify_state(6, 2, 3); /* 3 mais recentes: 19,0,1 (cruzando o wrap) */
     {
         size_t buf[kSpecCapacity];
         CHECK_EQ_SIZE(event_log_recent_indices(6, 2, 3, kSpecCapacity, buf), 3);
-        CHECK_EQ_SIZE(buf[0], 9);
+        CHECK_EQ_SIZE(buf[0], 19);
         CHECK_EQ_SIZE(buf[1], 0);
         CHECK_EQ_SIZE(buf[2], 1);
     }
@@ -353,13 +353,13 @@ void test_wrap_around_partial_ring()
         CHECK_EQ_SIZE(buf[0], 7);
         CHECK_EQ_SIZE(buf[1], 8);
     }
-    // recent_count 5, next 1: entradas 6,7,8,9,0; 2 mais recentes: 9,0.
+    // recent_count 5, next 1: entradas 16,17,18,19,0; 2 mais recentes: 19,0.
     verify_state(5, 1, 5);
     verify_state(5, 1, 2);
     {
         size_t buf[kSpecCapacity];
         CHECK_EQ_SIZE(event_log_recent_indices(5, 1, 2, kSpecCapacity, buf), 2);
-        CHECK_EQ_SIZE(buf[0], 9);
+        CHECK_EQ_SIZE(buf[0], 19);
         CHECK_EQ_SIZE(buf[1], 0);
     }
 }
@@ -374,7 +374,7 @@ void test_most_recent_n_semantics()
         size_t next;
         size_t count;
     } states[] = {
-        {10, 0, 3},  {10, 3, 4},  {6, 2, 3}, {6, 9, 6},
+        {20, 0, 3},  {20, 3, 4},  {6, 2, 3}, {6, 9, 6},
         {5, 1, 2},   {3, 7, 1},   {3, 9, 2}, {8, 8, 8},
     };
     for (const auto &st : states) {
@@ -402,7 +402,7 @@ void test_most_recent_n_semantics()
 
 void test_sweep_all_valid_states()
 {
-    /* Varredura exaustiva dos estados validos (recent_count 0..10, next 0..9,
+    /* Varredura exaustiva dos estados validos (recent_count 0..20, next 0..19,
      * count 0..15): o contrato inteiro — retorno, ordem, wrap, limites e
      * ausencia de escrita fora de n — vale para todas as combinacoes. */
     for (size_t recent_count = 0; recent_count <= kSpecCapacity; ++recent_count) {
@@ -448,7 +448,7 @@ void test_invalid_inputs_return_zero_and_write_nothing()
 
 void test_honors_capacity_parameter()
 {
-    // A funcao respeita o parametro capacity (nao embute a constante 10):
+    // A funcao respeita o parametro capacity (nao embute a constante 20):
     // capacity 3, anel cheio -> 0,1,2; parcial com wrap -> indice >= 0 < 3.
     verify_state(3, 0, 5, 3);
     verify_state(2, 2, 1, 3);
@@ -467,6 +467,30 @@ void test_honors_capacity_parameter()
         CHECK_EQ_SIZE(event_log_recent_indices(2, 2, 1, 3, buf), 1);
         CHECK_EQ_SIZE(buf[0], 1); /* mais recente = slot (2 - 1) % 3 */
     }
+
+    /* A faixa inteira documentada (1..64) deve funcionar sem a funcao
+     * embutir o default 20 na aritmetica do anel. */
+    for (size_t capacity = 1; capacity <= kMaxCapacity; ++capacity) {
+        verify_state(capacity, 0, capacity + 7, capacity);
+        verify_state(capacity, capacity - 1, 1, capacity);
+    }
+}
+
+void test_max_capacity_64_wrap_clamp_and_order()
+{
+    /* O anel de producao suporta 64 entradas mesmo quando o default Kconfig
+     * para o comando continua sendo 20. */
+    verify_state(kMaxCapacity, 0, kMaxCapacity, kMaxCapacity);
+    verify_state(kMaxCapacity, 1, 40, kMaxCapacity);
+    verify_state(kMaxCapacity, 63, kMaxCapacity + 9, kMaxCapacity);
+
+    size_t buf[kMaxCapacity + kCanarySlots];
+    fill_sentinel(buf, kMaxCapacity + kCanarySlots);
+    CHECK_EQ_SIZE(event_log_recent_indices(kMaxCapacity, 1, 40, kMaxCapacity, buf), 40);
+    for (size_t i = 0; i < 40; ++i) {
+        CHECK_EQ_SIZE(buf[i], (25 + i) % kMaxCapacity);
+    }
+    CHECK(suffix_untouched(buf, 40, kMaxCapacity + kCanarySlots));
 }
 
 } // namespace
@@ -486,6 +510,7 @@ int main()
     test_sweep_all_valid_states();
     test_invalid_inputs_return_zero_and_write_nothing();
     test_honors_capacity_parameter();
+    test_max_capacity_64_wrap_clamp_and_order();
 
     if (s_failures == 0) {
         std::printf("PASS: event_log_recent (%d checks)\n", s_checks);

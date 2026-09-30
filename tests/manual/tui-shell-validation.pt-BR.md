@@ -83,7 +83,7 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
-| CMD1 | Digitar `help` + `Enter` | Ecoa `$ help`; imprime exatamente `help - show this help`<br>`wifi [search|saved|audit] - show status, manage Wi-Fi, or audit`<br>`log - show recent events`<br>`clear - clear the terminal`<br>`screen [on|off|timeout <0-1440>] - control screen protection`<br>`ssh [user@]host[:port] - start an SSH session` (com newline final); permanece no menu |  |  |
+| CMD1 | Digitar `help` + `Enter` | Ecoa `$ help`; imprime exatamente `help - show this help`<br>`wifi [search|saved|audit] - show status, manage Wi-Fi, or audit`<br>`log [lines <1-64>] - show recent events`<br>`clear - clear the terminal`<br>`screen [on|off|timeout <0-1440>] - control screen protection`<br>`ssh [user@]host[:port] - start an SSH session` (com newline final); permanece no menu |  |  |
 | CMD2 | Digitar `clear` + `Enter` | Limpa o texto de saida do terminal unificado |  |  |
 | CMD3 | Digitar `wifi` + `Enter` | Imprime `wifi: enabled connected <ip>` / `wifi: enabled disconnected` / `wifi: disabled disconnected`, ou `wifi: unavailable` se `wifi_mgr_get_status` falhar; sem crash |  |  |
 | CMD3a | Digitar `log` + `Enter` repetidamente | Imprime os eventos recentes, ou `(nenhum evento disponivel)`, sem reiniciar o dispositivo nem gerar panic |  |  |
@@ -226,7 +226,7 @@ que depende obrigatoriamente deste plano manual.
 |---------------------|---------|-------|
 | `components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp` | `tab5_keymap_lookup` | `tests/host/keymap/test_keymap.cpp` |
 | `components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp` | `tab5_char_event_parse` (modificador, comprimento sem NUL extra, UTF-8 e limites) | `tests/host/keymap/test_keyboard_event.cpp` |
-| `components/cyberdeck/src/platform/logging/event_log_recent.cpp` | `event_log_recent_indices` (ordem, wrap-around e limites do ring buffer) | `tests/host/keymap/test_event_log_recent.cpp` |
+| `components/cyberdeck/src/platform/logging/event_log_recent.cpp` | `event_log_recent_indices` (capacidade maxima 64, default de exibicao 20, faixa 1..64, clamp, ordem e wrap-around) | `tests/host/keymap/test_event_log_recent.cpp` |
 | `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp` | `cyberdeck_parse_ssh_target` (validos, invalidos, limites 1..65535 e normalizacao de zeros a esquerda), `cyberdeck_encode_ssh_key` (imprimiveis, controle, Ctrl/Alt, limites 0..0xFF), `cyberdeck_parse_command` (roteamento, separador do verbo `ssh`, trim de bordas, verbo colado, `screen on|off|timeout <0-1440>`), `cyberdeck_help_text` (bloco exato, estrutura, comandos presentes e determinismo) | `tests/host/keymap/test_shell_utils.cpp` |
 | `components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp` | `state`, `parse_timeout_minutes`, `persisted_timeout`, `evaluate_inactivity`, `turn_on`, `turn_off` | `tests/host/keymap/test_screen_protection.cpp` + `test_screen_protection_contract.py` |
 | `components/cyberdeck/src/platform/display/screen_off.cpp` | `screen_off_init`, `screen_off_turn_on`, `screen_off_turn_off`, `screen_off_set_timeout_minutes`, duplo toque, NVS restauracao | `tests/host/keymap/test_screen_protection_contract.py` |

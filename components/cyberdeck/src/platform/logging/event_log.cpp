@@ -21,6 +21,12 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "sdkconfig.h"
+
+#if CONFIG_CYBERDECK_LOG_LINES < 1 || CONFIG_CYBERDECK_LOG_LINES > 64
+#error "CONFIG_CYBERDECK_LOG_LINES must be in the range 1..64"
+#endif
+
 namespace {
 
 constexpr uint32_t RECORD_MAGIC = 0x354C4F47; // "GOL5"
@@ -29,7 +35,7 @@ constexpr size_t LOG_CAPACITY = (16U * 1024U * 1024U) / RECORD_SIZE;
 constexpr size_t MESSAGE_SIZE = 192;
 constexpr size_t TAG_SIZE = 32;
 constexpr size_t QUEUE_LENGTH = 32;
-constexpr size_t RECENT_COUNT = 10;
+constexpr size_t RECENT_CAPACITY = EVENT_LOG_RECENT_MAX_CAPACITY;
 constexpr TickType_t RETRY_INTERVAL = pdMS_TO_TICKS(5000);
 
 struct __attribute__((packed)) LogRecord {
@@ -51,7 +57,8 @@ StaticQueue_t s_queue_struct;
 uint8_t s_queue_storage[QUEUE_LENGTH * sizeof(LogRecord)];
 StaticSemaphore_t s_recent_mutex_storage;
 SemaphoreHandle_t s_recent_mutex = nullptr;
-LogRecord s_recent[RECENT_COUNT];
+LogRecord s_recent[RECENT_CAPACITY];
+LogRecord s_rebuild_recent[RECENT_CAPACITY];
 size_t s_recent_count = 0;
 size_t s_recent_next = 0;
 TaskHandle_t s_task = nullptr;
@@ -93,16 +100,16 @@ void insert_recent(LogRecord *records, size_t *count, const LogRecord &record)
         ++position;
     }
 
-    if (*count == RECENT_COUNT && position == 0) {
+    if (*count == RECENT_CAPACITY && position == 0) {
         return;
     }
-    if (*count < RECENT_COUNT) {
+    if (*count < RECENT_CAPACITY) {
         for (size_t index = *count; index > position; --index) {
             records[index] = records[index - 1];
         }
         ++*count;
     } else {
-        for (size_t index = 1; index < RECENT_COUNT; ++index) {
+        for (size_t index = 1; index < RECENT_CAPACITY; ++index) {
             records[index - 1] = records[index];
         }
         --position;
@@ -174,8 +181,8 @@ void remember_record(const LogRecord &record)
         return;
     }
     s_recent[s_recent_next] = record;
-    s_recent_next = (s_recent_next + 1) % RECENT_COUNT;
-    if (s_recent_count < RECENT_COUNT) {
+    s_recent_next = (s_recent_next + 1) % RECENT_CAPACITY;
+    if (s_recent_count < RECENT_CAPACITY) {
         s_recent_count++;
     }
     xSemaphoreGive(s_recent_mutex);
@@ -196,7 +203,6 @@ bool rebuild_state(FILE *file, uint32_t *next_slot, uint32_t *next_sequence)
     uint32_t latest_sequence = 0;
     uint32_t latest_slot = 0;
     bool found = false;
-    LogRecord recent[RECENT_COUNT];
     size_t recent_count = 0;
     LogRecord record;
 
@@ -210,7 +216,7 @@ bool rebuild_state(FILE *file, uint32_t *next_slot, uint32_t *next_sequence)
             latest_sequence = record.sequence;
             latest_slot = static_cast<uint32_t>(slot);
         }
-        insert_recent(recent, &recent_count, record);
+        insert_recent(s_rebuild_recent, &recent_count, record);
     }
 
     *next_slot = found ? (latest_slot + 1U) % LOG_CAPACITY : 0;
@@ -218,9 +224,9 @@ bool rebuild_state(FILE *file, uint32_t *next_slot, uint32_t *next_sequence)
 
     if (s_recent_mutex != nullptr && xSemaphoreTake(s_recent_mutex, portMAX_DELAY) == pdTRUE) {
         s_recent_count = recent_count;
-        s_recent_next = recent_count == RECENT_COUNT ? 0 : recent_count;
+        s_recent_next = recent_count == RECENT_CAPACITY ? 0 : recent_count;
         for (size_t index = 0; index < recent_count; ++index) {
-            s_recent[index] = recent[index];
+            s_recent[index] = s_rebuild_recent[index];
         }
         xSemaphoreGive(s_recent_mutex);
     }
@@ -363,11 +369,11 @@ extern "C" size_t event_log_latest(size_t max_events, event_log_line_callback_t 
         return 0;
     }
 
-    size_t indices[RECENT_COUNT];
+    size_t indices[RECENT_CAPACITY];
     size_t count = 0;
     if (xSemaphoreTake(s_recent_mutex, portMAX_DELAY) == pdTRUE) {
         count = event_log_recent_indices(s_recent_count, s_recent_next, max_events,
-                                         RECENT_COUNT, indices);
+                                         RECENT_CAPACITY, indices);
         xSemaphoreGive(s_recent_mutex);
     }
 

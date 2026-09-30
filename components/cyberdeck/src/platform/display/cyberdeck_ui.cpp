@@ -61,11 +61,13 @@ lv_obj_t *s_menu = nullptr;
 lv_obj_t *s_terminal = nullptr;
 lv_obj_t *s_keyboard = nullptr;
 lv_timer_t *s_battery_timer = nullptr;
+lv_timer_t *s_terminal_output_timer = nullptr;
 std::string s_output;
 
 cyberdeck_terminal_filter s_ssh_output_filter;
 cyberdeck_ssh_line_composer s_ssh_line_composer;
 bool s_rendering = false;
+bool s_terminal_output_dirty = false;
 bool s_virtual_enter_handled = false;
 std::string s_last_clock_text;
 cyberdeck_local_shell s_local_shell("/sdcard", "/");
@@ -166,8 +168,9 @@ shell_session_host s_shell_session_host{};
 cyberdeck_shell_session::session s_shell_session{s_shell_session_host};
 
 void append_line(const std::string &line);
-void append_output(const char *data, size_t len);
+void append_output(const char *data, size_t len, bool repaint = true);
 void render_terminal();
+void process_terminal_output(lv_timer_t *timer);
 void zero_string(std::string &s);
 void refresh_ble_status();
 
@@ -401,6 +404,10 @@ void destroy_ui_resource_handles()
 {
     /* A deinit during BLE authentication must not leave the passkey resident. */
     s_shell_session.clear_ble_auth_input();
+    if (s_terminal_output_timer != nullptr) {
+        lv_timer_del(s_terminal_output_timer);
+        s_terminal_output_timer = nullptr;
+    }
     s_wifi_audit.teardown();
     if (s_ble_observer != nullptr) {
         ble_mgr_unregister_observer(s_ble_observer);
@@ -916,9 +923,10 @@ void render_terminal() {
     uint32_t char_pos = static_cast<uint32_t>(utf8_char_count(output) + utf8_char_count(marker) +
                                               utf8_char_count(visible_line.substr(line_start, cursor_bytes - line_start)));
     lv_textarea_set_cursor_pos(s_terminal, char_pos);
+    s_terminal_output_dirty = false;
 }
 
-void append_output(const char *data, size_t len) {
+void append_output(const char *data, size_t len, bool repaint) {
     if (!data || !len) return;
     s_output.append(data, len);
     if (s_output.size() > TERMINAL_LIMIT) {
@@ -926,7 +934,13 @@ void append_output(const char *data, size_t len) {
         size_t safe_offset = utf8_valid_start_offset(s_output, excess);
         s_output.erase(0, safe_offset);
     }
-    render_terminal();
+    s_terminal_output_dirty = true;
+    if (repaint) render_terminal();
+}
+
+void process_terminal_output(lv_timer_t *)
+{
+    if (s_terminal_output_dirty) render_terminal();
 }
 
 void reset_ssh_output_filter() {
@@ -953,7 +967,7 @@ void on_ssh_data(const char *data, size_t length) {
     std::string displayed(written + cyberdeck_edit_line::limit + 1, '\0');
     const size_t displayed_size = s_ssh_line_composer.feed(filtered.data(), written,
                                                            &displayed[0], displayed.size());
-    append_output(displayed.data(), displayed_size);
+    append_output(displayed.data(), displayed_size, false);
 }
 
 void on_ssh_state(ssh_client_state_t state, const char *message) {
@@ -1267,15 +1281,20 @@ s_last_clock_text.clear();
       lv_timer_create(update_clock, 1000, nullptr);
       lv_timer_create(process_wifi_state, 100, nullptr);
       lv_timer_create(process_wifi_scan, 100, nullptr);
-      lv_timer_create(process_ble_events, 100, nullptr);
+lv_timer_create(process_ble_events, 100, nullptr);
       lv_timer_create(process_wifi_audit, 100, nullptr);
       s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
+      s_terminal_output_timer = lv_timer_create(process_terminal_output, 100, nullptr);
+      if (s_terminal_output_timer == nullptr) {
+          destroy_ui_resource_handles();
+          return ESP_ERR_NO_MEM;
+      }
       const cyberdeck_terminal_view::callbacks terminal_callbacks{
-          focused, terminal_insert, terminal_changed, terminal_key,
-          virtual_keyboard_changed};
+         focused, terminal_insert, terminal_changed, terminal_key,
+         virtual_keyboard_changed};
       (void)s_terminal_view.create(s_screen, s_menu, TERMINAL_LIMIT, terminal_callbacks);
       s_terminal = s_terminal_view.textarea();
-     reset_ssh_output_filter();
+      reset_ssh_output_filter();
      discard_ssh_line_composer();
      s_ble_transient_active = false;
      s_ble_transient_committed = false;

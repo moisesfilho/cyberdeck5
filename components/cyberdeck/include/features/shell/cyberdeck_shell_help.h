@@ -19,7 +19,7 @@ struct entry {
 inline constexpr std::array<entry, 16> kCatalog = {{
     {"help", "help", "show this help"},
     {"wifi", "wifi [search|saved|audit]", "show status, manage Wi-Fi, or audit"},
-    {"log", "log", "show recent events"},
+    {"log", "log [lines <1-64>]", "show recent events"},
     {"clear", "clear", "clear the terminal"},
     {"screen", "screen [on|off|timeout <0-1440>]", "control screen protection"},
     {"battery", "battery [protection on|off|status]", "show or control battery protection"},

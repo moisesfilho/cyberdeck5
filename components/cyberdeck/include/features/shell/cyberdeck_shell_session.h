@@ -199,6 +199,7 @@ private:
     std::string ble_auth_input_;
     std::uint64_t wifi_connection_token_ = 0;
     std::uint64_t wifi_model_connection_token_ = 0;
+    std::size_t log_lines_;
 };
 
 } // namespace cyberdeck_shell_session

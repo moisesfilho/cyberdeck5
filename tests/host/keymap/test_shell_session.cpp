@@ -111,6 +111,7 @@ struct fake_host final : cyberdeck_shell_session::host {
     /* Event log. */
     std::vector<std::string> events;
     std::string recent;
+    std::size_t recent_requested = 0;
 
     /* Local shell / cat. */
     bool cat_accepted = true;
@@ -263,7 +264,7 @@ struct fake_host final : cyberdeck_shell_session::host {
     }
     std::string recent_events(std::size_t count) override
     {
-        (void)count;
+        recent_requested = count;
         return recent;
     }
 
@@ -522,6 +523,7 @@ int main()
         h.recent = "evt one\n";
         session s(h);
         submit(s, "log");
+        check(h.recent_requested == 20, "log requests the configured 20 recent lines");
         check(h.output.find("ultimos eventos") != std::string::npos, "log prints a header");
         check(h.output.find("evt one") != std::string::npos, "log prints the events");
     }
@@ -530,8 +532,83 @@ int main()
         fake_host h;
         session s(h);
         submit(s, "log");
+        check(h.recent_requested == 20, "empty log also requests the configured 20 lines");
         check(h.output.find("(nenhum evento") != std::string::npos,
               "an empty log reports the absence of events");
+    }
+
+    /* The configured default is session-local: a valid override is temporary,
+     * queries expose the current value, and invalid requests do not mutate it. */
+    {
+        fake_host h;
+        h.recent = "evt\n";
+        session s(h);
+        submit(s, "log lines");
+        check(h.output.find("log lines: 20") != std::string::npos,
+              "log lines reports the configured default");
+        h.output.clear();
+        submit(s, "log lines 1");
+        check(h.output.find("log lines set to 1") != std::string::npos,
+              "log lines 1 accepts the lower boundary");
+        h.output.clear();
+        submit(s, "log");
+        check(h.recent_requested == 1, "override controls the recent event request");
+
+        for (const char *invalid : {"log lines 0", "log lines 65",
+                                    "log lines nope", "log lines 4 extra"}) {
+            h.output.clear();
+            submit(s, invalid);
+            check(h.output.find("usage: log [lines <1-64>]") != std::string::npos,
+                  "invalid log-lines syntax reports usage");
+            h.output.clear();
+            submit(s, "log");
+            check(h.recent_requested == 1,
+                  "invalid log-lines syntax does not alter the session value");
+        }
+
+        h.output.clear();
+        submit(s, "log lines 64");
+        check(h.output.find("log lines set to 64") != std::string::npos,
+              "log lines 64 accepts the upper boundary");
+        h.output.clear();
+        submit(s, "log");
+        check(h.recent_requested == 64, "upper-bound override is used");
+        h.output.clear();
+        submit(s, "log lines");
+        check(h.output.find("log lines: 64") != std::string::npos,
+              "log lines exposes the active override");
+    }
+
+    /* Parser + session integration: requesting 40 lines is valid even though
+     * the Kconfig default remains 20, and the host port receives the complete
+     * available window (up to the requested count). */
+    {
+        fake_host h;
+        for (int index = 1; index <= 40; ++index) {
+            h.recent += "event-" + std::to_string(index) + "\n";
+        }
+        session s(h);
+        submit(s, "log lines 40");
+        check(h.output.find("log lines set to 40") != std::string::npos,
+              "log lines 40 is accepted by the session parser");
+        h.output.clear();
+        submit(s, "log");
+        check(h.recent_requested == 40,
+              "log requests the configured session window of 40 lines");
+        for (int index = 1; index <= 40; ++index) {
+            check(h.output.find("event-" + std::to_string(index) + "\n") != std::string::npos,
+                  "log returns every available event up to the requested 40 lines");
+        }
+    }
+
+    {
+        fake_host h;
+        session first(h);
+        submit(first, "log lines 7");
+        session recreated(h);
+        submit(recreated, "log lines");
+        check(h.output.find("log lines: 20") != std::string::npos,
+              "recreating a session resets the override to Kconfig default");
     }
 
     {

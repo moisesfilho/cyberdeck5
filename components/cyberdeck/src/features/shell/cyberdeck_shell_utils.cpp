@@ -306,6 +306,11 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
         cmd.type = CYBERDECK_CMD_WIFI_AUDIT_SAVE;
     } else if (command == "log") {
         cmd.type = CYBERDECK_CMD_LOG;
+    } else if (command.rfind("log", 0) == 0 &&
+               (command[3] == ' ' || command[3] == '\t')) {
+        cmd.type = CYBERDECK_CMD_LOG;
+        const size_t first = command.find_first_not_of(" \t", 3);
+        if (first != std::string::npos) cmd.args = command.substr(first);
     } else if (command == "screen on" || screen_command == "screen on") {
         cmd.type = CYBERDECK_CMD_SCREEN_ON;
     } else if (command == "screen off" || screen_command == "screen off") {

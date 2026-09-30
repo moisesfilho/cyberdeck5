@@ -561,6 +561,27 @@ void test_parse_command_whitespace_and_exact_match()
     CHECK_EQ(cmd.args, "foo bar");
 }
 
+void test_parse_log_lines_forms()
+{
+    cyberdeck_cmd_t cmd = cyberdeck_parse_command("log lines");
+    CHECK(cmd.type == CYBERDECK_CMD_LOG);
+    CHECK_EQ(cmd.args, "lines");
+
+    cmd = cyberdeck_parse_command("log lines 1");
+    CHECK(cmd.type == CYBERDECK_CMD_LOG);
+    CHECK_EQ(cmd.args, "lines 1");
+
+    cmd = cyberdeck_parse_command("log lines 64");
+    CHECK(cmd.type == CYBERDECK_CMD_LOG);
+    CHECK_EQ(cmd.args, "lines 64");
+
+    for (const char *text : {"log lines 0", "log lines 65", "log lines nope",
+                             "log lines 4 extra"}) {
+        cmd = cyberdeck_parse_command(text);
+        CHECK(cmd.type == CYBERDECK_CMD_LOG);
+    }
+}
+
 void test_parse_wifi_audit_save_command()
 {
     // wifi audit is display-only; persistence is opted into with the separate
@@ -812,7 +833,7 @@ void test_help_text_commands_present()
         "rm [-r] <path> - remove a file or directory",
         "rmdir <directory> - remove an empty directory",
         "wifi [search|saved|audit] - show status, manage Wi-Fi, or audit",
-        "log - show recent events",
+        "log [lines <1-64>] - show recent events",
         "clear - clear the terminal",
         "screen [on|off|timeout <0-1440>] - control screen protection",
         "battery [protection on|off|status] - show or control battery protection",
@@ -873,6 +894,7 @@ int main()
     test_encode_ssh_key_modifier_scope_and_bounds();
     test_parse_command_routing();
     test_parse_command_whitespace_and_exact_match();
+    test_parse_log_lines_forms();
     test_parse_wifi_audit_save_command();
     test_parse_screen_commands();
     test_parse_battery_protection_commands();

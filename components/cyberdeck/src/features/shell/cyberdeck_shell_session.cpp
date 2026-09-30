@@ -5,6 +5,18 @@
 #include <string>
 #include <vector>
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#else
+#ifndef CONFIG_CYBERDECK_LOG_LINES
+#define CONFIG_CYBERDECK_LOG_LINES 20
+#endif
+#endif
+
+#if CONFIG_CYBERDECK_LOG_LINES < 1 || CONFIG_CYBERDECK_LOG_LINES > 64
+#error "CONFIG_CYBERDECK_LOG_LINES must be in the range 1..64"
+#endif
+
 #include "features/shell/cyberdeck_shell_utils.h"
 #include "platform/display/cyberdeck_screen_protection.h"
 
@@ -56,9 +68,33 @@ bool is_cat_help_request(const std::string &line)
     return end == std::string::npos || line.find_first_not_of(" \t", end) == std::string::npos;
 }
 
+bool parse_log_lines_argument(const std::string &argument, std::size_t &lines)
+{
+    const size_t first = argument.find_first_not_of(" \t");
+    if (first == std::string::npos || argument.compare(first, 5, "lines") != 0) return false;
+    const size_t value_start = first + 5;
+    if (value_start == argument.size()) return false;
+    if (argument[value_start] != ' ' && argument[value_start] != '\t') return false;
+
+    const size_t digit_start = argument.find_first_not_of(" \t", value_start);
+    if (digit_start == std::string::npos) return false;
+    std::size_t value = 0;
+    size_t digit = digit_start;
+    for (; digit < argument.size() && argument[digit] >= '0' && argument[digit] <= '9'; ++digit) {
+        value = value * 10U + static_cast<std::size_t>(argument[digit] - '0');
+        if (value > 64U) return false;
+    }
+    if (digit == digit_start || argument.find_first_not_of(" \t", digit) != std::string::npos ||
+        value < 1U) {
+        return false;
+    }
+    lines = value;
+    return true;
+}
+
 } // namespace
 
-session::session(host &host) : host_(host) {}
+session::session(host &host) : host_(host), log_lines_(CONFIG_CYBERDECK_LOG_LINES) {}
 
 void session::sync_editor()
 {
@@ -390,8 +426,28 @@ void session::execute_line(bool line_already_sent)
         break;
     }
     case CYBERDECK_CMD_LOG: {
+        if (!cmd.args.empty()) {
+            std::size_t requested_lines = 0;
+            if (cmd.args == "lines") {
+                char message[32];
+                snprintf(message, sizeof(message), "log lines: %u\n",
+                         static_cast<unsigned>(log_lines_));
+                host_.append_output_line(message);
+                break;
+            }
+            if (!parse_log_lines_argument(cmd.args, requested_lines)) {
+                host_.append_output_line("usage: log [lines <1-64>]\n");
+                break;
+            }
+            log_lines_ = requested_lines;
+            char message[32];
+            snprintf(message, sizeof(message), "log lines set to %u\n",
+                     static_cast<unsigned>(log_lines_));
+            host_.append_output_line(message);
+            break;
+        }
         host_.append_output_line("ultimos eventos:\n");
-        const std::string logged = host_.recent_events(10);
+        const std::string logged = host_.recent_events(log_lines_);
         if (!logged.empty()) host_.write_output(logged.data(), logged.size());
         else host_.append_output_line("(nenhum evento disponivel)\n");
         break;

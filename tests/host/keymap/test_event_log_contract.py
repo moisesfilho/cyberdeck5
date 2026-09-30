@@ -68,13 +68,13 @@ def _sequence_is_newer(candidate, current):
 
 
 def _insert_recent_model(records, sequence):
-    """Independent oracle for the sorted ten-record reconstruction window."""
+    """Independent oracle for the sorted twenty-record reconstruction window."""
     position = 0
     while position < len(records) and not _sequence_is_newer(records[position], sequence):
         position += 1
-    if len(records) == 10 and position == 0:
+    if len(records) == 20 and position == 0:
         return
-    if len(records) < 10:
+    if len(records) < 20:
         records.insert(position, sequence)
         return
     records.pop(0)
@@ -86,22 +86,22 @@ def test_recent_reconstruction_wrap_and_order(source):
     insert_recent = between(source, "void insert_recent", "void copy_text")
     check("sequence_is_newer(records[position].sequence, record.sequence)" in insert_recent,
           "recent reconstruction must compare sequences with wrap-safe ordering")
-    check("insert_recent(recent, &recent_count, record)" in source,
+    check("insert_recent(s_rebuild_recent, &recent_count, record)" in source,
           "recovery must insert every valid physical record into the recent window")
 
-    # Physical scan order crosses the ring boundary: slots 0..3 contain the
+    # Physical scan order crosses the ring boundary: slots 0..15 contain the
     # post-wrap records, while the older pre-wrap records occupy the tail.
-    physical_scan = list(range(4)) + list(range(0xFFFFFFF8, 0x100000000))
+    physical_scan = list(range(16)) + list(range(0xFFFFFFF8, 0x100000000))
     recent = []
     for sequence in physical_scan:
         _insert_recent_model(recent, sequence & 0xFFFFFFFF)
 
-    expected = list(range(0xFFFFFFFA, 0x100000000)) + list(range(4))
+    expected = list(range(0xFFFFFFFC, 0x100000000)) + list(range(16))
     check(recent == expected,
-          "reconstructed ten recent records must remain ordered across sequence wrap")
-    check(len(recent) == len(set(recent)) == 10,
+          "reconstructed twenty recent records must remain ordered across sequence wrap")
+    check(len(recent) == len(set(recent)) == 20,
           "reconstructed recent records must not contain duplicates")
-    check(recent[-1] == 3, "reconstructed recent records must include the newest sequence")
+    check(recent[-1] == 15, "reconstructed recent records must include the newest sequence")
 
 
 def test_recovery_and_durability_contract(source):

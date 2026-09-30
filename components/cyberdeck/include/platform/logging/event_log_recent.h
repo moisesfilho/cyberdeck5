@@ -14,25 +14,26 @@ extern "C" {
  * cronologica (mais antigo -> mais recente), os indices dos `count` eventos
  * mais recentes do anel. O nome/estado do anel espelham a producao:
  *
- *   - recent_count: entradas validas no anel (0..EVENT_LOG_RECENT_CAPACITY).
+ *   - recent_count: entradas validas no anel (0..capacity).
  *   - next: proximo slot de escrita (sempre em [0, EVENT_LOG_RECENT_CAPACITY)
  *           apos o wrap de remember_record(); o evento mais antigo vive em
  *           (next + capacity - recent_count) % capacity.
  *
  * A funcao NAO le os registros: escreve apenas os indices (slots) no buffer
- * de saida, permitindo que a implementacao de producao itere o anel
- * registro a registro sem copiar os RECENT_COUNT registros para a stack
- * (motivo do overflow de stack do comando `log`).
+ * de saida, permitindo que a implementacao de producao itere o anel registro
+ * a registro sem copiar os registros para a stack.
  *
  * Garantia de seguranca (propriedade principal do contrato): nenhum indice
  * fora de [0, capacity) e produzido, para qualquer entrada documentada; em
  * estado invalido a funcao retorna 0 sem escrever nada.
  */
 
-/* Capacidade do anel "recent" (paridade com RECENT_COUNT = 10 em
- * event_log.cpp). O static_assert no teste quebra o build se a producao
- * divergir deste valor. */
-#define EVENT_LOG_RECENT_CAPACITY 10
+/* Capacidade máxima do anel de produção. O número exibido continua sendo
+ * configurado separadamente pelo Kconfig e pode ser sobrescrito por sessão. */
+#define EVENT_LOG_RECENT_CAPACITY 64
+
+/* Nome explícito para o limite compartilhado com a configuração. */
+#define EVENT_LOG_RECENT_MAX_CAPACITY EVENT_LOG_RECENT_CAPACITY
 
 /*
  * Preenche `out_indices` com os indices (slots) dos `count` eventos mais

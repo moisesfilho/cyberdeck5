@@ -1,0 +1,11 @@
+menu "Cyberdeck"
+
+    config CYBERDECK_LOG_LINES
+        int "Event log lines shown by the log command"
+        default 20
+        range 1 64
+        help
+            Maximum number of recent event log lines displayed by the
+            `log` shell command. The valid range is 1 through 64.
+
+endmenu

@@ -51,8 +51,8 @@ def main() -> int:
     init = function_body(source, "extern \"C\" esp_err_t cyberdeck_ui_init(")
     require("s_keyboard_dispatch.start(on_keyboard_event, nullptr)" in init,
             "init must start the keyboard dispatcher")
-    require(init.count("return ESP_ERR_NO_MEM") == 4,
-            "init must retain one failure exit for each resource phase")
+    require(init.count("return ESP_ERR_NO_MEM") == 5,
+            "init must retain one failure exit for each resource/timer phase")
     for handle in ("s_wifi_state_queue", "s_wifi_scan_queue",
                    "s_wifi_scan_context_mutex", "s_ble_event_queue"):
         failure = re.search(rf"if\s*\([^)]*{handle}\s*==\s*nullptr[^)]*\)\s*\{{(?P<body>.*?)\}}",
@@ -61,6 +61,16 @@ def main() -> int:
         if failure is not None:
             require("destroy_ui_resource_handles()" in failure.group("body"),
                     f"{handle} failure must clean prior resources")
+    timer_failure = re.search(
+        r"if\s*\(\s*s_terminal_output_timer\s*==\s*nullptr\s*\)\s*\{(?P<body>.*?)\}",
+        init,
+        re.S,
+    )
+    require(timer_failure is not None,
+            "terminal output timer allocation must have a failure branch")
+    if timer_failure is not None:
+        require("destroy_ui_resource_handles()" in timer_failure.group("body"),
+                "timer failure must clean prior resources")
 
     print("PASS: UI partial-allocation cleanup and keyboard-dispatch contract")
     return 0

@@ -11,7 +11,7 @@ namespace cyberdeck_help_test {
 inline constexpr std::string_view kUnifiedHelpText =
     "help - show this help\n"
     "wifi [search|saved|audit] - show status, manage Wi-Fi, or audit\n"
-    "log - show recent events\n"
+    "log [lines <1-64>] - show recent events\n"
     "clear - clear the terminal\n"
     "screen [on|off|timeout <0-1440>] - control screen protection\n"
     "battery [protection on|off|status] - show or control battery protection\n"

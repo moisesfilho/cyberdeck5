@@ -148,7 +148,7 @@ void test_help_catalog_documents_bluetooth_exactly_once()
 
     /* The existing catalog rows are preserved: bluetooth is additive. */
     for (const char *existing : {"help - show this help", "wifi [search|saved|audit]",
-                                 "log - show recent events", "clear - clear the terminal",
+                                 "log [lines <1-64>] - show recent events", "clear - clear the terminal",
                                  "screen [on|off|timeout <0-1440>]",
                                  "battery [protection on|off|status]",
                                  "ssh [user@]host[:port]", "pwd - print working directory",
