@@ -622,6 +622,516 @@ void test_non_connectable_devices_are_kept_but_marked()
     CHECK(list.render().find("Beacon") != std::string::npos);
 }
 
+/* REQ-COV-01/TEST-COV-TYPES: deterministic edge coverage for the real missed
+ * gcov branches (address separators/trimming, UTF-8 lead/continuation paths,
+ * dedup promotion and capacity guards). */
+void test_coverage_addresses_separators_and_case_forms()
+{
+    expect_address("AA:BB:CC:DD:EE:00", 17, "AA:BB:CC:DD:EE:00");
+    expect_address("aa-bb-cc-dd-ee-ff", 17, "AA:BB:CC:DD:EE:FF");
+    expect_address("aAbBcCdDeEfF", 12, "AA:BB:CC:DD:EE:FF");
+    /* Leading/trailing/double separators and embedded blanks are rejected. */
+    expect_address_rejected(":AA:BB:CC:DD:EE:FF", 18);
+    expect_address_rejected("AA:BB:CC:DD:EE:FF:", 18);
+    expect_address_rejected("AA::BB:CC:DD:EE:FF", 18);
+    expect_address_rejected("AA--BB-CC-DD-EE-FF", 18);
+    expect_address_rejected("AA:BB:CC:DD:EE:FF ", 18);
+    expect_address_rejected("AA:BB:CC:DD:EE:FF\t", 18);
+    expect_address_rejected(" AA:BB:CC:DD:EE:FF", 18);
+    expect_address_rejected("AA:BB:CC:DD:EE:FG", 17);
+    expect_address_rejected("AA:BB:CC:DD:EE:F", 16);
+}
+
+void test_coverage_sanitize_utf8_boundaries_and_control_set()
+{
+    using cyberdeck_ble::sanitize_name;
+    /* Two-byte sequence split at the end and invalid continuations. */
+    {
+        const char truncated[] = {'A', 'B', static_cast<char>(0xC3)};
+        CHECK_STR(sanitize_name(truncated, sizeof(truncated)), "AB");
+    }
+    {
+        const char bad_cont[] = {'A', static_cast<char>(0xC3), 'X', 'B'};
+        CHECK_STR(sanitize_name(bad_cont, sizeof(bad_cont)), "A XB");
+    }
+    {
+        /* Overlong "/" (0xC0 0xAF) after content becomes one space. */
+        const char overlong[] = {'A', static_cast<char>(0xC0), static_cast<char>(0xAF)};
+        CHECK_STR(sanitize_name(overlong, sizeof(overlong)), "A");
+    }
+    /* Three-byte truncated/invalid/surrogate paths. */
+    {
+        const char truncated[] = {'A', static_cast<char>(0xE2), static_cast<char>(0x96)};
+        CHECK_STR(sanitize_name(truncated, sizeof(truncated)), "A");
+    }
+    {
+        const char bad[] = {'A', static_cast<char>(0xE2), 'X',
+                            static_cast<char>(0xA0), 'B'};
+        CHECK_STR(sanitize_name(bad, sizeof(bad)), "A X B");
+    }
+    {
+        /* U+D800 surrogate encoded in three bytes is rejected. */
+        const char surrogate[] = {'A', static_cast<char>(0xED), static_cast<char>(0xA0),
+                                  static_cast<char>(0x80), 'B'};
+        CHECK_STR(sanitize_name(surrogate, sizeof(surrogate)), "A B");
+    }
+    /* Four-byte truncated/invalid/range paths. */
+    {
+        const char truncated[] = {'A', static_cast<char>(0xF0), static_cast<char>(0x9F),
+                                  static_cast<char>(0x94)};
+        CHECK_STR(sanitize_name(truncated, sizeof(truncated)), "A");
+    }
+    {
+        const char bad[] = {'A', static_cast<char>(0xF0), 'X',
+                            static_cast<char>(0x9F), static_cast<char>(0x94),
+                            static_cast<char>(0xA5), 'B'};
+        CHECK_STR(sanitize_name(bad, sizeof(bad)), "A X   B");
+    }
+    {
+        /* Code point beyond U+10FFFF (0xF4 0x90 ...) is rejected. */
+        const char out_of_range[] = {'A', static_cast<char>(0xF4), static_cast<char>(0x90),
+                                     static_cast<char>(0x80), static_cast<char>(0x80), 'B'};
+        CHECK_STR(sanitize_name(out_of_range, sizeof(out_of_range)), "A B");
+    }
+    /* Bare continuation byte mid-string and control saturation at the cap. */
+    {
+        const char stray[] = {'A', static_cast<char>(0x80), 'B'};
+        CHECK_STR(sanitize_name(stray, sizeof(stray)), "A B");
+    }
+    CHECK_STR(sanitize_name("\x7F\x80\x9F\xC2\x85", 5), k_unnamed_placeholder);
+    CHECK_STR(sanitize_name("ab\x01\x02\x03", 5), "ab");
+}
+
+void test_coverage_passkey_and_list_promotion_guards()
+{
+    using cyberdeck_ble::parse_passkey;
+    std::uint32_t value = 777;
+    /* Interior tab is not valid; max representable value passes; the modulus
+     * itself and longer trimmed input are rejected without clobbering out. */
+    CHECK(!parse_passkey("123\t56", 6, value));
+    CHECK_EQ(value, std::uint32_t(777));
+    CHECK(parse_passkey("999999", 6, value));
+    CHECK_EQ(value, std::uint32_t(999999));
+    CHECK(!parse_passkey("1000000", 7, value));
+    CHECK_EQ(value, std::uint32_t(999999));
+    CHECK(!parse_passkey("\t 12 34 \t", 9, value));
+    CHECK_EQ(value, std::uint32_t(999999));
+    CHECK(parse_passkey("\t 123456 \t", 10, value));
+    CHECK_EQ(value, std::uint32_t(123456));
+
+    /* Dedup: connectable monotone demotion stays false and typed find misses. */
+    device_list list;
+    CHECK(list.add(make_device("AA:BB:CC:DD:EE:01", "", -50,
+                               device_kind::unknown)));
+    CHECK(list.add(make_device("AA:BB:CC:DD:EE:01", "Named", -40,
+                               device_kind::keyboard)));
+    const device *merged = list.find("AA:BB:CC:DD:EE:01");
+    CHECK(merged != nullptr);
+    if (merged != nullptr) {
+        CHECK_STR(merged->name, "Named");
+        CHECK(merged->kind == device_kind::keyboard);
+        CHECK_EQ(merged->rssi, -40);
+    }
+    CHECK(list.add(make_device("AA:BB:CC:DD:EE:02", "Beacon", -40,
+                               device_kind::unknown, false, false)));
+    /* A stronger RSSI on the same non-connectable peer is promoted but the
+     * monotone demotion keeps connectable false. */
+    CHECK(list.add(make_device("AA:BB:CC:DD:EE:02", "Beacon", -30,
+                               device_kind::unknown, true, true)));
+    const device *beacon = list.find("AA:BB:CC:DD:EE:02");
+    CHECK(beacon != nullptr);
+    if (beacon != nullptr) CHECK(!beacon->connectable);
+    CHECK(list.find("AA:BB:CC:DD:EE:01",
+                    cyberdeck_ble::address_type::random_static) == nullptr);
+    /* Overlong stored address and typed miss on empty list. */
+    CHECK(!list.add(make_device("AA:BB:CC:DD:EE:FF:00", "Long", -40,
+                                device_kind::mouse)));
+    device_list empty;
+    CHECK(empty.find("AA:BB:CC:DD:EE:01",
+                     cyberdeck_ble::address_type::public_address) == nullptr);
+}
+
+/* REQ-COV-02/TEST-COV-TYPES-02: punctuation, case, invalid and overlong
+ * address forms through the public normalize_address API. */
+void test_coverage_address_punctuation_case_and_overlong()
+{
+    expect_address("AA-BB-CC-DD-EE-FF", 17, "AA:BB:CC:DD:EE:FF");
+    expect_address("aA-bB-cC-dD-eE-fF", 17, "AA:BB:CC:DD:EE:FF");
+    expect_address("aabbccDDEEFF", 12, "AA:BB:CC:DD:EE:FF");
+    expect_address("00:11:22:33:44:55", 17, "00:11:22:33:44:55");
+    /* Dots, slashes, underscores and blanks are never separators. */
+    expect_address_rejected("AA.BB.CC.DD.EE.FF", 17);
+    expect_address_rejected("AA/BB/CC/DD/EE/FF", 17);
+    expect_address_rejected("AA_BB_CC_DD_EE_FF", 17);
+    expect_address_rejected("AA:BB:CC:DD:EE:FF\n", 18);
+    expect_address_rejected("AA:BB:CC:DD:EE:FF\r", 18);
+    expect_address_rejected("AA:BB:CC:DD:EE:0G", 17);
+    expect_address_rejected("AA:BB:CC:DD:EE:ZZ", 17);
+    /* Overlong bare and colon forms fail without touching out. */
+    expect_address_rejected("AABBCCDDEEFF0", 13);
+    expect_address_rejected("AABBCCDDEEFF00", 14);
+    expect_address_rejected("00:11:22:33:44:55:66", 20);
+}
+
+void test_coverage_sanitize_leading_overlong_surrogate_trim_truncate()
+{
+    using cyberdeck_ble::sanitize_name;
+    /* Leading invalid/overlong/surrogate bytes are skipped, not blanked. */
+    {
+        const char leading_bad[] = {static_cast<char>(0xFF), 'H', 'e', 'l', 'l', 'o'};
+        CHECK_STR(sanitize_name(leading_bad, sizeof(leading_bad)), "Hello");
+    }
+    {
+        const char leading_overlong[] = {static_cast<char>(0xC0), static_cast<char>(0xAF),
+                                         'H', 'i'};
+        CHECK_STR(sanitize_name(leading_overlong, sizeof(leading_overlong)), "Hi");
+    }
+    {
+        const char leading_surrogate[] = {static_cast<char>(0xED), static_cast<char>(0xA0),
+                                          static_cast<char>(0x80), 'H', 'i'};
+        CHECK_STR(sanitize_name(leading_surrogate, sizeof(leading_surrogate)), "Hi");
+    }
+    {
+        const char leading_stray[] = {static_cast<char>(0x80), 'H', 'i'};
+        CHECK_STR(sanitize_name(leading_stray, sizeof(leading_stray)), "Hi");
+    }
+    /* Leading truncated sequences collapse to the placeholder. */
+    {
+        const char truncated_two[] = {static_cast<char>(0xC3)};
+        CHECK_STR(sanitize_name(truncated_two, sizeof(truncated_two)), k_unnamed_placeholder);
+    }
+    {
+        const char truncated_three[] = {static_cast<char>(0xE2), static_cast<char>(0x96)};
+        CHECK_STR(sanitize_name(truncated_three, sizeof(truncated_three)),
+                  k_unnamed_placeholder);
+    }
+    {
+        const char truncated_four[] = {static_cast<char>(0xF0), static_cast<char>(0x9F),
+                                       static_cast<char>(0x94)};
+        CHECK_STR(sanitize_name(truncated_four, sizeof(truncated_four)),
+                  k_unnamed_placeholder);
+    }
+    /* Trailing controls are saturated into the trim, not the output. */
+    CHECK_STR(sanitize_name("hi\x7F", 3), "hi");
+    CHECK_STR(sanitize_name("hi\xC2\x85", 4), "hi");
+    CHECK_STR(sanitize_name("hi  ", 4), "hi");
+    CHECK_STR(sanitize_name("  hi", 4), "hi");
+    /* Saturation at the cap: extra controls and blanks never grow output. */
+    {
+        std::string full = repeated('a', k_max_name_bytes);
+        std::string with_control = full + "\x01";
+        CHECK_STR(sanitize_name(with_control.c_str(), with_control.size()), full);
+        std::string with_blanks = full + "   ";
+        CHECK_STR(sanitize_name(with_blanks.c_str(), with_blanks.size()), full);
+    }
+    /* Truncation keeps whole code points: 17 x 2-byte units clamp to 16. */
+    CHECK_STR(sanitize_name(repeated("\xC3\xA9", 16).c_str(), 32),
+              repeated("\xC3\xA9", 16));
+    CHECK_STR(sanitize_name(repeated("\xC3\xA9", 17).c_str(), 34),
+              repeated("\xC3\xA9", 16));
+    /* A 4-byte unit that no longer fits stops the copy, keeping ASCII prefix. */
+    {
+        const std::string ascii31 = repeated('a', 31);
+        const std::string mixed = ascii31 + "\xF0\x9F\x94\xA5";
+        CHECK_STR(sanitize_name(mixed.c_str(), mixed.size()), ascii31);
+    }
+}
+
+void test_coverage_passkey_trims_malformed_max()
+{
+    using cyberdeck_ble::parse_passkey;
+    std::uint32_t value = 777;
+    CHECK(parse_passkey(" 123456 ", 8, value));
+    CHECK_EQ(value, std::uint32_t(123456));
+    value = 777;
+    CHECK(parse_passkey(" \t123456\t ", 10, value));
+    CHECK_EQ(value, std::uint32_t(123456));
+    value = 777;
+    CHECK(parse_passkey(" 000000 ", 8, value));
+    CHECK_EQ(value, std::uint32_t(0));
+    /* Whitespace-only trims to empty and is rejected without clobbering. */
+    value = 777;
+    CHECK(!parse_passkey("      ", 6, value));
+    CHECK_EQ(value, std::uint32_t(777));
+    /* Newlines are content, never trimming, and any interior blank fails. */
+    value = 777;
+    CHECK(!parse_passkey("12\n456", 6, value));
+    CHECK_EQ(value, std::uint32_t(777));
+    value = 777;
+    CHECK(!parse_passkey("\n123456", 7, value));
+    CHECK_EQ(value, std::uint32_t(777));
+    value = 777;
+    CHECK(!parse_passkey("123456\n", 7, value));
+    CHECK_EQ(value, std::uint32_t(777));
+    value = 777;
+    CHECK(!parse_passkey("123 56", 6, value));
+    CHECK_EQ(value, std::uint32_t(777));
+    value = 777;
+    CHECK(!parse_passkey("12:456", 6, value));
+    CHECK_EQ(value, std::uint32_t(777));
+    value = 777;
+    CHECK(!parse_passkey("12345\x7F", 6, value));
+    CHECK_EQ(value, std::uint32_t(777));
+    /* Overlong trimmed input is rejected even when the prefix is numeric. */
+    value = 777;
+    CHECK(!parse_passkey(" 1234567 ", 9, value));
+    CHECK_EQ(value, std::uint32_t(777));
+}
+
+void test_coverage_device_list_merge_remove_render_clamp()
+{
+    /* Lowercase input is normalized on add and found via the stored form. */
+    device_list normalized;
+    CHECK(normalized.add(make_device("aa:bb:cc:dd:ee:0a", "Lower", -50,
+                                     device_kind::mouse)));
+    CHECK_EQ(normalized.size(), std::size_t(1));
+    const device *stored = normalized.find("AA:BB:CC:DD:EE:0A");
+    CHECK(stored != nullptr);
+    if (stored != nullptr) {
+        CHECK_STR(stored->address, "AA:BB:CC:DD:EE:0A");
+        CHECK_STR(stored->name, "Lower");
+    }
+    CHECK(normalized.find("aa:bb:cc:dd:ee:0a") == nullptr);
+    CHECK(normalized.remove("AA:BB:CC:DD:EE:0A"));
+    CHECK_EQ(normalized.size(), std::size_t(0));
+
+    /* Empty + empty keeps an empty name; display and render use placeholder. */
+    device_list unnamed;
+    CHECK(unnamed.add(make_device("AA:BB:CC:DD:EE:10", "", -50,
+                                  device_kind::unknown)));
+    CHECK(unnamed.add(make_device("AA:BB:CC:DD:EE:10", "", -40,
+                                  device_kind::unknown)));
+    CHECK_EQ(unnamed.size(), std::size_t(1));
+    const device *kept = unnamed.find("AA:BB:CC:DD:EE:10");
+    CHECK(kept != nullptr);
+    if (kept != nullptr) {
+        CHECK_STR(kept->name, "");
+        CHECK_EQ(kept->rssi, -40);
+        CHECK_STR(cyberdeck_ble::display_name(*kept), k_unnamed_placeholder);
+    }
+    CHECK(unnamed.render().find("(unnamed)") != std::string::npos);
+
+    /* Paired promotes monotonically and survives a later unpaired merge. */
+    device_list paired;
+    CHECK(paired.add(make_device("AA:BB:CC:DD:EE:11", "Tag", -50,
+                                 device_kind::unknown)));
+    CHECK(paired.add(make_device("AA:BB:CC:DD:EE:11", "Tag", -50,
+                                 device_kind::mouse, true, true)));
+    CHECK(paired.add(make_device("AA:BB:CC:DD:EE:11", "Other", -30,
+                                 device_kind::keyboard, false, true)));
+    const device *tag = paired.find("AA:BB:CC:DD:EE:11");
+    CHECK(tag != nullptr);
+    if (tag != nullptr) {
+        CHECK(tag->paired);
+        CHECK(tag->kind == device_kind::mouse);
+        CHECK_STR(tag->name, "Tag");
+        CHECK_EQ(tag->rssi, -30);
+        CHECK(tag->connectable);
+    }
+
+    /* A weaker non-connectable duplicate still demotes without downgrading. */
+    device_list demote;
+    CHECK(demote.add(make_device("AA:BB:CC:DD:EE:12", "Beacon", -40,
+                                 device_kind::keyboard, false, true)));
+    CHECK(demote.add(make_device("AA:BB:CC:DD:EE:12", "Beacon", -90,
+                                 device_kind::unknown, false, false)));
+    const device *beacon = demote.find("AA:BB:CC:DD:EE:12");
+    CHECK(beacon != nullptr);
+    if (beacon != nullptr) {
+        CHECK_EQ(beacon->rssi, -40);
+        CHECK(beacon->kind == device_kind::keyboard);
+        CHECK(!beacon->connectable);
+    }
+
+    /* A duplicate on a full list still merges instead of failing capacity. */
+    device_list full;
+    for (std::size_t i = 0; i < k_max_devices; ++i) {
+        char address[18];
+        std::snprintf(address, sizeof(address), "AA:BB:CC:DD:%02X:%02X",
+                      static_cast<unsigned>(i >> 8), static_cast<unsigned>(i & 0xFF));
+        CHECK(full.add(make_device(address, "Device", -60,
+                                   device_kind::unknown)));
+    }
+    CHECK_EQ(full.size(), k_max_devices);
+    CHECK(full.add(make_device("AA:BB:CC:DD:00:00", "Device", -30,
+                               device_kind::keyboard)));
+    CHECK_EQ(full.size(), k_max_devices);
+    const device *promoted = full.find("AA:BB:CC:DD:00:00");
+    CHECK(promoted != nullptr);
+    if (promoted != nullptr) {
+        CHECK_EQ(promoted->rssi, -30);
+        CHECK(promoted->kind == device_kind::keyboard);
+    }
+
+    /* Removal clamps the selection and render keeps the marker deterministic. */
+    device_list ordered;
+    CHECK(ordered.add(make_device("AA:BB:CC:DD:EE:21", "A", -40, device_kind::keyboard)));
+    CHECK(ordered.add(make_device("AA:BB:CC:DD:EE:22", "B", -41, device_kind::mouse)));
+    CHECK(ordered.add(make_device("AA:BB:CC:DD:EE:23", "C", -42, device_kind::headset)));
+    CHECK(ordered.remove("AA:BB:CC:DD:EE:21"));
+    CHECK_EQ(ordered.size(), std::size_t(2));
+    CHECK_EQ(ordered.selected_index(), std::size_t(0));
+    CHECK_STR(ordered.selected()->name, "B");
+    CHECK(ordered.render().find("> [1] B (Mouse, -41 dBm)") != std::string::npos);
+    ordered.select(1);
+    CHECK(ordered.remove("AA:BB:CC:DD:EE:22"));
+    CHECK_EQ(ordered.selected_index(), std::size_t(0));
+    CHECK(ordered.selected() != nullptr);
+    if (ordered.selected() != nullptr) {
+        CHECK_STR(ordered.selected()->name, "C");
+    }
+    /* Out-of-range removal leaves selection and content unchanged. */
+    CHECK(!ordered.remove("AA:BB:CC:DD:EE:FF"));
+    CHECK_EQ(ordered.size(), std::size_t(1));
+    CHECK_EQ(ordered.selected_index(), std::size_t(0));
+    ordered.clear();
+    CHECK_STR(ordered.render(), "No Bluetooth devices found.\n");
+
+    /* Single render is exact and RSSI is clamped in the projection. */
+    device_list single;
+    CHECK(single.add(make_device("AA:BB:CC:DD:EE:31", "Solo", -55,
+                                 device_kind::keyboard)));
+    CHECK_STR(single.render(),
+              "Found 1 Bluetooth devices (UP/DOWN navigate, ENTER pair, ESC cancel):\n"
+              "> [1] Solo (Keyboard, -55 dBm)\n");
+    device_list extremes;
+    CHECK(extremes.add(make_device("AA:BB:CC:DD:EE:32", "Weak", -127,
+                                   device_kind::unknown)));
+    CHECK(extremes.add(make_device("AA:BB:CC:DD:EE:33", "Hot", 127,
+                                   device_kind::unknown)));
+    CHECK(extremes.render().find("-120 dBm") != std::string::npos);
+    CHECK(extremes.render().find("20 dBm") != std::string::npos);
+}
+
+/* REQ-COV-01 cycle 2: leading-invalid UTF-8 branches where content already
+ * exists (else arm of !seen_non_space), saturated control at the name cap,
+ * empty-trim passkeys, unreachable-yet selection guard, and the merge path
+ * where address matches but addr_type differs (entry kept, capacity kept). */
+void test_coverage_types_cycle2_sanitize_passkey_merge()
+{
+    using cyberdeck_ble::parse_passkey;
+    using cyberdeck_ble::sanitize_name;
+
+    /* Non-leading invalid bytes after content each become one blank: second
+     * byte of a truncated 2-byte lead, bad continuation, overlong tail,
+     * truncated 3-byte lead, bad 3-byte continuation, surrogate tail,
+     * truncated 4-byte lead, bad 4-byte continuation, out-of-range tail,
+     * and a bare continuation byte. The leading variants are already pinned
+     * by the previous cycle; here seen_non_space is true so the else arm
+     * (push ' ') executes instead of the skip. */
+    {
+        const char t2[] = {'A', static_cast<char>(0xC3)};
+        CHECK_STR(sanitize_name(t2, sizeof(t2)), "A");
+    }
+    {
+        const char bad2[] = {'A', static_cast<char>(0xC3), 'X'};
+        CHECK_STR(sanitize_name(bad2, sizeof(bad2)), "A X");
+    }
+    {
+        const char over[] = {'A', static_cast<char>(0xC0), static_cast<char>(0xAF)};
+        CHECK_STR(sanitize_name(over, sizeof(over)), "A");
+    }
+    {
+        const char t3[] = {'A', static_cast<char>(0xE2), static_cast<char>(0x96)};
+        CHECK_STR(sanitize_name(t3, sizeof(t3)), "A");
+    }
+    {
+        const char bad3[] = {'A', static_cast<char>(0xE2), 'X',
+                             static_cast<char>(0xA0)};
+        CHECK_STR(sanitize_name(bad3, sizeof(bad3)), "A X");
+    }
+    {
+        const char sur[] = {'A', static_cast<char>(0xED), static_cast<char>(0xA0),
+                            static_cast<char>(0x80)};
+        CHECK_STR(sanitize_name(sur, sizeof(sur)), "A");
+    }
+    {
+        const char t4[] = {'A', static_cast<char>(0xF0), static_cast<char>(0x9F),
+                           static_cast<char>(0x94)};
+        CHECK_STR(sanitize_name(t4, sizeof(t4)), "A");
+    }
+    {
+        const char bad4[] = {'A', static_cast<char>(0xF0), 'X',
+                             static_cast<char>(0x9F), static_cast<char>(0x94),
+                             static_cast<char>(0xA5)};
+        CHECK_STR(sanitize_name(bad4, sizeof(bad4)), "A X");
+    }
+    {
+        const char oor[] = {'A', static_cast<char>(0xF4), static_cast<char>(0x90),
+                            static_cast<char>(0x80), static_cast<char>(0x80)};
+        CHECK_STR(sanitize_name(oor, sizeof(oor)), "A");
+    }
+    {
+        const char stray[] = {'A', static_cast<char>(0x80)};
+        CHECK_STR(sanitize_name(stray, sizeof(stray)), "A");
+    }
+
+    /* Saturated control at the cap: the (out.size() < cap) miss. A full
+     * name followed by a control char keeps exactly the cap bytes. */
+    {
+        const std::string full = repeated('z', k_max_name_bytes);
+        const std::string with_control = full + "\x01";
+        CHECK_STR(sanitize_name(with_control.c_str(), with_control.size()), full);
+    }
+
+    /* Address loop tail: a late non-hex digit returns false without touching
+     * the caller's buffer (33->35 miss at types.cpp:91). */
+    expect_address_rejected("AA:BB:CC:DD:EE:0Z", 17);
+
+    /* Passkey trim loops: empty-after-trim falls through both loops without
+     * entering them (start==end on entry), then rejects on digit count. */
+    {
+        std::uint32_t value = 777;
+        CHECK(!parse_passkey("", 0, value));
+        CHECK_EQ(value, std::uint32_t(777));
+        value = 777;
+        CHECK(!parse_passkey("   ", 3, value));
+        CHECK_EQ(value, std::uint32_t(777));
+    }
+    /* Modulus boundary via the public API: exactly 1000000 is rejected. */
+    {
+        std::uint32_t value = 777;
+        CHECK(!parse_passkey("1000000", 7, value));
+        CHECK_EQ(value, std::uint32_t(777));
+    }
+
+    /* Merge path where address matches but addr_type differs: no merge, a
+     * second entry is stored (covers the 30->32 / 40->41 miss region). */
+    {
+        device_list list;
+        CHECK(list.add(make_device("AA:BB:CC:DD:EE:50", "Pub", -50,
+                                   device_kind::unknown, false, true,
+                                   cyberdeck_ble::address_type::public_address)));
+        CHECK(list.add(make_device("AA:BB:CC:DD:EE:50", "Rnd", -55,
+                                   device_kind::keyboard, false, true,
+                                   cyberdeck_ble::address_type::random_static)));
+        CHECK_EQ(list.size(), std::size_t(2));
+        const device *pub = list.find("AA:BB:CC:DD:EE:50",
+                                      cyberdeck_ble::address_type::public_address);
+        CHECK(pub != nullptr);
+        if (pub != nullptr) CHECK_STR(pub->name, "Pub");
+    }
+
+    /* Degenerate selection guard: selection past the end with a non-empty
+     * list returns nullptr (selected() 6->7 miss). Reachable by removing the
+     * tail while the selection sat on it and then querying selected(). */
+    {
+        device_list list;
+        CHECK(list.add(make_device("AA:BB:CC:DD:EE:60", "A", -40,
+                                   device_kind::keyboard)));
+        CHECK(list.add(make_device("AA:BB:CC:DD:EE:61", "B", -41,
+                                   device_kind::mouse)));
+        list.select(1);
+        CHECK(list.remove("AA:BB:CC:DD:EE:61"));
+        /* clamp_selection pulls 1 -> 0, so selected() is valid again. */
+        CHECK(list.selected() != nullptr);
+        CHECK_EQ(list.selected_index(), std::size_t(0));
+        /* Empty list still yields nullptr without touching the guard. */
+        list.clear();
+        CHECK(list.selected() == nullptr);
+    }
+}
+
 } // namespace
 
 int main()
@@ -640,6 +1150,14 @@ int main()
     test_list_render_is_deterministic_and_shows_name_plus_type();
     test_duplicate_names_are_distinguished_only_by_address();
     test_non_connectable_devices_are_kept_but_marked();
+    test_coverage_addresses_separators_and_case_forms();
+    test_coverage_sanitize_utf8_boundaries_and_control_set();
+    test_coverage_passkey_and_list_promotion_guards();
+    test_coverage_address_punctuation_case_and_overlong();
+    test_coverage_sanitize_leading_overlong_surrogate_trim_truncate();
+    test_coverage_passkey_trims_malformed_max();
+    test_coverage_device_list_merge_remove_render_clamp();
+    test_coverage_types_cycle2_sanitize_passkey_merge();
 
     std::printf("ble types/list contract: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

@@ -548,7 +548,14 @@ helpers privados, entao a regra nao fixa a implementacao interna do adaptador.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `.clang-format`, `.github/workflows/quality-gate.yml` | `quality` | Gate deterministico de formatacao C++ (clang-format 18.1.8, todos os ranges de producao alterados em `ble_mgr.cpp`, estilo LLVM com indentacao de 4 espacos), lint, smells, Bandit, testes e cobertura host executados antes da instalacao do ESP-IDF, build ESP-IDF 5.5.5 depois dos checks host, agregado completo `make -C tests/host/keymap test` e cobertura minima de 80% por linha nos quatro modulos BLE puros host-linkable. A cobertura remove explicitamente os artefatos dos quatro modulos antes de compilar com `-O0 --coverage`; `ble_mgr.cpp` e demais integracoes ESP-IDF/hardware ficam fora da cobertura host e exigem validacao no dispositivo. O resumo usa o resultado real dos steps de build, contratos e cobertura. |
+| `.clang-format`, `.github/workflows/quality-gate.yml` | `quality` | Gate deterministico de formatacao C++ (clang-format 18.1.8, todos os ranges de producao alterados em `ble_mgr.cpp`, estilo LLVM com indentacao de 4 espacos), lint, smells, Bandit, agregado host completo `make -C tests/host/keymap test` com `-O0 --coverage` e build ESP-IDF 5.5.5 depois dos checks host. A cobertura BLE exige 80% de linhas nos quatro modulos host-puros (`cyberdeck_ble_types`, `cyberdeck_ble_state_machine`, `cyberdeck_ble_event_dispatch`, `cyberdeck_ble_store`) e reporta branches sem threshold; cobertura global reporta linhas e branches, sem threshold, filtrada por `../../../components/cyberdeck/src/.*\\.cpp` e limitada às translation units de produção realmente compiladas/testadas pelo agregado host (sem contar C++ sem gcda; hardware/ESP-IDF, third-party, shims, testes e fixtures ficam fora). Não há exclusões de gcovr. As actions são pinadas por SHA exato: checkout v4.2.2 em `11bd71901bbe5b1630ceea73d27597364c9af683` e Espressif branch v1 tip em `8fc05d1470d5591417e7a3707a1f2bec178db4ae`; a validação de hardware BLE continua dependente do dispositivo. O workflow publica a saída gcovr no Step Summary. |
+
+Declaracao de validacao fisica reportada pelo usuario (REQ-HW-01): foram testados
+no firmware gravado `0202b2b` os cenarios de conexao Bluetooth, scan,
+pareamento/reconexao e recuperacao `EALREADY`. A data e o dispositivo nao foram
+registrados na declaracao; nao ha logs seriais, comandos ou capturas de tela
+registrados dessa acao do usuario. Esta declaracao nao substitui a validacao
+reproduzivel pelo roteiro `tests/manual/serial-bridge-validation.pt-BR.md`.
 
 Os cinco alvos de bateria agora exercitam a implementacao de producao: o reader
 continua sendo o unico proprietario da aquisicao I2C, mas app_main inicia o
