@@ -586,6 +586,18 @@ static void start_scan_command(const ble_mgr_cmd_t &cmd)
              static_cast<unsigned>(params.passive), static_cast<unsigned>(params.filter_duplicates));
     int rc = ble_gap_disc(own_addr_type, 5000, &params, ble_gap_event_cb,
                       (void *)(uintptr_t)token);
+    if (rc == BLE_HS_EALREADY) {
+        /* The host believes a discovery is still in progress from a previous
+         * generation.  Force the GAP state back to idle so the next window can
+         * start cleanly instead of degrading permanently. */
+        ESP_LOGW(TAG, "ble_gap_disc EALREADY; forcing cancel to clear stale discovery");
+        (void)ble_gap_disc_cancel();
+        if (ble_gap_disc_active()) {
+            /* Still active after cancel: report the failure for this token and
+             * let the scheduler retry on its next window. */
+            ESP_LOGW(TAG, "BLE discovery still active after forced cancel; deferring");
+        }
+    }
     if (rc != 0) {
         ESP_LOGE(TAG, "ble_gap_disc failed: %d", rc);
         handle_scan_finished(token, rc);
@@ -669,8 +681,17 @@ static void ble_mgr_task(void *arg)
             break;
         }
         case BLE_MGR_CMD_SCAN_CANCEL: {
-            if (cmd.token == 0 || cmd.token != s_scan_token ||
-                cmd.token != s_dispatch.active_scan_token()) break;
+            if (cmd.token == 0)
+                break;
+            if (cmd.token != s_scan_token || cmd.token != s_dispatch.active_scan_token()) {
+                /* The previous generation already published its terminal
+                 * outcome.  A stale command is ignored so it cannot publish
+                 * an event for a generation that the dispatcher no longer
+                 * accepts or affect the active scan. */
+                ESP_LOGW(TAG, "BLE scan cancel stale token=%llu active=%llu; ignoring",
+                         static_cast<unsigned long long>(cmd.token), static_cast<unsigned long long>(s_scan_token));
+                break;
+            }
             const bool scan_active = ble_gap_disc_active();
             int rc = scan_active ? ble_gap_disc_cancel() : BLE_HS_EALREADY;
             if (rc == BLE_HS_EALREADY && !scan_active) {

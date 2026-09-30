@@ -5,23 +5,80 @@ on:
   pull_request:
 
 jobs:
-  firmware:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install host quality tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cppcheck pipx
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          pipx install 'clang-format==18.1.8'
+          pipx install 'gcovr==8.4'
+          pipx install 'ruff==0.13.2'
+          pipx install 'bandit==1.9.1'
+      - name: Format C++ and Python
+        run: |
+          clang-format --version
+          # The adapter predates this gate and intentionally retains its
+          # existing layout; check every changed production range.
+          clang-format --dry-run --Werror \
+            --lines=589:600 \
+            --lines=684:690 \
+            components/cyberdeck/src/features/bluetooth/ble_mgr.cpp
+          # F is the repository's deterministic Python syntax/import-format
+          # check; the existing CLI intentionally retains its broader legacy
+          # whitespace style outside this gate.
+          ruff check --select F tools
+      - name: Lint, smells, and security
+        run: |
+          cppcheck --enable=warning,performance,portability \
+            --error-exitcode=1 --suppress=missingIncludeSystem \
+            components/cyberdeck/src/features/bluetooth/cyberdeck_ble_*.cpp
+          bandit -r tools -ll
       - uses: espressif/install-esp-idf-action@v1
         with:
           version: v5.5.5
       - name: Build firmware
+        id: firmware-build
         run: idf.py build
-      - name: Host unit tests (keymap)
-        run: make -C tests/host/keymap test
+      - name: Host contracts and tests (approved executable set)
+        id: host-contracts
+        working-directory: tests/host/keymap
+        run: |
+          make clean
+          make test
+      - name: Host coverage gate (pure, measurable scope only)
+        id: host-coverage
+        working-directory: tests/host/keymap
+        run: |
+          make clean
+          rm -f \
+            *-cyberdeck_ble_types.gcda *-cyberdeck_ble_types.gcno \
+            *-test_ble_types.gcda *-test_ble_types.gcno \
+            *-cyberdeck_ble_state_machine.gcda *-cyberdeck_ble_state_machine.gcno \
+            *-test_ble_state_machine.gcda *-test_ble_state_machine.gcno \
+            *-cyberdeck_ble_event_dispatch.gcda *-cyberdeck_ble_event_dispatch.gcno \
+            *-test_ble_event_dispatch.gcda *-test_ble_event_dispatch.gcno \
+            *-cyberdeck_ble_store.gcda *-cyberdeck_ble_store.gcno \
+            *-test_ble_store.gcda *-test_ble_store.gcno
+          make CXXFLAGS='-std=c++17 -Wall -Wextra -Werror -O0 --coverage' \
+            test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store
+          ./test_ble_types
+          ./test_ble_state_machine
+          ./test_ble_event_dispatch
+          ./test_ble_store
+          gcovr --root ../../.. --filter '../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_(types|state_machine|event_dispatch|store)\.cpp' \
+            --fail-under-line 80 --print-summary
       - name: Job summary
         if: always()
         run: |
           {
             echo '| Check | Result |'
             echo '| --- | --- |'
-            echo '| ESP-IDF build | completed by previous step |'
-            echo '| Host unit tests (keymap) | completed by previous step |'
+            echo '| ESP-IDF 5.5.5 build | ${{ steps.firmware-build.outcome }} |'
+            echo '| Host BLE contracts | ${{ steps.host-contracts.outcome }} |'
+            echo '| Host BLE line coverage | ${{ steps.host-coverage.outcome }} |'
+            echo '| Hardware-only BLE adapter | excluded from host coverage; requires device validation |'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -224,10 +224,13 @@ terminais; não esperam `s_dispatch_mutex` nem chamam dispatch/GAP. A task
 `ble_mgr.cpp` serializa preempcao de discovery como `SCAN_CANCEL -> DISC_COMPLETE
 -> SCAN_START`: enquanto o cancelamento GAP esta pendente, uma nova geracao nao
 inicia scan; `DISC_COMPLETE` valida o token capturado e a task libera
-explicitamente a proxima geracao. O caminho trata `EALREADY` apenas quando
-`ble_gap_disc_active()` e falso, preservando observer de 10 s, bonds/RPA/
-`addr_type`, nomes persistidos, tres tentativas, novo anuncio, bloqueio manual,
-filas bounded e callbacks.
+explicitamente a proxima geracao. Se `ble_gap_disc` retornar `EALREADY`, o
+adaptador tenta cancelar e consulta `ble_gap_disc_active()` antes de publicar o
+termino de falha do token atual. Cancelamento de token stale e ignorado porque o
+terminal da geracao anterior ja foi publicado; nenhum evento e emitido com token
+obsoleto e a geracao ativa nao e afetada.
+O caminho preserva observer de 10 s, bonds/RPA/`addr_type`, nomes persistidos,
+tres tentativas, novo anuncio, bloqueio manual, filas bounded e callbacks.
 
 Os contratos `test_ble_scan_contract.py` e `test_ble_runtime_regressions.py`
 cobrem a inferencia segura de `own_addr_type` no sync (fora do helper de start),
@@ -539,6 +542,12 @@ helpers privados, entao a regra nao fixa a implementacao interna do adaptador.
 | `REQ-BAT-008` — battery/external/charging/absent/unknown thresholds e votos | `test_battery_protection.cpp`, `test_battery_protection_contract.py` |
 | `REQ-BAT-009` — 90/85 protection hysteresis e fail-safe state | `test_battery_protection.cpp`, `test_battery_protection_contract.py` |
 | `REQ-BAT-010` — NVS default/option, UI timer/snapshot, shell e ui.type | `test_battery_protection_contract.py` |
+
+### CI e cobertura host mensuravel
+
+| Arquivo | Simbolos/contrato | Papel |
+| --- | --- | --- |
+| `.clang-format`, `.github/workflows/quality-gate.yml` | `quality` | Gate deterministico de formatacao C++ (clang-format 18.1.8, todos os ranges de producao alterados em `ble_mgr.cpp`, estilo LLVM com indentacao de 4 espacos), lint, smells, Bandit, build ESP-IDF 5.5.5, agregado completo `make -C tests/host/keymap test` e cobertura minima de 80% por linha nos quatro modulos BLE puros host-linkable. A cobertura remove explicitamente os artefatos dos quatro modulos antes de compilar com `-O0 --coverage`; `ble_mgr.cpp` e demais integracoes ESP-IDF/hardware ficam fora da cobertura host e exigem validacao no dispositivo. O resumo usa o resultado real dos steps de build, contratos e cobertura. |
 
 Os cinco alvos de bateria agora exercitam a implementacao de producao: o reader
 continua sendo o unico proprietario da aquisicao I2C, mas app_main inicia o
