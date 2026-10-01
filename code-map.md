@@ -324,7 +324,8 @@ de report map, notificações ou injeção de teclas.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/src/apps/screenshot/screenshot_server.cpp` | `screenshot_server_init`, `screenshot_server_wifi_state` | Servidor `GET /screenshot` na porta 80, iniciado/parado por estado Wi-Fi. |
+| `components/cyberdeck/src/apps/screenshot/screenshot_server.cpp` | `screenshot_server_init`, `screenshot_server_set_display_port`, `screenshot_server_wifi_state`, `screenshot_frame_t` | Servidor `GET /screenshot` na porta 80, iniciado/parado por estado Wi-Fi. Serializa BMP a partir de um frame RGB565 bounded recebido pela porta de display; nao inclui LVGL/BSP nem captura a tela diretamente. |
+| `components/cyberdeck/include/platform/display/cyberdeck_display_port.h`, `components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp` | `cyberdeck_display_capture`, `cyberdeck_display_release` | Adapter exclusivo de LVGL/BSP para a porta de display do Screenshot; faz lock, snapshot, copia bounded do frame e libera recursos. |
 | `components/cyberdeck/src/apps/screenshot/screenshot_bmp.cpp` | geracao de BMP | Converte framebuffer RGB565 em BMP 24-bit bottom-up com stride/padding. |
 
 O endpoint serializa requisicoes, usa lock de display somente durante o

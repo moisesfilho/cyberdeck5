@@ -7,17 +7,18 @@
 #include <string.h>
 #include <sys/socket.h>
 
-#include "bsp/esp-bsp.h"
 #include "esp_http_server.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "lvgl.h"
 
 static const char *TAG = "screenshot_http";
 static httpd_handle_t s_server = NULL;
 static SemaphoreHandle_t s_request_mutex = NULL;
+static screenshot_capture_fn s_capture = NULL;
+static screenshot_release_fn s_release = NULL;
+static void *s_display_context = NULL;
 
 static void send_error(httpd_req_t *req, httpd_err_code_t code, const char *message)
 {
@@ -71,31 +72,24 @@ static bool is_local_peer(httpd_req_t *req)
 static esp_err_t send_snapshot(httpd_req_t *req)
 {
     esp_err_t result = ESP_OK;
-    lv_draw_buf_t *snapshot = NULL;
-    if (!bsp_display_lock(pdMS_TO_TICKS(1000))) {
-        send_service_unavailable(req, "display is busy");
-        return ESP_OK;
-    }
-    lv_obj_t *screen = lv_screen_active();
-    snapshot = lv_snapshot_take(screen, LV_COLOR_FORMAT_RGB565);
-    bsp_display_unlock();
-    if (snapshot == NULL) {
-        send_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "could not capture display");
+    screenshot_frame_t frame = {};
+    if (s_capture == NULL || s_release == NULL || s_capture(s_display_context, &frame) != ESP_OK) {
+        send_service_unavailable(req, "display capture unavailable");
         return ESP_OK;
     }
 
-    const int width = snapshot->header.w;
-    const int height = snapshot->header.h;
+    const int width = frame.width;
+    const int height = frame.height;
     const size_t stride = screenshot_bmp_calc_stride(width);
-    if (!screenshot_bmp_validate_dimensions(width, height) || snapshot->header.cf != LV_COLOR_FORMAT_RGB565 ||
-        snapshot->header.stride < (uint32_t)(width * sizeof(uint16_t))) {
-        lv_draw_buf_destroy(snapshot);
+    if (!screenshot_bmp_validate_dimensions(width, height) ||
+        frame.data == NULL || frame.stride < (size_t)(width * sizeof(uint16_t))) {
+        s_release(s_display_context, &frame);
         send_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "unsupported display format");
         return ESP_OK;
     }
     uint8_t *row_buf = (uint8_t *)malloc(stride);
     if (row_buf == NULL) {
-        lv_draw_buf_destroy(snapshot);
+        s_release(s_display_context, &frame);
         send_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "screenshot buffer unavailable");
         return ESP_OK;
     }
@@ -108,10 +102,10 @@ static esp_err_t send_snapshot(httpd_req_t *req)
         result = ESP_FAIL;
     }
 
-    const uint8_t *source = (const uint8_t *)snapshot->data;
+    const uint8_t *source = frame.data;
     /* Bottom-Up: stream rows from height - 1 down to 0 for standard BMP rendering */
     for (int row = height - 1; result == ESP_OK && row >= 0; --row) {
-        const uint8_t *source_row = source + (size_t)row * snapshot->header.stride;
+        const uint8_t *source_row = source + (size_t)row * frame.stride;
         for (int col = 0; col < width; ++col) {
             uint16_t pixel;
             memcpy(&pixel, source_row + (size_t)col * sizeof(uint16_t), sizeof(pixel));
@@ -124,7 +118,7 @@ static esp_err_t send_snapshot(httpd_req_t *req)
         if (httpd_resp_send_chunk(req, (const char *)row_buf, stride) != ESP_OK) result = ESP_FAIL;
     }
     if (result == ESP_OK && httpd_resp_send_chunk(req, NULL, 0) != ESP_OK) result = ESP_FAIL;
-    lv_draw_buf_destroy(snapshot);
+    s_release(s_display_context, &frame);
     free(row_buf);
     return result;
 }
@@ -182,6 +176,17 @@ esp_err_t screenshot_server_init(void)
     if (s_request_mutex != NULL) return ESP_OK;
     s_request_mutex = xSemaphoreCreateMutex();
     return s_request_mutex == NULL ? ESP_ERR_NO_MEM : ESP_OK;
+}
+
+esp_err_t screenshot_server_set_display_port(screenshot_capture_fn capture,
+                                              screenshot_release_fn release,
+                                              void *context)
+{
+    if (capture == NULL || release == NULL) return ESP_ERR_INVALID_ARG;
+    s_capture = capture;
+    s_release = release;
+    s_display_context = context;
+    return ESP_OK;
 }
 
 void screenshot_server_wifi_state(const wifi_status_t *status, bool enabled, void *)

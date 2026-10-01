@@ -76,7 +76,7 @@ supervisor.
 
 - [x] Remover acessos diretos da UI aos servicos.
 - [x] Expor Wi-Fi, SSH, BLE e Serial por interfaces de servico.
-- [ ] Fazer Screenshot consumir uma interface de display.
+- [x] Fazer Screenshot consumir uma interface de display.
 - [x] Fazer o shell acessar storage, rede e input por portas do sistema.
 - [ ] Converter callbacks externos em eventos bounded.
 
@@ -86,8 +86,14 @@ e consumida pela UI atraves de `runtime::app_logger()`. Os acessos diretos da
 UI aos servicos Wi-Fi, SSH, BLE e Serial tambem foram removidos: o gateway
 `cyberdeck_service_ports` concentra as chamadas aos backends e a UI consome
 somente as portas. O shell session ja expunha storage, rede e input por seu
-`host`. Ainda faltam a porta de display do Screenshot e a conversao dos
-callbacks externos restantes para eventos bounded.
+`host`. Fica pendente a conversao dos callbacks externos restantes para
+eventos bounded.
+
+O Screenshot foi entao migrado para `screenshot_frame_t`: o servidor HTTP nao
+inclui mais LVGL/BSP nem captura `lv_screen_active()`; recebe um frame RGB565
+bounded pela porta `cyberdeck_display_port`, que concentra lock, snapshot e
+liberacao do buffer no adapter de display. Permanecem pendentes somente os
+callbacks externos que ainda precisam ser consolidados no event bus bounded.
 
 ### 4. IPC e Event Bus
 

@@ -8,6 +8,8 @@
 #include "platform/display/screen_off.h"
 #include "platform/input/tab5_keyboard.h"
 #include "apps/system/cyberdeck_system_apps.h"
+#include "apps/screenshot/screenshot_server.h"
+#include "platform/display/cyberdeck_display_port.h"
 #include "bsp/m5stack_tab5.h"
 
 static const char *TAG = "cyberdeck5";
@@ -38,6 +40,8 @@ extern "C" void app_main(void)
     bsp_display_lock(0);
     ESP_ERROR_CHECK(imu_reader_start(display));
     ESP_ERROR_CHECK(cyberdeck_ui_init());
+    ESP_ERROR_CHECK(screenshot_server_set_display_port(cyberdeck_display_capture,
+                                                       cyberdeck_display_release, nullptr));
     ESP_ERROR_CHECK(screen_off_init(display, 20));
     bsp_display_unlock();
 
