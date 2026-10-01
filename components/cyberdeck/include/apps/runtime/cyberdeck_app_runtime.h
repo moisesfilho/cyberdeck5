@@ -6,6 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include "apps/runtime/cyberdeck_app_logger.h"
+
 namespace cyberdeck_apps {
 
 constexpr std::size_t k_max_applications = 16;
@@ -75,6 +77,11 @@ public:
     virtual bool teardown() { return stop(); }
     virtual bool running() const = 0;
     virtual result execute(std::string_view command, std::string_view args) = 0;
+    void set_logger(logger *value) { logger_ = value; }
+    logger *app_logger() const { return logger_; }
+
+private:
+    logger *logger_ = nullptr;
 };
 
 class runtime {
@@ -86,6 +93,7 @@ public:
     bool restart_application(std::string_view id);
     bool start_all();
     bool stop_all();
+    void set_logger(logger *value);
     application *find(std::string_view id);
     const application *find(std::string_view id) const;
     app_state state(std::string_view id) const;
@@ -99,6 +107,7 @@ private:
     std::array<app_state, k_max_applications> states_{};
     std::array<std::string, k_max_applications> failures_{};
     std::size_t count_ = 0;
+    logger *logger_ = nullptr;
 
     bool start_index(std::size_t index, std::array<bool, k_max_applications> &visiting);
     bool stop_index(std::size_t index);

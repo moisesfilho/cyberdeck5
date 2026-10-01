@@ -7,6 +7,7 @@
 #include "apps/serial/cyberdeck_serial_bridge.h"
 #include "apps/ssh/ssh_client.h"
 #include "apps/wifi/wifi_mgr.h"
+#include "platform/logging/event_log.h"
 
 #include "esp_log.h"
 
@@ -18,6 +19,9 @@ constexpr const char *TAG = "system_apps";
 
 bool start_shell() { return true; }
 bool stop_shell() { return false; }
+
+bool start_event_log() { return event_log_init() == ESP_OK; }
+bool stop_event_log() { return false; }
 
 bool start_ssh() { return true; }
 bool stop_ssh()
@@ -82,6 +86,14 @@ private:
     bool running_ = false;
 };
 
+class event_log_logger final : public cyberdeck_apps::logger {
+public:
+    void write(char level, const char *tag, const char *message) override
+    {
+        event_log_write(level, tag, message);
+    }
+};
+
 cyberdeck_apps::manifest make_manifest(std::string_view id, std::string_view name,
                                        std::string_view description,
                                        std::initializer_list<std::string_view> dependencies,
@@ -118,8 +130,15 @@ cyberdeck_apps::manifest make_manifest(std::string_view id, std::string_view nam
 }
 
 cyberdeck_apps::demo_application s_demo;
+event_log_logger s_event_logger;
+service_application s_event_log{make_manifest("cyberdeck.event_log", "Event log service",
+                                               "Persistent bounded event log for applications", {},
+                                               {"storage", "logging"}, 1000,
+                                               cyberdeck_apps::app_type::service,
+                                               {"logging"}, 6144, 16),
+                                start_event_log, stop_event_log};
 service_application s_shell{make_manifest("cyberdeck.shell", "Terminal shell",
-                                           "Primary foreground terminal application", {},
+                                           "Primary foreground terminal application", {"cyberdeck.event_log"},
                                            {"display", "input", "storage"}, 1000,
                                            cyberdeck_apps::app_type::foreground,
                                            {"display", "input", "storage", "shell"}, 8192, 8),
@@ -127,37 +146,37 @@ service_application s_shell{make_manifest("cyberdeck.shell", "Terminal shell",
 /* Wi-Fi brings up the C6 radio, SD storage and the STA netif, so its lifecycle
  * budget is larger than the trivial services. */
 service_application s_wifi{make_manifest("cyberdeck.wifi", "Wi-Fi service",
-                                         "Wi-Fi connectivity and network management", {},
+                                          "Wi-Fi connectivity and network management", {"cyberdeck.event_log"},
                                          {"network", "storage"}, 8000,
                                          cyberdeck_apps::app_type::service,
                                          {"network", "storage"}, 4096, 8),
                            start_wifi, nullptr};
 service_application s_serial{make_manifest("cyberdeck.serial", "Serial bridge",
                                             "USB Serial-JTAG NDJSON control bridge",
-                                            {"cyberdeck.shell"}, {"serial", "input"}, 2000,
+                                             {"cyberdeck.event_log", "cyberdeck.shell"}, {"serial", "input"}, 2000,
                                             cyberdeck_apps::app_type::service,
                                             {"serial", "input"}, 4096, 8),
                               start_serial, stop_serial};
 service_application s_ssh{make_manifest("cyberdeck.ssh", "SSH service",
                                          "Asynchronous SSH client service",
-                                         {"cyberdeck.wifi"}, {"network", "storage"}, 1000,
+                                          {"cyberdeck.event_log", "cyberdeck.wifi"}, {"network", "storage"}, 1000,
                                          cyberdeck_apps::app_type::background,
                                          {"network", "storage"}, 6144, 8),
                            start_ssh, stop_ssh};
 service_application s_screenshot{make_manifest("cyberdeck.screenshot", "Screenshot service",
                                                "Local-network screenshot HTTP endpoint",
-                                               {"cyberdeck.wifi"}, {"display", "network"}, 1000,
+                                                {"cyberdeck.event_log", "cyberdeck.wifi"}, {"display", "network"}, 1000,
                                                cyberdeck_apps::app_type::service,
                                                {"display", "network"}, 6144, 1),
                                   start_screenshot, nullptr};
 service_application s_bluetooth{make_manifest("cyberdeck.bluetooth", "Bluetooth service",
-                                              "ESP-Hosted BLE manager", {}, {"bluetooth"}, 1000,
+                                               "ESP-Hosted BLE manager", {"cyberdeck.event_log"}, {"bluetooth"}, 1000,
                                               cyberdeck_apps::app_type::background,
                                               {"bluetooth"}, 8192, 8),
                                  start_bluetooth, stop_bluetooth};
 
 cyberdeck_apps::application *const k_apps[] = {
-    &s_shell, &s_wifi, &s_serial, &s_ssh, &s_screenshot, &s_bluetooth, &s_demo,
+    &s_event_log, &s_shell, &s_wifi, &s_serial, &s_ssh, &s_screenshot, &s_bluetooth, &s_demo,
 };
 
 bool s_registered = false;
@@ -167,6 +186,7 @@ bool s_registered = false;
 extern "C" esp_err_t cyberdeck_system_apps_register(void)
 {
     if (s_registered) return ESP_OK;
+    cyberdeck_apps::global_runtime().set_logger(&s_event_logger);
     for (cyberdeck_apps::application *app : k_apps) {
         if (!cyberdeck_apps::global_runtime().register_application(*app)) {
             ESP_LOGE(TAG, "failed to register system app");
@@ -175,6 +195,12 @@ extern "C" esp_err_t cyberdeck_system_apps_register(void)
     }
     s_registered = true;
     return ESP_OK;
+}
+
+extern "C" esp_err_t cyberdeck_system_apps_start_logging(void)
+{
+    cyberdeck_apps::runtime &runtime = cyberdeck_apps::global_runtime();
+    return runtime.start_application("cyberdeck.event_log") ? ESP_OK : ESP_FAIL;
 }
 
 extern "C" esp_err_t cyberdeck_system_apps_start(void)

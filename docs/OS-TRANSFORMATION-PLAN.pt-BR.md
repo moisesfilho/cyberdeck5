@@ -63,6 +63,15 @@ hooks `init()` e `teardown()` com defaults compativeis; `app info` expoe esses
 metadados e o ultimo diagnostico de lifecycle. Os system apps declaram tipo,
 capacidades, stack e fila requisitadas.
 
+Responsabilidade de logging: `cyberdeck.event_log` agora e um system app
+registrado e iniciado pelo supervisor. O `app_main` apenas registra os system
+apps e solicita `cyberdeck_system_apps_start_logging()` depois de validar o
+cartao SD; ele nao chama mais `event_log_init()` diretamente. O runtime injeta
+uma porta `cyberdeck_apps::logger` em cada aplicacao registrada, implementada
+no firmware pelo adaptador do supervisor para `event_log_write()`. O evento log
+continua bounded e persistente, mas seu lifecycle e ownership pertencem ao
+supervisor.
+
 ### 3. Separacao de Servicos
 
 - [ ] Remover acessos diretos da UI aos servicos.

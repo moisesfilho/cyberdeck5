@@ -1,5 +1,4 @@
 #include "platform/display/cyberdeck_ui.h"
-#include "platform/logging/event_log.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include "nvs_flash.h"
@@ -20,8 +19,8 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(bsp_sdcard_mount());
     if (bsp_sdcard_get_handle() == nullptr) return;
 
-    ESP_ERROR_CHECK(event_log_init());
     ESP_ERROR_CHECK(cyberdeck_system_apps_register());
+    ESP_ERROR_CHECK(cyberdeck_system_apps_start_logging());
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {

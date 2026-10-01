@@ -28,7 +28,11 @@ def main() -> int:
 
     if "runtime.start_all()" not in apps:
         failures.append("startup must be delegated to the supervisor")
-    for dependency in ('{"cyberdeck.wifi"}', '{"cyberdeck.shell"}'):
+    if "event_log_init()" not in apps or "cyberdeck.event_log" not in apps:
+        failures.append("event log must be a registered supervisor-owned system app")
+    if "set_logger(&s_event_logger)" not in apps:
+        failures.append("system apps must inject the supervisor logger")
+    for dependency in ("cyberdeck.wifi", "cyberdeck.shell", "cyberdeck.event_log"):
         if dependency not in apps:
             failures.append(f"missing declarative dependency {dependency}")
     if "lifecycle_timeout_ms" not in apps:

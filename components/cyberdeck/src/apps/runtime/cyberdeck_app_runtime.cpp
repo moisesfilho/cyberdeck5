@@ -66,11 +66,18 @@ const char *app_type_name(app_type type)
 bool runtime::register_application(application &app)
 {
     if (count_ == applications_.size() || find(app.get_manifest().id) != nullptr) return false;
+    app.set_logger(logger_);
     applications_[count_] = &app;
     states_[count_] = app_state::registered;
     failures_[count_].clear();
     ++count_;
     return true;
+}
+
+void runtime::set_logger(logger *value)
+{
+    logger_ = value;
+    for (std::size_t i = 0; i < count_; ++i) applications_[i]->set_logger(value);
 }
 
 application *runtime::find(std::string_view id)
