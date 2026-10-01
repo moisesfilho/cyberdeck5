@@ -106,11 +106,23 @@ liberacao do buffer no adapter de display.
 
 ### 4. IPC e Event Bus
 
-- [ ] Criar eventos tipados e bounded.
-- [ ] Criar filas por aplicacao.
-- [ ] Preservar tokens de geracao e descarte de eventos stale.
-- [ ] Definir backpressure, overflow e timeout explicitamente.
+- [x] Criar eventos tipados e bounded.
+- [x] Criar filas por aplicacao.
+- [x] Preservar tokens de geracao e descarte de eventos stale.
+- [x] Definir backpressure, overflow e timeout explicitamente.
 - [ ] Proibir chamadas diretas entre tasks quando houver IPC aplicavel.
+
+Recorte aprovado da Etapa 4: o cliente SSH publica uma geração monotônica
+`uint64_t` em todos os callbacks; a UI captura a geração aceita e descarta
+eventos stale no pump. Callbacks SSH apenas publicam snapshots/eventos e são
+proibidos de adquirir `bsp_display_lock` ou tocar LVGL/display diretamente.
+O teardown invalida a geração esperada antes de destruir a fila. O teardown da UI chama a porta
+`ssh_disconnect_and_wait()` antes de destruir a fila de eventos SSH. A espera e
+bounded e usa `vTaskDelay`, observando o retorno nulo de `s_task_handle`. Dados
+SSH descartados por fila cheia sao contados em um contador saturante; eventos de
+estado tentam reservar espaco removendo um evento de dados antigo. O payload
+continua limitado e nao ha arrays grandes na stack. O event bus geral e a
+eliminacao de chamadas diretas entre tasks permanecem pendentes.
 
 ### 5. Modelo de Tasks
 

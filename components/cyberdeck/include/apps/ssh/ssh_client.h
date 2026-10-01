@@ -19,21 +19,25 @@ typedef enum {
     SSH_CLIENT_NEED_HOST_KEY
 } ssh_client_state_t;
 
+typedef uint64_t ssh_client_generation_t;
+
 /**
  * @brief Callback chamado quando chegam dados da saida remota do SSH (stdout/stderr).
  *
+ * @param generation Geracao da sessao que recebeu os dados.
  * @param data Ponteiro para os dados recebidos.
  * @param len Tamanho em bytes.
  */
-typedef void (*ssh_rx_cb_t)(const char *data, size_t len);
+typedef void (*ssh_rx_cb_t)(ssh_client_generation_t generation, const char *data, size_t len);
 
 /**
  * @brief Callback chamado quando o estado da conexao SSH muda.
  *
+ * @param generation Geracao da sessao que mudou de estado.
  * @param state Novo estado da conexao.
  * @param msg Mensagem descritiva opcional (ex: erro ou status).
  */
-typedef void (*ssh_state_cb_t)(ssh_client_state_t state, const char *msg);
+typedef void (*ssh_state_cb_t)(ssh_client_generation_t generation, ssh_client_state_t state, const char *msg);
 
 /**
  * @brief Inicia a conexao SSH assincrona em uma task dedicada.
@@ -72,6 +76,9 @@ esp_err_t ssh_client_send_data(const char *data, size_t len);
  */
 void ssh_client_disconnect(void);
 
+/** Solicita o encerramento e aguarda bounded o retorno da task SSH. */
+bool ssh_client_disconnect_and_wait(uint32_t timeout_ms);
+
 /**
  * @brief Verifica se ha uma sessao SSH ativa ou em processo de conexao.
  *
@@ -83,6 +90,9 @@ bool ssh_client_is_active(void);
  * @brief Retorna o estado atual do cliente SSH.
  */
 ssh_client_state_t ssh_client_get_state(void);
+
+/** Retorna a geracao da sessao aceita mais recentemente. */
+ssh_client_generation_t ssh_client_generation(void);
 
 #ifdef __cplusplus
 }

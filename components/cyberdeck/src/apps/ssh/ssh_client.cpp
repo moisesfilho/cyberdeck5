@@ -3,8 +3,6 @@
 #include "apps/wifi/wifi_storage.h"
 #include "apps/wifi/wifi_mgr.h"
 #include "esp_log.h"
-#include "bsp/esp-bsp.h"
-#include "bsp/m5stack_tab5.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -67,6 +65,7 @@ struct SSHConfig {
 };
 
 std::atomic<ssh_client_state_t> s_state{SSH_CLIENT_DISCONNECTED};
+std::atomic<ssh_client_generation_t> s_generation{0};
 ssh_rx_cb_t s_rx_cb = nullptr;
 ssh_state_cb_t s_state_cb = nullptr;
 
@@ -80,60 +79,55 @@ std::atomic_bool s_stop_requested{false};
 SSHConfig s_current_config;
 static std::once_flag s_ssh_init_once;
 
-void set_state_locked(ssh_client_state_t new_state, const char *msg = nullptr)
+void set_state_locked(ssh_client_generation_t generation, ssh_client_state_t new_state, const char *msg = nullptr)
 {
     s_state.store(new_state, std::memory_order_release);
     ssh_state_cb_t cb = s_state_cb;
     if (cb != nullptr) {
-        if (bsp_display_lock(pdMS_TO_TICKS(500))) {
-            cb(new_state, msg);
-            bsp_display_unlock();
-        }
+        cb(generation, new_state, msg);
     }
 }
 
-void dispatch_rx(const char *data, size_t len)
+void dispatch_rx(ssh_client_generation_t generation, const char *data, size_t len)
 {
     ssh_rx_cb_t cb = s_rx_cb;
     if (cb != nullptr && len > 0) {
-        if (bsp_display_lock(pdMS_TO_TICKS(500))) {
-            cb(data, len);
-            bsp_display_unlock();
-        }
+        cb(generation, data, len);
     }
 }
 
-bool verify_host_key(ssh_session session)
+bool verify_host_key(ssh_client_generation_t generation, ssh_session session)
 {
     const enum ssh_known_hosts_e host_state = ssh_session_is_known_server(session);
     if (host_state == SSH_KNOWN_HOSTS_OK) {
         return true;
     }
     if (host_state == SSH_KNOWN_HOSTS_UNKNOWN || host_state == SSH_KNOWN_HOSTS_NOT_FOUND) {
-        set_state_locked(SSH_CLIENT_NEED_HOST_KEY, "Chave de host desconhecida. Confirme para continuar.");
+        set_state_locked(generation, SSH_CLIENT_NEED_HOST_KEY, "Chave de host desconhecida. Confirme para continuar.");
         uint8_t accepted = 0;
         while (!s_stop_requested.load(std::memory_order_acquire)) {
             if (xQueueReceive(s_host_key_queue, &accepted, pdMS_TO_TICKS(100)) == pdTRUE && accepted != 0) {
                 if (ssh_session_update_known_hosts(session) != SSH_OK) {
-                    set_state_locked(SSH_CLIENT_ERROR, "Nao foi possivel salvar a chave do host.");
+                    set_state_locked(generation, SSH_CLIENT_ERROR, "Nao foi possivel salvar a chave do host.");
                     return false;
                 }
                 return true;
             }
         }
-        set_state_locked(SSH_CLIENT_DISCONNECTED, "Chave de host recusada.");
+        set_state_locked(generation, SSH_CLIENT_DISCONNECTED, "Chave de host recusada.");
         return false;
     }
-    set_state_locked(SSH_CLIENT_ERROR, "Chave de host alterada ou invalida.");
+    set_state_locked(generation, SSH_CLIENT_ERROR, "Chave de host alterada ou invalida.");
     return false;
 }
 
 void ssh_client_task(void *pvParameters)
 {
+    const ssh_client_generation_t generation = static_cast<ssh_client_generation_t>(reinterpret_cast<uintptr_t>(pvParameters));
     ESP_LOGI(TAG, "Iniciando task SSH para %s@%s:%d", s_current_config.user.c_str(), s_current_config.host.c_str(),
              s_current_config.port);
 
-    set_state_locked(SSH_CLIENT_CONNECTING, "Conectando ao servidor...");
+    set_state_locked(generation, SSH_CLIENT_CONNECTING, "Conectando ao servidor...");
     wifi_mgr_net_session_connecting();
 
     std::call_once(s_ssh_init_once, []() {
@@ -143,7 +137,7 @@ void ssh_client_task(void *pvParameters)
     ssh_session session = ssh_new();
     if (session == nullptr) {
         ESP_LOGE(TAG, "Falha ao alocar sessão SSH");
-        set_state_locked(SSH_CLIENT_ERROR, "Erro interno ao alocar sessão SSH.");
+        set_state_locked(generation, SSH_CLIENT_ERROR, "Erro interno ao alocar sessão SSH.");
         s_task_handle.store(nullptr, std::memory_order_release);
         vTaskDelete(NULL);
         return;
@@ -174,7 +168,7 @@ void ssh_client_task(void *pvParameters)
         std::string err_msg = "Falha ao configurar família de endereços SSH: ";
         err_msg += ssh_connect_error(session, rc);
         ESP_LOGE(TAG, "%s", err_msg.c_str());
-        set_state_locked(SSH_CLIENT_ERROR, err_msg.c_str());
+        set_state_locked(generation, SSH_CLIENT_ERROR, err_msg.c_str());
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
         vTaskDelete(NULL);
@@ -186,7 +180,7 @@ void ssh_client_task(void *pvParameters)
         std::string err_msg = "Falha na conexão: ";
         err_msg += ssh_connect_error(session, rc);
         ESP_LOGE(TAG, "%s", err_msg.c_str());
-        set_state_locked(SSH_CLIENT_ERROR, err_msg.c_str());
+        set_state_locked(generation, SSH_CLIENT_ERROR, err_msg.c_str());
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
         vTaskDelete(NULL);
@@ -196,13 +190,13 @@ void ssh_client_task(void *pvParameters)
     if (s_stop_requested) {
         ssh_disconnect(session);
         ssh_free(session);
-        set_state_locked(SSH_CLIENT_DISCONNECTED, "Conexão cancelada pelo usuário.");
+        set_state_locked(generation, SSH_CLIENT_DISCONNECTED, "Conexão cancelada pelo usuário.");
         s_task_handle.store(nullptr, std::memory_order_release);
         vTaskDelete(NULL);
         return;
     }
 
-    if (!verify_host_key(session)) {
+    if (!verify_host_key(generation, session)) {
         ssh_disconnect(session);
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
@@ -216,7 +210,7 @@ void ssh_client_task(void *pvParameters)
         std::string err_msg = "Erro durante autenticação: ";
         err_msg += ssh_get_error(session);
         ESP_LOGE(TAG, "%s", err_msg.c_str());
-        set_state_locked(SSH_CLIENT_ERROR, err_msg.c_str());
+        set_state_locked(generation, SSH_CLIENT_ERROR, err_msg.c_str());
         ssh_disconnect(session);
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
@@ -226,7 +220,7 @@ void ssh_client_task(void *pvParameters)
 
     if (rc != SSH_AUTH_SUCCESS) {
         // Solicita senha ao usuário
-        set_state_locked(SSH_CLIENT_NEED_PASSWORD, "Aguardando senha...");
+        set_state_locked(generation, SSH_CLIENT_NEED_PASSWORD, "Aguardando senha...");
 
         char password_buf[128] = {0};
         bool got_password = false;
@@ -242,13 +236,13 @@ void ssh_client_task(void *pvParameters)
             explicit_bzero(password_buf, sizeof(password_buf));
             ssh_disconnect(session);
             ssh_free(session);
-            set_state_locked(SSH_CLIENT_DISCONNECTED, "Autenticação cancelada.");
+            set_state_locked(generation, SSH_CLIENT_DISCONNECTED, "Autenticação cancelada.");
             s_task_handle.store(nullptr, std::memory_order_release);
             vTaskDelete(NULL);
             return;
         }
 
-        set_state_locked(SSH_CLIENT_AUTHENTICATING, "Autenticando...");
+        set_state_locked(generation, SSH_CLIENT_AUTHENTICATING, "Autenticando...");
         rc = ssh_userauth_password(session, NULL, password_buf);
         // Limpa buffer de senha da memória por segurança
         explicit_bzero(password_buf, sizeof(password_buf));
@@ -257,7 +251,7 @@ void ssh_client_task(void *pvParameters)
             std::string err_msg = "Autenticação falhou: ";
             err_msg += ssh_get_error(session);
             ESP_LOGE(TAG, "%s", err_msg.c_str());
-            set_state_locked(SSH_CLIENT_ERROR, err_msg.c_str());
+            set_state_locked(generation, SSH_CLIENT_ERROR, err_msg.c_str());
             ssh_disconnect(session);
             ssh_free(session);
             s_task_handle.store(nullptr, std::memory_order_release);
@@ -271,7 +265,7 @@ void ssh_client_task(void *pvParameters)
     ssh_channel channel = ssh_channel_new(session);
     if (channel == nullptr) {
         ESP_LOGE(TAG, "Falha ao criar canal SSH");
-        set_state_locked(SSH_CLIENT_ERROR, "Falha ao criar canal SSH.");
+        set_state_locked(generation, SSH_CLIENT_ERROR, "Falha ao criar canal SSH.");
         ssh_disconnect(session);
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
@@ -284,7 +278,7 @@ void ssh_client_task(void *pvParameters)
         std::string err_msg = "Falha ao abrir sessão no canal: ";
         err_msg += ssh_get_error(session);
         ESP_LOGE(TAG, "%s", err_msg.c_str());
-        set_state_locked(SSH_CLIENT_ERROR, err_msg.c_str());
+        set_state_locked(generation, SSH_CLIENT_ERROR, err_msg.c_str());
         ssh_channel_free(channel);
         ssh_disconnect(session);
         ssh_free(session);
@@ -304,7 +298,7 @@ void ssh_client_task(void *pvParameters)
         std::string err_msg = "Falha ao solicitar shell interativo: ";
         err_msg += ssh_get_error(session);
         ESP_LOGE(TAG, "%s", err_msg.c_str());
-        set_state_locked(SSH_CLIENT_ERROR, err_msg.c_str());
+        set_state_locked(generation, SSH_CLIENT_ERROR, err_msg.c_str());
         ssh_channel_close(channel);
         ssh_channel_free(channel);
         ssh_disconnect(session);
@@ -314,7 +308,7 @@ void ssh_client_task(void *pvParameters)
         return;
     }
 
-    set_state_locked(SSH_CLIENT_CONNECTED, "Conectado.");
+    set_state_locked(generation, SSH_CLIENT_CONNECTED, "Conectado.");
     wifi_mgr_net_session_online();
     ESP_LOGI(TAG, "Sessão SSH interativa estabelecida.");
 
@@ -347,7 +341,7 @@ void ssh_client_task(void *pvParameters)
             nbytes = ssh_channel_read_nonblocking(channel, rx_buffer, sizeof(rx_buffer) - 1, 0);
             if (nbytes > 0) {
                 rx_buffer[nbytes] = '\0';
-                dispatch_rx(rx_buffer, (size_t)nbytes);
+                dispatch_rx(generation, rx_buffer, (size_t)nbytes);
                 had_data = true;
             } else if (nbytes < 0) {
                 ESP_LOGE(TAG, "Erro na leitura do canal SSH: %s", ssh_get_error(session));
@@ -365,7 +359,7 @@ void ssh_client_task(void *pvParameters)
             nbytes = ssh_channel_read_nonblocking(channel, rx_buffer, sizeof(rx_buffer) - 1, 1);
             if (nbytes > 0) {
                 rx_buffer[nbytes] = '\0';
-                dispatch_rx(rx_buffer, (size_t)nbytes);
+                dispatch_rx(generation, rx_buffer, (size_t)nbytes);
                 had_data = true;
             } else if (nbytes < 0) {
                 ESP_LOGE(TAG, "Erro na leitura de stderr SSH: %s", ssh_get_error(session));
@@ -382,7 +376,7 @@ void ssh_client_task(void *pvParameters)
     }
 
     ESP_LOGI(TAG, "Encerrando sessão SSH...");
-    set_state_locked(SSH_CLIENT_DISCONNECTING, "Desconectando...");
+    set_state_locked(generation, SSH_CLIENT_DISCONNECTING, "Desconectando...");
 
     ssh_channel_send_eof(channel);
     ssh_channel_close(channel);
@@ -391,7 +385,7 @@ void ssh_client_task(void *pvParameters)
     ssh_disconnect(session);
     ssh_free(session);
 
-    set_state_locked(SSH_CLIENT_DISCONNECTED, "Conexão SSH encerrada.");
+    set_state_locked(generation, SSH_CLIENT_DISCONNECTED, "Conexão SSH encerrada.");
     s_task_handle.store(nullptr, std::memory_order_release);
     vTaskDelete(NULL);
 }
@@ -426,6 +420,14 @@ esp_err_t ssh_client_connect(const char *user, const char *host, int port, ssh_r
         return ESP_ERR_INVALID_STATE;
     }
 
+    const ssh_client_generation_t previous_generation = s_generation.load(std::memory_order_relaxed);
+    if (previous_generation == UINT64_MAX) {
+        xSemaphoreGive(s_state_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+    const ssh_client_generation_t generation = previous_generation + 1;
+    s_generation.store(generation, std::memory_order_release);
+
     // Limpa filas remanescentes
     xQueueReset(s_input_queue);
     xQueueReset(s_password_queue);
@@ -440,7 +442,8 @@ esp_err_t ssh_client_connect(const char *user, const char *host, int port, ssh_r
     s_stop_requested.store(false, std::memory_order_release);
 
     TaskHandle_t task = nullptr;
-    BaseType_t ret = xTaskCreate(ssh_client_task, "ssh_client", 24576, NULL, 5, &task);
+    BaseType_t ret = xTaskCreate(ssh_client_task, "ssh_client", 24576,
+                                 reinterpret_cast<void *>(static_cast<uintptr_t>(generation)), 5, &task);
     if (ret == pdPASS) {
         s_task_handle.store(task, std::memory_order_release);
     }
@@ -499,6 +502,19 @@ void ssh_client_disconnect(void)
     s_stop_requested.store(true, std::memory_order_release);
 }
 
+bool ssh_client_disconnect_and_wait(uint32_t timeout_ms)
+{
+    ssh_client_disconnect();
+
+    const TickType_t start = xTaskGetTickCount();
+    const TickType_t timeout_ticks = pdMS_TO_TICKS(timeout_ms);
+    while (s_task_handle.load(std::memory_order_acquire) != nullptr) {
+        if (timeout_ticks == 0 || (xTaskGetTickCount() - start) >= timeout_ticks) return false;
+        vTaskDelay(1);
+    }
+    return true;
+}
+
 bool ssh_client_is_active(void)
 {
     const ssh_client_state_t state = s_state.load(std::memory_order_acquire);
@@ -508,4 +524,9 @@ bool ssh_client_is_active(void)
 ssh_client_state_t ssh_client_get_state(void)
 {
     return s_state.load(std::memory_order_acquire);
+}
+
+ssh_client_generation_t ssh_client_generation(void)
+{
+    return s_generation.load(std::memory_order_acquire);
 }

@@ -36,6 +36,8 @@
 #include <cstdint>
 #include <vector>
 #include <new>
+#include <atomic>
+#include <limits>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -103,8 +105,10 @@ constexpr std::size_t k_ssh_event_queue_capacity = 8;
  * froze the boot right after wifi_mgr_start(). */
 constexpr std::size_t k_ssh_event_state_message_limit = 64;
 constexpr std::size_t k_ssh_event_data_limit = 256;
+constexpr uint32_t k_ssh_disconnect_timeout_ms = 1000;
 enum class ssh_ui_event_kind : uint8_t { data, state };
 struct ssh_ui_event {
+    ssh_client_generation_t generation = 0;
     ssh_ui_event_kind kind = ssh_ui_event_kind::data;
     ssh_client_state_t state = SSH_CLIENT_DISCONNECTED;
     char message[k_ssh_event_state_message_limit]{};
@@ -116,7 +120,13 @@ struct ssh_ui_event {
 /* One reusable reclaim buffer keeps the LVGL timer from copying a large element
  * on the stack.  It is only touched from the LVGL task. */
 ssh_ui_event s_ssh_event_slot;
+ssh_ui_event s_ssh_data_event;
+ssh_ui_event s_ssh_state_event;
+ssh_ui_event s_ssh_discarded_event;
 QueueHandle_t s_ssh_event_queue = nullptr;
+ssh_client_generation_t s_ssh_expected_generation = 0;
+std::atomic<uint32_t> s_ssh_data_queue_drop_count{0};
+std::atomic<uint32_t> s_ssh_state_queue_drop_count{0};
 cyberdeck_ble::state_machine s_ble_model;
 cyberdeck_ble::device_list s_ble_scan_devices;
 std::string s_ble_last_notice;
@@ -438,9 +448,15 @@ void destroy_ui_resource_handles()
         vQueueDelete(s_ble_event_queue);
         s_ble_event_queue = nullptr;
     }
+    s_ssh_expected_generation = 0;
+    const bool ssh_stopped = cyberdeck_apps::service_ports::ssh_disconnect_and_wait(k_ssh_disconnect_timeout_ms);
     if (s_ssh_event_queue != nullptr) {
-        vQueueDelete(s_ssh_event_queue);
-        s_ssh_event_queue = nullptr;
+        if (ssh_stopped) {
+            vQueueDelete(s_ssh_event_queue);
+            s_ssh_event_queue = nullptr;
+        } else {
+            ESP_LOGE("cyberdeck_ui", "Timeout ao encerrar task SSH; fila mantida para evitar use-after-delete");
+        }
     }
     if (s_wifi_scan_context_mutex != nullptr) {
         vSemaphoreDelete(s_wifi_scan_context_mutex);
@@ -1024,26 +1040,62 @@ void process_ssh_state(ssh_client_state_t state, const char *message) {
     render_terminal();
 }
 
-void on_ssh_data(const char *data, size_t length)
+void on_ssh_data(ssh_client_generation_t generation, const char *data, size_t length)
 {
     if (s_ssh_event_queue == nullptr || data == nullptr || length == 0) return;
-    ssh_ui_event event{};
+    if (uxQueueMessagesWaiting(s_ssh_event_queue) >= k_ssh_event_queue_capacity - 1) {
+        uint32_t dropped = s_ssh_data_queue_drop_count.load(std::memory_order_relaxed);
+        while (dropped != std::numeric_limits<uint32_t>::max() &&
+               !s_ssh_data_queue_drop_count.compare_exchange_weak(
+                   dropped, dropped + 1, std::memory_order_relaxed)) {}
+        return;
+    }
+    ssh_ui_event &event = s_ssh_data_event;
+    event = {};
+    event.generation = generation;
     event.kind = ssh_ui_event_kind::data;
     event.length = length > k_ssh_event_data_limit
                        ? static_cast<uint16_t>(k_ssh_event_data_limit)
                        : static_cast<uint16_t>(length);
     std::memcpy(event.data, data, event.length);
-    (void)xQueueSend(s_ssh_event_queue, &event, 0);
+    if (xQueueSend(s_ssh_event_queue, &event, 0) != pdTRUE) {
+        uint32_t dropped = s_ssh_data_queue_drop_count.load(std::memory_order_relaxed);
+        while (dropped != std::numeric_limits<uint32_t>::max() &&
+               !s_ssh_data_queue_drop_count.compare_exchange_weak(
+                   dropped, dropped + 1, std::memory_order_relaxed)) {}
+    }
 }
 
-void on_ssh_state(ssh_client_state_t state, const char *message)
+void on_ssh_state(ssh_client_generation_t generation, ssh_client_state_t state, const char *message)
 {
     if (s_ssh_event_queue == nullptr) return;
-    ssh_ui_event event{};
+    ssh_ui_event &event = s_ssh_state_event;
+    event = {};
+    event.generation = generation;
     event.kind = ssh_ui_event_kind::state;
     event.state = state;
-    if (message != nullptr) std::snprintf(event.message, sizeof(event.message), "%s", message);
-    (void)xQueueSend(s_ssh_event_queue, &event, 0);
+    if (message != nullptr) {
+        std::snprintf(event.message, sizeof(event.message), "%s", message);
+    }
+    if (xQueueSend(s_ssh_event_queue, &event, 0) == pdTRUE) return;
+
+    /* State transitions have priority over old data, but never silently replace
+     * another state: a full state-only queue is an observable, bounded loss. */
+    ssh_ui_event &discarded = s_ssh_discarded_event;
+    if (xQueueReceive(s_ssh_event_queue, &discarded, 0) == pdTRUE &&
+        discarded.kind == ssh_ui_event_kind::data) {
+        if (xQueueSend(s_ssh_event_queue, &event, 0) != pdTRUE) {
+            uint32_t dropped = s_ssh_state_queue_drop_count.load(std::memory_order_relaxed);
+            while (dropped != std::numeric_limits<uint32_t>::max() &&
+                   !s_ssh_state_queue_drop_count.compare_exchange_weak(
+                       dropped, dropped + 1, std::memory_order_relaxed)) {}
+        }
+        return;
+    }
+    uint32_t dropped = s_ssh_state_queue_drop_count.load(std::memory_order_relaxed);
+    while (dropped != std::numeric_limits<uint32_t>::max() &&
+           !s_ssh_state_queue_drop_count.compare_exchange_weak(
+               dropped, dropped + 1, std::memory_order_relaxed)) {}
 }
 
 void process_ssh_events(lv_timer_t *)
@@ -1052,6 +1104,7 @@ void process_ssh_events(lv_timer_t *)
     /* Reclaim into the shared slot instead of a local copy: the queue element
      * must not be materialized on the LVGL task stack. */
     while (xQueueReceive(s_ssh_event_queue, &s_ssh_event_slot, 0) == pdTRUE) {
+        if (s_ssh_event_slot.generation != s_ssh_expected_generation) continue;
         if (s_ssh_event_slot.kind == ssh_ui_event_kind::data) {
             process_ssh_data(s_ssh_event_slot.data, s_ssh_event_slot.length);
         } else {
@@ -1224,7 +1277,12 @@ void shell_session_host::discard_ssh_composer() { discard_ssh_line_composer(); }
 cyberdeck_ssh_line_composer &shell_session_host::ssh_composer() { return s_ssh_line_composer; }
 esp_err_t shell_session_host::ssh_connect(const char *user, const char *host, int port)
 {
-    return cyberdeck_apps::service_ports::ssh_connect(user, host, port, on_ssh_data, on_ssh_state);
+    const esp_err_t result = cyberdeck_apps::service_ports::ssh_connect(
+        user, host, port, on_ssh_data, on_ssh_state);
+    if (result == ESP_OK) {
+        s_ssh_expected_generation = cyberdeck_apps::service_ports::ssh_generation();
+    }
+    return result;
 }
 cyberdeck_session_state shell_session_host::ssh_phase() const
 {

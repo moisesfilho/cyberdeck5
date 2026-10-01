@@ -33,8 +33,8 @@ def main() -> int:
     source = UI_PATH.read_text(encoding="utf-8")
     append = body(source, "void append_output(const char *data, size_t len, bool repaint)")
     process = body(source, "void process_terminal_output(lv_timer_t *)")
-    ssh_data_callback = body(source, "void on_ssh_data(const char *data, size_t length)")
-    ssh_state_callback = body(source, "void on_ssh_state(ssh_client_state_t state, const char *message)")
+    ssh_data_callback = body(source, "void on_ssh_data(ssh_client_generation_t generation, const char *data, size_t length)")
+    ssh_state_callback = body(source, "void on_ssh_state(ssh_client_generation_t generation, ssh_client_state_t state, const char *message)")
     ssh_data = body(source, "void process_ssh_data(const char *data, size_t length)")
     ssh_state = body(source, "void process_ssh_state(ssh_client_state_t state, const char *message)")
     ssh_events = body(source, "void process_ssh_events(lv_timer_t *)")
@@ -42,8 +42,14 @@ def main() -> int:
 
     # T-COAL-01/02, REQ-1/AC-1.
     assert "append_output(displayed.data(), displayed_size, false);" in ssh_data
+    assert "event.generation = generation;" in ssh_data_callback
+    assert "event.generation = generation;" in ssh_state_callback
     assert "xQueueSend(s_ssh_event_queue, &event, 0)" in ssh_data_callback
     assert "xQueueSend(s_ssh_event_queue, &event, 0)" in ssh_state_callback
+    assert "uxQueueMessagesWaiting(s_ssh_event_queue) >= k_ssh_event_queue_capacity - 1" in ssh_data_callback
+    assert "s_ssh_data_queue_drop_count" in ssh_data_callback
+    assert "xQueueReceive(s_ssh_event_queue, &discarded, 0)" in ssh_state_callback
+    assert "discarded.kind == ssh_ui_event_kind::data" in ssh_state_callback
     assert "s_output.append(data, len);" in append
     assert "s_terminal_output_dirty = true;" in append
     assert "if (repaint) render_terminal();" in append
@@ -57,6 +63,7 @@ def main() -> int:
     assert "k_ssh_event_state_message_limit = 64" in source
     assert "ssh_ui_event s_ssh_event_slot;" in source
     assert "xQueueReceive(s_ssh_event_queue, &s_ssh_event_slot, 0)" in ssh_events
+    assert "if (s_ssh_event_slot.generation != s_ssh_expected_generation) continue;" in ssh_events
     assert "ssh_ui_event event{}" not in ssh_events
     assert "1024" not in source, "no inline 1 KB payload may return to the SSH event"
     assert "if (s_terminal_output_dirty) render_terminal();" in process

@@ -31,6 +31,10 @@ def require(condition: bool, message: str) -> None:
 def main() -> int:
     source = UI.read_text(encoding="utf-8")
     cleanup = function_body(source, "void destroy_ui_resource_handles(")
+    require("ssh_stopped = cyberdeck_apps::service_ports::ssh_disconnect_and_wait(k_ssh_disconnect_timeout_ms)" in cleanup,
+            "cleanup must join SSH before deleting its event queue")
+    require(cleanup.index("ssh_disconnect_and_wait") < cleanup.index("vQueueDelete(s_ssh_event_queue)"),
+            "SSH task must stop before its event queue is deleted")
     for handle, deleter in (
         ("s_wifi_scan_context_mutex", "vSemaphoreDelete"),
         ("s_wifi_scan_queue", "vQueueDelete"),

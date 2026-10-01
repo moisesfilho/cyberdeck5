@@ -22,11 +22,13 @@ bool wifi_cancel_scan(wifi_scan_cb_t callback, void *context);
 void wifi_set_state_callback(wifi_state_cb_t callback, void *context);
 
 ssh_client_state_t ssh_state();
+ssh_client_generation_t ssh_generation();
 esp_err_t ssh_connect(const char *user, const char *host, int port,
                       ssh_rx_cb_t data_callback, ssh_state_cb_t state_callback);
 esp_err_t ssh_send_data(const char *data, std::size_t length);
 esp_err_t ssh_send_password(const char *password);
 void ssh_accept_host_key();
+bool ssh_disconnect_and_wait(std::uint32_t timeout_ms);
 
 esp_err_t ble_enqueue(const ble_mgr_cmd_t *command, TickType_t timeout_ticks);
 ble_mgr_observer_handle_t ble_register_observer(ble_mgr_observer_cb_t callback, void *context);

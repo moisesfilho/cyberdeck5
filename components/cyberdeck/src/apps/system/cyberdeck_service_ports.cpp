@@ -22,6 +22,7 @@ void wifi_set_state_callback(wifi_state_cb_t callback, void *context)
 }
 
 ssh_client_state_t ssh_state() { return ssh_client_get_state(); }
+ssh_client_generation_t ssh_generation() { return ssh_client_generation(); }
 esp_err_t ssh_connect(const char *user, const char *host, int port,
                       ssh_rx_cb_t data_callback, ssh_state_cb_t state_callback)
 {
@@ -33,6 +34,10 @@ esp_err_t ssh_send_data(const char *data, std::size_t length)
 }
 esp_err_t ssh_send_password(const char *password) { return ssh_client_send_password(password); }
 void ssh_accept_host_key() { ssh_client_accept_host_key(); }
+bool ssh_disconnect_and_wait(std::uint32_t timeout_ms)
+{
+    return ssh_client_disconnect_and_wait(timeout_ms);
+}
 
 esp_err_t ble_enqueue(const ble_mgr_cmd_t *command, TickType_t timeout_ticks)
 {
