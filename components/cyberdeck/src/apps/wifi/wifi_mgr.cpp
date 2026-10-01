@@ -28,8 +28,14 @@ static const char *TAG = "tab5_wifi";
 #define CONNECT_RETRY_BASE_MS 2000
 #define CONNECT_RETRY_MAX_MS 30000
 #define CONNECT_TIMEOUT_MS 15000
+#define NET_SESSION_EVENT_QUEUE_LENGTH 4
 
 struct wifi_callback_update { wifi_status_t status; bool enabled; };
+enum class net_session_event : uint8_t {
+    SESSION_CONNECTING,
+    SESSION_ONLINE,
+    SESSION_SOCKET_ERROR,
+};
 typedef struct {
     wifi_state_cb_t cb;
     void *ctx;
@@ -94,6 +100,8 @@ struct wifi_manager_context {
     cyberdeck_net_coordinator net_coordinator;
     TaskHandle_t net_worker = NULL;
     SemaphoreHandle_t net_mutex = NULL;
+    QueueHandle_t net_session_event_queue = NULL;
+    std::atomic<uint32_t> net_session_event_drops{0};
     TaskHandle_t wifi_event_worker = NULL;
     SemaphoreHandle_t wifi_event_mutex = NULL;
     cyberdeck_wifi_test::event_dispatch wifi_dispatch;
@@ -169,6 +177,8 @@ public:
 #define s_net_coordinator (wifi_context().net_coordinator)
 #define s_net_worker (wifi_context().net_worker)
 #define s_net_mutex (wifi_context().net_mutex)
+#define s_net_session_event_queue (wifi_context().net_session_event_queue)
+#define s_net_session_event_drops (wifi_context().net_session_event_drops)
 #define s_wifi_event_worker (wifi_context().wifi_event_worker)
 #define s_wifi_event_mutex (wifi_context().wifi_event_mutex)
 #define s_wifi_dispatch (wifi_context().wifi_dispatch)
@@ -199,6 +209,10 @@ static void rollback_start(bool wifi_started)
 {
     wipe_sensitive_state(true);
     if (s_net_worker != NULL) { vTaskDelete(s_net_worker); s_net_worker = NULL; }
+    if (s_net_session_event_queue != NULL) {
+        vQueueDelete(s_net_session_event_queue);
+        s_net_session_event_queue = NULL;
+    }
     if (s_wifi_event_worker != NULL) { vTaskDelete(s_wifi_event_worker); s_wifi_event_worker = NULL; }
     if (s_scan_timer != NULL) { xTimerDelete(s_scan_timer, portMAX_DELAY); s_scan_timer = NULL; }
     if (s_retry_timer != NULL) { xTimerDelete(s_retry_timer, portMAX_DELAY); s_retry_timer = NULL; }
@@ -248,6 +262,7 @@ static void rollback_start(bool wifi_started)
     s_wifi_disconnect_pending.store(false, std::memory_order_release);
     s_ui_notify_pending.store(false, std::memory_order_release);
     s_scan_done_pending.store(false, std::memory_order_release);
+    s_net_session_event_drops.store(0, std::memory_order_relaxed);
     s_persist_retry_armed.store(false, std::memory_order_release);
     s_wifi_enabled = true;
     s_wifi_persistence_coordinator.teardown();
@@ -377,6 +392,14 @@ static bool net_lock(void)
 static void net_unlock(void)
 {
     if (s_net_mutex != NULL) xSemaphoreGive(s_net_mutex);
+}
+
+static void record_net_session_event_drop(void)
+{
+    uint32_t drops = s_net_session_event_drops.load(std::memory_order_relaxed);
+    while (drops != UINT32_MAX &&
+           !s_net_session_event_drops.compare_exchange_weak(
+               drops, drops + 1, std::memory_order_relaxed, std::memory_order_relaxed)) {}
 }
 
 static bool submit_cancel_connect_locked(void)
@@ -776,6 +799,21 @@ static void net_worker(void *arg)
     for (;;) {
         cyberdeck_net_drain_result item{};
         if (net_lock()) {
+            net_session_event session_event{};
+            while (s_net_session_event_queue != NULL &&
+                   xQueueReceive(s_net_session_event_queue, &session_event, 0) == pdTRUE) {
+                switch (session_event) {
+                case net_session_event::SESSION_CONNECTING:
+                    s_net_coordinator.on_session_connecting();
+                    break;
+                case net_session_event::SESSION_ONLINE:
+                    s_net_coordinator.on_session_online();
+                    break;
+                case net_session_event::SESSION_SOCKET_ERROR:
+                    s_net_coordinator.on_socket_error();
+                    break;
+                }
+            }
             if (s_cancel_connect_pending.load(std::memory_order_acquire))
                 (void)submit_cancel_connect_locked();
             if (s_wifi_disconnect_pending.load(std::memory_order_acquire))
@@ -810,25 +848,28 @@ bool wifi_mgr_is_enabled(void)
 
 void wifi_mgr_net_session_connecting(void)
 {
-    if (net_lock()) {
-        s_net_coordinator.on_session_connecting();
-        net_unlock();
+    const net_session_event event = net_session_event::SESSION_CONNECTING;
+    if (s_net_session_event_queue == NULL || xQueueSend(s_net_session_event_queue, &event, 0) != pdTRUE) {
+        record_net_session_event_drop();
+        ESP_LOGW(TAG, "evento de sessao SSH descartado (fila cheia/indisponivel)");
     }
 }
 
 void wifi_mgr_net_session_online(void)
 {
-    if (net_lock()) {
-        s_net_coordinator.on_session_online();
-        net_unlock();
+    const net_session_event event = net_session_event::SESSION_ONLINE;
+    if (s_net_session_event_queue == NULL || xQueueSend(s_net_session_event_queue, &event, 0) != pdTRUE) {
+        record_net_session_event_drop();
+        ESP_LOGW(TAG, "evento de sessao SSH descartado (fila cheia/indisponivel)");
     }
 }
 
 void wifi_mgr_net_session_socket_error(void)
 {
-    if (net_lock()) {
-        s_net_coordinator.on_socket_error();
-        net_unlock();
+    const net_session_event event = net_session_event::SESSION_SOCKET_ERROR;
+    if (s_net_session_event_queue == NULL || xQueueSend(s_net_session_event_queue, &event, 0) != pdTRUE) {
+        record_net_session_event_drop();
+        ESP_LOGW(TAG, "evento de sessao SSH descartado (fila cheia/indisponivel)");
     }
 }
 
@@ -1104,6 +1145,10 @@ esp_err_t wifi_mgr_start(void)
     if (s_state_callback_queue == NULL) {
         s_state_callback_queue = xQueueCreate(1, sizeof(wifi_callback_update));
         if (s_state_callback_queue == NULL) { rollback_start(false); return ESP_ERR_NO_MEM; }
+    }
+    if (s_net_session_event_queue == NULL) {
+        s_net_session_event_queue = xQueueCreate(NET_SESSION_EVENT_QUEUE_LENGTH, sizeof(net_session_event));
+        if (s_net_session_event_queue == NULL) { rollback_start(false); return ESP_ERR_NO_MEM; }
     }
     if (!s_wifi_persistence_coordinator.initialize()) { rollback_start(false); return ESP_ERR_NO_MEM; }
     if (net_lock()) {

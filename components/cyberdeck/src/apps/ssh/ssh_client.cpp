@@ -1,7 +1,5 @@
 #include "apps/ssh/ssh_client.h"
 #include "cyberdeck_paths.h"
-#include "apps/wifi/wifi_storage.h"
-#include "apps/wifi/wifi_mgr.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -128,7 +126,6 @@ void ssh_client_task(void *pvParameters)
              s_current_config.port);
 
     set_state_locked(generation, SSH_CLIENT_CONNECTING, "Conectando ao servidor...");
-    wifi_mgr_net_session_connecting();
 
     std::call_once(s_ssh_init_once, []() {
         ssh_init();
@@ -142,8 +139,6 @@ void ssh_client_task(void *pvParameters)
         vTaskDelete(NULL);
         return;
     }
-
-    wifi_storage_mount();
 
     long timeout_sec = 10;
     unsigned int port_val = static_cast<unsigned int>(s_current_config.port);
@@ -309,7 +304,6 @@ void ssh_client_task(void *pvParameters)
     }
 
     set_state_locked(generation, SSH_CLIENT_CONNECTED, "Conectado.");
-    wifi_mgr_net_session_online();
     ESP_LOGI(TAG, "Sessão SSH interativa estabelecida.");
 
     char rx_buffer[1024];
@@ -329,7 +323,6 @@ void ssh_client_task(void *pvParameters)
                 input_buffer.erase(0, (size_t)written);
             } else if (written < 0) {
                 ESP_LOGE(TAG, "Erro ao escrever no canal SSH: %s", ssh_get_error(session));
-                wifi_mgr_net_session_socket_error();
                 break;
             }
         }
@@ -345,7 +338,6 @@ void ssh_client_task(void *pvParameters)
                 had_data = true;
             } else if (nbytes < 0) {
                 ESP_LOGE(TAG, "Erro na leitura do canal SSH: %s", ssh_get_error(session));
-                wifi_mgr_net_session_socket_error();
                 break;
             }
         } while (nbytes > 0);
@@ -363,7 +355,6 @@ void ssh_client_task(void *pvParameters)
                 had_data = true;
             } else if (nbytes < 0) {
                 ESP_LOGE(TAG, "Erro na leitura de stderr SSH: %s", ssh_get_error(session));
-                wifi_mgr_net_session_socket_error();
                 break;
             }
         } while (nbytes > 0);

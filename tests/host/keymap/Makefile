@@ -657,6 +657,9 @@ test_ble_background_contract: test_ble_background_contract.py $(BLE_MGR_SRC) $(B
 test_ble_bond_name_contract: test_ble_bond_name_contract.py $(BLE_MGR_SRC) $(BLE_TYPES_SRC) $(BLE_STORE_SRC) $(BLE_EVENTS_SRC) $(BLE_BACKGROUND_SRC) $(BLE_BACKGROUND_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
 	$(PYTHON) test_ble_bond_name_contract.py
 
+test_net_session_ipc_contract: test_net_session_ipc_contract.py ../../../components/cyberdeck/src/apps/wifi/wifi_mgr.cpp ../../../components/cyberdeck/src/apps/ssh/ssh_client.cpp Makefile
+	$(PYTHON) test_net_session_ipc_contract.py
+
 # Focused aggregate for the boot/reconnect/name requirements; intentionally
 # excludes the complete host suite.
 test_ble_bond_reconnect: test_ble_state_machine test_ble_event_dispatch test_ble_store
@@ -722,6 +725,7 @@ test: $(BINS)
 	@./test_app_runtime
 	@echo "==> Executando contrato dos system apps"
 	@$(MAKE) --no-print-directory test_system_apps_contract
+	@$(MAKE) --no-print-directory test_net_session_ipc_contract
 	@echo "==> Executando testes do coordenador de teardown Wi-Fi/SSH e timers"
 	@./test_net_coordinator
 	@echo "==> Executando testes da guarda incremental de eco remoto do SSH"

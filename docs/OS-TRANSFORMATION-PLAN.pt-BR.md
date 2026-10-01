@@ -110,7 +110,7 @@ liberacao do buffer no adapter de display.
 - [x] Criar filas por aplicacao.
 - [x] Preservar tokens de geracao e descarte de eventos stale.
 - [x] Definir backpressure, overflow e timeout explicitamente.
-- [ ] Proibir chamadas diretas entre tasks quando houver IPC aplicavel.
+- [x] Proibir chamadas diretas entre tasks quando houver IPC aplicavel.
 
 Recorte aprovado da Etapa 4: o cliente SSH publica uma geração monotônica
 `uint64_t` em todos os callbacks; a UI captura a geração aceita e descarta
@@ -121,8 +121,13 @@ O teardown invalida a geração esperada antes de destruir a fila. O teardown da
 bounded e usa `vTaskDelay`, observando o retorno nulo de `s_task_handle`. Dados
 SSH descartados por fila cheia sao contados em um contador saturante; eventos de
 estado tentam reservar espaco removendo um evento de dados antigo. O payload
-continua limitado e nao ha arrays grandes na stack. O event bus geral e a
-eliminacao de chamadas diretas entre tasks permanecem pendentes.
+continua limitado e nao ha arrays grandes na stack. O event bus geral permanece
+pendente. Neste recorte, a task SSH nao chama mais o backend Wi-Fi: os eventos
+tipados `SESSION_CONNECTING`, `SESSION_ONLINE` e `SESSION_SOCKET_ERROR` entram
+em uma fila FIFO bounded de quatro itens, com descarte nao bloqueante contado
+quando cheia, e sao consumidos pela `net_worker` sob `net_lock`. A fila e
+criada transacionalmente antes do uso e destruida no rollback/teardown; nao ha
+bus global.
 
 ### 5. Modelo de Tasks
 
