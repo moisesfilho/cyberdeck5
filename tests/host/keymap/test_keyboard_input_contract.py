@@ -92,7 +92,7 @@ def main() -> int:
     require("local_key(LV_KEY_ENTER)" in terminal_changed,
             "virtual Enter must remain routed through local_key")
     session = SESSION.read_text(encoding="utf-8")
-    for required in ("virtual_keyboard_changed", "terminal_insert", "ssh_client_connect"):
+    for required in ("virtual_keyboard_changed", "terminal_insert", "service_ports::ssh_connect"):
         require(required in ui, f"existing UI input path missing: {required}")
     # The shell command and local execution moved to the extracted session; the
     # UI keeps only the SSH host seam.

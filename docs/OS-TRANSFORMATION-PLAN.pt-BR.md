@@ -74,17 +74,20 @@ supervisor.
 
 ### 3. Separacao de Servicos
 
-- [ ] Remover acessos diretos da UI aos servicos.
-- [ ] Expor Wi-Fi, SSH, BLE e Serial por interfaces de servico.
+- [x] Remover acessos diretos da UI aos servicos.
+- [x] Expor Wi-Fi, SSH, BLE e Serial por interfaces de servico.
 - [ ] Fazer Screenshot consumir uma interface de display.
-- [ ] Fazer o shell acessar storage, rede e input por portas do sistema.
+- [x] Fazer o shell acessar storage, rede e input por portas do sistema.
 - [ ] Converter callbacks externos em eventos bounded.
 
 Execucao inicial da Fase 3: o acesso direto da UI ao backend `event_log` foi
 removido. O logger agora e uma porta do runtime, implementada pelo supervisor
 e consumida pela UI atraves de `runtime::app_logger()`. Os acessos diretos da
-UI aos servicos Wi-Fi, SSH, BLE e Serial ainda precisam ser migrados para
-portas equivalentes; esta fase permanece parcialmente concluida.
+UI aos servicos Wi-Fi, SSH, BLE e Serial tambem foram removidos: o gateway
+`cyberdeck_service_ports` concentra as chamadas aos backends e a UI consome
+somente as portas. O shell session ja expunha storage, rede e input por seu
+`host`. Ainda faltam a porta de display do Screenshot e a conversao dos
+callbacks externos restantes para eventos bounded.
 
 ### 4. IPC e Event Bus
 

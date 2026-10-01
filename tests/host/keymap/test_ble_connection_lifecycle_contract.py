@@ -75,7 +75,7 @@ def main() -> int:
     assert "s_ble_model.owns_input()" in rendered
     terminal = body(ui, "void render_terminal()")
     assert "s_wifi_ui_state" in terminal
-    assert "ssh_client_get_state" in terminal
+    assert "service_ports::ssh_state" in terminal
     execute = body(session, "void session::execute_line(bool line_already_sent)")
     assert "CYBERDECK_CMD_WIFI" in execute
     assert "host_.ssh_send_data" in execute

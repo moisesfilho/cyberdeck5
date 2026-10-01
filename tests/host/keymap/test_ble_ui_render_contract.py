@@ -134,7 +134,7 @@ def main() -> int:
     assert "host_.sync_ble_transient()" in key
     assert "s_ble_model.owns_input()" in terminal
     assert "s_wifi_ui_state" in terminal
-    assert "ssh_client_get_state" in terminal
+    assert "service_ports::ssh_state" in terminal
     assert "execute_line()" in key
 
     print("PASS: BLE transient UI rendering/ownership contract")

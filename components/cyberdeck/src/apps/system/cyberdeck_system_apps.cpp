@@ -5,6 +5,7 @@
 #include "apps/bluetooth/ble_mgr.h"
 #include "apps/screenshot/screenshot_server.h"
 #include "apps/serial/cyberdeck_serial_bridge.h"
+#include "apps/system/cyberdeck_service_ports.h"
 #include "apps/ssh/ssh_client.h"
 #include "apps/wifi/wifi_mgr.h"
 #include "platform/logging/event_log.h"
@@ -38,7 +39,7 @@ bool start_screenshot()
 
 bool start_wifi() { return wifi_mgr_start() == ESP_OK; }
 
-bool start_serial() { return cyberdeck_serial::bridge_start(); }
+bool start_serial() { return cyberdeck_apps::service_ports::serial_start(); }
 bool stop_serial() { return false; }
 
 bool start_bluetooth() { return ble_mgr_start() == ESP_OK; }

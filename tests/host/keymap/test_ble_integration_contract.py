@@ -419,7 +419,7 @@ def check_ui_routing(report: Report) -> None:
 
     # REQ-BLE-003/008: the UI reaches the adapter only through the bounded
     # public queue and the observer callback - it never blocks on the coprocessor.
-    for token in ("ble_mgr_enqueue_cmd", "ble_mgr_register_observer"):
+    for token in ("service_ports::ble_enqueue", "service_ports::ble_register_observer"):
         report.require(token in ui,
                        f"cyberdeck_ui.cpp must drive the adapter through {token}")
 

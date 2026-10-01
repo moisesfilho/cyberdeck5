@@ -28,6 +28,7 @@ idf_component_register(
         "src/apps/runtime/cyberdeck_app_runtime.cpp"
         "src/apps/demo/cyberdeck_demo_app.cpp"
         "src/apps/system/cyberdeck_system_apps.cpp"
+        "src/apps/system/cyberdeck_service_ports.cpp"
         "src/platform/logging/event_log.cpp"
         "src/platform/logging/event_log_recent.cpp"
         "src/platform/sensors/imu_reader.cpp"

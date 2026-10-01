@@ -324,7 +324,7 @@ def main() -> int:
         r"cyberdeck_wifi_icon_update_layout\s*\(\s*s_wifi_status\s*,\s*"
         r"lv_obj_get_width\s*\(\s*s_wifi_status\s*\)\s*\)", header_view, re.DOTALL) is not None,
         "Wi-Fi resize must use the actual child width")
-    require(re.search(r"wifi_mgr_set_state_callback\s*\(\s*on_wifi_state\s*,",
+    require(re.search(r"service_ports::wifi_set_state_callback\s*\(\s*on_wifi_state\s*,",
                       init) is not None,
             "Wi-Fi state callback must remain registered")
     require("LV_EVENT_SIZE_CHANGED" in wifi_icon,
