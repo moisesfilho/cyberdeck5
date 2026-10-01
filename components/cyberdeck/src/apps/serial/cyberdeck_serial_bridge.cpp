@@ -1102,7 +1102,45 @@ namespace {
 
 /* ---- escrita de frames (mutex compartilhado com o writer de log) ---- */
 SemaphoreHandle_t s_frame_mutex = nullptr;
-bool s_started = false;
+SemaphoreHandle_t s_lifecycle_mutex = nullptr;
+StaticSemaphore_t s_lifecycle_mutex_storage;
+SemaphoreHandle_t s_start_gate = nullptr;
+StaticSemaphore_t s_start_gate_storage;
+SemaphoreHandle_t s_ready = nullptr;
+StaticSemaphore_t s_ready_storage;
+std::atomic<bool> s_sync_initialized{false};
+std::atomic<bool> s_sync_initializing{false};
+std::atomic<bool> s_ready_ok{false};
+std::atomic<bool> s_stop_requested{false};
+std::atomic<TaskHandle_t> s_task_handle{nullptr};
+enum class lifecycle_state : std::uint8_t { stopped, starting, running, stopping, failed };
+std::atomic<lifecycle_state> s_lifecycle{lifecycle_state::stopped};
+
+bool ensure_lifecycle_sync()
+{
+    if (s_sync_initialized.load(std::memory_order_acquire)) return true;
+    bool expected = false;
+    if (s_sync_initializing.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        s_lifecycle_mutex = xSemaphoreCreateMutexStatic(&s_lifecycle_mutex_storage);
+        s_start_gate = xSemaphoreCreateBinaryStatic(&s_start_gate_storage);
+        s_ready = xSemaphoreCreateBinaryStatic(&s_ready_storage);
+        const bool ok = s_lifecycle_mutex != nullptr && s_start_gate != nullptr && s_ready != nullptr;
+        s_sync_initialized.store(ok, std::memory_order_release);
+        s_sync_initializing.store(false, std::memory_order_release);
+        return ok;
+    }
+    while (!s_sync_initialized.load(std::memory_order_acquire) &&
+           s_sync_initializing.load(std::memory_order_acquire)) vTaskDelay(1);
+    return s_sync_initialized.load(std::memory_order_acquire);
+}
+
+bool stop_requested() { return s_stop_requested.load(std::memory_order_acquire); }
+
+void task_finished(lifecycle_state state)
+{
+    s_task_handle.store(nullptr, std::memory_order_release);
+    s_lifecycle.store(state, std::memory_order_release);
+}
 
 void write_raw(const char *data, std::size_t len)
 {
@@ -1511,6 +1549,10 @@ device_result exec_screen_dump(const request &req)
     }
     bool failed = false;
     for (std::uint32_t i = 0; i < chunks; ++i) {
+        if (stop_requested()) {
+            failed = true;
+            break;
+        }
         std::vector<std::uint8_t> bytes;
         std::uint32_t chunk_crc = 0;
         bool is_last = false;
@@ -1786,12 +1828,17 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
  * console chegam intercalados e sao filtrados). */
 void bridge_task_entry(void *)
 {
+    /* O criador publica o handle real antes de liberar esta barreira. */
+    (void)xSemaphoreTake(s_start_gate, portMAX_DELAY);
     if (!usb_serial_jtag_is_driver_installed()) {
         usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
         cfg.tx_buffer_size = 8192;
         cfg.rx_buffer_size = 8192;
         if (usb_serial_jtag_driver_install(&cfg) != ESP_OK) {
             ESP_LOGE("serial_brg", "falha ao instalar driver USB Serial-JTAG");
+            s_ready_ok.store(false, std::memory_order_release);
+            xSemaphoreGive(s_ready);
+            task_finished(lifecycle_state::failed);
             vTaskDelete(nullptr);
             return;
         }
@@ -1799,10 +1846,14 @@ void bridge_task_entry(void *)
     usb_serial_jtag_vfs_set_rx_line_endings(ESP_LINE_ENDINGS_CRLF);
     usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
     usb_serial_jtag_vfs_use_driver();
+    (void)esp_log_set_vprintf(locked_log_writer);
+    s_ready_ok.store(true, std::memory_order_release);
+    xSemaphoreGive(s_ready);
 
     LineAssembler assembler;
     std::uint8_t buf[512];
     for (;;) {
+        if (stop_requested()) break;
         const int n = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(100));
         if (n <= 0) {
             continue;
@@ -1810,6 +1861,7 @@ void bridge_task_entry(void *)
         assembler.feed(reinterpret_cast<const char *>(buf), static_cast<std::size_t>(n));
         std::string line;
         while (assembler.next_line(line)) {
+            if (stop_requested()) break;
             const std::size_t b = line.find_first_not_of(" \t\r");
             if (b == std::string::npos || line[b] != '{') {
                 continue; /* log/console: nao e uma requisicao */
@@ -1820,6 +1872,8 @@ void bridge_task_entry(void *)
             }
         }
     }
+    task_finished(lifecycle_state::stopped);
+    vTaskDelete(nullptr);
 }
 
 } // namespace
@@ -2690,12 +2744,24 @@ dispatch_result dispatch_one(const char *line, std::size_t len)
 
 bool bridge_start(void)
 {
-    if (s_started) {
+    if (!ensure_lifecycle_sync()) return false;
+    xSemaphoreTake(s_lifecycle_mutex, portMAX_DELAY);
+    const lifecycle_state state = s_lifecycle.load(std::memory_order_acquire);
+    if (state == lifecycle_state::running) {
+        xSemaphoreGive(s_lifecycle_mutex);
         return true;
     }
+    if (state == lifecycle_state::starting || state == lifecycle_state::stopping ||
+        s_task_handle.load(std::memory_order_acquire) != nullptr) {
+        xSemaphoreGive(s_lifecycle_mutex);
+        return false;
+    }
+    s_lifecycle.store(lifecycle_state::starting, std::memory_order_release);
     if (s_frame_mutex == nullptr) {
         s_frame_mutex = xSemaphoreCreateMutex();
         if (s_frame_mutex == nullptr) {
+            s_lifecycle.store(lifecycle_state::failed, std::memory_order_release);
+            xSemaphoreGive(s_lifecycle_mutex);
             return false;
         }
     }
@@ -2703,16 +2769,61 @@ bool bridge_start(void)
         static StaticSemaphore_t s_scan_storage;
         s_scan.sem = xSemaphoreCreateCountingStatic(4, 0, &s_scan_storage);
         if (s_scan.sem == nullptr) {
+            s_lifecycle.store(lifecycle_state::failed, std::memory_order_release);
+            xSemaphoreGive(s_lifecycle_mutex);
             return false;
         }
     }
-    (void)esp_log_set_vprintf(locked_log_writer);
+    while (xSemaphoreTake(s_start_gate, 0) == pdTRUE) {}
+    while (xSemaphoreTake(s_ready, 0) == pdTRUE) {}
+    s_stop_requested.store(false, std::memory_order_release);
+    s_ready_ok.store(false, std::memory_order_release);
+    TaskHandle_t task = nullptr;
     const BaseType_t created =
-        xTaskCreate(bridge_task_entry, "serial_brg", 8192, nullptr, 3, nullptr);
+        xTaskCreate(bridge_task_entry, "serial_brg", 8192, nullptr, 3, &task);
     if (created != pdPASS) {
+        s_lifecycle.store(lifecycle_state::failed, std::memory_order_release);
+        xSemaphoreGive(s_lifecycle_mutex);
         return false;
     }
-    s_started = true;
+    s_task_handle.store(task, std::memory_order_release);
+    xSemaphoreGive(s_start_gate);
+    xSemaphoreGive(s_lifecycle_mutex);
+
+    const bool ready = xSemaphoreTake(s_ready, pdMS_TO_TICKS(2000)) == pdTRUE &&
+                       s_ready_ok.load(std::memory_order_acquire);
+    xSemaphoreTake(s_lifecycle_mutex, portMAX_DELAY);
+    if (ready && !s_stop_requested.load(std::memory_order_acquire) &&
+        s_lifecycle.load(std::memory_order_acquire) == lifecycle_state::starting) {
+        s_lifecycle.store(lifecycle_state::running, std::memory_order_release);
+        xSemaphoreGive(s_lifecycle_mutex);
+        return true;
+    }
+    s_stop_requested.store(true, std::memory_order_release);
+    s_lifecycle.store(lifecycle_state::stopping, std::memory_order_release);
+    xSemaphoreGive(s_lifecycle_mutex);
+    return false;
+}
+
+bool bridge_stop(std::uint32_t timeout_ms)
+{
+    if (!ensure_lifecycle_sync()) return false;
+    xSemaphoreTake(s_lifecycle_mutex, portMAX_DELAY);
+    const lifecycle_state state = s_lifecycle.load(std::memory_order_acquire);
+    if (state == lifecycle_state::stopped || state == lifecycle_state::failed) {
+        xSemaphoreGive(s_lifecycle_mutex);
+        return true;
+    }
+    s_stop_requested.store(true, std::memory_order_release);
+    s_lifecycle.store(lifecycle_state::stopping, std::memory_order_release);
+    xSemaphoreGive(s_lifecycle_mutex);
+
+    const TickType_t start = xTaskGetTickCount();
+    const TickType_t limit = pdMS_TO_TICKS(timeout_ms);
+    while (s_task_handle.load(std::memory_order_acquire) != nullptr) {
+        if (limit == 0 || (xTaskGetTickCount() - start) >= limit) return false;
+        vTaskDelay(1);
+    }
     return true;
 }
 

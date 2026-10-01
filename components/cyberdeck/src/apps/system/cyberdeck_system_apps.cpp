@@ -23,6 +23,7 @@ constexpr uint32_t k_ssh_task_stack_bytes = 24576;
 constexpr uint32_t k_ssh_event_queue_depth = 8;
 constexpr uint32_t k_ble_host_task_stack_bytes = 8192;
 constexpr uint32_t k_ble_command_queue_depth = 8;
+constexpr uint32_t k_serial_task_stack_bytes = 8192;
 
 bool start_shell() { return true; }
 bool stop_shell() { return false; }
@@ -45,7 +46,7 @@ bool start_screenshot()
 bool start_wifi() { return wifi_mgr_start() == ESP_OK; }
 
 bool start_serial() { return cyberdeck_apps::service_ports::serial_start(); }
-bool stop_serial() { return false; }
+bool stop_serial() { return cyberdeck_apps::service_ports::serial_stop(2000); }
 
 bool start_bluetooth() { return ble_mgr_start() == ESP_OK; }
 bool stop_bluetooth() { return ble_mgr_stop() == ESP_OK; }
@@ -168,8 +169,8 @@ service_application s_serial{make_manifest("cyberdeck.serial", "Serial bridge",
                                             "USB Serial-JTAG NDJSON control bridge",
                                              {"cyberdeck.event_log", "cyberdeck.shell"}, {"serial", "input"}, 2000,
                                             cyberdeck_apps::app_type::service,
-                                            {"serial", "input"}, 4096, 8),
-                              start_serial, stop_serial};
+                                             {"serial", "input"}, k_serial_task_stack_bytes, 0),
+                               start_serial, stop_serial, true};
 service_application s_ssh{make_manifest("cyberdeck.ssh", "SSH service",
                                          "Asynchronous SSH client service",
                                           {"cyberdeck.event_log", "cyberdeck.wifi"}, {"network", "storage"}, 1000,

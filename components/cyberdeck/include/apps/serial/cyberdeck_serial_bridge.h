@@ -14,7 +14,7 @@
  * dependencia de hardware. A logica host-testavel vive em
  * cyberdeck_serial_bridge.cpp; o lado de dispositivo (task, driver
  * USB Serial-JTAG, hooks de UI/Wi-Fi) fica atras de `#ifdef ESP_PLATFORM`
- * e e iniciado por bridge_start(), chamado por main/app_main.cpp.
+ * e e iniciado por bridge_start(), chamado pela porta do system app Serial.
  *
  * Contrato NDJSON:
  *   - Entrada limitada a k_max_ndjson_line (4096) bytes por linha; linhas
@@ -197,6 +197,7 @@ bool extract_envelope(const std::string &line, std::string &envelope);
 /* Cria o mutex de frames (compartilhado com o writer de log), instala o
  * driver USB Serial-JTAG e inicia a task da ponte. Retorno false em falha. */
 bool bridge_start(void);
+bool bridge_stop(std::uint32_t timeout_ms);
 #endif
 
 } // namespace cyberdeck_serial

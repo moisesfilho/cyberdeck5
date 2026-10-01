@@ -131,11 +131,11 @@ bus global.
 
 ### 5. Modelo de Tasks
 
-- [ ] Definir uma task principal por servico bloqueante.
-- [ ] Declarar stack no manifesto.
+- [x] Definir uma task principal por servico bloqueante.
+- [x] Declarar stack no manifesto.
 - [ ] Associar fila e mutex ao lifecycle da aplicacao.
-- [ ] Tornar start e stop idempotentes.
-- [ ] Exigir join antes de destruir recursos.
+- [x] Tornar start e stop idempotentes.
+- [x] Exigir join antes de destruir recursos.
 - [ ] Integrar watchdog e limites de execucao.
 - [ ] Manter operacoes pesadas fora da task LVGL e de callbacks ESP-IDF.
 
@@ -149,8 +149,17 @@ ultima operacao sobre filas, mutexes e estado de lifecycle, marca seu handle
 como encerrado e se auto-exclui. `ble_mgr_stop()` exige essa confirmacao antes
 de parar o NimBLE e destruir filas, mutexes e semaforos; em timeout retorna
 `ESP_ERR_TIMEOUT` e retém os recursos. O manifesto BLE declara a stack real do
-host de 8192 bytes e fila de comandos de 8 itens. Wi-Fi, Serial e Screenshot
-ainda não têm teardown seguro simétrico nesta etapa.
+host de 8192 bytes e fila de comandos de 8 itens. Wi-Fi e Screenshot ainda não
+têm teardown seguro simétrico nesta etapa. Para Serial-JTAG, `bridge_start()`
+aguarda o handshake da task `serial_brg` e `serial_stop()` solicita saída
+cooperativa e faz join bounded de até 2000 ms. Timeout deixa o estado em
+`stopping`, preserva o handle e impede restart concorrente; a task observa o
+pedido no loop de leitura e no loop de chunks de `screen.dump`. O driver USB
+Serial-JTAG, o writer global de `esp_log_set_vprintf` e os semáforos/mutexes
+compartilhados permanecem vivos: este recorte não faz desmontagem de recursos
+de boot. O manifesto declara stack de 8192 bytes e `queue_depth=0`, pois a
+ponte não possui fila própria; a entrada é bounded pelo driver/assembler
+existente, e o campo não é usado para inventar capacidade.
 
 ### 6. Sistema de Arquivos Virtual
 

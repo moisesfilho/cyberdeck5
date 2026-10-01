@@ -50,5 +50,6 @@ ble_mgr_observer_handle_t ble_register_observer(ble_mgr_observer_cb_t callback, 
 void ble_unregister_observer(ble_mgr_observer_handle_t handle) { ble_mgr_unregister_observer(handle); }
 
 bool serial_start() { return cyberdeck_serial::bridge_start(); }
+bool serial_stop(std::uint32_t timeout_ms) { return cyberdeck_serial::bridge_stop(timeout_ms); }
 
 } // namespace cyberdeck_apps::service_ports
