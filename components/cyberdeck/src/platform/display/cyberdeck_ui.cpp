@@ -1,5 +1,4 @@
 #include "platform/display/cyberdeck_ui.h"
-#include "platform/logging/event_log.h"
 #include "apps/shell/cyberdeck_history.h"
 #include "apps/shell/cyberdeck_shell_utils.h"
 #include "lvgl.h"
@@ -980,7 +979,8 @@ void on_ssh_state(ssh_client_state_t state, const char *message) {
     /* SSH state is part of the terminal/event log, not the compact header. */
     append_line(status);
     append_line("\n");
-    event_log_write(state == SSH_CLIENT_ERROR ? 'E' : 'I', "ssh", status);
+    cyberdeck_apps::logger *logger = cyberdeck_apps::global_runtime().app_logger();
+    if (logger != nullptr) logger->write(state == SSH_CLIENT_ERROR ? 'E' : 'I', "ssh", status);
     if (state == SSH_CLIENT_DISCONNECTED || state == SSH_CLIENT_DISCONNECTING || state == SSH_CLIENT_ERROR) {
         char pending[1];
         const size_t written = s_ssh_output_filter.flush(pending, sizeof(pending));
@@ -1205,12 +1205,15 @@ bool shell_session_host::battery_protection_snapshot(
 }
 void shell_session_host::log_event(char level, const char *tag, const char *message)
 {
-    event_log_write(level, tag, message);
+    cyberdeck_apps::logger *logger = cyberdeck_apps::global_runtime().app_logger();
+    if (logger != nullptr) logger->write(level, tag, message);
 }
 std::string shell_session_host::recent_events(std::size_t count)
 {
     std::string logged;
-    event_log_latest(count, [](const char *event, void *ctx) {
+    cyberdeck_apps::logger *logger = cyberdeck_apps::global_runtime().app_logger();
+    if (logger == nullptr) return logged;
+    logger->latest(count, [](const char *event, void *ctx) {
         if (event == nullptr || ctx == nullptr) return;
         auto *out = static_cast<std::string *>(ctx);
         out->append(event);

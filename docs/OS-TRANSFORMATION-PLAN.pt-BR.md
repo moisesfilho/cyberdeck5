@@ -80,6 +80,12 @@ supervisor.
 - [ ] Fazer o shell acessar storage, rede e input por portas do sistema.
 - [ ] Converter callbacks externos em eventos bounded.
 
+Execucao inicial da Fase 3: o acesso direto da UI ao backend `event_log` foi
+removido. O logger agora e uma porta do runtime, implementada pelo supervisor
+e consumida pela UI atraves de `runtime::app_logger()`. Os acessos diretos da
+UI aos servicos Wi-Fi, SSH, BLE e Serial ainda precisam ser migrados para
+portas equivalentes; esta fase permanece parcialmente concluida.
+
 ### 4. IPC e Event Bus
 
 - [ ] Criar eventos tipados e bounded.

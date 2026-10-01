@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 APPS = ROOT / "components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp"
 APP_MAIN = ROOT / "main/app_main.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+RUNTIME = ROOT / "components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h"
 CMAX = ROOT / "components/cyberdeck/CMakeLists.txt"
 
 
@@ -15,6 +16,7 @@ def main() -> int:
     apps = APPS.read_text(encoding="utf-8")
     app_main = APP_MAIN.read_text(encoding="utf-8")
     ui = UI.read_text(encoding="utf-8")
+    runtime = RUNTIME.read_text(encoding="utf-8")
     cmake = CMAX.read_text(encoding="utf-8")
     failures = []
 
@@ -32,6 +34,10 @@ def main() -> int:
         failures.append("event log must be a registered supervisor-owned system app")
     if "set_logger(&s_event_logger)" not in apps:
         failures.append("system apps must inject the supervisor logger")
+    if "event_log_write(" in ui or "event_log_latest(" in ui:
+        failures.append("UI must use the supervisor logger port instead of event_log directly")
+    if "logger *app_logger() const" not in runtime:
+        failures.append("runtime must expose the supervisor logger port")
     for dependency in ("cyberdeck.wifi", "cyberdeck.shell", "cyberdeck.event_log"):
         if dependency not in apps:
             failures.append(f"missing declarative dependency {dependency}")

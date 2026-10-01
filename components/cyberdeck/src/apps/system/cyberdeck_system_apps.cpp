@@ -92,6 +92,11 @@ public:
     {
         event_log_write(level, tag, message);
     }
+
+    std::size_t latest(std::size_t max_events, line_callback callback, void *context) override
+    {
+        return event_log_latest(max_events, callback, context);
+    }
 };
 
 cyberdeck_apps::manifest make_manifest(std::string_view id, std::string_view name,

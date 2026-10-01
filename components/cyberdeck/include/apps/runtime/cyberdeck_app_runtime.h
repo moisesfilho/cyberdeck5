@@ -94,6 +94,7 @@ public:
     bool start_all();
     bool stop_all();
     void set_logger(logger *value);
+    logger *app_logger() const { return logger_; }
     application *find(std::string_view id);
     const application *find(std::string_view id) const;
     app_state state(std::string_view id) const;
