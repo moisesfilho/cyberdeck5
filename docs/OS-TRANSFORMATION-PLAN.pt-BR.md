@@ -149,8 +149,14 @@ ultima operacao sobre filas, mutexes e estado de lifecycle, marca seu handle
 como encerrado e se auto-exclui. `ble_mgr_stop()` exige essa confirmacao antes
 de parar o NimBLE e destruir filas, mutexes e semaforos; em timeout retorna
 `ESP_ERR_TIMEOUT` e retém os recursos. O manifesto BLE declara a stack real do
-host de 8192 bytes e fila de comandos de 8 itens. Wi-Fi e Screenshot ainda não
-têm teardown seguro simétrico nesta etapa. Para Serial-JTAG, `bridge_start()`
+host de 8192 bytes e fila de comandos de 8 itens. O sub-recorte seguro desta
+etapa endurece somente o rollback de `wifi_mgr_start()` para o `wifi_evt_worker`:
+a solicitação de parada é cooperativa, o worker é acordado e há join bounded por
+uma barreira de quiescência antes da destruição de filas, mutex e coordinator. Se
+a barreira expira, os recursos dependentes ficam retidos/quarentenados e o start
+falha com `ESP_ERR_TIMEOUT`; não há `vTaskDelete` de worker vivo. Isso não cria
+`wifi_mgr_stop` público e não altera `net_worker` nem Screenshot. O teardown
+completo e o stop simétrico do Wi-Fi continuam pendentes. Para Serial-JTAG, `bridge_start()`
 aguarda o handshake da task `serial_brg` e `serial_stop()` solicita saída
 cooperativa e faz join bounded de até 2000 ms. Timeout deixa o estado em
 `stopping`, preserva o handle e impede restart concorrente; a task observa o
