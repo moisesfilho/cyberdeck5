@@ -142,10 +142,15 @@ bus global.
 Recorte inicial da Etapa 5: o app SSH agora usa `disconnect_and_wait()` no
 stop, com espera bounded de 1000 ms, e seu manifesto declara a stack dinamica
 de 24576 bytes e a fila de eventos bounded de 8 itens. O adaptador de
-`service_application` torna somente o lifecycle do SSH idempotente, sem mudar
-os demais servicos. O join da task continua ocorrendo antes da destruicao da
-fila de eventos, preservando a invalidacao de geracao/callbacks existente. Os
-demais servicos ainda nao estao corrigidos de forma simetrica nesta etapa.
+`service_application` torna somente os lifecycles de SSH e BLE idempotentes,
+sem mudar os demais servicos. O BLE possui uma barreira de quiescencia
+separada do ACK do comando STOP: a task publica a barreira somente depois da
+ultima operacao sobre filas, mutexes e estado de lifecycle, marca seu handle
+como encerrado e se auto-exclui. `ble_mgr_stop()` exige essa confirmacao antes
+de parar o NimBLE e destruir filas, mutexes e semaforos; em timeout retorna
+`ESP_ERR_TIMEOUT` e retém os recursos. O manifesto BLE declara a stack real do
+host de 8192 bytes e fila de comandos de 8 itens. Wi-Fi, Serial e Screenshot
+ainda não têm teardown seguro simétrico nesta etapa.
 
 ### 6. Sistema de Arquivos Virtual
 

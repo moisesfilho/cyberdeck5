@@ -21,6 +21,8 @@ constexpr const char *TAG = "system_apps";
 constexpr uint32_t k_ssh_lifecycle_timeout_ms = 1000;
 constexpr uint32_t k_ssh_task_stack_bytes = 24576;
 constexpr uint32_t k_ssh_event_queue_depth = 8;
+constexpr uint32_t k_ble_host_task_stack_bytes = 8192;
+constexpr uint32_t k_ble_command_queue_depth = 8;
 
 bool start_shell() { return true; }
 bool stop_shell() { return false; }
@@ -182,10 +184,11 @@ service_application s_screenshot{make_manifest("cyberdeck.screenshot", "Screensh
                                                {"display", "network"}, 6144, 1),
                                   start_screenshot, nullptr};
 service_application s_bluetooth{make_manifest("cyberdeck.bluetooth", "Bluetooth service",
-                                               "ESP-Hosted BLE manager", {"cyberdeck.event_log"}, {"bluetooth"}, 1000,
-                                              cyberdeck_apps::app_type::background,
-                                              {"bluetooth"}, 8192, 8),
-                                 start_bluetooth, stop_bluetooth};
+                                                "ESP-Hosted BLE manager", {"cyberdeck.event_log"}, {"bluetooth"}, 1000,
+                                               cyberdeck_apps::app_type::background,
+                                               {"bluetooth"}, k_ble_host_task_stack_bytes,
+                                               k_ble_command_queue_depth),
+                                  start_bluetooth, stop_bluetooth, true};
 
 cyberdeck_apps::application *const k_apps[] = {
     &s_event_log, &s_shell, &s_wifi, &s_serial, &s_ssh, &s_screenshot, &s_bluetooth, &s_demo,

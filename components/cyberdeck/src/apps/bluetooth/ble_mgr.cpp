@@ -63,6 +63,10 @@ static SemaphoreHandle_t s_ble_mutex = NULL;
  * ble_mgr.  The pure dispatch object is deliberately kept behind this lock. */
 static SemaphoreHandle_t s_dispatch_mutex = NULL;
 static SemaphoreHandle_t s_stop_done = NULL;
+/* This is distinct from the stop command ACK: it is released only after the
+ * manager has stopped touching its queues, mutexes, and lifecycle state. */
+static SemaphoreHandle_t s_task_quiesced = NULL;
+static volatile bool s_ble_task_quiesced = false;
 static bool s_started = false;
 static volatile bool s_host_synced = false;
 static uint8_t s_own_addr[6] = {0};
@@ -364,7 +368,10 @@ esp_err_t ble_mgr_start(void)
     ble_hs_cfg.sm_sc = 1;
 
     s_stop_done = xSemaphoreCreateBinary();
-    if (s_stop_done == NULL || xTaskCreate(ble_mgr_task, "ble_mgr", BLE_MGR_TASK_STACK, NULL, BLE_MGR_TASK_PRIO, &s_ble_task) != pdPASS) {
+    s_task_quiesced = xSemaphoreCreateBinary();
+    s_ble_task_quiesced = false;
+    if (s_stop_done == NULL || s_task_quiesced == NULL ||
+        xTaskCreate(ble_mgr_task, "ble_mgr", BLE_MGR_TASK_STACK, NULL, BLE_MGR_TASK_PRIO, &s_ble_task) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create BLE manager task");
         nimble_port_freertos_deinit();
         vSemaphoreDelete(s_dispatch_mutex);
@@ -374,6 +381,7 @@ esp_err_t ble_mgr_start(void)
         vQueueDelete(s_ble_queue);
         s_ble_queue = NULL;
         if (s_stop_done != NULL) { vSemaphoreDelete(s_stop_done); s_stop_done = NULL; }
+        if (s_task_quiesced != NULL) { vSemaphoreDelete(s_task_quiesced); s_task_quiesced = NULL; }
         return ESP_ERR_NO_MEM;
     }
 
@@ -391,12 +399,16 @@ esp_err_t ble_mgr_stop(void)
     ble_mgr_cmd_t cmd{};
     cmd.kind = BLE_MGR_CMD_STOP;
     if (xQueueSend(s_ble_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE ||
-        xSemaphoreTake(s_stop_done, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        xSemaphoreTake(s_stop_done, pdMS_TO_TICKS(2000)) != pdTRUE ||
+        xSemaphoreTake(s_task_quiesced, pdMS_TO_TICKS(2000)) != pdTRUE ||
+        !s_ble_task_quiesced) {
         ESP_LOGE(TAG, "BLE manager teardown timed out; resources retained safely");
         return ESP_ERR_TIMEOUT;
     }
-    s_ble_task = NULL;
 
+    /* The explicit quiescence barrier above is the join.  In particular, the
+     * stop ACK alone is not sufficient: a self-deleting task can acknowledge
+     * before the scheduler has completed its final task transition. */
     nimble_port_stop();
     nimble_port_freertos_deinit();
 
@@ -423,6 +435,7 @@ esp_err_t ble_mgr_stop(void)
         s_gap_terminal_queue = NULL;
     }
     if (s_stop_done != NULL) { vSemaphoreDelete(s_stop_done); s_stop_done = NULL; }
+    if (s_task_quiesced != NULL) { vSemaphoreDelete(s_task_quiesced); s_task_quiesced = NULL; }
 
     s_started = false;
     s_host_synced = false;
@@ -659,7 +672,14 @@ static void ble_mgr_task(void *arg)
                 }
                 (void)ble_gap_conn_cancel();
             }
+            /* No queue, mutex, observer, dispatch, or lifecycle state may be
+             * touched after this point.  Publish the explicit quiescence
+             * barrier before self-deleting; ble_mgr_stop never deletes a
+             * possibly stale task handle from outside the task. */
+            s_ble_task_quiesced = true;
+            s_ble_task = NULL;
             if (s_stop_done != NULL) xSemaphoreGive(s_stop_done);
+            if (s_task_quiesced != NULL) xSemaphoreGive(s_task_quiesced);
             vTaskDelete(NULL);
             return;
         case BLE_MGR_CMD_SCAN_START: {

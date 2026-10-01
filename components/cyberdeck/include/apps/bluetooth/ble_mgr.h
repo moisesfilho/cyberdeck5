@@ -21,7 +21,11 @@ esp_err_t ble_mgr_start(void);
 
 /**
  * Stop the BLE manager and release resources.
- * Idempotent: safe to call multiple times and when not started.
+ * Idempotent: safe to call multiple times and when not started.  A successful
+ * stop first waits for the manager task's explicit quiescence barrier (after
+ * its final queue/mutex/lifecycle access), then tears down NimBLE and only
+ * then destroys the dynamic resources.  On timeout it returns ESP_ERR_TIMEOUT
+ * and retains every resource because the task may still be using it.
  */
 esp_err_t ble_mgr_stop(void);
 
