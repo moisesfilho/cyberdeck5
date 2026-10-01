@@ -112,12 +112,15 @@ LVGL_MANAGED := ../../../managed_components/lvgl__lvgl
 LVGL_GROUP_H := $(LVGL_MANAGED)/include/lvgl/core/lv_group.h
 
 SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/apps/screenshot/screenshot_bmp.cpp
-LOCAL_SHELL_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp
+VFS_NAMESPACE_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp
+VFS_NAMESPACE_HDR := ../../../components/cyberdeck/include/apps/shell/cyberdeck_vfs_namespace.h
+LOCAL_SHELL_SRC = ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp $(VFS_NAMESPACE_SRC)
 SESSION_SRC     := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp
 SESSION_HDR     := ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h
 APP_RUNTIME_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp
 APP_RUNTIME_HDR := ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h
 LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/apps/shell/cyberdeck_local_shell.h
+LOCAL_SHELL_NAMESPACE_CONTRACT := local_shell_namespace_contract.py
 CAT_MULTILINE_SRC := test_cat_multiline.cpp
 SHELL_TEST       := test_shell_utils.cpp
 SERIAL_TEST      := test_serial_ndjson_dispatch.cpp
@@ -406,20 +409,20 @@ test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../comp
 # Host test for the confined /sdcard local shell.  Include the production
 # header directly: a duplicate test-only ABI here can make the test compile
 # while linking a different class layout/API than the implementation.
-test_local_shell: test_local_shell.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
+test_local_shell: test_local_shell.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_local_shell.cpp $(LOCAL_SHELL_SRC) -Wl,--wrap=opendir -o test_local_shell
 
 # Host regression for the dedicated cat API.  This deliberately bypasses the
 # generic shell object so a multiline result is checked at the worker's source
 # seam, including CRLF, tabs, UTF-8, exact 12288-byte output, embedded NUL,
 # and a suffix after the first newline for the UI sanitizer.
-test_cat_multiline: $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
+test_cat_multiline: $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) -o test_cat_multiline
 
 # RED: the menu and local shell must render one shared help catalog.  The
 # target links both real production implementations; no production edit is
 # implied by this test registration.
-test_help_unification: $(HELP_UNIFICATION_TEST) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) shim/lvgl.h
+test_help_unification: $(HELP_UNIFICATION_TEST) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR) shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(HELP_UNIFICATION_TEST) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) -o test_help_unification
 
 # RED structural companion: rejects private literal help lists in the two
@@ -535,6 +538,9 @@ local_shell_security_contract: local_shell_security_contract.py ../../../compone
 local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h $(LOCAL_SHELL_HDR)
 	$(PYTHON) local_shell_tokenizer_contract.py
 
+local_shell_namespace_contract: $(LOCAL_SHELL_NAMESPACE_CONTRACT) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_SRC) $(VFS_NAMESPACE_HDR) ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md
+	$(PYTHON) $(LOCAL_SHELL_NAMESPACE_CONTRACT)
+
 test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 	$(PYTHON) test_prompt_behavior.py
 
@@ -567,7 +573,7 @@ test_serial_sysinfo_wifi: test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) $(SE
 test_fs_write_dispatch: test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_fs_write_dispatch
 
-test_cat_worker: test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
+test_cat_worker: test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -I../../../components/cyberdeck/include test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) -o test_cat_worker
 
 test_ble_background: test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) $(BLE_BACKGROUND_HDR)

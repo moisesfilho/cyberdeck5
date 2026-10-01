@@ -1,6 +1,7 @@
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "apps/shell/cyberdeck_shell_help.h"
 #include "apps/shell/cyberdeck_shell_utils.h"
+#include "apps/shell/cyberdeck_vfs_namespace.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -334,6 +335,10 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root,
         : (current == virtual_root ? "/" + argument : current + "/" + argument);
     if (!valid_virtual_path(virtual_path, virtual_root))
         return reject_cat("cat: path escapes /");
+    cyberdeck_vfs_namespace::resolved_path namespace_target{};
+    if (cyberdeck_vfs_namespace::resolve(current.c_str(), argument.c_str(), namespace_target) &&
+        namespace_target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path)
+        return reject_cat("cat: virtual namespace is read-only metadata");
     const std::string relative = virtual_path.size() > virtual_root.size()
         ? virtual_path.substr(virtual_root.size() == 1 ? 1 : virtual_root.size() + 1)
         : std::string{};
@@ -410,6 +415,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     auto reject = [](const std::string &text) {
         return cyberdeck_local_shell_result{cyberdeck_local_shell_status::rejected, text + "\n"};
     };
+    cyberdeck_vfs_namespace::resolved_path namespace_target{};
     auto resolve = [&](const std::string &argument, bool allow_parent, fs::path &host,
                        std::string &virtual_path) {
         if (!valid_virtual_path(argument, virtual_root_)) return false;
@@ -464,6 +470,13 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
 
     if (command == "cd") {
         if (words.size() != 2 || words[1].empty() || words[1][0] == '-') return reject("usage: cd [path]");
+        if (cyberdeck_vfs_namespace::resolve(cwd_.c_str(), words[1].c_str(), namespace_target) &&
+            namespace_target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path) {
+            if (words[1][0] == '/' && !cyberdeck_vfs_namespace::is_namespace_root(words[1].c_str()))
+                return reject("cd: invalid path");
+            cwd_ = namespace_target.path;
+            return {cyberdeck_local_shell_status::handled, {}};
+        }
         fs::path host; std::string target;
         if (!resolve(words[1], true, host, target)) return reject("cd: invalid path");
         std::error_code error;
@@ -482,14 +495,28 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         else if (!argument.empty()) return reject("too many arguments");
         else argument = words[i];
     }
-    if (command == "ls" && argument.empty()) argument = cwd_;
+    const bool ls_operand_omitted = command == "ls" && argument.empty();
+    if (ls_operand_omitted) argument = cwd_;
     if ((command == "touch" || command == "mkdir" || command == "rm" || command == "rmdir") && argument.empty())
         return reject("missing operand");
+
+    const bool is_virtual_target =
+        cyberdeck_vfs_namespace::resolve(cwd_.c_str(), argument.c_str(), namespace_target) &&
+        namespace_target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path;
 
     fs::path host; std::string target;
     if (!resolve(argument, false, host, target)) return reject("path escapes /");
 
     if (command == "ls") {
+        if (!ls_operand_omitted && argument == "/") {
+            std::string output;
+            for (std::size_t index = 0; index < cyberdeck_vfs_namespace::k_namespace_count; ++index) {
+                output += cyberdeck_vfs_namespace::at(index).name;
+                output += '\n';
+            }
+            return {cyberdeck_local_shell_status::handled, output};
+        }
+        if (is_virtual_target) return {cyberdeck_local_shell_status::handled, {}};
         errno = 0;
         DIR *raw_directory = ::opendir(host.c_str());
         if (raw_directory == nullptr) return reject("ls: cannot open directory");
@@ -525,6 +552,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     }
     if (command == "cat") {
         if (argument.empty()) return reject("missing operand");
+        if (is_virtual_target) return reject("cat: virtual namespace is read-only metadata");
         const int descriptor = secure_open_regular(fs::path(host_root_), host);
         if (descriptor < 0) return reject("cat: secure open unavailable");
         struct stat file_info = {};
@@ -551,6 +579,8 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         return {cyberdeck_local_shell_status::handled, output};
     }
     struct stat info = {};
+    if (is_virtual_target)
+        return reject(command + ": virtual namespace is read-only metadata");
     const bool path_exists = lstat_path(host, info);
     if (path_exists && S_ISLNK(info.st_mode)) return reject("symbolic links are not allowed");
     if (command == "touch") {

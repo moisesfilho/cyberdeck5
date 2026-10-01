@@ -160,6 +160,37 @@ void test_listing(fixture &f) {
     CHECK(r.output.find(".hidden-dir") != std::string::npos);
 }
 
+void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
+    std::error_code error;
+    fs::create_directory(f.root / "apps", error);
+    std::ofstream(f.root / "apps" / "should-not-run") << "payload";
+    cyberdeck_local_shell shell(f.root.string());
+
+    auto result = execute_without_exception(shell, "ls /");
+    CHECK(result.status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(result.output, "apps\ndata\ndev\ntmp\nsystem\n");
+    CHECK(shell.execute("cd /apps").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.execute("pwd").output, "/apps\n");
+    CHECK(shell.execute("cd tools").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.execute("pwd").output, "/apps/tools\n");
+    CHECK(shell.execute("cd ..").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.cwd(), "/apps");
+    CHECK(shell.execute("ls").output.empty());
+
+    const char *readonly_commands[] = {
+        "cat /apps/should-not-run", "touch /apps/new", "mkdir /data/new",
+        "rm /dev/raw", "rmdir /system", "cat /tmp/content"
+    };
+    for (const char *command : readonly_commands) {
+        result = execute_without_exception(shell, command);
+        CHECK(result.status == cyberdeck_local_shell_status::rejected);
+        CHECK(result.output.find("virtual namespace is read-only metadata") != std::string::npos);
+    }
+    CHECK(fs::is_regular_file(f.root / "apps" / "should-not-run"));
+    CHECK(!fs::exists(f.root / "apps" / "new"));
+    CHECK(!fs::exists(f.root / "data"));
+}
+
 void test_root_listing_resolves_exact_physical_root(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
 
@@ -604,6 +635,7 @@ int main() {
         fixture f;
         if (f.root.empty()) return 1;
         test_listing(f);
+        test_virtual_namespace_catalog_and_readonly_behavior(f);
     }
     {
         fixture f;

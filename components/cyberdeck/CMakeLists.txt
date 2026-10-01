@@ -25,6 +25,7 @@ idf_component_register(
         "src/apps/shell/cyberdeck_history.cpp"
         "src/apps/shell/cyberdeck_shell_utils.cpp"
         "src/apps/shell/cyberdeck_local_shell.cpp"
+        "src/apps/shell/cyberdeck_vfs_namespace.cpp"
         "src/apps/shell/cyberdeck_cat_worker.cpp"
         "src/apps/runtime/cyberdeck_app_runtime.cpp"
         "src/apps/demo/cyberdeck_demo_app.cpp"

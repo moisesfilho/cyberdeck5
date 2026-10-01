@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 SESSION_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h"
 LOCAL_SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
+VFS_NAMESPACE = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp"
 LIMIT = 12288
 
 
@@ -196,7 +197,7 @@ int main(int argc, char **argv) {
         subprocess.run([
             "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
             "-I", str(ROOT / "components/cyberdeck/include"), str(cpp),
-            str(LOCAL_SHELL), "-o", str(binary),
+            str(LOCAL_SHELL), str(VFS_NAMESPACE), "-o", str(binary),
         ], check=True)
         subprocess.run([str(binary), str(root)], check=True)
 

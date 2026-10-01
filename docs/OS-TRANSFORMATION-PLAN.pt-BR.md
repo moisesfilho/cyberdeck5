@@ -189,13 +189,18 @@ retorna enquanto um callback estiver em execução.
 
 ### 6. Sistema de Arquivos Virtual
 
-- [ ] Consolidar o namespace virtual do dispositivo.
-- [ ] Definir `/apps`, `/data`, `/dev`, `/tmp` e `/system`.
+- [x] Primeiro recorte: catálogo compilado e resolver readonly bounded para
+  `/apps`, `/data`, `/dev`, `/tmp` e `/system`, integrado ao shell local.
+- [ ] Consolidar o namespace virtual do dispositivo com backends.
 - [ ] Manter `/data` para dados persistentes do usuario.
 - [ ] Manter `/system` para configuracoes e estado interno.
 - [ ] Expor dispositivos por interfaces virtuais em `/dev`.
 - [ ] Preservar confinamento, limites e protecao contra traversal e symlink.
 - [ ] Manter execucao de binarios do SD fora do escopo inicial.
+
+O recorte atual expõe somente metadados: `/data` e `/system` ainda não têm
+mapeamento persistente, `/dev` não entrega handles e `/apps` não executa
+conteúdo. O `/sdcard` físico continua sendo `host_root`, separado do catálogo.
 
 ### 7. Shell como Userland
 
