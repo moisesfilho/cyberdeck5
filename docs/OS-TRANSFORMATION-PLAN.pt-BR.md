@@ -78,7 +78,7 @@ supervisor.
 - [x] Expor Wi-Fi, SSH, BLE e Serial por interfaces de servico.
 - [x] Fazer Screenshot consumir uma interface de display.
 - [x] Fazer o shell acessar storage, rede e input por portas do sistema.
-- [ ] Converter callbacks externos em eventos bounded.
+- [x] Converter callbacks externos em eventos bounded.
 
 Execucao inicial da Fase 3: o acesso direto da UI ao backend `event_log` foi
 removido. O logger agora e uma porta do runtime, implementada pelo supervisor
@@ -86,14 +86,23 @@ e consumida pela UI atraves de `runtime::app_logger()`. Os acessos diretos da
 UI aos servicos Wi-Fi, SSH, BLE e Serial tambem foram removidos: o gateway
 `cyberdeck_service_ports` concentra as chamadas aos backends e a UI consome
 somente as portas. O shell session ja expunha storage, rede e input por seu
-`host`. Fica pendente a conversao dos callbacks externos restantes para
-eventos bounded.
+`host`. Os callbacks de Wi-Fi e BLE ja usavam filas bounded; os callbacks SSH
+agora tambem publicam eventos limitados em uma fila de 8 entradas e somente o
+timer LVGL executa filtro, compositor, render e logging.
+
+Regressao encontrada na validacao fisica desta entrega: a primeira versao do
+evento SSH carregava 1024 bytes de payload inline e o timer LVGL reclamava
+copias por valor, o que estourava a stack da task e travava o boot logo apos
+`wifi_mgr_start()` (`app_main` nunca retornava, sem panic). A causa foi provada
+por reversao: sem a fila o boot completava normalmente. A correcao reduziu o
+elemento da fila para 332 bytes e passou a reclamar eventos num slot estatico
+compartilhado, sem materializar o evento na stack do timer. Payloads acima de
+256 bytes por callback continuam truncados de forma fail-safe.
 
 O Screenshot foi entao migrado para `screenshot_frame_t`: o servidor HTTP nao
 inclui mais LVGL/BSP nem captura `lv_screen_active()`; recebe um frame RGB565
 bounded pela porta `cyberdeck_display_port`, que concentra lock, snapshot e
-liberacao do buffer no adapter de display. Permanecem pendentes somente os
-callbacks externos que ainda precisam ser consolidados no event bus bounded.
+liberacao do buffer no adapter de display.
 
 ### 4. IPC e Event Bus
 

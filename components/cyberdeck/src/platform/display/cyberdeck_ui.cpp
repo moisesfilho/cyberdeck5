@@ -95,6 +95,28 @@ SemaphoreHandle_t s_wifi_scan_context_mutex = nullptr;
 cyberdeck_keyboard_dispatch::dispatcher s_keyboard_dispatch;
 QueueHandle_t s_ble_event_queue = nullptr;
 ble_mgr_observer_handle_t s_ble_observer = nullptr;
+constexpr std::size_t k_ssh_event_queue_capacity = 8;
+/* State messages are short and fully described by the enum plus a small tag.
+ * Keeping the queue element tiny matters: the LVGL timer reclaims events by
+ * value, so a large element would be copied on the LVGL task stack every tick.
+ * A first version carrying 1 KB of inline payload overflowed that stack and
+ * froze the boot right after wifi_mgr_start(). */
+constexpr std::size_t k_ssh_event_state_message_limit = 64;
+constexpr std::size_t k_ssh_event_data_limit = 256;
+enum class ssh_ui_event_kind : uint8_t { data, state };
+struct ssh_ui_event {
+    ssh_ui_event_kind kind = ssh_ui_event_kind::data;
+    ssh_client_state_t state = SSH_CLIENT_DISCONNECTED;
+    char message[k_ssh_event_state_message_limit]{};
+    /* Data payloads are small; larger chunks are truncated rather than queued
+     * as a single oversized element. */
+    char data[k_ssh_event_data_limit]{};
+    uint16_t length = 0;
+};
+/* One reusable reclaim buffer keeps the LVGL timer from copying a large element
+ * on the stack.  It is only touched from the LVGL task. */
+ssh_ui_event s_ssh_event_slot;
+QueueHandle_t s_ssh_event_queue = nullptr;
 cyberdeck_ble::state_machine s_ble_model;
 cyberdeck_ble::device_list s_ble_scan_devices;
 std::string s_ble_last_notice;
@@ -415,6 +437,10 @@ void destroy_ui_resource_handles()
     if (s_ble_event_queue != nullptr) {
         vQueueDelete(s_ble_event_queue);
         s_ble_event_queue = nullptr;
+    }
+    if (s_ssh_event_queue != nullptr) {
+        vQueueDelete(s_ssh_event_queue);
+        s_ssh_event_queue = nullptr;
     }
     if (s_wifi_scan_context_mutex != nullptr) {
         vSemaphoreDelete(s_wifi_scan_context_mutex);
@@ -958,7 +984,7 @@ void show_ssh(bool ssh) {
     render_terminal();
 }
 
-void on_ssh_data(const char *data, size_t length) {
+void process_ssh_data(const char *data, size_t length) {
     if (!data || !length) return;
     std::string filtered(length + 1, '\0');
     const size_t written = s_ssh_output_filter.feed(data, length, &filtered[0], filtered.size());
@@ -969,7 +995,7 @@ void on_ssh_data(const char *data, size_t length) {
     append_output(displayed.data(), displayed_size, false);
 }
 
-void on_ssh_state(ssh_client_state_t state, const char *message) {
+void process_ssh_state(ssh_client_state_t state, const char *message) {
     static const char *names[] = {"OFFLINE", "CONNECTING", "PASSWORD", "AUTH", "ONLINE", "CLOSING", "ERROR", "HOST KEY"};
     size_t i = static_cast<size_t>(state);
     char status[180];
@@ -996,6 +1022,42 @@ void on_ssh_state(ssh_client_state_t state, const char *message) {
         s_shell_session.clear_editor();
     }
     render_terminal();
+}
+
+void on_ssh_data(const char *data, size_t length)
+{
+    if (s_ssh_event_queue == nullptr || data == nullptr || length == 0) return;
+    ssh_ui_event event{};
+    event.kind = ssh_ui_event_kind::data;
+    event.length = length > k_ssh_event_data_limit
+                       ? static_cast<uint16_t>(k_ssh_event_data_limit)
+                       : static_cast<uint16_t>(length);
+    std::memcpy(event.data, data, event.length);
+    (void)xQueueSend(s_ssh_event_queue, &event, 0);
+}
+
+void on_ssh_state(ssh_client_state_t state, const char *message)
+{
+    if (s_ssh_event_queue == nullptr) return;
+    ssh_ui_event event{};
+    event.kind = ssh_ui_event_kind::state;
+    event.state = state;
+    if (message != nullptr) std::snprintf(event.message, sizeof(event.message), "%s", message);
+    (void)xQueueSend(s_ssh_event_queue, &event, 0);
+}
+
+void process_ssh_events(lv_timer_t *)
+{
+    if (s_ssh_event_queue == nullptr) return;
+    /* Reclaim into the shared slot instead of a local copy: the queue element
+     * must not be materialized on the LVGL task stack. */
+    while (xQueueReceive(s_ssh_event_queue, &s_ssh_event_slot, 0) == pdTRUE) {
+        if (s_ssh_event_slot.kind == ssh_ui_event_kind::data) {
+            process_ssh_data(s_ssh_event_slot.data, s_ssh_event_slot.length);
+        } else {
+            process_ssh_state(s_ssh_event_slot.state, s_ssh_event_slot.message);
+        }
+    }
 }
 
 
@@ -1269,11 +1331,16 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
             destroy_ui_resource_handles();
              return ESP_ERR_NO_MEM;
          }
-         s_ble_event_queue = xQueueCreate(9, sizeof(ble_mgr_event_t));
-         if (s_ble_event_queue == nullptr) {
+          s_ble_event_queue = xQueueCreate(9, sizeof(ble_mgr_event_t));
+          if (s_ble_event_queue == nullptr) {
              destroy_ui_resource_handles();
-             return ESP_ERR_NO_MEM;
-         }
+              return ESP_ERR_NO_MEM;
+          }
+          s_ssh_event_queue = xQueueCreate(k_ssh_event_queue_capacity, sizeof(ssh_ui_event));
+          if (s_ssh_event_queue == nullptr) {
+              destroy_ui_resource_handles();
+              return ESP_ERR_NO_MEM;
+          }
          s_ble_observer = cyberdeck_apps::service_ports::ble_register_observer(on_ble_event, nullptr);
          s_cat_worker_ready = cyberdeck_cat_worker_start("/sdcard", on_cat_result, nullptr);
      s_screen = lv_scr_act(); style_base(s_screen, BLACK, WHITE); lv_obj_set_style_pad_all(s_screen, 12, 0); lv_obj_set_layout(s_screen, LV_LAYOUT_NONE); disable_scrolling(s_screen);
@@ -1285,7 +1352,8 @@ s_last_clock_text.clear();
       lv_timer_create(update_clock, 1000, nullptr);
       lv_timer_create(process_wifi_state, 100, nullptr);
       lv_timer_create(process_wifi_scan, 100, nullptr);
-lv_timer_create(process_ble_events, 100, nullptr);
+       lv_timer_create(process_ble_events, 100, nullptr);
+       lv_timer_create(process_ssh_events, 100, nullptr);
       lv_timer_create(process_wifi_audit, 100, nullptr);
       s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
       s_terminal_output_timer = lv_timer_create(process_terminal_output, 100, nullptr);

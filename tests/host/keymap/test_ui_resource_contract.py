@@ -36,6 +36,7 @@ def main() -> int:
         ("s_wifi_scan_queue", "vQueueDelete"),
         ("s_wifi_state_queue", "vQueueDelete"),
         ("s_ble_event_queue", "vQueueDelete"),
+        ("s_ssh_event_queue", "vQueueDelete"),
     ):
         block = re.search(rf"if\s*\(\s*{handle}\s*!=\s*nullptr\s*\)\s*\{{(?P<body>.*?)\}}",
                           cleanup, re.S)
@@ -51,10 +52,10 @@ def main() -> int:
     init = function_body(source, "extern \"C\" esp_err_t cyberdeck_ui_init(")
     require("s_keyboard_dispatch.start(on_keyboard_event, nullptr)" in init,
             "init must start the keyboard dispatcher")
-    require(init.count("return ESP_ERR_NO_MEM") == 5,
+    require(init.count("return ESP_ERR_NO_MEM") == 6,
             "init must retain one failure exit for each resource/timer phase")
     for handle in ("s_wifi_state_queue", "s_wifi_scan_queue",
-                   "s_wifi_scan_context_mutex", "s_ble_event_queue"):
+                   "s_wifi_scan_context_mutex", "s_ble_event_queue", "s_ssh_event_queue"):
         failure = re.search(rf"if\s*\([^)]*{handle}\s*==\s*nullptr[^)]*\)\s*\{{(?P<body>.*?)\}}",
                             init, re.S)
         require(failure is not None, f"{handle} allocation must have a failure branch")

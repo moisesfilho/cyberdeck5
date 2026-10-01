@@ -33,21 +33,38 @@ def main() -> int:
     source = UI_PATH.read_text(encoding="utf-8")
     append = body(source, "void append_output(const char *data, size_t len, bool repaint)")
     process = body(source, "void process_terminal_output(lv_timer_t *)")
-    ssh_data = body(source, "void on_ssh_data(const char *data, size_t length)")
-    ssh_state = body(source, "void on_ssh_state(ssh_client_state_t state, const char *message)")
+    ssh_data_callback = body(source, "void on_ssh_data(const char *data, size_t length)")
+    ssh_state_callback = body(source, "void on_ssh_state(ssh_client_state_t state, const char *message)")
+    ssh_data = body(source, "void process_ssh_data(const char *data, size_t length)")
+    ssh_state = body(source, "void process_ssh_state(ssh_client_state_t state, const char *message)")
+    ssh_events = body(source, "void process_ssh_events(lv_timer_t *)")
     init = body(source, "extern \"C\" esp_err_t cyberdeck_ui_init(void)")
 
     # T-COAL-01/02, REQ-1/AC-1.
     assert "append_output(displayed.data(), displayed_size, false);" in ssh_data
+    assert "xQueueSend(s_ssh_event_queue, &event, 0)" in ssh_data_callback
+    assert "xQueueSend(s_ssh_event_queue, &event, 0)" in ssh_state_callback
     assert "s_output.append(data, len);" in append
     assert "s_terminal_output_dirty = true;" in append
     assert "if (repaint) render_terminal();" in append
     assert process.count("render_terminal();") == 1
+
+    # The SSH queue element is reclaimed by value on the LVGL timer.  A large
+    # inline payload overflowed the LVGL task stack and froze the boot right
+    # after wifi_mgr_start(), so both the element size and the absence of a
+    # stack copy are pinned here.
+    assert "k_ssh_event_data_limit = 256" in source
+    assert "k_ssh_event_state_message_limit = 64" in source
+    assert "ssh_ui_event s_ssh_event_slot;" in source
+    assert "xQueueReceive(s_ssh_event_queue, &s_ssh_event_slot, 0)" in ssh_events
+    assert "ssh_ui_event event{}" not in ssh_events
+    assert "1024" not in source, "no inline 1 KB payload may return to the SSH event"
     assert "if (s_terminal_output_dirty) render_terminal();" in process
     assert "lv_timer_create(process_terminal_output, 100, nullptr);" in init
 
     # T-BOUND-01/02, REQ-2/AC-2.
     assert "constexpr size_t TERMINAL_LIMIT = 12288;" in source
+    assert "k_ssh_event_queue_capacity = 8" in source
     assert "if (s_output.size() > TERMINAL_LIMIT)" in append
     assert "s_output.erase(0, safe_offset);" in append
     assert "utf8_valid_start_offset(s_output, excess)" in append
