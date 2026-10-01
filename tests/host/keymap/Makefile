@@ -338,7 +338,7 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR)
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_app_runtime.cpp $(APP_RUNTIME_SRC) -o test_app_runtime
 
-test_system_apps_contract: test_system_apps_contract.py
+test_system_apps_contract: test_system_apps_contract.py ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp ../../../components/cyberdeck/src/apps/ssh/ssh_client.cpp
 	$(PYTHON) test_system_apps_contract.py
 
 test_edit_line: test_edit_line.cpp $(EDIT_LINE_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_edit_line.h

@@ -139,6 +139,14 @@ bus global.
 - [ ] Integrar watchdog e limites de execucao.
 - [ ] Manter operacoes pesadas fora da task LVGL e de callbacks ESP-IDF.
 
+Recorte inicial da Etapa 5: o app SSH agora usa `disconnect_and_wait()` no
+stop, com espera bounded de 1000 ms, e seu manifesto declara a stack dinamica
+de 24576 bytes e a fila de eventos bounded de 8 itens. O adaptador de
+`service_application` torna somente o lifecycle do SSH idempotente, sem mudar
+os demais servicos. O join da task continua ocorrendo antes da destruicao da
+fila de eventos, preservando a invalidacao de geracao/callbacks existente. Os
+demais servicos ainda nao estao corrigidos de forma simetrica nesta etapa.
+
 ### 6. Sistema de Arquivos Virtual
 
 - [ ] Consolidar o namespace virtual do dispositivo.

@@ -13,10 +13,14 @@
 #include "esp_log.h"
 
 #include <initializer_list>
+#include <cstdint>
 
 namespace {
 
 constexpr const char *TAG = "system_apps";
+constexpr uint32_t k_ssh_lifecycle_timeout_ms = 1000;
+constexpr uint32_t k_ssh_task_stack_bytes = 24576;
+constexpr uint32_t k_ssh_event_queue_depth = 8;
 
 bool start_shell() { return true; }
 bool stop_shell() { return false; }
@@ -27,8 +31,7 @@ bool stop_event_log() { return false; }
 bool start_ssh() { return true; }
 bool stop_ssh()
 {
-    ssh_client_disconnect();
-    return true;
+    return ssh_client_disconnect_and_wait(k_ssh_lifecycle_timeout_ms);
 }
 
 bool start_screenshot()
@@ -50,8 +53,8 @@ public:
     using lifecycle_fn = bool (*)();
 
     service_application(cyberdeck_apps::manifest manifest, lifecycle_fn start,
-                        lifecycle_fn stop)
-        : manifest_(manifest), start_(start), stop_(stop)
+                        lifecycle_fn stop, bool idempotent = false)
+        : manifest_(manifest), start_(start), stop_(stop), idempotent_(idempotent)
     {
     }
 
@@ -59,7 +62,7 @@ public:
 
     bool start() override
     {
-        if (running_) return false;
+        if (running_) return idempotent_;
         if (start_ == nullptr || !start_()) return false;
         running_ = true;
         return true;
@@ -67,7 +70,8 @@ public:
 
     bool stop() override
     {
-        if (!running_ || stop_ == nullptr || !stop_()) return false;
+        if (!running_) return idempotent_;
+        if (stop_ == nullptr || !stop_()) return false;
         running_ = false;
         return true;
     }
@@ -84,6 +88,7 @@ private:
     cyberdeck_apps::manifest manifest_;
     lifecycle_fn start_;
     lifecycle_fn stop_;
+    bool idempotent_;
     bool running_ = false;
 };
 
@@ -166,9 +171,10 @@ service_application s_serial{make_manifest("cyberdeck.serial", "Serial bridge",
 service_application s_ssh{make_manifest("cyberdeck.ssh", "SSH service",
                                          "Asynchronous SSH client service",
                                           {"cyberdeck.event_log", "cyberdeck.wifi"}, {"network", "storage"}, 1000,
-                                         cyberdeck_apps::app_type::background,
-                                         {"network", "storage"}, 6144, 8),
-                           start_ssh, stop_ssh};
+                                          cyberdeck_apps::app_type::background,
+                                          {"network", "storage"}, k_ssh_task_stack_bytes,
+                                          k_ssh_event_queue_depth),
+                            start_ssh, stop_ssh, true};
 service_application s_screenshot{make_manifest("cyberdeck.screenshot", "Screenshot service",
                                                "Local-network screenshot HTTP endpoint",
                                                 {"cyberdeck.event_log", "cyberdeck.wifi"}, {"display", "network"}, 1000,
