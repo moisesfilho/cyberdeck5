@@ -190,9 +190,8 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     states_[index] = app_state::running;
     if (elapsed > item.lifecycle_timeout_ms) {
         /* The hook returned success, so the observable state is running. The
-         * budget overrun is a diagnostic only: hooks are synchronous and
-         * cannot be preempted, so failing a started application here would
-         * report a state the device does not have and would block dependents. */
+         * budget is checked only after return: synchronous hooks cannot be
+         * preempted, so this diagnostic must not block dependents. */
         failures_[index] = "start hook timeout";
     } else {
         failures_[index].clear();
@@ -222,6 +221,9 @@ bool runtime::stop_index(std::size_t index)
         failures_[index] = "stop hook failed";
         return false;
     }
+    /* A successful stop, including one that exceeded the budget, leaves the
+     * application stopped. The timeout is post-return diagnostics only; any
+     * effective bound must be enforced by the service's cooperative join. */
     states_[index] = app_state::registered;
     if (elapsed > applications_[index]->get_manifest().lifecycle_timeout_ms) {
         failures_[index] = "stop hook timeout";

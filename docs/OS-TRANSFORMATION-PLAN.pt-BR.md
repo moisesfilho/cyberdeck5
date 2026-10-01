@@ -32,11 +32,13 @@ tratava o estouro do orcamento de lifecycle como falha de estado. O
 `wifi_mgr_start()` leva ~2,7 s para subir o radio C6 e o storage SD, o que
 excedia o orcamento de 1 s e marcava `cyberdeck.wifi` como `failed`, bloqueando
 por dependencia `cyberdeck.ssh` e `cyberdeck.screenshot`. Como os hooks sao
-sincronos e nao podem ser preemptados, o estado agora reflete o retorno real do
-hook e o estouro do orcamento fica apenas como diagnostico; o orcamento do Wi-Fi
+sincronos e nao podem ser preemptados, o estado agora segue o retorno real do
+hook e o estouro do orcamento fica apenas como diagnostico pos-retorno; o orcamento do Wi-Fi
 foi elevado para 8 s. Regressao coberta por `test_app_runtime.cpp` (`slow_app` e
-`slow_dependent_app`) e por `failing_app`/`failing_dependent_app`, que confirmam
-que falha real continua fail-closed.
+`slow_dependent_app`) no hook de start e por
+`failing_app`/`failing_dependent_app`, que confirmam que falha real continua
+fail-closed. A cobertura comportamental do stop permanece encaminhada ao gate
+de testes da Etapa 5.
 
 ## Fases Pendentes
 
@@ -138,6 +140,15 @@ bus global.
 - [x] Exigir join antes de destruir recursos.
 - [ ] Integrar watchdog e limites de execucao.
 - [ ] Manter operacoes pesadas fora da task LVGL e de callbacks ESP-IDF.
+
+O campo `lifecycle_timeout_ms` do runtime e um orcamento de observabilidade:
+start e stop sao hooks sincronos, portanto o runtime so mede o tempo depois que
+o hook retorna. Um hook que demora e retorna sucesso preserva o estado coerente
+(`running` apos start ou `registered` apos stop) e recebe o diagnostico
+`start hook timeout`/`stop hook timeout`; o runtime nao interrompe a execucao
+nem bloqueia dependentes por esse motivo. Os limites efetivos ficam nos joins
+cooperativos bounded dos servicos, que devem reter/quarentenar recursos quando
+a task nao confirma quiescencia. Falha real do hook continua fail-closed.
 
 Recorte inicial da Etapa 5: o app SSH agora usa `disconnect_and_wait()` no
 stop, com espera bounded de 1000 ms, e seu manifesto declara a stack dinamica

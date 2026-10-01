@@ -96,7 +96,14 @@ public:
         running_ = true;
         return true;
     }
-    bool stop() override { running_ = false; return true; }
+    bool stop() override
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
+        while (std::chrono::steady_clock::now() < deadline) {
+        }
+        running_ = false;
+        return true;
+    }
     bool running() const override { return running_; }
     cyberdeck_apps::result execute(std::string_view, std::string_view) override { return {}; }
 
@@ -246,6 +253,8 @@ int main()
     check(slow_runtime.stop_application("slow.app"), "slow app stops");
     check(slow_runtime.state("slow.dependent") == cyberdeck_apps::app_state::registered,
           "stopping a dependency stops its dependents first");
+    check(slow_runtime.failure_reason("slow.app") == "stop hook timeout",
+          "successful stop overrun is kept as diagnostic");
 
     /* A hook that genuinely fails must fail closed and block dependents. */
     cyberdeck_apps::runtime failing_runtime;

@@ -45,6 +45,9 @@ struct manifest {
     std::size_t dependency_count = 0;
     std::array<std::string_view, k_max_resources> resources{};
     std::size_t resource_count = 0;
+    /* Diagnostic budget measured after a synchronous hook returns. It does
+     * not preempt the hook; effective execution limits belong to the
+     * cooperative joins owned by the service. */
     std::uint32_t lifecycle_timeout_ms = 1000;
     std::string_view api_version = "1";
     app_type type = app_type::service;
