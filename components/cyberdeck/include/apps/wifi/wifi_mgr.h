@@ -31,6 +31,7 @@ esp_err_t wifi_mgr_start(void);
  * chamado pela task de eventos; o contexto permanece sob responsabilidade do
  * chamador. */
 esp_err_t wifi_mgr_add_state_callback(wifi_state_cb_t cb, void *ctx);
+esp_err_t wifi_mgr_remove_state_callback(wifi_state_cb_t cb, void *ctx);
 
 /* Compatibilidade: registra observador do estado. */
 esp_err_t wifi_mgr_set_state_callback(wifi_state_cb_t cb, void *ctx);

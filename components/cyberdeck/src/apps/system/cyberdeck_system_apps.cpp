@@ -24,6 +24,8 @@ constexpr uint32_t k_ssh_event_queue_depth = 8;
 constexpr uint32_t k_ble_host_task_stack_bytes = 8192;
 constexpr uint32_t k_ble_command_queue_depth = 8;
 constexpr uint32_t k_serial_task_stack_bytes = 8192;
+constexpr uint32_t k_screenshot_task_stack_bytes = 6144;
+constexpr uint32_t k_screenshot_control_queue_depth = 8;
 
 bool start_shell() { return true; }
 bool stop_shell() { return false; }
@@ -39,8 +41,19 @@ bool stop_ssh()
 
 bool start_screenshot()
 {
-    return screenshot_server_init() == ESP_OK &&
-           wifi_mgr_add_state_callback(screenshot_server_wifi_state, nullptr) == ESP_OK;
+    if (screenshot_server_start() != ESP_OK) return false;
+    if (wifi_mgr_add_state_callback(screenshot_server_wifi_state, nullptr) != ESP_OK) {
+        (void)screenshot_server_stop(1000);
+        return false;
+    }
+    return true;
+}
+
+bool stop_screenshot()
+{
+    const esp_err_t removed = wifi_mgr_remove_state_callback(screenshot_server_wifi_state, nullptr);
+    if (removed != ESP_OK && removed != ESP_ERR_NOT_FOUND) return false;
+    return screenshot_server_stop(1000) == ESP_OK;
 }
 
 bool start_wifi() { return wifi_mgr_start() == ESP_OK; }
@@ -181,9 +194,10 @@ service_application s_ssh{make_manifest("cyberdeck.ssh", "SSH service",
 service_application s_screenshot{make_manifest("cyberdeck.screenshot", "Screenshot service",
                                                "Local-network screenshot HTTP endpoint",
                                                 {"cyberdeck.event_log", "cyberdeck.wifi"}, {"display", "network"}, 1000,
-                                               cyberdeck_apps::app_type::service,
-                                               {"display", "network"}, 6144, 1),
-                                  start_screenshot, nullptr};
+                                                cyberdeck_apps::app_type::service,
+                                                {"display", "network"}, k_screenshot_task_stack_bytes,
+                                                k_screenshot_control_queue_depth),
+                                   start_screenshot, stop_screenshot, true};
 service_application s_bluetooth{make_manifest("cyberdeck.bluetooth", "Bluetooth service",
                                                 "ESP-Hosted BLE manager", {"cyberdeck.event_log"}, {"bluetooth"}, 1000,
                                                cyberdeck_apps::app_type::background,

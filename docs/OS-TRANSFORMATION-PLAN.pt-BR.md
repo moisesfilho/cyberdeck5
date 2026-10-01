@@ -133,7 +133,7 @@ bus global.
 
 - [x] Definir uma task principal por servico bloqueante.
 - [x] Declarar stack no manifesto.
-- [ ] Associar fila e mutex ao lifecycle da aplicacao.
+- [x] Associar fila e mutex ao lifecycle da aplicacao.
 - [x] Tornar start e stop idempotentes.
 - [x] Exigir join antes de destruir recursos.
 - [ ] Integrar watchdog e limites de execucao.
@@ -166,6 +166,15 @@ compartilhados permanecem vivos: este recorte não faz desmontagem de recursos
 de boot. O manifesto declara stack de 8192 bytes e `queue_depth=0`, pois a
 ponte não possui fila própria; a entrada é bounded pelo driver/assembler
 existente, e o campo não é usado para inventar capacidade.
+
+O Screenshot completa este recorte com a task `screenshot_ctl` (stack de 6144
+bytes e fila bounded de 8 itens). O callback de estado Wi-Fi somente copia e
+publica snapshots; a task serializa `httpd_start()`/`httpd_stop()`. O start
+aguarda handshake de prontidão e o stop remove o listener, sinaliza a task e
+aguarda a barreira de quiescência do mutex de requisição antes de retornar.
+Timeout não executa `vTaskDelete` forçado e coloca task, fila, mutex e HTTPD em
+quarentena. O listener Wi-Fi agora possui unregister sincronizado, que não
+retorna enquanto um callback estiver em execução.
 
 ### 6. Sistema de Arquivos Virtual
 

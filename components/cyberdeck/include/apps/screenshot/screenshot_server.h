@@ -21,6 +21,8 @@ typedef esp_err_t (*screenshot_capture_fn)(void *context, screenshot_frame_t *ou
 typedef void (*screenshot_release_fn)(void *context, screenshot_frame_t *frame);
 
 esp_err_t screenshot_server_init(void);
+esp_err_t screenshot_server_start(void);
+esp_err_t screenshot_server_stop(uint32_t timeout_ms);
 esp_err_t screenshot_server_set_display_port(screenshot_capture_fn capture,
                                               screenshot_release_fn release,
                                               void *context);

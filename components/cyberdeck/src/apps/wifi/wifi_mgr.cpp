@@ -107,6 +107,7 @@ struct wifi_manager_context {
     SemaphoreHandle_t wifi_event_mutex = NULL;
     SemaphoreHandle_t wifi_event_worker_wake = NULL;
     SemaphoreHandle_t wifi_event_worker_quiesced = NULL;
+    SemaphoreHandle_t state_listener_mutex = NULL;
     std::atomic<bool> wifi_event_stop_requested{false};
     bool wifi_event_worker_quarantined = false;
     cyberdeck_wifi_test::event_dispatch wifi_dispatch;
@@ -207,6 +208,7 @@ public:
 #define s_lost_ip_handler_registered (wifi_context().lost_ip_handler_registered)
 #define s_sta_netif (wifi_context().sta_netif)
 #define s_state_listeners (wifi_context().state_listeners)
+#define s_state_listener_mutex (wifi_context().state_listener_mutex)
 #define s_wifi_storage_sink (wifi_context().storage_sink)
 #define s_wifi_retry_scheduler (wifi_context().retry_scheduler)
 #define s_wifi_persistence_coordinator (wifi_context().persistence)
@@ -368,8 +370,12 @@ void wifi_mgr_process_state_callbacks(void)
     wifi_callback_update update = {};
     if (xQueueReceive(s_state_callback_queue, &update, 0) != pdTRUE) return;
     for (size_t i = 0; i < WIFI_MGR_MAX_STATE_LISTENERS; ++i) {
-        if (s_state_listeners[i].cb != NULL)
-            s_state_listeners[i].cb(&update.status, update.enabled, s_state_listeners[i].ctx);
+        if (s_state_listener_mutex == NULL ||
+            xSemaphoreTake(s_state_listener_mutex, portMAX_DELAY) != pdTRUE) continue;
+        const wifi_state_cb_t callback = s_state_listeners[i].cb;
+        void *const context = s_state_listeners[i].ctx;
+        if (callback != NULL) callback(&update.status, update.enabled, context);
+        xSemaphoreGive(s_state_listener_mutex);
     }
 }
 
@@ -918,8 +924,14 @@ void wifi_mgr_net_session_socket_error(void)
 esp_err_t wifi_mgr_add_state_callback(wifi_state_cb_t cb, void *ctx)
 {
     if (cb == NULL) return ESP_ERR_INVALID_ARG;
+    if (s_state_listener_mutex == NULL) {
+        s_state_listener_mutex = xSemaphoreCreateMutex();
+        if (s_state_listener_mutex == NULL) return ESP_ERR_NO_MEM;
+    }
+    if (xSemaphoreTake(s_state_listener_mutex, portMAX_DELAY) != pdTRUE) return ESP_ERR_TIMEOUT;
     for (size_t i = 0; i < WIFI_MGR_MAX_STATE_LISTENERS; ++i) {
         if (s_state_listeners[i].cb == cb && s_state_listeners[i].ctx == ctx) {
+            xSemaphoreGive(s_state_listener_mutex);
             return ESP_OK;
         }
     }
@@ -927,10 +939,27 @@ esp_err_t wifi_mgr_add_state_callback(wifi_state_cb_t cb, void *ctx)
         if (s_state_listeners[i].cb == NULL) {
             s_state_listeners[i].cb = cb;
             s_state_listeners[i].ctx = ctx;
+            xSemaphoreGive(s_state_listener_mutex);
             return ESP_OK;
         }
     }
+    xSemaphoreGive(s_state_listener_mutex);
     return ESP_ERR_NO_MEM;
+}
+
+esp_err_t wifi_mgr_remove_state_callback(wifi_state_cb_t cb, void *ctx)
+{
+    if (cb == NULL || s_state_listener_mutex == NULL) return ESP_ERR_NOT_FOUND;
+    if (xSemaphoreTake(s_state_listener_mutex, portMAX_DELAY) != pdTRUE) return ESP_ERR_TIMEOUT;
+    for (size_t i = 0; i < WIFI_MGR_MAX_STATE_LISTENERS; ++i) {
+        if (s_state_listeners[i].cb == cb && s_state_listeners[i].ctx == ctx) {
+            s_state_listeners[i] = {};
+            xSemaphoreGive(s_state_listener_mutex);
+            return ESP_OK;
+        }
+    }
+    xSemaphoreGive(s_state_listener_mutex);
+    return ESP_ERR_NOT_FOUND;
 }
 
 esp_err_t wifi_mgr_set_state_callback(wifi_state_cb_t cb, void *ctx)

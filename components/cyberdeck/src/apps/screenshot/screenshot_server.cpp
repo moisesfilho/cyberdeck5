@@ -11,7 +11,11 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
+
+#include <atomic>
 
 static const char *TAG = "screenshot_http";
 static httpd_handle_t s_server = NULL;
@@ -19,6 +23,22 @@ static SemaphoreHandle_t s_request_mutex = NULL;
 static screenshot_capture_fn s_capture = NULL;
 static screenshot_release_fn s_release = NULL;
 static void *s_display_context = NULL;
+static QueueHandle_t s_control_queue = NULL;
+static SemaphoreHandle_t s_ready = NULL;
+static SemaphoreHandle_t s_quiesced = NULL;
+static std::atomic<TaskHandle_t> s_task{NULL};
+static std::atomic<bool> s_stop_requested{false};
+static bool s_quarantined = false;
+
+constexpr size_t k_control_queue_depth = 8;
+constexpr uint32_t k_task_stack_bytes = 6144;
+
+enum class control_kind : uint8_t { wifi_snapshot, stop };
+struct control_item {
+    control_kind kind;
+    wifi_status_t status;
+    bool enabled;
+};
 
 static void send_error(httpd_req_t *req, httpd_err_code_t code, const char *message)
 {
@@ -171,11 +191,90 @@ static void stop_server(void)
     }
 }
 
+static void screenshot_control_task(void *)
+{
+    if (s_ready != NULL) xSemaphoreGive(s_ready);
+    control_item item = {};
+    for (;;) {
+        if (xQueueReceive(s_control_queue, &item, portMAX_DELAY) != pdTRUE) continue;
+        if (item.kind == control_kind::stop || s_stop_requested.load(std::memory_order_acquire)) {
+            /* The request mutex is the HTTP quiescence barrier. */
+            if (s_request_mutex != NULL) {
+                (void)xSemaphoreTake(s_request_mutex, portMAX_DELAY);
+                stop_server();
+                xSemaphoreGive(s_request_mutex);
+            } else {
+                stop_server();
+            }
+            s_task.store(NULL, std::memory_order_release);
+            if (s_quiesced != NULL) xSemaphoreGive(s_quiesced);
+            vTaskDelete(NULL);
+        }
+        if (item.status.has_ip && item.enabled) {
+            const esp_err_t err = start_server();
+            if (err != ESP_OK) ESP_LOGE(TAG, "could not start /screenshot: %s", esp_err_to_name(err));
+        } else {
+            if (s_request_mutex != NULL) {
+                (void)xSemaphoreTake(s_request_mutex, portMAX_DELAY);
+                stop_server();
+                xSemaphoreGive(s_request_mutex);
+            } else {
+                stop_server();
+            }
+        }
+    }
+}
+
 esp_err_t screenshot_server_init(void)
 {
-    if (s_request_mutex != NULL) return ESP_OK;
-    s_request_mutex = xSemaphoreCreateMutex();
-    return s_request_mutex == NULL ? ESP_ERR_NO_MEM : ESP_OK;
+    if (s_quarantined) return ESP_ERR_INVALID_STATE;
+    if (s_request_mutex == NULL) s_request_mutex = xSemaphoreCreateMutex();
+    if (s_control_queue == NULL) s_control_queue = xQueueCreate(k_control_queue_depth, sizeof(control_item));
+    if (s_ready == NULL) s_ready = xSemaphoreCreateBinary();
+    if (s_quiesced == NULL) s_quiesced = xSemaphoreCreateBinary();
+    if (s_request_mutex == NULL || s_control_queue == NULL || s_ready == NULL || s_quiesced == NULL)
+        return ESP_ERR_NO_MEM;
+    return ESP_OK;
+}
+
+esp_err_t screenshot_server_start(void)
+{
+    const esp_err_t init_result = screenshot_server_init();
+    if (init_result != ESP_OK) return init_result;
+    if (s_task.load(std::memory_order_acquire) != NULL) return ESP_OK;
+    s_stop_requested.store(false, std::memory_order_release);
+    TaskHandle_t task = NULL;
+    if (xTaskCreate(screenshot_control_task, "screenshot_ctl", k_task_stack_bytes, NULL,
+                    tskIDLE_PRIORITY + 1, &task) != pdPASS) {
+        s_task.store(NULL, std::memory_order_release);
+        return ESP_ERR_NO_MEM;
+    }
+    s_task.store(task, std::memory_order_release);
+    if (xSemaphoreTake(s_ready, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        s_stop_requested.store(true, std::memory_order_release);
+        control_item stop = {.kind = control_kind::stop, .status = {}, .enabled = false};
+        (void)xQueueSend(s_control_queue, &stop, 0);
+        s_quarantined = true;
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
+esp_err_t screenshot_server_stop(uint32_t timeout_ms)
+{
+    if (s_quarantined) return ESP_ERR_INVALID_STATE;
+    if (s_task.load(std::memory_order_acquire) == NULL) return ESP_OK;
+    s_stop_requested.store(true, std::memory_order_release);
+    control_item stop = {.kind = control_kind::stop, .status = {}, .enabled = false};
+    /* A full queue is still safe: stop_requested makes the task terminate on
+     * its next bounded snapshot receive.  The queue is only a wake-up path. */
+    (void)xQueueSend(s_control_queue, &stop, 0);
+    if (xSemaphoreTake(s_quiesced, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        /* Never delete a task which may still own HTTPD, the queue or mutex. */
+        s_quarantined = true;
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
 }
 
 esp_err_t screenshot_server_set_display_port(screenshot_capture_fn capture,
@@ -191,10 +290,7 @@ esp_err_t screenshot_server_set_display_port(screenshot_capture_fn capture,
 
 void screenshot_server_wifi_state(const wifi_status_t *status, bool enabled, void *)
 {
-    if (status != NULL && enabled && status->has_ip) {
-        const esp_err_t err = start_server();
-        if (err != ESP_OK) ESP_LOGE(TAG, "could not start /screenshot: %s", esp_err_to_name(err));
-    } else {
-        stop_server();
-    }
+    if (status == NULL || s_control_queue == NULL || s_stop_requested.load(std::memory_order_acquire)) return;
+    control_item item = {.kind = control_kind::wifi_snapshot, .status = *status, .enabled = enabled};
+    (void)xQueueSend(s_control_queue, &item, 0);
 }
