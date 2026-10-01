@@ -7,8 +7,8 @@
  * exercises its actual ABI and transaction/ownership behavior.
  *
  * Planned production paths:
- *   components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit_persistence.h
- *   components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit_persistence.cpp
+ *   components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit_persistence.h
+ *   components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit_persistence.cpp
  *
  * The interface is documented in contracts/cyberdeck_wifi_audit_persistence.h.
  * There is no hardware, ESP-IDF, FreeRTOS, real SD card, or asynchronous test
@@ -16,7 +16,7 @@
  * inject write/fsync/close/rename failures, stale artifacts, ACK failure, and
  * a rename barrier for the concurrency case.
  */
-#include "features/wifi/cyberdeck_wifi_audit_persistence.h"
+#include "apps/wifi/cyberdeck_wifi_audit_persistence.h"
 
 #include <algorithm>
 #include <array>

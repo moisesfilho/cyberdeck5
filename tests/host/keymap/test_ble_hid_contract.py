@@ -10,9 +10,9 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-MGR = (ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp").read_text()
-HDR = (ROOT / "components/cyberdeck/include/features/bluetooth/ble_mgr.h").read_text()
-EVENTS = (ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp").read_text()
+MGR = (ROOT / "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp").read_text()
+HDR = (ROOT / "components/cyberdeck/include/apps/bluetooth/ble_mgr.h").read_text()
+EVENTS = (ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_event_dispatch.cpp").read_text()
 
 
 def body(source: str, signature: str) -> str:

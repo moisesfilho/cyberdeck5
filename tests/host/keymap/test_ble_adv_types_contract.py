@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-BLE_MGR = ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
+BLE_MGR = ROOT / "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp"
 EXPECTED_TYPES = (
     "BLE_HCI_ADV_RPT_EVTYPE_ADV_IND",
     "BLE_HCI_ADV_RPT_EVTYPE_DIR_IND",

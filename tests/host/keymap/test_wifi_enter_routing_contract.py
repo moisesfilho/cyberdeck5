@@ -27,7 +27,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
 
 # Enter in these states must be a menu-local selection, never line execution.
 LOCAL_SELECTION_STATES = ("SEARCH_SELECT", "SAVED_SELECT", "SAVED_CONFIRM")

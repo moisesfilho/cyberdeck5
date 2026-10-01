@@ -6,7 +6,7 @@
  * diagnostic).
  *
  * RED until the coder creates
- * components/cyberdeck/src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp
+ * components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_event_dispatch.cpp
  * with the ABI declared in contracts/cyberdeck_ble_event_dispatch.h.  No
  * ESP-IDF, NimBLE, esp_hosted, LVGL, NVS, simulator or hardware is used here.
  */

@@ -1,14 +1,14 @@
 #include "platform/display/cyberdeck_ui.h"
 #include "platform/logging/event_log.h"
-#include "features/shell/cyberdeck_history.h"
-#include "features/shell/cyberdeck_shell_utils.h"
+#include "apps/shell/cyberdeck_history.h"
+#include "apps/shell/cyberdeck_shell_utils.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
-#include "features/ssh/ssh_client.h"
+#include "apps/ssh/ssh_client.h"
 #include "platform/input/tab5_keyboard.h"
 #include "platform/input/cyberdeck_keyboard_dispatch.h"
-#include "features/shell/cyberdeck_shell_session.h"
-#include "features/wifi/wifi_mgr.h"
+#include "apps/shell/cyberdeck_shell_session.h"
+#include "apps/wifi/wifi_mgr.h"
 #include "platform/display/cyberdeck_wifi_indicator.h"
 #include "platform/display/cyberdeck_wifi_icon.h"
 #include "platform/display/cyberdeck_clock.h"
@@ -16,18 +16,19 @@
 #include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_terminal_view.h"
 #include "platform/sensors/battery_protection.h"
-#include "features/shell/cyberdeck_terminal_filter.h"
-#include "features/shell/cyberdeck_ssh_line_composer.h"
-#include "features/wifi/cyberdeck_wifi_menu.h"
-#include "features/wifi/cyberdeck_wifi_state_machine.h"
-#include "features/wifi/cyberdeck_wifi_audit.h"
-#include "features/bluetooth/ble_mgr.h"
-#include "features/bluetooth/cyberdeck_ble_background.h"
-#include "features/bluetooth/cyberdeck_ble_types.h"
-#include "features/bluetooth/cyberdeck_ble_state_machine.h"
-#include "features/shell/cyberdeck_edit_line.h"
-#include "features/shell/cyberdeck_local_shell.h"
-#include "features/shell/cyberdeck_cat_worker.h"
+#include "apps/shell/cyberdeck_terminal_filter.h"
+#include "apps/shell/cyberdeck_ssh_line_composer.h"
+#include "apps/wifi/cyberdeck_wifi_menu.h"
+#include "apps/wifi/cyberdeck_wifi_state_machine.h"
+#include "apps/wifi/cyberdeck_wifi_audit.h"
+#include "apps/bluetooth/ble_mgr.h"
+#include "apps/bluetooth/cyberdeck_ble_background.h"
+#include "apps/bluetooth/cyberdeck_ble_types.h"
+#include "apps/bluetooth/cyberdeck_ble_state_machine.h"
+#include "apps/shell/cyberdeck_edit_line.h"
+#include "apps/shell/cyberdeck_local_shell.h"
+#include "apps/shell/cyberdeck_cat_worker.h"
+#include "apps/runtime/cyberdeck_app_runtime.h"
 #include "platform/display/cyberdeck_screen_protection.h"
 #include "platform/display/screen_off.h"
 
@@ -162,6 +163,7 @@ struct shell_session_host final : public cyberdeck_shell_session::host {
     std::string recent_events(std::size_t count) override;
     bool cat_enqueue(const char *cwd, const char *line) override;
     cyberdeck_local_shell &local_shell() override;
+    cyberdeck_apps::runtime &app_runtime() override;
 };
 
 shell_session_host s_shell_session_host{};
@@ -1221,6 +1223,7 @@ bool shell_session_host::cat_enqueue(const char *cwd, const char *line)
     return s_cat_worker_ready && cyberdeck_cat_worker_enqueue(cwd, line);
 }
 cyberdeck_local_shell &shell_session_host::local_shell() { return s_local_shell; }
+ cyberdeck_apps::runtime &shell_session_host::app_runtime() { return cyberdeck_apps::global_runtime(); }
 
 /* LVGL key codes never cross into the session: translate here so the
  * controller depends only on its own key vocabulary. */

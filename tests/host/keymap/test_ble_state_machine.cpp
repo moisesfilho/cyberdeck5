@@ -7,7 +7,7 @@
  * timeout / cancellation messages).
  *
  * RED until the coder creates
- * components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp
+ * components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp
  * with the ABI declared in contracts/cyberdeck_ble_state_machine.h.  No
  * ESP-IDF, NimBLE, esp_hosted, LVGL, NVS, simulator or hardware is used here.
  */

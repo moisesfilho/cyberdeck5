@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKER = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp"
+WORKER = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp"
 
 
 def require(condition: bool, message: str) -> None:

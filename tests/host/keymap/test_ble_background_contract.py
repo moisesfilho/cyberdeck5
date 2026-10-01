@@ -5,11 +5,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-MGR = ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
+MGR = ROOT / "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-BG = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp"
-BG_HDR = ROOT / "components/cyberdeck/include/features/bluetooth/cyberdeck_ble_background.h"
-STATE = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp"
+BG = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cpp"
+BG_HDR = ROOT / "components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_background.h"
+STATE = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 
 

@@ -1,5 +1,5 @@
 /* TDD contract tests for the confined local shell rooted at virtual "/". */
-#include "features/shell/cyberdeck_local_shell.h"
+#include "apps/shell/cyberdeck_local_shell.h"
 
 #include <cstdio>
 #include <cstdlib>

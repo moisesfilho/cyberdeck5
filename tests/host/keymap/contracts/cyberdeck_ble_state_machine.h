@@ -2,7 +2,7 @@
  * Host-only contract for the pure BLE search/pair state machine.
  *
  * Test-owned.  Production must expose the same ABI from
- * components/cyberdeck/include/features/bluetooth/cyberdeck_ble_state_machine.h
+ * components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_state_machine.h
  * and link from cyberdeck_ble_state_machine.cpp without ESP-IDF, NimBLE,
  * esp_hosted, FreeRTOS, LVGL, NVS, timers or hardware.
  *
@@ -20,8 +20,8 @@
 #include <string>
 #include <vector>
 
-#if __has_include("features/bluetooth/cyberdeck_ble_state_machine.h")
-#include "features/bluetooth/cyberdeck_ble_state_machine.h"
+#if __has_include("apps/bluetooth/cyberdeck_ble_state_machine.h")
+#include "apps/bluetooth/cyberdeck_ble_state_machine.h"
 #else
 #include "cyberdeck_ble_types.h"
 

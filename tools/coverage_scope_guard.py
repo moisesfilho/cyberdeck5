@@ -13,15 +13,15 @@ import sys
 # implementation.  Every other production translation unit must appear in the
 # gcovr JSON.  Keep this list deliberately small and review each addition.
 ALLOWLIST = {
-    "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp":
+    "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp":
         "NimBLE/ESP-Hosted and FreeRTOS adapter",
-    "components/cyberdeck/src/features/wifi/wifi_mgr.cpp":
+    "components/cyberdeck/src/apps/wifi/wifi_mgr.cpp":
         "ESP-IDF Wi-Fi/event/NVS adapter",
-    "components/cyberdeck/src/features/wifi/wifi_storage.cpp":
+    "components/cyberdeck/src/apps/wifi/wifi_storage.cpp":
         "BSP/SD-card storage adapter",
-    "components/cyberdeck/src/features/screenshot/screenshot_server.cpp":
+    "components/cyberdeck/src/apps/screenshot/screenshot_server.cpp":
         "ESP HTTP server/LVGL adapter",
-    "components/cyberdeck/src/features/ssh/ssh_client.cpp":
+    "components/cyberdeck/src/apps/ssh/ssh_client.cpp":
         "libssh session with ESP-IDF/BSP/FreeRTOS integration",
     "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp":
         "LVGL/BSP/FreeRTOS composition adapter; behavior is in host-tested models",
@@ -40,8 +40,8 @@ ALLOWLIST = {
 }
 
 FORBIDDEN_ALLOWLIST = {
-    "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp",
-    "components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp",
+    "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cpp",
+    "components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp",
     "components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp",
     "components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp",
     "components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp",

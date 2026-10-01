@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCE = ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
+SOURCE = ROOT / "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp"
 
 
 def body(source: str, signature: str) -> str:

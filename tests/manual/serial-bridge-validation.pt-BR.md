@@ -10,7 +10,7 @@ chunks Base64 com CRC32).
 NDJSON com uma linha por mensagem, limite de 4096 bytes, `{"rid","ok":true,
 "result":...}` no sucesso e `{"rid","ok":false,"error","error_code"}` no erro;
 `screen.dump` em frames `start`/`chunk`/`end` com chunks de 1024 bytes.
-**Firmware:** `components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp`,
+**Firmware:** `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp`,
 `main/app_main.cpp` (`bridge_start`), host `tools/cyberdeck_cli.py`.
 **Duracao estimada:** 30-45 min por execucao.
 
@@ -184,7 +184,7 @@ ip: <valor>
 
 | Unidade de producao | Funcoes | Teste |
 |---------------------|---------|-------|
-| `components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp` | `parse_ndjson_line` (limites, erros tipados, rid/type/UTF-8), `dispatch_one`/`build_envelope` (envelopes, UI/sys/wifi puro) | `tests/host/keymap/test_serial_ndjson_dispatch.cpp` |
+| `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp` | `parse_ndjson_line` (limites, erros tipados, rid/type/UTF-8), `dispatch_one`/`build_envelope` (envelopes, UI/sys/wifi puro) | `tests/host/keymap/test_serial_ndjson_dispatch.cpp` |
 | idem | `screen_bmp_size`, `screen_chunk_bounds`, `screen_dump_init/get_chunk`, `crc32` | `tests/host/keymap/test_serial_screen_dump.cpp` |
 | idem | `LineAssembler` (stream intercalado com logs, linha >4096, feeds fragmentados), `is_log_line`/`extract_envelope` | `tests/host/keymap/test_serial_cli_tolerance.cpp` |
 | idem | `sys_info_to_json/from_json`, `wifi_scan_to_json` | `tests/host/keymap/test_serial_sysinfo_wifi.cpp` |

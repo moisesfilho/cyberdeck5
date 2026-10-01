@@ -10,6 +10,8 @@ necessários para a primeira ferramenta.
 - Manter operações bloqueantes fora da thread da UI.
 - Não criar extensibilidade antes de existir uma segunda ferramenta real.
 - Preferir buffers limitados e descarte explícito de dados antigos.
+- Tratar aplicações como módulos compilados e registrados explicitamente antes
+  de introduzir execução dinâmica a partir do SD.
 - O `cat` local valida o caminho e o tamanho antes da saída, abre cada componente
   por descritor sem seguir symlinks, lê somente do descritor validado e rejeita
   conservadoramente VFS sem essas garantias; sua saída é sanitizada antes do LVGL
@@ -19,10 +21,10 @@ necessários para a primeira ferramenta.
 ## Organização semântica
 
 O componente ESP-IDF único é organizado por contexto, não por componentes
-ESP-IDF adicionais. `src/features/` contém os fluxos de produto (shell, Wi-Fi,
+ESP-IDF adicionais. `src/apps/` contém os fluxos de produto (shell, Wi-Fi,
 SSH e screenshot), enquanto `src/platform/` contém as integrações de entrada,
 display, sensores, logging e networking. Os headers espelham essa árvore em
-`include/features/` e `include/platform/`. A lógica pura deve permanecer
+`include/apps/` e `include/platform/`. A lógica pura deve permanecer
 host-testável; `app_main` é o ponto de composição das partes concretas.
 
 ### Camada visual
@@ -33,7 +35,7 @@ Os widgets LVGL são mantidos separados dos serviços e comandos. `cyberdeck_ui.
 `cyberdeck_terminal_view.cpp` cria o textarea e o teclado virtual. Esses views
 recebem dados já resolvidos e callbacks de interação, mas não incluem
 `wifi_mgr`, `ssh_client`, `ble_mgr`, shell, NVS, I2C ou persistência. Serviços e
-modelos de produto permanecem em `src/features/`, sem dependência de LVGL.
+modelos de produto permanecem em `src/apps/`, sem dependência de LVGL.
 
 O handoff do teclado físico fica isolado em `cyberdeck_keyboard_dispatch.cpp`.
 Ele possui a fila bounded de snapshots, o mutex de enqueue/rollback e o
@@ -41,7 +43,7 @@ agendamento por `lv_async_call`. O dispatcher não conhece sessões de shell,
 SSH, Wi-Fi ou BLE.
 
 O estado de sessão e as decisões de entrada ficam em
-`src/features/shell/cyberdeck_shell_session.{h,cpp}`. A `session` é livre de
+`src/apps/shell/cyberdeck_shell_session.{h,cpp}`. A `session` é livre de
 LVGL e possui a linha corrente, o cursor, o histórico, o SSID Wi-Fi pendente, o
 `cyberdeck_edit_line` de cada contexto (menu, SSH, senha, host key), a chave de
 estado SSH e o buffer de passkey BLE. Ela decide o que cada tecla faz e executa
@@ -67,6 +69,34 @@ terminal. A UI mantém apenas o pump de eventos (`on_ble_event`,
 `process_ble_events`, `ble_submit_actions`) e roteia eventos e preempção
 para o scheduler.
 
+### Runtime de aplicações
+
+O firmware inicia diretamente na aplicação shell. A sessão de shell continua
+sendo o controlador da interação e consulta `cyberdeck_apps::runtime` depois de
+tentar os comandos locais, mas antes de encaminhar a linha para SSH ou outro
+passthrough.
+
+Na primeira fase, aplicações são compiladas no firmware e implementam o
+contrato `manifest`/`application`: manifesto bounded, `start`, `stop`, estado
+de execução e dispatch do comando registrado. O registry aceita no máximo 16
+aplicações. Os comandos `app list`, `app info <id>`, `app start <id>` e
+`app stop <id>` são fornecidos pelo runtime.
+
+A aplicação `cyberdeck.demo` é a prova inicial do contrato. Ela é registrada
+durante `cyberdeck_ui_init()` e expõe o comando `demo`. Não existe ainda
+loader ELF, instalação dinâmica, interpretador de scripts ou acesso de uma
+aplicação a LVGL. Esses recursos dependerão de um `cyberdeck_app_host` com
+permissões, limites de memória, filas e lifecycle próprios.
+
+Os system apps fixos do Tab5 são `cyberdeck.shell`, `cyberdeck.wifi`,
+`cyberdeck.serial`, `cyberdeck.ssh`, `cyberdeck.screenshot` e
+`cyberdeck.bluetooth`. `app_main` apenas registra e inicia o supervisor; os
+serviços não são mais inicializados diretamente nesse ponto. A ordem preserva
+as dependências existentes: shell, screenshot, Wi-Fi, Serial-JTAG, Bluetooth e
+SSH. O teardown completo ficará para a evolução das APIs de serviço; nesta
+fase, SSH e Bluetooth possuem stop real, enquanto Wi-Fi, Serial-JTAG e
+Screenshot permanecem ativos até reboot.
+
 `managed_components/`, incluindo `m5stack_tab5` e `sock_utils`, permanece fora
 dessa reorganização e continua sendo gerenciado pelo ESP-IDF.
 
@@ -77,10 +107,9 @@ dessa reorganização e continua sendo gerenciado pelo ESP-IDF.
 3. Criar a tela TUI monocromática.
 4. Sob lock do display: criar a UI e inicializar a protecao de tela (`screen_off_init` com timeout padrao de 2 minutos e brilho 20%); restaurar o timeout persistido do NVS antes de iniciar o timer.
 5. Iniciar o reader INA226; falha de inicializacao registra log e nao aborta o restante do boot; ausencia no probe publica `absent`, enquanto falha de leitura apos o startup publica `unavailable`.
-6. Inicializar Wi-Fi e reconexao a partir do SD; o header recebe estados de Wi-Fi por callback e atualiza somente o icone: claro quando Wi-Fi esta habilitado, conectado e possui IP, e escuro nos demais estados. O SSID nao e renderizado no header.
-7. Aguardar conexao SSH iniciada pelo usuario.
-8. Iniciar a ponte manual USB Serial-JTAG (`bridge_start`): task propria, iniciada por ultimo; falha aqui registra aviso e nao derruba o boot.
-9. Iniciar o gerenciador BLE (`ble_mgr_start`): task propria para stack NimBLE via ESP-Hosted ao C6; falha registra aviso e nao aborta o boot.
+6. Iniciar os system apps em ordem: shell, screenshot, Wi-Fi, Serial-JTAG, Bluetooth e SSH; falhas de serviço continuam não fatais.
+7. O app Wi-Fi publica estados para o header, que atualiza somente o ícone; o SSID não é renderizado no header.
+8. Aguardar conexão SSH iniciada pelo usuário através do app SSH.
 
 ## Bateria
 

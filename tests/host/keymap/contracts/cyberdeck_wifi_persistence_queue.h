@@ -1,6 +1,6 @@
 #pragma once
 
-#include "features/wifi/cyberdeck_wifi_event_dispatch.h"
+#include "apps/wifi/cyberdeck_wifi_event_dispatch.h"
 
 namespace cyberdeck_wifi_test {
 

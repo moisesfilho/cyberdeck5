@@ -5,13 +5,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-MGR = ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
+MGR = ROOT / "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
-BG = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp"
-TYPES = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_types.cpp"
-STORE = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_store.cpp"
-EVENTS = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+BG = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cpp"
+TYPES = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp"
+STORE = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_store.cpp"
+EVENTS = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_event_dispatch.cpp"
 
 
 def body(source: str, signature: str) -> str:

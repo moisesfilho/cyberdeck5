@@ -3,7 +3,7 @@
  * Sem hardware real.
  *
  * Contrato esperado (producao ausente -> RED):
- *   Header: components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
+ *   Header: components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h
  *   Tipos:
  *     struct SysInfo { std::string fw_version; std::string idf_version; std::string chip; int free_heap; std::string uptime; };
  *     struct WifiNet { std::string ssid; int rssi; bool open; };
@@ -20,7 +20,7 @@
  *     - wifi scan JSON contem array "networks" com ssid/rssi/open, ordenavel
  *     - handlers retornam envelope NDJSON com rid ecoado e ok:true
  */
-#include "features/serial/cyberdeck_serial_bridge.h"
+#include "apps/serial/cyberdeck_serial_bridge.h"
 
 #include <cstdio>
 #include <cstring>

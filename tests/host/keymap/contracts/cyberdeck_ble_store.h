@@ -2,7 +2,7 @@
  * Host-only contract for the pure BLE bond store.
  *
  * Test-owned.  Production must expose the same ABI from
- * components/cyberdeck/include/features/bluetooth/cyberdeck_ble_store.h
+ * components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_store.h
  * and link from cyberdeck_ble_store.cpp without ESP-IDF, NimBLE, esp_hosted,
  * FreeRTOS, LVGL, NVS, FATFS or hardware.  The bytes-to-storage mapping is the
  * adapter's job; this module owns only the bounded logical record set.
@@ -20,8 +20,8 @@
 #include <string>
 #include <vector>
 
-#if __has_include("features/bluetooth/cyberdeck_ble_store.h")
-#include "features/bluetooth/cyberdeck_ble_store.h"
+#if __has_include("apps/bluetooth/cyberdeck_ble_store.h")
+#include "apps/bluetooth/cyberdeck_ble_store.h"
 #else
 #include "cyberdeck_ble_types.h"
 

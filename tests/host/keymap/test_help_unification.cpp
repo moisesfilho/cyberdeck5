@@ -7,8 +7,8 @@
  */
 #include "contracts/cyberdeck_help.h"
 
-#include "features/shell/cyberdeck_local_shell.h"
-#include "features/shell/cyberdeck_shell_utils.h"
+#include "apps/shell/cyberdeck_local_shell.h"
+#include "apps/shell/cyberdeck_shell_utils.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -158,8 +158,8 @@ void test_catalog_is_complete_and_unique()
 
     const std::vector<std::string> actual_lines = split_lines(actual);
     const std::vector<std::string> expected_lines = split_lines(expected);
-    CHECK(actual_lines.size() == 16);
-    CHECK(expected_lines.size() == 16);
+    CHECK(actual_lines.size() == 17);
+    CHECK(expected_lines.size() == 17);
 
     std::vector<std::string> first_tokens;
     for (const std::string &line : actual_lines) {

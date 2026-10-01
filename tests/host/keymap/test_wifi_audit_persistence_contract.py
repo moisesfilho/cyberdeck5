@@ -10,8 +10,8 @@ import re
 
 
 ROOT = Path(__file__).resolve().parents[3]
-HEADER = ROOT / "components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit_persistence.h"
-SOURCE = ROOT / "components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit_persistence.cpp"
+HEADER = ROOT / "components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit_persistence.h"
+SOURCE = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit_persistence.cpp"
 CONTRACT = ROOT / "tests/host/keymap/contracts/cyberdeck_wifi_audit_persistence.h"
 CPP = ROOT / "tests/host/keymap/test_wifi_audit_persistence.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"

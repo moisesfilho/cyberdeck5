@@ -3,7 +3,7 @@
  *
  * This header is intentionally test-owned.  The production implementation must
  * expose the same ABI from
- * components/cyberdeck/include/features/bluetooth/cyberdeck_ble_types.h
+ * components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_types.h
  * and link from cyberdeck_ble_types.cpp without ESP-IDF, NimBLE, Bluedroid,
  * esp_hosted, FreeRTOS, LVGL, NVS, or hardware.
  *
@@ -18,8 +18,8 @@
 #include <string>
 #include <vector>
 
-#if __has_include("features/bluetooth/cyberdeck_ble_types.h")
-#include "features/bluetooth/cyberdeck_ble_types.h"
+#if __has_include("apps/bluetooth/cyberdeck_ble_types.h")
+#include "apps/bluetooth/cyberdeck_ble_types.h"
 #else
 namespace cyberdeck_ble {
 

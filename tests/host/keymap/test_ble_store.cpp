@@ -5,7 +5,7 @@
  * and REQ-BLE-010 (no secret is ever persisted, accepted or displayed).
  *
  * RED until the coder creates
- * components/cyberdeck/src/features/bluetooth/cyberdeck_ble_store.cpp with the
+ * components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_store.cpp with the
  * ABI declared in contracts/cyberdeck_ble_store.h.  No ESP-IDF, NimBLE,
  * esp_hosted, LVGL, NVS, FATFS, simulator or hardware is used here.
  */

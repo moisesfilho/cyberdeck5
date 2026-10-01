@@ -6,7 +6,7 @@
 #
 # Sem dependencias externas alem de g++/make: compila os fontes de producao
 # (components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp,
-# components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp,
+# components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp,
 # cyberdeck_history.cpp e components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp)
 # contra um shim da API LVGL (shim/lvgl.h) - exceto historico e parser de
 # eventos, que sao logica pura sem LVGL - e roda as assercoes.
@@ -24,17 +24,17 @@ PYTHON   ?= python3
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O2
 
 KEYMAP_SRC       := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp
-SHELL_UTILS_SRC  := ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp
-SHELL_HELP_HDR   := ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_help.h
-HISTORY_SRC      := ../../../components/cyberdeck/src/features/shell/cyberdeck_history.cpp
+SHELL_UTILS_SRC  := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp
+SHELL_HELP_HDR   := ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h
+HISTORY_SRC      := ../../../components/cyberdeck/src/apps/shell/cyberdeck_history.cpp
 KEYBOARD_EVENT_SRC := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp
 EVENT_LOG_RECENT_SRC := ../../../components/cyberdeck/src/platform/logging/event_log_recent.cpp
-TERMINAL_FILTER_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_terminal_filter.cpp
+TERMINAL_FILTER_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_terminal_filter.cpp
 TERMINAL_OUTPUT_CONTRACT := test_terminal_output_contract.py
-EDIT_LINE_SRC    := ../../../components/cyberdeck/src/features/shell/cyberdeck_edit_line.cpp
+EDIT_LINE_SRC    := ../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp
 NET_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/networking/cyberdeck_net_coordinator.cpp
-ECHO_GUARD_SRC   := ../../../components/cyberdeck/src/features/shell/cyberdeck_ssh_echo_guard.cpp
-LINE_COMPOSER_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_ssh_line_composer.cpp
+ECHO_GUARD_SRC   := ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_echo_guard.cpp
+LINE_COMPOSER_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp
 CLOCK_SRC        := ../../../components/cyberdeck/src/platform/display/cyberdeck_clock.cpp
 SCREEN_PROTECTION_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp
 SCREEN_PROTECTION_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_screen_protection.h
@@ -44,17 +44,17 @@ SCREEN_PROTECTION_CONTRACT := test_screen_protection_contract.py
 WIFI_INDICATOR_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp
 WIFI_ICON_SRC      := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp
 WIFI_ICON_HDR      := ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_icon.h
-WIFI_MENU_SRC      := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_menu.cpp
-WIFI_STATE_MACHINE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_state_machine.cpp
-WIFI_STATE_MACHINE_HDR := ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_state_machine.h
-WIFI_EVENT_DISPATCH_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_event_dispatch.cpp
-WIFI_PERSISTENCE_QUEUE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_queue.cpp
-WIFI_PERSISTENCE_COORDINATOR_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_persistence_coordinator.cpp
-WIFI_AUDIT_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit.cpp
+WIFI_MENU_SRC      := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp
+WIFI_STATE_MACHINE_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp
+WIFI_STATE_MACHINE_HDR := ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_state_machine.h
+WIFI_EVENT_DISPATCH_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_event_dispatch.cpp
+WIFI_PERSISTENCE_QUEUE_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_persistence_queue.cpp
+WIFI_PERSISTENCE_COORDINATOR_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_persistence_coordinator.cpp
+WIFI_AUDIT_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit.cpp
 WIFI_AUDIT_SAVE_TEST := test_wifi_audit_save.cpp
 WIFI_AUDIT_SAVE_CONTRACT := test_wifi_audit_save_contract.py
-WIFI_AUDIT_PERSISTENCE_SRC := ../../../components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit_persistence.cpp
-WIFI_AUDIT_PERSISTENCE_HDR := ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit_persistence.h
+WIFI_AUDIT_PERSISTENCE_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit_persistence.cpp
+WIFI_AUDIT_PERSISTENCE_HDR := ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit_persistence.h
 WIFI_AUDIT_PERSISTENCE_CONTRACT_HDR := contracts/cyberdeck_wifi_audit_persistence.h
 ORIENTATION_SRC := ../../../components/cyberdeck/src/platform/sensors/orientation.cpp
 BATTERY_PURE_SRC := ../../../components/cyberdeck/src/platform/sensors/battery_status.cpp
@@ -82,25 +82,25 @@ BATTERY_VIEW_TEST := test_battery_view.cpp
 BATTERY_VIEW_BIN := test_battery_view_bin
 BATTERY_VIEW_CONTRACT := test_battery_view_contract.py
 BATTERY_BIN       := test_battery_contract
-SERIAL_BRIDGE_SRC := ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp
-SERIAL_BRIDGE_HDR := ../../../components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
+SERIAL_BRIDGE_SRC := ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp
+SERIAL_BRIDGE_HDR := ../../../components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h
 # BLE (REQ-BLE-001..011 / AC-BLE-001..011).  The radio lives on the ESP32-C6
 # coprocessor reached through esp_hosted, so the host suite only ever links the
 # four pure modules plus the host-linkable shell parser.  The contracts are
 # test-owned ABI fixtures under contracts/ and the production headers must
 # expose exactly the same symbols.
-BLE_TYPES_SRC     := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_types.cpp
-BLE_STATE_SRC     := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp
-BLE_EVENTS_SRC    := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp
-BLE_STORE_SRC     := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_store.cpp
-BLE_TYPES_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_types.h
-BLE_STATE_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_state_machine.h
-BLE_EVENTS_HDR    := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_event_dispatch.h
-BLE_STORE_HDR     := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_store.h
-BLE_MGR_SRC       := ../../../components/cyberdeck/src/features/bluetooth/ble_mgr.cpp
-BLE_MGR_HDR       := ../../../components/cyberdeck/include/features/bluetooth/ble_mgr.h
-BLE_BACKGROUND_SRC := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp
-BLE_BACKGROUND_HDR := ../../../components/cyberdeck/include/features/bluetooth/cyberdeck_ble_background.h
+BLE_TYPES_SRC     := ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp
+BLE_STATE_SRC     := ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp
+BLE_EVENTS_SRC    := ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_event_dispatch.cpp
+BLE_STORE_SRC     := ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_store.cpp
+BLE_TYPES_HDR     := ../../../components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_types.h
+BLE_STATE_HDR     := ../../../components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_state_machine.h
+BLE_EVENTS_HDR    := ../../../components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_event_dispatch.h
+BLE_STORE_HDR     := ../../../components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_store.h
+BLE_MGR_SRC       := ../../../components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp
+BLE_MGR_HDR       := ../../../components/cyberdeck/include/apps/bluetooth/ble_mgr.h
+BLE_BACKGROUND_SRC := ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cpp
+BLE_BACKGROUND_HDR := ../../../components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_background.h
 BLE_TYPES_CONTRACT_HDR     := contracts/cyberdeck_ble_types.h
 BLE_STATE_CONTRACT_HDR     := contracts/cyberdeck_ble_state_machine.h
 BLE_EVENTS_CONTRACT_HDR    := contracts/cyberdeck_ble_event_dispatch.h
@@ -111,16 +111,18 @@ INCLUDES        := -Ishim -I../../../components/cyberdeck/include
 LVGL_MANAGED := ../../../managed_components/lvgl__lvgl
 LVGL_GROUP_H := $(LVGL_MANAGED)/include/lvgl/core/lv_group.h
 
-SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/features/screenshot/screenshot_bmp.cpp
-LOCAL_SHELL_SRC := ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp
-SESSION_SRC     := ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp
-SESSION_HDR     := ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_session.h
-LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/features/shell/cyberdeck_local_shell.h
+SCREENSHOT_BMP_SRC := ../../../components/cyberdeck/src/apps/screenshot/screenshot_bmp.cpp
+LOCAL_SHELL_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp
+SESSION_SRC     := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp
+SESSION_HDR     := ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h
+APP_RUNTIME_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp
+APP_RUNTIME_HDR := ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h
+LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/apps/shell/cyberdeck_local_shell.h
 CAT_MULTILINE_SRC := test_cat_multiline.cpp
 SHELL_TEST       := test_shell_utils.cpp
 SERIAL_TEST      := test_serial_ndjson_dispatch.cpp
-CAT_WORKER_SRC   := ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp
-BLE_BACKGROUND_SRC := ../../../components/cyberdeck/src/features/bluetooth/cyberdeck_ble_background.cpp
+CAT_WORKER_SRC   := ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp
+BLE_BACKGROUND_SRC := ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cpp
 KEYBOARD_DISPATCH_SRC := ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
 HEADER_VIEW_SRC  := ../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp
 TERMINAL_VIEW_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp
@@ -128,7 +130,7 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_cat_worker test_ble_background test_keyboard_dispatch test_display_views $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_cat_worker test_ble_background test_keyboard_dispatch test_display_views $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
 .PHONY: all test verify clean test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard
 
@@ -171,7 +173,7 @@ test_shell_utils: test_shell_utils.cpp contracts/cyberdeck_help.h $(SHELL_UTILS_
 # Logica pura (sem LVGL): nao precisa de shim.
 # O header entra como dependencia para que mudancas no contrato (ex.: limite)
 # forcem recompilacao e a validacao do static_assert de paridade.
-test_history: test_history.cpp $(HISTORY_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_history.h
+test_history: test_history.cpp $(HISTORY_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_history.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_history.cpp $(HISTORY_SRC) -o test_history
 
 # Logica pura (sem LVGL): nao precisa de shim.
@@ -190,7 +192,7 @@ test_event_log_recent: test_event_log_recent.cpp $(EVENT_LOG_RECENT_SRC) ../../.
 test_event_log_contract: test_event_log_contract.py ../../../components/cyberdeck/src/platform/logging/event_log.cpp Makefile
 	$(PYTHON) test_event_log_contract.py
 
-test_event_log_config_contract: test_event_log_config_contract.py ../../../components/cyberdeck/Kconfig ../../../components/cyberdeck/include/platform/logging/event_log_recent.h ../../../components/cyberdeck/src/platform/logging/event_log.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp Makefile
+test_event_log_config_contract: test_event_log_config_contract.py ../../../components/cyberdeck/Kconfig ../../../components/cyberdeck/include/platform/logging/event_log_recent.h ../../../components/cyberdeck/src/platform/logging/event_log.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp Makefile
 	$(PYTHON) test_event_log_config_contract.py
 
 # Logica pura (sem LVGL): indicador de estado do Wi-Fi (contrato em
@@ -216,7 +218,7 @@ test_wifi_icon_layout: test_wifi_icon_layout.cpp $(WIFI_ICON_SRC) ../../../compo
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_icon_layout.cpp $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) -o test_wifi_icon_layout
 
 # Logica pura (sem LVGL): modelo e renderizacao do menu Wi-Fi (scan/saved/deduplicacao/navegacao).
-test_wifi_menu: test_wifi_menu.cpp $(WIFI_MENU_SRC) ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_menu.h
+test_wifi_menu: test_wifi_menu.cpp $(WIFI_MENU_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_menu.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_menu.cpp $(WIFI_MENU_SRC) -o test_wifi_menu
 
 # Host-side contract coverage for the pure search/saved state machine:
@@ -242,7 +244,7 @@ test_wifi_persistence_queue: test_wifi_persistence_queue.cpp $(WIFI_PERSISTENCE_
 test_wifi_persistence_coordination: test_wifi_persistence_coordination.cpp $(WIFI_PERSISTENCE_COORDINATOR_SRC) $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) contracts/cyberdeck_wifi_persistence_coordinator.h contracts/cyberdeck_wifi_persistence_queue.h contracts/cyberdeck_wifi_event_dispatch.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -Icontracts test_wifi_persistence_coordination.cpp $(WIFI_PERSISTENCE_COORDINATOR_SRC) $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) -o test_wifi_persistence_coordination
 
-test_wifi_audit: test_wifi_audit.cpp $(WIFI_AUDIT_SRC) ../../../components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit.h $(WIFI_AUDIT_PERSISTENCE_HDR)
+test_wifi_audit: test_wifi_audit.cpp $(WIFI_AUDIT_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit.h $(WIFI_AUDIT_PERSISTENCE_HDR)
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_audit.cpp $(WIFI_AUDIT_SRC) -o test_wifi_audit
 
 # Host contract for the injectable Wi-Fi audit persistence transaction.
@@ -259,7 +261,7 @@ test_wifi_audit_persistence_contract: test_wifi_audit_persistence_contract.py $(
 test_wifi_audit_save: $(WIFI_AUDIT_SAVE_TEST) $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(CLOCK_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_AUDIT_SAVE_TEST) $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(CLOCK_SRC) -pthread -o test_wifi_audit_save
 
-test_wifi_audit_save_contract: $(WIFI_AUDIT_SAVE_CONTRACT) ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp ../../../code-map.md ../../../.gitignore
+test_wifi_audit_save_contract: $(WIFI_AUDIT_SAVE_CONTRACT) ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../code-map.md ../../../.gitignore
 	$(PYTHON) $(WIFI_AUDIT_SAVE_CONTRACT)
 
 
@@ -288,7 +290,7 @@ test_screen_protection: $(SCREEN_PROTECTION_TEST) $(SCREEN_PROTECTION_SRC) $(SCR
 # compartilhado de ajuda, a fixture e os dois testes comportamentais que
 # comparam a ajuda de producao sao pre-requisitos: o contrato inspeciona todos
 # eles e nao pode ser invalidado por arquivo obsoleto.
-test_screen_protection_contract: $(SCREEN_PROTECTION_CONTRACT) $(SCREEN_PROTECTION_SRC) $(SCREEN_PROTECTION_HDR) $(SHELL_HELP_HDR) contracts/cyberdeck_help.h $(SHELL_TEST) $(HELP_UNIFICATION_TEST) $(SERIAL_TEST) ../../../components/cyberdeck/src/platform/display/screen_off.cpp ../../../components/cyberdeck/include/platform/display/screen_off.h ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../.gitignore
+test_screen_protection_contract: $(SCREEN_PROTECTION_CONTRACT) $(SCREEN_PROTECTION_SRC) $(SCREEN_PROTECTION_HDR) $(SHELL_HELP_HDR) contracts/cyberdeck_help.h $(SHELL_TEST) $(HELP_UNIFICATION_TEST) $(SERIAL_TEST) ../../../components/cyberdeck/src/platform/display/screen_off.cpp ../../../components/cyberdeck/include/platform/display/screen_off.h ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../.gitignore
 	$(PYTHON) $(SCREEN_PROTECTION_CONTRACT)
 
 # Logica pura (sem LVGL): filtro puro e incremental da saida SSH (contrato em
@@ -298,7 +300,7 @@ test_screen_protection_contract: $(SCREEN_PROTECTION_CONTRACT) $(SCREEN_PROTECTI
 # no fluxo on_ssh_data()/append_output() do TUI. Ate la, este target fica
 # vermelho por design (TDD): o build falha por MODULO AUSENTE, com a mensagem
 # "No rule to make target '.../cyberdeck_terminal_filter.cpp'".
-test_terminal_filter: test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_terminal_filter.h
+test_terminal_filter: test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_terminal_filter.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) -o test_terminal_filter
 
 test_terminal_output_contract: $(TERMINAL_OUTPUT_CONTRACT) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp test_terminal_filter.cpp Makefile
@@ -320,6 +322,7 @@ test_terminal_output_contract: $(TERMINAL_OUTPUT_CONTRACT) ../../../components/c
 # BLE/Wi-Fi, shell_utils, local_shell, protecao de tela e bateria).
 test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
+		$(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) $(BATTERY_PROTECTION_SRC) \
 		$(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) $(WIFI_STATE_MACHINE_SRC) \
 		$(BLE_TYPES_SRC) $(BLE_STATE_SRC) \
@@ -327,11 +330,18 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_session.cpp \
 		$(SESSION_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
 		$(LOCAL_SHELL_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
+		$(APP_RUNTIME_SRC) \
 		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
 		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) \
 		$(BLE_STATE_SRC) -o test_shell_session
 
-test_edit_line: test_edit_line.cpp $(EDIT_LINE_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_edit_line.h
+test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_app_runtime.cpp $(APP_RUNTIME_SRC) -o test_app_runtime
+
+test_system_apps_contract: test_system_apps_contract.py
+	$(PYTHON) test_system_apps_contract.py
+
+test_edit_line: test_edit_line.cpp $(EDIT_LINE_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_edit_line.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_edit_line.cpp $(EDIT_LINE_SRC) -o test_edit_line
 
 # Logica pura (sem LVGL): coordenador do teardown Wi-Fi/SSH e do gating dos
@@ -356,7 +366,7 @@ test_net_coordinator: test_net_coordinator.cpp $(NET_COORDINATOR_SRC) ../../../c
 # coder junto com a integracao em on_ssh_data(). Ate la, este target fica
 # vermelho por design (TDD): o build falha por MODULO AUSENTE, com a mensagem
 # "No rule to make target '.../cyberdeck_ssh_echo_guard.cpp'".
-test_ssh_echo_guard: test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_ssh_echo_guard.h
+test_ssh_echo_guard: test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_echo_guard.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) -o test_ssh_echo_guard
 
 # Logica pura (sem LVGL): composicao local/remota da linha SSH (contrato em
@@ -371,7 +381,7 @@ test_ssh_echo_guard: test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) ../../../componen
 # (deques); a implementacao atual (cyberdeck_ssh_line_composer.cpp) ainda usa a
 # politica FIFO antiga e por isso NAO compila — este target fica vermelho por
 # design (TDD) ate o coder reimplementar o estado unico previsto no contrato.
-test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../../components/cyberdeck/include/features/shell/cyberdeck_ssh_line_composer.h
+test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_line_composer.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) -o test_ssh_line_composer
 
 # Logica pura (sem LVGL): API pura de geracao de BMP 24-bit top-down
@@ -381,7 +391,7 @@ test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../..
 # (screenshot_bmp.cpp) sera criada pelo coder. Ate la, este target
 # fica vermelho por design (TDD): o build falha por MODULO AUSENTE,
 # com a mensagem "No rule to make target '.../screenshot_bmp.cpp'".
-test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../components/cyberdeck/include/features/screenshot/screenshot_bmp.h
+test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../components/cyberdeck/include/apps/screenshot/screenshot_bmp.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) -o test_screenshot_bmp
 
 # Host test for the confined /sdcard local shell.  Include the production
@@ -400,12 +410,12 @@ test_cat_multiline: $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
 # RED: the menu and local shell must render one shared help catalog.  The
 # target links both real production implementations; no production edit is
 # implied by this test registration.
-test_help_unification: $(HELP_UNIFICATION_TEST) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) shim/lvgl.h
+test_help_unification: $(HELP_UNIFICATION_TEST) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(HELP_UNIFICATION_TEST) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) -o test_help_unification
 
 # RED structural companion: rejects private literal help lists in the two
 # shells and in the non-linkable LVGL UI.  It performs source inspection only.
-help_unification_contract: $(HELP_UNIFICATION_CONTRACT) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) $(LOCAL_SHELL_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../code-map.md Makefile
+help_unification_contract: $(HELP_UNIFICATION_CONTRACT) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) $(LOCAL_SHELL_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../code-map.md Makefile
 	$(PYTHON) $(HELP_UNIFICATION_CONTRACT)
 
 test_orientation: test_orientation.cpp $(ORIENTATION_SRC) ../../../components/cyberdeck/include/platform/sensors/orientation.h shim/lvgl.h
@@ -465,7 +475,7 @@ test_battery_view_contract: $(BATTERY_VIEW_CONTRACT) $(BATTERY_VIEW_SRC) $(BATTE
 # Structural companion for expander-B, NVS, UI timer/snapshot, shell and
 # ui.type.  It reads production source and fails closed when the feature is
 # absent; it never opens hardware or a simulator.
-test_battery_protection_contract: $(BATTERY_PROTECTION_CONTRACT) $(BATTERY_PROTECTION_CONTRACT_HDR) $(BATTERY_ADAPTER_SRC) $(BATTERY_ADAPTER_HDR) ../../../components/cyberdeck/CMakeLists.txt ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp ../../../tests/host/keymap/test_serial_ndjson_dispatch.cpp ../../../code-map.md ../../../.gitignore ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md Makefile
+test_battery_protection_contract: $(BATTERY_PROTECTION_CONTRACT) $(BATTERY_PROTECTION_CONTRACT_HDR) $(BATTERY_ADAPTER_SRC) $(BATTERY_ADAPTER_HDR) ../../../components/cyberdeck/CMakeLists.txt ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../tests/host/keymap/test_serial_ndjson_dispatch.cpp ../../../code-map.md ../../../.gitignore ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md Makefile
 	$(PYTHON) $(BATTERY_PROTECTION_CONTRACT)
 
 # Structural host-side contract for boot and initial IMU orientation. The
@@ -492,28 +502,28 @@ test_ui_resource_contract: test_ui_resource_contract.py ../../../components/cybe
 test_local_prompt_contract: local_prompt_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) local_prompt_contract.py
 
-test_cat_contract: cat_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h
+test_cat_contract: cat_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h
 	$(PYTHON) cat_contract.py
 
-test_cat_multiline_contract: test_cat_multiline_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp
+test_cat_multiline_contract: test_cat_multiline_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp
 	$(PYTHON) test_cat_multiline_contract.py
 
-test_cat_lifecycle_sanitization_contract: test_cat_lifecycle_sanitization_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h
+test_cat_lifecycle_sanitization_contract: test_cat_lifecycle_sanitization_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h
 	$(PYTHON) test_cat_lifecycle_sanitization_contract.py
 
-test_cat_start_teardown_start_contract: test_cat_start_teardown_start_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp
+test_cat_start_teardown_start_contract: test_cat_start_teardown_start_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp
 	$(PYTHON) test_cat_start_teardown_start_contract.py
 
-test_cat_stack_footprint_contract: test_cat_stack_footprint_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp
+test_cat_stack_footprint_contract: test_cat_stack_footprint_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp
 	$(PYTHON) test_cat_stack_footprint_contract.py
 
-test_cat_worker_path_safety_contract: test_cat_worker_path_safety_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_local_shell.h
+test_cat_worker_path_safety_contract: test_cat_worker_path_safety_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_local_shell.h
 	$(PYTHON) test_cat_worker_path_safety_contract.py
 
-local_shell_security_contract: local_shell_security_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp
+local_shell_security_contract: local_shell_security_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp
 	$(PYTHON) local_shell_security_contract.py
 
-local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h $(LOCAL_SHELL_HDR)
+local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h $(LOCAL_SHELL_HDR)
 	$(PYTHON) local_shell_tokenizer_contract.py
 
 test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
@@ -598,14 +608,14 @@ test_ble_store: test_ble_store.cpp $(BLE_STORE_SRC) $(BLE_STORE_HDR) $(BLE_STORE
 # production cyberdeck_parse_command()/cyberdeck_help_text() instead of
 # inspecting the source.  It is RED until CYBERDECK_CMD_BLUETOOTH_SEARCH and
 # CYBERDECK_CMD_BLUETOOTH_PAIRED exist and the catalog gains the bluetooth row.
-test_ble_command_parse: test_ble_command_parse.cpp contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h shim/lvgl.h
+test_ble_command_parse: test_ble_command_parse.cpp contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h shim/lvgl.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_ble_command_parse.cpp $(SHELL_UTILS_SRC) -o test_ble_command_parse
 
 # Structural companion for the non-linkable part: composition, CMake/app_main
 # wiring, the FreeRTOS task boundary, the log-secret rule, the REQ-BLE-011
 # classic-Bluetooth exclusion and the REQ/AC traceability.  Source inspection
 # only; it never opens hardware, a radio or the Serial Automation Bridge.
-test_ble_integration_contract: test_ble_integration_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_STATE_SRC) $(BLE_STATE_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STORE_CONTRACT_HDR) ../../../components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/include/features/shell/cyberdeck_shell_help.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../main/idf_component.yml ../../../sdkconfig.defaults ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md ../../../code-map.md ../../../.gitignore
+test_ble_integration_contract: test_ble_integration_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_STATE_SRC) $(BLE_STATE_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STORE_CONTRACT_HDR) ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../main/idf_component.yml ../../../sdkconfig.defaults ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md ../../../code-map.md ../../../.gitignore
 	$(PYTHON) test_ble_integration_contract.py
 
 test_ble_scan_contract: test_ble_scan_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_TYPES_HDR) $(BLE_STORE_HDR) $(BLE_EVENTS_HDR)
@@ -708,6 +718,10 @@ test: $(BINS)
 	@./test_edit_line
 	@echo "==> Executando testes comportamentais da sessao de shell"
 	@./test_shell_session
+	@echo "==> Executando testes do runtime de aplicacoes compiladas"
+	@./test_app_runtime
+	@echo "==> Executando contrato dos system apps"
+	@$(MAKE) --no-print-directory test_system_apps_contract
 	@echo "==> Executando testes do coordenador de teardown Wi-Fi/SSH e timers"
 	@./test_net_coordinator
 	@echo "==> Executando testes da guarda incremental de eco remoto do SSH"

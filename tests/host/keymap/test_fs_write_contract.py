@@ -18,12 +18,12 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[3]
-BRIDGE_CPP = ROOT / "components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp"
-BRIDGE_H = ROOT / "components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h"
+BRIDGE_CPP = ROOT / "components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp"
+BRIDGE_H = ROOT / "components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h"
 CLI = ROOT / "tools/cyberdeck_cli.py"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
-LOCAL_SHELL_CPP = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp"
+LOCAL_SHELL_CPP = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
 
 
 def require(cond, msg):

@@ -4,8 +4,8 @@
  * e REQ-005 (comandos UI) conforme plano aprovado.
  *
  * Contrato esperado (producao ausente -> RED):
- *   Header: components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
- *   Source: components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp
+ *   Header: components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h
+ *   Source: components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp
  *   Namespace: cyberdeck_serial
  *   Simbolos:
  *     constexpr size_t k_max_ndjson_line = 4096;
@@ -22,7 +22,7 @@
  * Sem hardware, sem pyserial, sem FreeRTOS/LVGL.
  * O teste falha em compilacao ate o coder criar os modulos (RED por design).
  */
-#include "features/serial/cyberdeck_serial_bridge.h"
+#include "apps/serial/cyberdeck_serial_bridge.h"
 
 #include <cstdio>
 #include <cstring>

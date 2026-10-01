@@ -13,10 +13,10 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
-AUDIT = ROOT / "components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit.cpp"
-PERSISTENCE = ROOT / "components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit_persistence.cpp"
-PERSISTENCE_HEADER = ROOT / "components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit_persistence.h"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+AUDIT = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit.cpp"
+PERSISTENCE = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit_persistence.cpp"
+PERSISTENCE_HEADER = ROOT / "components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit_persistence.h"
 PERSISTENCE_CONTRACT = ROOT / "tests/host/keymap/contracts/cyberdeck_wifi_audit_persistence.h"
 COMPONENT = ROOT / "components/cyberdeck/CMakeLists.txt"
 SDKCONFIG_DEFAULTS = ROOT / "sdkconfig.defaults"
@@ -143,7 +143,7 @@ def main() -> int:
             "component build must register audit source")
     require("cyberdeck_wifi_audit_persistence.cpp" in component,
             "component build must register the real persistence source")
-    require("features/wifi/cyberdeck_wifi_audit.h" in makefile,
+    require("apps/wifi/cyberdeck_wifi_audit.h" in makefile,
             "host test must include the production audit header")
     require("test_wifi_audit" in makefile,
             "host Makefile must register audit tests")

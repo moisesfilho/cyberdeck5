@@ -8,10 +8,7 @@
 #include "platform/sensors/battery_protection.h"
 #include "platform/display/screen_off.h"
 #include "platform/input/tab5_keyboard.h"
-#include "features/wifi/wifi_mgr.h"
-#include "features/screenshot/screenshot_server.h"
-#include "features/serial/cyberdeck_serial_bridge.h"
-#include "features/bluetooth/ble_mgr.h"
+#include "apps/system/cyberdeck_system_apps.h"
 #include "bsp/m5stack_tab5.h"
 
 static const char *TAG = "cyberdeck5";
@@ -24,6 +21,7 @@ extern "C" void app_main(void)
     if (bsp_sdcard_get_handle() == nullptr) return;
 
     ESP_ERROR_CHECK(event_log_init());
+    ESP_ERROR_CHECK(cyberdeck_system_apps_register());
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -53,21 +51,8 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(tab5_keyboard_init());
     ESP_ERROR_CHECK(bsp_display_brightness_set(20));
 
-    ESP_ERROR_CHECK(screenshot_server_init());
-    ESP_ERROR_CHECK(wifi_mgr_add_state_callback(screenshot_server_wifi_state, nullptr));
-    ESP_ERROR_CHECK(wifi_mgr_start());
-
-    /* BLE manager (REQ-BLE-001..011): radio on ESP32-C6 via ESP-Hosted.
-     * Non-fatal failure at boot: logs warning but does not abort. */
-    esp_err_t ble_err = ble_mgr_start();
-    if (ble_err != ESP_OK) {
-        ESP_LOGW(TAG, "BLE manager unavailable: %s", esp_err_to_name(ble_err));
-    }
-
-    /* Ponte manual USB Serial-JTAG NDJSON (REQ-002..009): task propria,
-     * fora da stack do LVGL; falha aqui nao derruba o boot. */
-    if (!cyberdeck_serial::bridge_start()) {
-        ESP_LOGW(TAG, "Ponte USB Serial-JTAG nao iniciada");
-    }
+    /* System applications preserve the previous non-fatal service startup
+     * policy while making each service visible to the shell runtime. */
+    ESP_ERROR_CHECK(cyberdeck_system_apps_start());
     ESP_LOGI(TAG, "CYBERDECK5 iniciado");
 }

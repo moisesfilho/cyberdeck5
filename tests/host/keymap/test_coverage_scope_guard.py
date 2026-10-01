@@ -48,9 +48,9 @@ def main() -> None:
             path = root / item
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("int adapter() { return 0; }\n")
-        required = "components/cyberdeck/src/features/pure.cpp"
+        required = "components/cyberdeck/src/apps/pure.cpp"
         (source / "features").mkdir(exist_ok=True)
-        (source / "features/pure.cpp").write_text("int f() { return 1; }\n")
+        (source / "apps/pure.cpp").write_text("int f() { return 1; }\n")
         report = root / "coverage.json"
 
         def check(files, expected):
@@ -63,14 +63,14 @@ def main() -> None:
         report.write_text("not-json")
         assert run(root, source, report) == 1
         # Existing hardware allowlist entries are rejected when covered.
-        (source / "features/bluetooth").mkdir(exist_ok=True)
-        allowlisted = "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
-        (source / "features/bluetooth/ble_mgr.cpp").write_text("int g() {}\n")
+        (source / "apps/bluetooth").mkdir(exist_ok=True)
+        allowlisted = "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp"
+        (source / "apps/bluetooth/ble_mgr.cpp").write_text("int g() {}\n")
         check([required, allowlisted], 1)
         # Every eligible TU must be represented; forbidden allowlists fail closed.
-        forbidden = "components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp"
-        (source / "features/shell").mkdir(exist_ok=True)
-        (source / "features/shell/cyberdeck_cat_worker.cpp").write_text("int h() {}\n")
+        forbidden = "components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp"
+        (source / "apps/shell").mkdir(exist_ok=True)
+        (source / "apps/shell/cyberdeck_cat_worker.cpp").write_text("int h() {}\n")
         check([required, allowlisted, forbidden], 1)
         assert run_with_forbidden_allowlist(root, source, report, forbidden) == 1
     print("coverage scope guard tests passed")

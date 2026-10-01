@@ -12,15 +12,15 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[3]
-SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
-SHELL_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h"
+SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp"
+SHELL_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
-SESSION_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_session.h"
-AUDIT = ROOT / "components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit.cpp"
-PERSISTENCE = ROOT / "components/cyberdeck/src/features/wifi/cyberdeck_wifi_audit_persistence.cpp"
-PERSISTENCE_HEADER = ROOT / "components/cyberdeck/include/features/wifi/cyberdeck_wifi_audit_persistence.h"
-SERIAL = ROOT / "components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+SESSION_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h"
+AUDIT = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit.cpp"
+PERSISTENCE = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit_persistence.cpp"
+PERSISTENCE_HEADER = ROOT / "components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit_persistence.h"
+SERIAL = ROOT / "components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
 

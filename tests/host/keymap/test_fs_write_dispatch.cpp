@@ -11,8 +11,8 @@
  *   - preserve cat / serial contracts existentes
  *
  * Contrato esperado (producao ausente -> RED):
- *   Header: components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
- *   Source: components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp
+ *   Header: components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h
+ *   Source: components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp
  *           + shell/fs_write puro (se separado)
  *   Namespace: cyberdeck_serial
  *   Extensoes esperadas:
@@ -27,7 +27,7 @@
  * Sem hardware, sem pyserial. O teste compila contra o header existente e
  * fica RED enquanto fs.write nao for implementado (unknown_type / missing).
  */
-#include "features/serial/cyberdeck_serial_bridge.h"
+#include "apps/serial/cyberdeck_serial_bridge.h"
 
 #include <cstdio>
 #include <cstdlib>

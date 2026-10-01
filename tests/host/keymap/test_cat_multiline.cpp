@@ -1,5 +1,5 @@
 /* Host regression tests for the dedicated, heap-backed cat API. */
-#include "features/shell/cyberdeck_local_shell.h"
+#include "apps/shell/cyberdeck_local_shell.h"
 
 #include <cstdio>
 #include <fstream>

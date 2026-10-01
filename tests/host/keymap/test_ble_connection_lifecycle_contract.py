@@ -11,10 +11,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-STATE = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp"
-MGR = ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
+STATE = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp"
+MGR = ROOT / "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
 
 
 def body(source: str, signature: str) -> str:

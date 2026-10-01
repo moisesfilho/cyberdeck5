@@ -5,10 +5,10 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[3]
-SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp"
-WORKER = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp"
-HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_cat_worker.h"
-LOCAL_SHELL_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_local_shell.h"
+SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
+WORKER = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp"
+HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h"
+LOCAL_SHELL_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_local_shell.h"
 
 
 def require(condition: bool, message: str) -> None:

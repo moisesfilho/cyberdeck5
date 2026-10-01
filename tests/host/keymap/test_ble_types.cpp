@@ -6,7 +6,7 @@
  *
  * The production source is intentionally absent in this tester handoff, so this
  * binary is RED until the coder creates
- * components/cyberdeck/src/features/bluetooth/cyberdeck_ble_types.cpp with the
+ * components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp with the
  * ABI declared in contracts/cyberdeck_ble_types.h.  No ESP-IDF, NimBLE,
  * esp_hosted, LVGL, NVS, simulator or hardware is used here.
  */

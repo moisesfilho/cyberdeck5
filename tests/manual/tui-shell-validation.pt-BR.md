@@ -12,7 +12,7 @@ digitacao por teclado fisico e virtual, inclusive durante SSH; scroll do
 terminal apenas interno (sem scrollbar externa). Não há tela SSH separada nem
 ação de retorno.
 **Firmware:** `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp`, `src/platform/input/tab5_keyboard_keys.cpp`,
-`src/platform/input/tab5_keyboard.cpp`, `src/features/ssh/ssh_client.cpp`, `src/features/shell/cyberdeck_shell_utils.cpp`.
+`src/platform/input/tab5_keyboard.cpp`, `src/apps/ssh/ssh_client.cpp`, `src/apps/shell/cyberdeck_shell_utils.cpp`.
 **Duracao estimada:** 60-90 min por execucao.
 
 > Este plano NAO substitui codigo de producao nem altera firmware. Qualquer
@@ -227,7 +227,7 @@ que depende obrigatoriamente deste plano manual.
 | `components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp` | `tab5_keymap_lookup` | `tests/host/keymap/test_keymap.cpp` |
 | `components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp` | `tab5_char_event_parse` (modificador, comprimento sem NUL extra, UTF-8 e limites) | `tests/host/keymap/test_keyboard_event.cpp` |
 | `components/cyberdeck/src/platform/logging/event_log_recent.cpp` | `event_log_recent_indices` (capacidade maxima 64, default de exibicao 20, faixa 1..64, clamp, ordem e wrap-around) | `tests/host/keymap/test_event_log_recent.cpp` |
-| `components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp` | `cyberdeck_parse_ssh_target` (validos, invalidos, limites 1..65535 e normalizacao de zeros a esquerda), `cyberdeck_encode_ssh_key` (imprimiveis, controle, Ctrl/Alt, limites 0..0xFF), `cyberdeck_parse_command` (roteamento, separador do verbo `ssh`, trim de bordas, verbo colado, `screen on|off|timeout <0-1440>`), `cyberdeck_help_text` (bloco exato, estrutura, comandos presentes e determinismo) | `tests/host/keymap/test_shell_utils.cpp` |
+| `components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp` | `cyberdeck_parse_ssh_target` (validos, invalidos, limites 1..65535 e normalizacao de zeros a esquerda), `cyberdeck_encode_ssh_key` (imprimiveis, controle, Ctrl/Alt, limites 0..0xFF), `cyberdeck_parse_command` (roteamento, separador do verbo `ssh`, trim de bordas, verbo colado, `screen on|off|timeout <0-1440>`), `cyberdeck_help_text` (bloco exato, estrutura, comandos presentes e determinismo) | `tests/host/keymap/test_shell_utils.cpp` |
 | `components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp` | `state`, `parse_timeout_minutes`, `persisted_timeout`, `evaluate_inactivity`, `turn_on`, `turn_off` | `tests/host/keymap/test_screen_protection.cpp` + `test_screen_protection_contract.py` |
 | `components/cyberdeck/src/platform/display/screen_off.cpp` | `screen_off_init`, `screen_off_turn_on`, `screen_off_turn_off`, `screen_off_set_timeout_minutes`, duplo toque, NVS restauracao | `tests/host/keymap/test_screen_protection_contract.py` |
 

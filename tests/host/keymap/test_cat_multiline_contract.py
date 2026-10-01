@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 TERMINAL_VIEW = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp"
-WORKER = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_cat_worker.cpp"
+WORKER = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp"
 
 
 def require(condition: bool, message: str) -> None:

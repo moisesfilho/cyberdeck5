@@ -1,8 +1,8 @@
 /*
  * Testes de REGRESSAO host-side para a guarda incremental de eco remoto do SSH
- * (contrato em components/cyberdeck/include/features/shell/cyberdeck_ssh_echo_guard.h;
+ * (contrato em components/cyberdeck/include/apps/shell/cyberdeck_ssh_echo_guard.h;
  * implementacao futura em
- * components/cyberdeck/src/features/shell/cyberdeck_ssh_echo_guard.cpp).
+ * components/cyberdeck/src/apps/shell/cyberdeck_ssh_echo_guard.cpp).
  *
  * Feature aprovada sob teste (historico/eco remoto SSH):
  *   - armar o guard com o payload local exato (ex.: "cmd\n" ou "\n" para linha
@@ -29,7 +29,7 @@
  *
  * Build: make test_ssh_echo_guard -> ver Makefile (so g++/make).
  */
-#include "features/shell/cyberdeck_ssh_echo_guard.h"
+#include "apps/shell/cyberdeck_ssh_echo_guard.h"
 
 #include <cstdio>
 #include <cstring>

@@ -1,6 +1,6 @@
 /*
  * Testes unitarios host-side para a logica pura de shell e traducao SSH/VT100.
- * Cobre components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp.
+ * Cobre components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp.
  *
  * Alem das unidades isoladas, inclui testes de pipeline que espelham o fluxo
  * do terminal TUI unificado (menu inicial + tela SSH): parse_command gera o
@@ -14,10 +14,10 @@
  * shell. O teste fixa o catalogo completo, incluindo os comandos comuns e os
  * comandos locais, byte a byte (separador "-" entre comando e descricao,
  * newline final). Alem da igualdade exata, os testes fixam a estrutura
- * (16 newlines, 16 linhas nao vazias, newline final), a presenca de cada
+ * (17 newlines, 17 linhas nao vazias, newline final), a presenca de cada
  * comando e o determinismo entre chamadas.
  */
-#include "features/shell/cyberdeck_shell_utils.h"
+#include "apps/shell/cyberdeck_shell_utils.h"
 #include "contracts/cyberdeck_help.h"
 #include "lvgl.h"
 
@@ -477,6 +477,13 @@ void test_parse_command_routing()
     cmd = cyberdeck_parse_command("log");
     CHECK(cmd.type == CYBERDECK_CMD_LOG);
 
+    cmd = cyberdeck_parse_command("app list");
+    CHECK(cmd.type == CYBERDECK_CMD_APP);
+    CHECK_EQ(cmd.args, "list");
+
+    cmd = cyberdeck_parse_command("appx");
+    CHECK(cmd.type == CYBERDECK_CMD_UNKNOWN);
+
     // SSH command variants
     cmd = cyberdeck_parse_command("ssh");
     CHECK(cmd.type == CYBERDECK_CMD_SSH);
@@ -782,8 +789,8 @@ void test_help_text_exact_block()
 void test_help_text_structure()
 {
     // Arrange & Act
-    // Estrutura do catalogo unificado: exatamente 16 newlines (um por linha) e
-    // 16 linhas nao vazias; o texto termina obrigatoriamente em newline.
+    // Estrutura do catalogo unificado: exatamente 17 newlines (um por linha) e
+    // 17 linhas nao vazias; o texto termina obrigatoriamente em newline.
     const std::string text = cyberdeck_help_text();
 
     // Assert
@@ -796,7 +803,7 @@ void test_help_text_structure()
             ++newlines;
         }
     }
-    CHECK(newlines == 16);
+    CHECK(newlines == 17);
 
     // Split por '\n': linhas nao vazias entre quebras. Uma linha vazia
     // (start == i, sem caracteres) nao conta; a cauda apos o ultimo '\n'
@@ -811,7 +818,7 @@ void test_help_text_structure()
             line_start = i + 1;
         }
     }
-    CHECK(non_empty_lines == 16);
+    CHECK(non_empty_lines == 17);
 }
 
 void test_help_text_commands_present()
@@ -838,6 +845,7 @@ void test_help_text_commands_present()
         "screen [on|off|timeout <0-1440>] - control screen protection",
         "battery [protection on|off|status] - show or control battery protection",
         "bluetooth [search|paired] - search for or list paired Bluetooth devices",
+        "app [list|info|start|stop] [id] - manage compiled-in applications",
         "ssh [user@]host[:port] - start an SSH session",
     };
     for (const char *entry : entries) {
@@ -848,7 +856,7 @@ void test_help_text_commands_present()
     // esta contagem, uma linha nova no catalogo passaria despercebida porque
     // o teste so procuraria as entradas conhecidas.
     const size_t expected_rows = sizeof(entries) / sizeof(entries[0]);
-    CHECK(expected_rows == 16);
+    CHECK(expected_rows == 17);
     size_t rows_seen = 0;
     for (const char *entry : entries) {
         size_t position = 0;

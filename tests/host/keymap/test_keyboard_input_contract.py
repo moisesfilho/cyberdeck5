@@ -7,7 +7,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
 DISPATCH = ROOT / "components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp"
 
 
@@ -76,7 +76,7 @@ def main() -> int:
             "a modified physical key must be routed through the session")
     require("insert_physical(" not in consumer and "insert_virtual(" not in consumer,
             "the UI facade must not decide how text or a modified key is interpreted")
-    session_source = (ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp").read_text(encoding="utf-8")
+    session_source = (ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp").read_text(encoding="utf-8")
     require("insert_physical_text" in session_source and
             "insert_modified_key" in session_source,
             "the session must implement both physical input paths")

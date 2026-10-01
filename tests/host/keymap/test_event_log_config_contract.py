@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 KCONFIG = ROOT / "components/cyberdeck/Kconfig"
 EVENT_LOG = ROOT / "components/cyberdeck/src/platform/logging/event_log.cpp"
 RECENT_HEADER = ROOT / "components/cyberdeck/include/platform/logging/event_log_recent.h"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
 
 
 def check(condition, message):

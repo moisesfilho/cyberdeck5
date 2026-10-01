@@ -6,8 +6,8 @@
  * deterministic: no ESP-IDF, FreeRTOS, SD card, or device clock is used.
  * A production path is considered a test input, never a filesystem escape.
  */
-#include "features/wifi/cyberdeck_wifi_audit.h"
-#include "features/wifi/cyberdeck_wifi_audit_persistence.h"
+#include "apps/wifi/cyberdeck_wifi_audit.h"
+#include "apps/wifi/cyberdeck_wifi_audit_persistence.h"
 #include "platform/display/cyberdeck_clock.h"
 
 #include <algorithm>

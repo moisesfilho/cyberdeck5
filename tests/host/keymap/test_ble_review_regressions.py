@@ -10,7 +10,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-MGR = ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp"
+MGR = ROOT / "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 
 

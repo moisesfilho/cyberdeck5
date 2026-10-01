@@ -27,8 +27,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 
-BLE_DIR = ROOT / "components/cyberdeck/src/features/bluetooth"
-BLE_INCLUDE = ROOT / "components/cyberdeck/include/features/bluetooth"
+BLE_DIR = ROOT / "components/cyberdeck/src/apps/bluetooth"
+BLE_INCLUDE = ROOT / "components/cyberdeck/include/apps/bluetooth"
 BLE_TYPES_HDR = BLE_INCLUDE / "cyberdeck_ble_types.h"
 BLE_TYPES_SRC = BLE_DIR / "cyberdeck_ble_types.cpp"
 BLE_STATE_HDR = BLE_INCLUDE / "cyberdeck_ble_state_machine.h"
@@ -41,15 +41,16 @@ BLE_STORE_SRC = BLE_DIR / "cyberdeck_ble_store.cpp"
 BLE_MGR_HDR = BLE_INCLUDE / "ble_mgr.h"
 BLE_MGR_SRC = BLE_DIR / "ble_mgr.cpp"
 
-SHELL_UTILS_HDR = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h"
-SHELL_UTILS = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
-SHELL_HELP = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_help.h"
+SHELL_UTILS_HDR = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h"
+SHELL_UTILS = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp"
+SHELL_HELP = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
 UI_HDR = ROOT / "components/cyberdeck/include/platform/display/cyberdeck_ui.h"
-SERIAL = ROOT / "components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp"
+SERIAL = ROOT / "components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp"
 SERIAL_TEST = ROOT / "tests/host/keymap/test_serial_ndjson_dispatch.cpp"
 APP = ROOT / "main/app_main.cpp"
+SYSTEM_APPS = ROOT / "components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp"
 COMPONENT = ROOT / "components/cyberdeck/CMakeLists.txt"
 COMPONENT_YML = ROOT / "main/idf_component.yml"
 SDKCONFIG_DEFAULTS = ROOT / "sdkconfig.defaults"
@@ -346,9 +347,9 @@ def check_shell_routing(report: Report) -> None:
     entries = re.findall(r'\{"bluetooth"[^\n]*\}', catalog)
     report.require(len(entries) == 1,
                    "the bluetooth help row must exist exactly once in the catalog")
-    report.require(re.search(r"std::array\s*<\s*entry\s*,\s*16\s*>\s+kCatalog", catalog)
-                   is not None,
-                   "the shared help catalog must grow to 16 entries")
+    report.require(re.search(r"std::array\s*<\s*entry\s*,\s*17\s*>\s+kCatalog", catalog)
+                    is not None,
+                    "the shared help catalog must contain 17 entries")
 
     fixture = strip_comments(report.read(HELP_FIXTURE))
     report.require("bluetooth [search|paired]" in fixture,
@@ -472,14 +473,16 @@ def check_adapter_composition(report: Report) -> None:
 
     # Non-fatal boot: a failure must be logged, never fatal.
     app = strip_comments(report.read(APP))
+    system_apps = strip_comments(report.read(SYSTEM_APPS))
     if app:
-        report.require("ble_mgr_start" in app,
-                       "app_main must start the BLE adapter")
         body = function_body(app, "void app_main(", report)
-        report.require("ble_mgr_start" in body,
-                       "app_main must call ble_mgr_start")
-        if "ble_mgr_start" in body:
-            tail = body[body.find("ble_mgr_start"):]
+        start_owner = body if "ble_mgr_start" in body else system_apps
+        report.require("ble_mgr_start" in start_owner,
+                       "the system app supervisor must start the BLE adapter")
+        report.require("cyberdeck_system_apps_start" in body or "ble_mgr_start" in body,
+                       "app_main must start the system app supervisor")
+        if "ble_mgr_start" in start_owner:
+            tail = start_owner[start_owner.find("ble_mgr_start"):]
             for fatal in ("abort()", "esp_restart()", "while (1)"):
                 # Only the few statements right after the call matter.
                 report.require(fatal not in tail[:400],

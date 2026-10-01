@@ -1,5 +1,5 @@
 /* RED TDD contract for the passive/local Wi-Fi association audit. */
-#include "features/wifi/cyberdeck_wifi_audit.h"
+#include "apps/wifi/cyberdeck_wifi_audit.h"
 
 #include <cassert>
 #include <cstdio>

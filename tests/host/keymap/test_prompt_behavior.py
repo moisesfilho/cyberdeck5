@@ -16,8 +16,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_session.h"
-LOCAL_SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp"
+SESSION_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h"
+LOCAL_SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
 LIMIT = 12288
 
 
@@ -171,7 +171,7 @@ def test_marker_matrix_executes_production_expression() -> None:
 
 def test_invalid_cd_invokes_real_local_shell() -> None:
     harness = r'''
-#include "features/shell/cyberdeck_local_shell.h"
+#include "apps/shell/cyberdeck_local_shell.h"
 #include <cassert>
 #include <filesystem>
 #include <fstream>

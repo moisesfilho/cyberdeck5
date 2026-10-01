@@ -3,8 +3,8 @@
  * Cobre REQ-006/REQ-007 (screen.dump chunk/CRC/end, byte-identical).
  *
  * Contrato esperado (producao ausente -> RED):
- *   Header: components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
- *   Source: components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp
+ *   Header: components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h
+ *   Source: components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp
  *   Reuso: reutiliza screenshot_bmp.h stride/size/conv ja existente, mas encapsula
  *          chunking serial com CRC IEEE e flag end. Sem hardware/LVGL real: framebuffer
  *          RGB565 e injetado pelo teste.
@@ -32,8 +32,8 @@
  *
  * Sem hardware, sem pyserial.
  */
-#include "features/serial/cyberdeck_serial_bridge.h"
-#include "features/screenshot/screenshot_bmp.h"
+#include "apps/serial/cyberdeck_serial_bridge.h"
+#include "apps/screenshot/screenshot_bmp.h"
 
 #include <cstdio>
 #include <cstring>

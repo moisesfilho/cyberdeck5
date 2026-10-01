@@ -18,13 +18,13 @@ STATE_HEADER = ROOT / "components/cyberdeck/include/platform/display/cyberdeck_s
 STATE_CONTRACT = ROOT / "tests/host/keymap/contracts/cyberdeck_screen_protection.h"
 SCREEN_SOURCE = ROOT / "components/cyberdeck/src/platform/display/screen_off.cpp"
 SCREEN_HEADER = ROOT / "components/cyberdeck/include/platform/display/screen_off.h"
-SHELL_SOURCE = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
-SHELL_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h"
-HELP_HEADER = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_help.h"
+SHELL_SOURCE = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp"
+SHELL_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h"
+HELP_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h"
 HELP_FIXTURE = ROOT / "tests/host/keymap/contracts/cyberdeck_help.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
-SERIAL = ROOT / "components/cyberdeck/src/features/serial/cyberdeck_serial_bridge.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+SERIAL = ROOT / "components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp"
 APP = ROOT / "main/app_main.cpp"
 COMPONENT = ROOT / "components/cyberdeck/CMakeLists.txt"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
@@ -218,7 +218,7 @@ def check_shared_help_catalog(help_header: str, help_fixture: str, shell: str,
     require(shell.count(SCREEN_HELP_DESCRIPTION) == 1,
             "shell_utils.cpp must reference the screen description only in the "
             "compile-time catalog guard")
-    require('#include "features/shell/cyberdeck_shell_help.h"' in shell,
+    require('#include "apps/shell/cyberdeck_shell_help.h"' in shell,
             "shell_utils.cpp must include the shared help catalog header")
     help_text = function_body(shell, "std::string cyberdeck_help_text()")
     require("cyberdeck_shell_help::text()" in help_text,

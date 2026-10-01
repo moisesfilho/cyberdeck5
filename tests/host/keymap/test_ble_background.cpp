@@ -1,4 +1,4 @@
-#include "features/bluetooth/cyberdeck_ble_background.h"
+#include "apps/bluetooth/cyberdeck_ble_background.h"
 
 #include <cassert>
 #include <cstring>

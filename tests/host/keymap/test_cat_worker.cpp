@@ -1,4 +1,4 @@
-#include "features/shell/cyberdeck_cat_worker.h"
+#include "apps/shell/cyberdeck_cat_worker.h"
 
 #include <cassert>
 #include <filesystem>

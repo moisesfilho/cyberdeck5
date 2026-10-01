@@ -12,13 +12,13 @@ import re
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SHELL_UTILS = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_utils.cpp"
-LOCAL_SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp"
+SHELL_UTILS = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp"
+LOCAL_SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 CODE_MAP = ROOT / "code-map.md"
-SHELL_HELP = ROOT / "components/cyberdeck/include/features/shell/cyberdeck_shell_help.h"
+SHELL_HELP = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h"
 HELP_FIXTURE = ROOT / "tests/host/keymap/contracts/cyberdeck_help.h"
 
 # These descriptions are the observable entries of the approved catalog.  A
@@ -41,11 +41,12 @@ CATALOG_DESCRIPTIONS = (
     "control screen protection",
     "show or control battery protection",
     "search for or list paired Bluetooth devices",
+    "manage compiled-in applications",
     "start an SSH session",
 )
 
 COMMAND_NAMES = (
-    "help", "wifi", "log", "clear", "screen", "battery", "bluetooth", "ssh",
+    "help", "wifi", "log", "clear", "screen", "battery", "bluetooth", "app", "ssh",
     "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm", "rmdir",
 )
 
@@ -87,8 +88,8 @@ def main() -> int:
     # approved battery and bluetooth rows.  This keeps a stale executable/fixture
     # from being mistaken for a passing help contract after a rebuild.
     require("kCatalog" in shell_help and
-            re.search(r"std::array\s*<\s*entry\s*,\s*16\s*>\s+kCatalog", shell_help) is not None,
-            "production help header must retain the 16-entry ordered catalog")
+            re.search(r"std::array\s*<\s*entry\s*,\s*17\s*>\s+kCatalog", shell_help) is not None,
+            "production help header must retain the 17-entry ordered catalog")
     require(re.search(
         r'\{"battery"\s*,\s*"battery \[protection on\|off\|status\]"\s*,\s*'
         r'"show or control battery protection"\}', shell_help) is not None,
@@ -149,13 +150,13 @@ def main() -> int:
     # are still checked behaviorally; these source checks ensure they cannot
     # silently regress to private lists while the test is being wired in.
     require(
-        '#include "features/shell/cyberdeck_shell_utils.h"' in local_source,
+        '#include "apps/shell/cyberdeck_shell_utils.h"' in local_source,
         "local_shell.cpp must include the shared shell help contract",
     )
     require("cyberdeck_help_text()" in local_source,
             "local_shell.cpp must call cyberdeck_help_text()")
     require(
-        '#include "features/shell/cyberdeck_shell_utils.h"' in session_source
+        '#include "apps/shell/cyberdeck_shell_utils.h"' in session_source
         and "cyberdeck_help_text()" in session_source,
         "cyberdeck_shell_session.cpp must consume cyberdeck_help_text()",
     )

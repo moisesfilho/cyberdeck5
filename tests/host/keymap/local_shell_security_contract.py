@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[3]
-SHELL = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_local_shell.cpp"
+SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
 
 
 def require(condition: bool, message: str) -> None:

@@ -3,7 +3,7 @@
  * Sem hardware real / pyserial.
  *
  * Contrato esperado (producao ausente -> RED):
- *   Header: components/cyberdeck/include/features/serial/cyberdeck_serial_bridge.h
+ *   Header: components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h
  *           + tools host: tests/host/serial/cli_client.h  OU  mesma bridge com feeder tolerante
  *   Alternativa aceitavel: o teste exercita o lado host via feeder puro (sem pyserial) que o coder
  *   deve prover em produção host; aqui usamos cyberdeck_serial::log_tolerant_feed / cli_reader.
@@ -21,7 +21,7 @@
  *
  *   O teste tenta (A) primeiro; se inexistente, tenta (B) via include alternativo.
  */
-#include "features/serial/cyberdeck_serial_bridge.h"
+#include "apps/serial/cyberdeck_serial_bridge.h"
 
 #include <cstdio>
 #include <cstring>

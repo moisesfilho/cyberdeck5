@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "features/shell/cyberdeck_shell_session.h"
+#include "apps/shell/cyberdeck_shell_session.h"
 
 namespace {
 
@@ -118,6 +118,7 @@ struct fake_host final : cyberdeck_shell_session::host {
     std::string cat_cwd;
     std::string cat_line;
     cyberdeck_local_shell shell{std::string("/tmp/opencode/session-harness")};
+    cyberdeck_apps::runtime apps;
 
     void append_output_line(const std::string &line) override { output += line; }
     void write_output(const char *data, std::size_t length) override
@@ -275,6 +276,7 @@ struct fake_host final : cyberdeck_shell_session::host {
         return cat_accepted;
     }
     cyberdeck_local_shell &local_shell() override { return shell; }
+    cyberdeck_apps::runtime &app_runtime() override { return apps; }
 };
 
 void type(session &s, const std::string &text)

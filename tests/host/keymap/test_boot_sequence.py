@@ -13,7 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[3]
 APP_MAIN = ROOT / "main" / "app_main.cpp"
 UI_SOURCE = ROOT / "components" / "cyberdeck" / "src" / "platform" / "display" / "cyberdeck_ui.cpp"
-LOCAL_SHELL_HEADER = ROOT / "components" / "cyberdeck" / "include" / "features" / "shell" / "cyberdeck_local_shell.h"
+LOCAL_SHELL_HEADER = ROOT / "components" / "cyberdeck" / "include" / "apps" / "shell" / "cyberdeck_local_shell.h"
 
 
 def check(condition: bool, message: str, failures: list[str]) -> None:

@@ -5,14 +5,14 @@
  * The shell parser is host-linkable, so this test exercises the real production
  * implementation instead of inspecting it.  It is RED until the coder adds
  * CYBERDECK_CMD_BLUETOOTH_SEARCH / CYBERDECK_CMD_BLUETOOTH_PAIRED to
- * components/cyberdeck/include/features/shell/cyberdeck_shell_utils.h, routes
+ * components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h, routes
  * both spellings in cyberdeck_parse_command() and adds the single `bluetooth`
  * row to the shared help catalog.
  *
  * Bluetooth Classic is explicitly out of scope (REQ-BLE-011): there is no
  * subcommand for it, and none may appear here.
  */
-#include "features/shell/cyberdeck_shell_utils.h"
+#include "apps/shell/cyberdeck_shell_utils.h"
 
 #include <cstdio>
 #include <string>
@@ -167,7 +167,7 @@ void test_help_catalog_documents_bluetooth_exactly_once()
     for (char value : help) {
         if (value == '\n') ++lines;
     }
-    CHECK_EQ(lines, std::size_t(16));
+    CHECK_EQ(lines, std::size_t(17));
 }
 
 } // namespace

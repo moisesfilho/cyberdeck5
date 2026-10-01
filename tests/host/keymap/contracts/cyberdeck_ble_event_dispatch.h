@@ -2,7 +2,7 @@
  * Host-only contract for the pure BLE event/token dispatch seam.
  *
  * Test-owned.  Production must expose the same ABI from
- * components/cyberdeck/include/features/bluetooth/cyberdeck_ble_event_dispatch.h
+ * components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_event_dispatch.h
  * and link from cyberdeck_ble_event_dispatch.cpp without ESP-IDF, NimBLE,
  * esp_hosted, FreeRTOS, LVGL, NVS or hardware.
  *
@@ -20,8 +20,8 @@
 #include <string>
 #include <string_view>
 
-#if __has_include("features/bluetooth/cyberdeck_ble_event_dispatch.h")
-#include "features/bluetooth/cyberdeck_ble_event_dispatch.h"
+#if __has_include("apps/bluetooth/cyberdeck_ble_event_dispatch.h")
+#include "apps/bluetooth/cyberdeck_ble_event_dispatch.h"
 #else
 #include "cyberdeck_ble_types.h"
 #include "cyberdeck_ble_state_machine.h"

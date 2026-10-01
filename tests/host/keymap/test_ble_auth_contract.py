@@ -11,11 +11,11 @@ import sys
 ROOT = Path(__file__).resolve().parents[3]
 UI = (ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp").read_text()
 # Key dispatch (passkey entry/backspace/Enter) moved to the extracted session.
-SESSION = (ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp").read_text()
+SESSION = (ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp").read_text()
 AUTH_PATH = UI + SESSION
-MGR = (ROOT / "components/cyberdeck/src/features/bluetooth/ble_mgr.cpp").read_text()
-MGR_H = (ROOT / "components/cyberdeck/include/features/bluetooth/ble_mgr.h").read_text()
-STATE = (ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp").read_text()
+MGR = (ROOT / "components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp").read_text()
+MGR_H = (ROOT / "components/cyberdeck/include/apps/bluetooth/ble_mgr.h").read_text()
+STATE = (ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp").read_text()
 
 
 def require(condition: bool, message: str) -> None:

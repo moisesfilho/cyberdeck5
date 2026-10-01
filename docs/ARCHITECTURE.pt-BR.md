@@ -14,10 +14,10 @@ necessários para a primeira ferramenta.
 ## Organização semântica
 
 O componente ESP-IDF continua único e é organizado por contexto, sem criar
-componentes ESP-IDF adicionais. `src/features/` contém os fluxos do produto
+componentes ESP-IDF adicionais. `src/apps/` contém os fluxos do produto
 (shell, Wi-Fi, SSH e screenshot), enquanto `src/platform/` contém as
 integrações de entrada, display, sensores, logging e networking. Os headers
-espelham essa árvore em `include/features/` e `include/platform/`. A lógica
+espelham essa árvore em `include/apps/` e `include/platform/`. A lógica
 pura deve permanecer testável no host; `app_main` é o ponto de composição das
 partes concretas.
 
@@ -29,7 +29,7 @@ Os widgets LVGL são mantidos separados dos serviços e comandos. `cyberdeck_ui.
 `cyberdeck_terminal_view.cpp` cria o textarea e o teclado virtual. Esses views
 recebem dados já resolvidos e callbacks de interação, mas não incluem
 `wifi_mgr`, `ssh_client`, `ble_mgr`, shell, NVS, I2C ou persistência. Serviços e
-modelos de produto permanecem em `src/features/`, sem dependência de LVGL.
+modelos de produto permanecem em `src/apps/`, sem dependência de LVGL.
 
 O handoff do teclado físico fica isolado em `cyberdeck_keyboard_dispatch.cpp`.
 Ele possui a fila bounded de snapshots, o mutex de enqueue/rollback e o
@@ -37,7 +37,7 @@ agendamento por `lv_async_call`. O dispatcher não conhece sessões de shell,
 SSH, Wi-Fi ou BLE.
 
 O estado de sessão e as decisões de entrada ficam em
-`src/features/shell/cyberdeck_shell_session.{h,cpp}`. A `session` é livre de
+`src/apps/shell/cyberdeck_shell_session.{h,cpp}`. A `session` é livre de
 LVGL e possui a linha corrente, o cursor, o histórico, o SSID Wi-Fi pendente, o
 `cyberdeck_edit_line` de cada contexto (menu, SSH, senha, host key), a chave de
 estado SSH e o buffer de passkey BLE. Ela decide o que cada tecla faz e executa

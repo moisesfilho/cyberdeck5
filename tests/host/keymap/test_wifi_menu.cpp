@@ -1,10 +1,10 @@
 /*
  * Testes unitarios host-side para a logica pura de menus Wi-Fi.
- * Cobre components/cyberdeck/src/features/wifi/cyberdeck_wifi_menu.cpp.
+ * Cobre components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp.
  *
  * Estruturado segundo o padrao AAA (Arrange, Act, Assert) e principios F.I.R.S.T.
  */
-#include "features/wifi/cyberdeck_wifi_menu.h"
+#include "apps/wifi/cyberdeck_wifi_menu.h"
 
 #include <cstdio>
 #include <string>

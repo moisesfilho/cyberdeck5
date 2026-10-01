@@ -11,9 +11,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
-SESSION = ROOT / "components/cyberdeck/src/features/shell/cyberdeck_shell_session.cpp"
-STATE = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_state_machine.cpp"
-EVENTS = ROOT / "components/cyberdeck/src/features/bluetooth/cyberdeck_ble_event_dispatch.cpp"
+SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+STATE = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp"
+EVENTS = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_event_dispatch.cpp"
 
 
 def function_body(source: str, signature: str) -> str:

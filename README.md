@@ -19,7 +19,8 @@ interativo no terminal.
 - Autenticação por senha
 - Rotação automática da tela pelo sensor BMI270
 - Ponte manual USB Serial-JTAG NDJSON com CLI host (`tools/cyberdeck_cli.py`)
-- Sem sistema de plugins, apps instaláveis, WASM ou desktop
+- Runtime inicial de aplicações compiladas, com `app list`, `app info`,
+  `app start` e `app stop`
 
 ## Requisitos
 
@@ -113,6 +114,29 @@ context.
 `cat` accepts only regular files under `/sdcard`. The size is checked before any
 output, reads use bounded chunks, and file I/O runs in a worker before the
 result is handed back to LVGL through a bounded asynchronous queue.
+
+### Compiled-in applications
+
+The firmware starts directly in the terminal shell. Compiled applications are
+registered in the firmware and can be inspected and controlled from the shell:
+
+```text
+app list
+app info cyberdeck.demo
+app start cyberdeck.demo
+demo
+app stop cyberdeck.demo
+```
+
+This first runtime does not load ELF files or scripts from the SD card. The SD
+card remains data storage; dynamic application installation will require a
+separate bounded application host and supervisor.
+
+The Tab5 system services are also registered applications: `cyberdeck.shell`,
+`cyberdeck.wifi`, `cyberdeck.serial`, `cyberdeck.ssh`, `cyberdeck.screenshot`
+and `cyberdeck.bluetooth`. They are started by the application supervisor in
+dependency order; this keeps `app_main` as composition code instead of a list
+of direct service starts.
 
 ### Screen Protection
 
