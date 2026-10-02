@@ -106,24 +106,32 @@ bool resolve(const char *cwd, const char *operand, resolved_path &result) noexce
     return true;
 }
 
+backend_kind backend_for(const resolved_path &path) noexcept
+{
+    if (path.kind != path_kind::namespace_path) return backend_kind::invalid;
+    if (path.namespace_index == k_data_namespace_index ||
+        path.namespace_index == k_system_namespace_index)
+        return backend_kind::filesystem;
+    if (path.namespace_index == k_dev_namespace_index &&
+        std::strcmp(path.path, "/dev/null") == 0)
+        return backend_kind::null_device;
+    return backend_kind::metadata;
+}
+
 bool is_filesystem_backend(const resolved_path &path) noexcept
 {
-    if (path.kind != path_kind::namespace_path) return false;
-    return path.namespace_index == k_data_namespace_index ||
-           path.namespace_index == k_system_namespace_index;
+    return backend_for(path) == backend_kind::filesystem;
 }
 
 bool is_mutable_backend(const resolved_path &path) noexcept
 {
-    return path.kind == path_kind::namespace_path &&
+    return backend_for(path) == backend_kind::filesystem &&
            path.namespace_index == k_data_namespace_index;
 }
 
 bool is_null_device(const resolved_path &path) noexcept
 {
-    return path.kind == path_kind::namespace_path &&
-           path.namespace_index == k_dev_namespace_index &&
-           std::strcmp(path.path, "/dev/null") == 0;
+    return backend_for(path) == backend_kind::null_device;
 }
 
 bool is_namespace_root(const char *path) noexcept

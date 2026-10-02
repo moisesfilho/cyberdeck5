@@ -17,6 +17,8 @@ struct entry {
 
 enum class path_kind { invalid, root, namespace_path };
 
+enum class backend_kind { invalid, metadata, filesystem, null_device };
+
 struct resolved_path {
     path_kind kind;
     std::size_t namespace_index;
@@ -25,6 +27,7 @@ struct resolved_path {
 
 const entry &at(std::size_t index);
 bool resolve(const char *cwd, const char *operand, resolved_path &result) noexcept;
+backend_kind backend_for(const resolved_path &path) noexcept;
 bool is_filesystem_backend(const resolved_path &path) noexcept;
 bool is_mutable_backend(const resolved_path &path) noexcept;
 bool is_null_device(const resolved_path &path) noexcept;

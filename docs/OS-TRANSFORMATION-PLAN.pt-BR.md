@@ -203,11 +203,11 @@ retorna enquanto um callback estiver em execução.
   do `/dev` físico e sem entrega de handles.
 - [x] Quarto recorte: mutações bounded (`touch`, `mkdir`, `rm`, `rmdir`) sob
   `/data`, com proteção da raiz e sem alterar `/system`.
-- [ ] Consolidar o namespace virtual do dispositivo com backends.
+- [x] Consolidar o namespace virtual do dispositivo com backends.
 - [x] Manter `/data` para dados persistentes do usuario.
 - [x] Manter `/system` para configuracoes e estado interno.
 - [x] Expor dispositivos por interfaces virtuais em `/dev`.
-- [ ] Preservar confinamento, limites e protecao contra traversal e symlink.
+- [x] Preservar confinamento, limites e protecao contra traversal e symlink.
 - [ ] Manter execucao de binarios do SD fora do escopo inicial.
 
 O recorte atual mapeia `/data` e `/system` para seus diretórios sob
@@ -239,6 +239,22 @@ Validação física das mutações `/data` em `/dev/ttyACM0` (fw `6c273c2`):
 `touch /data/phase6.tmp` criou o arquivo, `ls /data` o exibiu, `rm` o removeu
 e `rm -r /data` foi rejeitado pela proteção da raiz. O uptime permaneceu
 contínuo (`00:00:04` -> `00:00:05`), sem reboot ou panic.
+
+Finalização do recorte de consolidação: `cyberdeck_vfs_namespace` agora expõe
+uma classificação única de backend (`metadata`, `filesystem`, `null_device` ou
+`invalid`), consumida pelo shell para decidir leitura, mutação e interfaces
+virtuais. O shell não duplica mais a regra de identificação por índice. O teste
+host cobre a classificação dos cinco namespaces, a raiz, `/dev/null`, os
+backends físicos e a política mutável exclusiva de `/data`; os testes existentes
+mantêm cobertura de traversal, symlink, limites bounded e proteção das raízes.
+Execução de binários do SD continua explicitamente fora do escopo.
+
+Validação física do recorte consolidado em `/dev/ttyACM0` (2026-10-02, fw
+`e5e29a9-dirty`, IDF 5.5.5): `pwd` iniciou em `/`; `ls /` exibiu `apps`,
+`data`, `dev`, `tmp` e `system`; `/data` aceitou `touch`, `ls` e `rm` do
+arquivo temporário; `/dev/null` foi acessado sem conteúdo; e `cd /sdcard` foi
+rejeitado como caminho inválido. O `sys.info` passou de `00:00:04` para
+`00:01:19`, com heap estável e sem reboot, panic ou erro da ponte.
 
 ### 7. Shell como Userland
 

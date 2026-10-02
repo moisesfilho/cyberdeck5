@@ -1,5 +1,6 @@
 /* TDD contract tests for the confined local shell rooted at virtual "/". */
 #include "apps/shell/cyberdeck_local_shell.h"
+#include "apps/shell/cyberdeck_vfs_namespace.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -237,6 +238,31 @@ void test_root_listing_resolves_exact_physical_root(fixture &f) {
     CHECK(last_opendir_path != f.root.string() + "/.");
 
     CHECK_EQ(shell.cwd(), "/");
+}
+
+void test_backend_classification_is_centralized() {
+    using namespace cyberdeck_vfs_namespace;
+    resolved_path path{};
+
+    CHECK(resolve("/", "/data/file", path));
+    CHECK(backend_for(path) == backend_kind::filesystem);
+    CHECK(is_filesystem_backend(path));
+    CHECK(is_mutable_backend(path));
+
+    CHECK(resolve("/", "/system/file", path));
+    CHECK(backend_for(path) == backend_kind::filesystem);
+    CHECK(!is_mutable_backend(path));
+
+    CHECK(resolve("/", "/dev/null", path));
+    CHECK(backend_for(path) == backend_kind::null_device);
+    CHECK(is_null_device(path));
+
+    CHECK(resolve("/", "/apps/tools", path));
+    CHECK(backend_for(path) == backend_kind::metadata);
+    CHECK(!is_filesystem_backend(path));
+
+    CHECK(resolve("/", "/", path));
+    CHECK(backend_for(path) == backend_kind::invalid);
 }
 
 void test_child_listing_keeps_physical_path_mapping(fixture &f) {
@@ -666,6 +692,7 @@ int main() {
         if (f.root.empty()) return 1;
         test_listing(f);
         test_virtual_namespace_catalog_and_readonly_behavior(f);
+        test_backend_classification_is_centralized();
     }
     {
         fixture f;

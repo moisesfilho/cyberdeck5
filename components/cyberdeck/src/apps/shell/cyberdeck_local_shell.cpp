@@ -508,8 +508,11 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     const bool is_virtual_target =
         cyberdeck_vfs_namespace::resolve(cwd_.c_str(), argument.c_str(), namespace_target) &&
         namespace_target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path;
+    const auto target_backend = is_virtual_target
+        ? cyberdeck_vfs_namespace::backend_for(namespace_target)
+        : cyberdeck_vfs_namespace::backend_kind::invalid;
     const bool is_filesystem_target =
-        is_virtual_target && cyberdeck_vfs_namespace::is_filesystem_backend(namespace_target);
+        target_backend == cyberdeck_vfs_namespace::backend_kind::filesystem;
 
     fs::path host; std::string target;
     if (!resolve(argument, false, host, target)) return reject("path escapes /");
@@ -524,7 +527,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
             return {cyberdeck_local_shell_status::handled, output};
         }
         if (is_virtual_target && !is_filesystem_target) {
-            if (cyberdeck_vfs_namespace::is_null_device(namespace_target))
+            if (target_backend == cyberdeck_vfs_namespace::backend_kind::null_device)
                 return {cyberdeck_local_shell_status::handled, "null\n"};
             if (cyberdeck_vfs_namespace::is_namespace_root(namespace_target.path)) {
                 if (namespace_target.namespace_index == cyberdeck_vfs_namespace::k_dev_namespace_index)
@@ -569,7 +572,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     if (command == "cat") {
         if (argument.empty()) return reject("missing operand");
         if (is_virtual_target && !is_filesystem_target)
-            if (cyberdeck_vfs_namespace::is_null_device(namespace_target))
+            if (target_backend == cyberdeck_vfs_namespace::backend_kind::null_device)
                 return {cyberdeck_local_shell_status::handled, {}};
         if (is_virtual_target && !is_filesystem_target)
             return reject("cat: virtual namespace is read-only metadata");

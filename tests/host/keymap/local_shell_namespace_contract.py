@@ -30,6 +30,8 @@ def main() -> int:
             "local shell must consult the namespace resolver")
     require("is_filesystem_backend" in header and "is_filesystem_backend" in source,
             "filesystem backends must be explicit")
+    require("enum class backend_kind" in header and "backend_for" in source,
+            "namespace resolver must centralize backend classification")
     require("is_mutable_backend" in header and "is_mutable_backend" in source,
             "mutable backend policy must be explicit")
     require("k_data_namespace_index = 1" in header,
