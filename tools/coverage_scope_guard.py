@@ -23,6 +23,14 @@ ALLOWLIST = {
         "ESP HTTP server/LVGL adapter",
     "components/cyberdeck/src/apps/ssh/ssh_client.cpp":
         "libssh session with ESP-IDF/BSP/FreeRTOS integration",
+    "components/cyberdeck/src/apps/system/cyberdeck_service_ports.cpp":
+        "thin forwarding to the wifi_mgr/ssh_client/ble_mgr/serial bridge adapters",
+    "components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp":
+        "system app composition/lifecycle bound to hardware services; covered by "
+        "structural Python contracts (test_system_apps_contract.py, "
+        "test_shell_app_contract.py, test_serial_lifecycle_contract.py)",
+    "components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp":
+        "BSP/LVGL capture adapter (bsp_display_lock, lv_snapshot_take); no host build",
     "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp":
         "LVGL/BSP/FreeRTOS composition adapter; behavior is in host-tested models",
     "components/cyberdeck/src/platform/display/screen_off.cpp":
