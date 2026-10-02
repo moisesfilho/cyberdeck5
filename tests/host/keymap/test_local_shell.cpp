@@ -166,6 +166,8 @@ void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
     std::ofstream(f.root / "apps" / "should-not-run") << "payload";
     fs::create_directories(f.root / "data" / "notes", error);
     std::ofstream(f.root / "data" / "notes" / "readme.txt") << "persistent data\n";
+    fs::create_directories(f.root / "system" / "config", error);
+    std::ofstream(f.root / "system" / "config" / "mode.txt") << "safe\n";
     cyberdeck_local_shell shell(f.root.string());
 
     auto result = execute_without_exception(shell, "ls /");
@@ -185,11 +187,15 @@ void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
     CHECK_EQ(shell.execute("cat readme.txt").output, "persistent data\n");
     CHECK_EQ(shell.execute("cat /data/notes/readme.txt").output, "persistent data\n");
     CHECK(shell.execute("cd /").status == cyberdeck_local_shell_status::handled);
+    CHECK(shell.execute("cd /system").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.execute("ls").output, "config\n");
+    CHECK_EQ(shell.execute("cat /system/config/mode.txt").output, "safe\n");
+    CHECK(shell.execute("cd /").status == cyberdeck_local_shell_status::handled);
 
     const char *readonly_commands[] = {
         "cat /apps/should-not-run", "touch /apps/new", "mkdir /data/new",
         "touch /data/new.txt", "rm /data/notes/readme.txt", "rm /dev/raw",
-        "rmdir /system", "cat /tmp/content"
+        "rmdir /system", "cat /tmp/content", "touch /system/new.txt"
     };
     for (const char *command : readonly_commands) {
         result = execute_without_exception(shell, command);

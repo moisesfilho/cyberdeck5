@@ -106,10 +106,11 @@ bool resolve(const char *cwd, const char *operand, resolved_path &result) noexce
     return true;
 }
 
-bool is_data_backend(const resolved_path &path) noexcept
+bool is_filesystem_backend(const resolved_path &path) noexcept
 {
-    return path.kind == path_kind::namespace_path &&
-           path.namespace_index == k_data_namespace_index;
+    if (path.kind != path_kind::namespace_path) return false;
+    return path.namespace_index == k_data_namespace_index ||
+           path.namespace_index == k_system_namespace_index;
 }
 
 bool is_namespace_root(const char *path) noexcept

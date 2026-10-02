@@ -196,19 +196,19 @@ retorna enquanto um callback estiver em execução.
 
 - [x] Primeiro recorte: catálogo compilado e resolver readonly bounded para
   `/apps`, `/data`, `/dev`, `/tmp` e `/system`, integrado ao shell local.
-- [x] Segundo recorte: backend físico readonly bounded para `/data`, confinado a
-  `<host_root>/data` e reutilizando as proteções de path/descritor do shell.
+- [x] Segundo recorte: backends físicos readonly bounded para `/data` e
+  `/system`, confinados a seus diretórios sob `host_root` e reutilizando as
+  proteções de path/descritor do shell.
 - [ ] Consolidar o namespace virtual do dispositivo com backends.
 - [ ] Manter `/data` para dados persistentes do usuario.
-- [ ] Manter `/system` para configuracoes e estado interno.
+- [x] Manter `/system` para configuracoes e estado interno.
 - [ ] Expor dispositivos por interfaces virtuais em `/dev`.
 - [ ] Preservar confinamento, limites e protecao contra traversal e symlink.
 - [ ] Manter execucao de binarios do SD fora do escopo inicial.
 
-O recorte atual mapeia somente `/data` para `<host_root>/data`, sem mutações,
-e mantém `/system` como metadata-only. `/dev` não entrega handles e `/apps`
-não executa conteúdo. O `/sdcard` físico continua sendo `host_root`, separado
-do catálogo.
+O recorte atual mapeia `/data` e `/system` para seus diretórios sob
+`host_root`, sem mutações. `/dev` não entrega handles e `/apps` não executa
+conteúdo. O `/sdcard` físico continua sendo `host_root`, separado do catálogo.
 
 Validação física do segundo recorte em `/dev/ttyACM0` (ESP32-P4, fw
 `e3323db`, IDF 5.5.5): `ping` e `sys.info` responderam; `cd /data` e `ls`
@@ -216,6 +216,13 @@ exibiram o diretório persistente `com.tab5.notas`; `ls
 /data/com.tab5.notas` exibiu `nota.txt`; `cd /apps/tools` foi rejeitado como
 caminho inválido. O uptime permaneceu contínuo (`00:00:07` -> `00:00:25`),
 sem reboot, panic ou queda relevante de heap.
+
+Na validação do backend `/system`, o cartão físico não possuía o diretório
+`/sdcard/system`: `cd /system` foi rejeitado e `touch /system/new.txt` não
+criou arquivo. O fallback para a raiz virtual continuou funcional e o uptime
+permaneceu contínuo (`00:00:07` -> `00:00:18`), sem reboot ou panic. O caminho
+positivo de `cd`/`ls`/`cat` em `/system` permanece coberto pelo teste host;
+ausência do backend físico é tratada como falha fechada.
 
 ### 7. Shell como Userland
 

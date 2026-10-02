@@ -338,7 +338,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root,
     cyberdeck_vfs_namespace::resolved_path namespace_target{};
     if (cyberdeck_vfs_namespace::resolve(current.c_str(), argument.c_str(), namespace_target) &&
         namespace_target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path &&
-        !cyberdeck_vfs_namespace::is_data_backend(namespace_target))
+        !cyberdeck_vfs_namespace::is_filesystem_backend(namespace_target))
         return reject_cat("cat: virtual namespace is read-only metadata");
     const std::string relative = virtual_path.size() > virtual_root.size()
         ? virtual_path.substr(virtual_root.size() == 1 ? 1 : virtual_root.size() + 1)
@@ -473,7 +473,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         if (words.size() != 2 || words[1].empty() || words[1][0] == '-') return reject("usage: cd [path]");
         if (cyberdeck_vfs_namespace::resolve(cwd_.c_str(), words[1].c_str(), namespace_target) &&
             namespace_target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path &&
-            !cyberdeck_vfs_namespace::is_data_backend(namespace_target)) {
+            !cyberdeck_vfs_namespace::is_filesystem_backend(namespace_target)) {
             if (words[1][0] == '/' && !cyberdeck_vfs_namespace::is_namespace_root(words[1].c_str()))
                 return reject("cd: invalid path");
             cwd_ = namespace_target.path;
@@ -505,8 +505,8 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     const bool is_virtual_target =
         cyberdeck_vfs_namespace::resolve(cwd_.c_str(), argument.c_str(), namespace_target) &&
         namespace_target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path;
-    const bool is_data_target =
-        is_virtual_target && cyberdeck_vfs_namespace::is_data_backend(namespace_target);
+    const bool is_filesystem_target =
+        is_virtual_target && cyberdeck_vfs_namespace::is_filesystem_backend(namespace_target);
 
     fs::path host; std::string target;
     if (!resolve(argument, false, host, target)) return reject("path escapes /");
@@ -520,7 +520,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
             }
             return {cyberdeck_local_shell_status::handled, output};
         }
-        if (is_virtual_target && !is_data_target) {
+        if (is_virtual_target && !is_filesystem_target) {
             if (cyberdeck_vfs_namespace::is_namespace_root(namespace_target.path))
                 return {cyberdeck_local_shell_status::handled, {}};
             return reject("ls: invalid path");
@@ -560,7 +560,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     }
     if (command == "cat") {
         if (argument.empty()) return reject("missing operand");
-        if (is_virtual_target && !is_data_target)
+        if (is_virtual_target && !is_filesystem_target)
             return reject("cat: virtual namespace is read-only metadata");
         const int descriptor = secure_open_regular(fs::path(host_root_), host);
         if (descriptor < 0) return reject("cat: secure open unavailable");
