@@ -17,6 +17,7 @@ limites de seguranca e lifecycle bem definidos.
 - [x] Separar a UI dos modelos e servicos de produto.
 - [x] Validar a arquitetura com testes host, contratos estruturais e build ESP-IDF.
 - [x] Implementar validacao fisica dos fluxos de lifecycle das aplicacoes.
+- [x] Tornar o shell uma aplicacao de primeiro plano com console sob o supervisor.
 
 Execucao mais recente da Fase 1: o supervisor resolve dependencias declaradas, mantem
 estados de lifecycle, mede o tempo dos hooks, registra a ultima falha, expoe
@@ -258,13 +259,90 @@ rejeitado como caminho inválido. O `sys.info` passou de `00:00:04` para
 
 ### 7. Shell como Userland
 
-- [ ] Transformar o shell em uma aplicacao de primeiro plano completa.
-- [ ] Fazer o prompt e a linha de comando pertencerem ao app shell.
-- [ ] Fazer `app` consultar exclusivamente o supervisor.
-- [ ] Expor servicos por contratos de comando sem interceptar comandos legados.
-- [ ] Manter historico, edicao e sessoes isolados.
-- [ ] Tratar SSH como modo de sessao do shell.
-- [ ] Avaliar suporte futuro a multiplas sessoes ou consoles.
+- [x] Transformar o shell em uma aplicacao de primeiro plano completa.
+- [x] Fazer o prompt e a linha de comando pertencerem ao app shell.
+- [x] Fazer `app` consultar exclusivamente o supervisor.
+- [x] Expor servicos por contratos de comando sem interceptar comandos legados.
+- [x] Manter historico, edicao e sessoes isolados.
+- [x] Tratar SSH como modo de sessao do shell.
+- [x] Avaliar suporte futuro a multiplas sessoes ou consoles.
+
+Execucao da Fase 7: `cyberdeck.shell` deixou de ser um `service_application`
+com hooks stub (`start_shell` devolvia `true` e `stop_shell` devolvia `false`)
+e passou a ser a aplicacao real `cyberdeck_shell_app::application`, registrada
+no supervisor com `app_type::foreground` e dependencia de
+`cyberdeck.event_log`. O supervisor e o dono do ciclo de vida do console: cada
+`start` cria uma `session` nova, o que isola historico, edicao, tokens de
+conexao Wi-Fi e buffer de passkey, e cada `stop` apaga o passkey antes de
+liberar o console. `start` e `stop` sao idempotentes e o `start` falha fechado
+sem host de composicao.
+
+O prompt e a linha de comando migraram para o modulo puro
+`cyberdeck_shell_console`. As helpers de UTF-8 e de ajuste de largura sairam do
+TU anonimo da UI sem mudanca de comportamento, de modo que prompt, linha e
+scrollback passam a ter uma unica autoria sobre o limite de 12288 bytes. A UI
+nao constroi mais marker nem linha ajustada: `compose_console_line()` resolve
+apenas quem possui a entrada (SSH conectado, senha pendente, ownership de
+BLE/Wi-Fi e cwd) e `s_shell_app.compose_line(surface)` devolve marker, linha e
+cursor ja clampado. As facades locais `sync_editor`, `sync_line` e
+`execute_line` foram removidas da UI.
+
+O `app stop` nao pode destruir o console. Como `stop_index` para dependentes
+antes do alvo, `app stop cyberdeck.event_log` — dependencia declarada do shell —
+destruiria o console sem nunca nomea-lo, e todas as teclas, inclusive as que
+restaurariam o estado, seriam descartadas ate um reboot. O supervisor expoe
+`stops_console_owner(id)`, que percorre a arvore de dependentes com marcadores
+visitados (bounded contra ciclos), e recusa qualquer `app stop` cuja cascata
+alcance o dono do console. A API de lifecycle do supervisor
+(`stop_application`, `stop_all`, `restart_application`) permanece disponivel para
+quem controla o boot, porque o bloqueio se aplica aos comandos que chegam pelo
+proprio console.
+
+O runtime so e consultado para os tokens que lhe pertencem. O dispatcher
+classifica o primeiro token (limite de 256 bytes): `app` pertence
+exclusivamente ao supervisor, mesmo malformado; um comando declarado por uma
+aplicacao registrada e roteado ao supervisor; e um comando legado nunca e
+interceptado, mesmo quando outra aplicacao declara o mesmo nome. A reserva de
+comandos legados e derivada do catalogo unico de ajuda
+(`cyberdeck_shell_help::kCatalog`), portanto nao pode divergir do `help`
+exibido, e `collisions()` reporta em modo diagnostico os comandos declarados
+que colidem com um legado sem nunca rotea-los. O shell local continua sendo o
+primeiro dono das linhas e o parser legado permanece o unico dono de `wifi`,
+`log`, `clear`, `screen`, `battery`, `bluetooth`, `ssh` e `help`.
+`cyberdeck_shell_console.cpp` tambem absorveu as helpers de UTF-8 e de ajuste
+de largura que viviam no TU anonimo da UI, e o budget de 12288 passou a ter uma
+unica origem: a UI deriva `TERMINAL_LIMIT` de `k_terminal_limit` e valida a
+igualdade com `static_assert`, de modo que scrollback, prompt e linha nao podem
+divergir.
+
+SSH passou a ser um modo de sessao do console do shell
+(`session_mode::{menu,ssh_host_key,ssh_password,ssh_interactive}`), derivado de
+`host_->ssh_phase()` em vez de estado duplicado. O cliente SSH continua sendo um
+servico separado com seu proprio lifecycle; o shell possui apenas o modo.
+
+Decisao sobre multiplas sessoes ou consoles: o recorte atual suporta um unico
+console de primeiro plano, porque existe um unico terminal LVGL, uma unica
+fila bounded de teclado e um unico `screen_off`. O isolamento exigido pela fase
+e por instancia — cada aplicacao shell possui seu proprio console, e o host
+teste prova que duas instancias nao compartilham linha nem estado. Suporte a
+varios consoles simultaneos permanece fora de escopo e depende de uma superficie
+de display com multiplas areas e de um roteador de input por console, que sao
+trabalho das fases 8 e 9. O manifesto ganhou `owns_console`, e o supervisor
+recusa `app stop cyberdeck.shell` porque o console e o unico caminho para
+restaurar o proprio console; a API de lifecycle do supervisor continua disponivel
+para quem controla o boot.
+
+Validacao host da fase: `test_shell_app` (166 checks) cobre a matriz de prompt,
+os helpers de UTF-8 e de modo com fallbacks, os limites bounded, a politica de
+despacho incluindo registry cheio e runtime ausente, o ownership do console
+(start/stop idempotentes, start sem host, fachada nula-segura, console novo a
+cada start, duas instancias isoladas) e a propriedade pelo supervisor
+(dependencia ausente mantem o shell `failed` sem console, auto-stop recusado,
+`at()` bounded). `test_shell_app_contract.py` protege as fronteiras que o
+binario host nao alcanca, incluindo a remocao do console da UI, a ordem das
+decisoes no dispatcher e a interseccao do switch legado. O prompt e os helpers
+passaram a ser compilados a partir do TU de producao em
+`test_prompt_behavior.py`, em vez de copias de corpos.
 
 ### 8. Window Manager LVGL
 
