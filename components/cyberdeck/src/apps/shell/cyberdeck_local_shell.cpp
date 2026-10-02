@@ -599,7 +599,7 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         return {cyberdeck_local_shell_status::handled, output};
     }
     struct stat info = {};
-    if (is_virtual_target)
+    if (is_virtual_target && !cyberdeck_vfs_namespace::is_mutable_backend(namespace_target))
         return reject(command + ": virtual namespace is read-only metadata");
     const bool path_exists = lstat_path(host, info);
     if (path_exists && S_ISLNK(info.st_mode)) return reject("symbolic links are not allowed");
@@ -615,7 +615,10 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         return {cyberdeck_local_shell_status::handled, {}};
     }
     if (command == "rmdir") {
-        if (target == virtual_root_) return reject("rmdir: refusing to remove virtual root");
+        if (target == virtual_root_ ||
+            (cyberdeck_vfs_namespace::is_mutable_backend(namespace_target) &&
+             cyberdeck_vfs_namespace::is_namespace_root(namespace_target.path)))
+            return reject("rmdir: refusing to remove virtual root");
         std::error_code error;
         if (!fs::is_directory(host, error) || error) return reject("rmdir: directory is not empty");
         if (!fs::is_empty(host, error) || error) return reject("rmdir: directory is not empty");
@@ -629,7 +632,9 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
         const bool directory = fs::is_directory(host, error);
         if (error) return reject("rm: cannot remove path");
         if (directory && !recursive) return reject("rm: is a directory");
-        if (recursive && target == virtual_root_)
+        if (recursive && (target == virtual_root_ ||
+                          (cyberdeck_vfs_namespace::is_mutable_backend(namespace_target) &&
+                           cyberdeck_vfs_namespace::is_namespace_root(namespace_target.path))))
             return reject("rm: refusing to remove virtual root");
         if (recursive && contains_symlink_tree(host)) return reject("symbolic links are not allowed");
         const bool removed = recursive ? fs::remove_all(host, error) : fs::remove(host, error);

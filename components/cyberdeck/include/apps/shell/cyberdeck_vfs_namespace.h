@@ -26,6 +26,7 @@ struct resolved_path {
 const entry &at(std::size_t index);
 bool resolve(const char *cwd, const char *operand, resolved_path &result) noexcept;
 bool is_filesystem_backend(const resolved_path &path) noexcept;
+bool is_mutable_backend(const resolved_path &path) noexcept;
 bool is_null_device(const resolved_path &path) noexcept;
 bool is_namespace_root(const char *path) noexcept;
 

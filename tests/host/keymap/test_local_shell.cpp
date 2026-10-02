@@ -196,9 +196,17 @@ void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
     CHECK_EQ(shell.execute("cat /dev/null").output, "");
     CHECK(shell.execute("cat /dev/tty").status == cyberdeck_local_shell_status::rejected);
 
+    CHECK(shell.execute("touch /data/created.txt").status == cyberdeck_local_shell_status::handled);
+    CHECK(shell.execute("mkdir /data/work").status == cyberdeck_local_shell_status::handled);
+    CHECK(shell.execute("touch /data/work/item.txt").status == cyberdeck_local_shell_status::handled);
+    CHECK(shell.execute("rm /data/work/item.txt").status == cyberdeck_local_shell_status::handled);
+    CHECK(shell.execute("rmdir /data/work").status == cyberdeck_local_shell_status::handled);
+    CHECK(shell.execute("rm /data/created.txt").status == cyberdeck_local_shell_status::handled);
+    CHECK(shell.execute("rmdir /data").status == cyberdeck_local_shell_status::rejected);
+    CHECK(shell.execute("rm -r /data").status == cyberdeck_local_shell_status::rejected);
+
     const char *readonly_commands[] = {
-        "cat /apps/should-not-run", "touch /apps/new", "mkdir /data/new",
-        "touch /data/new.txt", "rm /data/notes/readme.txt", "rm /dev/raw",
+        "cat /apps/should-not-run", "touch /apps/new", "rm /dev/raw",
         "rmdir /system", "cat /tmp/content", "touch /system/new.txt", "touch /dev/null"
     };
     for (const char *command : readonly_commands) {

@@ -201,15 +201,17 @@ retorna enquanto um callback estiver em execução.
   proteções de path/descritor do shell.
 - [x] Terceiro recorte: interface virtual readonly `/dev/null`, sem abertura
   do `/dev` físico e sem entrega de handles.
+- [x] Quarto recorte: mutações bounded (`touch`, `mkdir`, `rm`, `rmdir`) sob
+  `/data`, com proteção da raiz e sem alterar `/system`.
 - [ ] Consolidar o namespace virtual do dispositivo com backends.
-- [ ] Manter `/data` para dados persistentes do usuario.
+- [x] Manter `/data` para dados persistentes do usuario.
 - [x] Manter `/system` para configuracoes e estado interno.
 - [x] Expor dispositivos por interfaces virtuais em `/dev`.
 - [ ] Preservar confinamento, limites e protecao contra traversal e symlink.
 - [ ] Manter execucao de binarios do SD fora do escopo inicial.
 
 O recorte atual mapeia `/data` e `/system` para seus diretórios sob
-`host_root`, sem mutações. `/dev/null` é a única interface virtual exposta;
+`host_root`; somente `/data` aceita as mutações bounded do shell. `/dev/null` é a única interface virtual exposta;
 ela sempre retorna conteúdo vazio e não entrega handles. `/apps` não executa
 conteúdo. O `/sdcard` físico continua sendo `host_root`, separado do catálogo.
 
@@ -232,6 +234,11 @@ Validação física da interface `/dev/null` em `/dev/ttyACM0` (fw
 `null`; `cat /dev/null` retornou vazio; `cat /dev/tty` foi rejeitado como
 namespace readonly. O uptime permaneceu contínuo (`00:00:04` -> `00:00:05`),
 sem reboot ou panic.
+
+Validação física das mutações `/data` em `/dev/ttyACM0` (fw `6c273c2`):
+`touch /data/phase6.tmp` criou o arquivo, `ls /data` o exibiu, `rm` o removeu
+e `rm -r /data` foi rejeitado pela proteção da raiz. O uptime permaneceu
+contínuo (`00:00:04` -> `00:00:05`), sem reboot ou panic.
 
 ### 7. Shell como Userland
 

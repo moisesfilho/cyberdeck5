@@ -113,6 +113,12 @@ bool is_filesystem_backend(const resolved_path &path) noexcept
            path.namespace_index == k_system_namespace_index;
 }
 
+bool is_mutable_backend(const resolved_path &path) noexcept
+{
+    return path.kind == path_kind::namespace_path &&
+           path.namespace_index == k_data_namespace_index;
+}
+
 bool is_null_device(const resolved_path &path) noexcept
 {
     return path.kind == path_kind::namespace_path &&
