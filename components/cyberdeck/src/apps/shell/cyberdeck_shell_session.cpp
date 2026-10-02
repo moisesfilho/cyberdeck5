@@ -1,5 +1,7 @@
 #include "apps/shell/cyberdeck_shell_session.h"
 
+#include "apps/shell/cyberdeck_shell_console.h"
+
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -270,12 +272,21 @@ void session::execute_line(bool line_already_sent)
         host_.render();
         return;
     }
-    const cyberdeck_apps::result app = host_.app_runtime().execute_line(line);
-    if (app.status == cyberdeck_apps::result_status::handled ||
-        app.status == cyberdeck_apps::result_status::rejected) {
-        if (!app.output.empty()) host_.append_output_line(app.output);
-        host_.render();
-        return;
+    /* The supervisor is consulted only for the tokens it owns: `app` and the
+     * commands declared by a registered application.  A legacy command name
+     * never reaches the runtime, so this recursion cannot capture wifi, log,
+     * screen, bluetooth, ssh or help, and the legacy parser below remains the
+     * single owner of those flows. */
+    cyberdeck_apps::runtime &runtime = host_.app_runtime();
+    const cyberdeck_shell_console::dispatcher dispatcher(&runtime);
+    if (dispatcher.resolve(line) == cyberdeck_shell_console::dispatch_target::supervisor) {
+        const cyberdeck_apps::result app = runtime.execute_line(line);
+        if (app.status == cyberdeck_apps::result_status::handled ||
+            app.status == cyberdeck_apps::result_status::rejected) {
+            if (!app.output.empty()) host_.append_output_line(app.output);
+            host_.render();
+            return;
+        }
     }
     cyberdeck_cmd_t cmd = cyberdeck_parse_command(line.c_str());
     switch (cmd.type) {

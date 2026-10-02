@@ -92,7 +92,7 @@ def main() -> int:
     require("ble_auth_input_.size() == cyberdeck_ble::k_passkey_digits" in SESSION,
             "Enter does not reject incomplete passkeys")
     require("clear_ble_auth_input()" in SESSION and
-            "s_shell_session.clear_ble_auth_input()" in UI,
+            "s_shell_app.clear_ble_auth_input()" in UI,
             "transient auth input is not cleared across lifecycle paths")
     require("s_ble_auth_input" not in UI,
             "the passkey buffer must be owned by the session, not the UI")

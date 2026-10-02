@@ -96,6 +96,11 @@ const application *runtime::find(std::string_view id) const
     return nullptr;
 }
 
+const application *runtime::at(std::size_t index) const
+{
+    return index < count_ ? applications_[index] : nullptr;
+}
+
 bool runtime::start_application(std::string_view id)
 {
     const std::size_t index = index_of(id);
@@ -197,6 +202,35 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
         failures_[index].clear();
     }
     return true;
+}
+
+bool runtime::cascade_stops_console(std::size_t index,
+                                   std::array<bool, k_max_applications> &visited) const
+{
+    if (visited[index]) return false;
+    visited[index] = true;
+    const std::string_view id = applications_[index]->get_manifest().id;
+    if (applications_[index]->get_manifest().owns_console) return true;
+    /* stop_index stops dependents first, so anything this application depends
+     * on is also part of the cascade when the dependency is stopped. */
+    for (std::size_t i = 0; i < count_; ++i) {
+        const manifest &candidate = applications_[i]->get_manifest();
+        for (std::size_t dep = 0; dep < candidate.dependency_count; ++dep) {
+            if (candidate.dependencies[dep] == id &&
+                cascade_stops_console(i, visited)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool runtime::stops_console_owner(std::string_view id) const
+{
+    const std::size_t index = index_of(id);
+    if (index == k_not_found) return false;
+    std::array<bool, k_max_applications> visited{};
+    return cascade_stops_console(index, visited);
 }
 
 bool runtime::stop_index(std::size_t index)
@@ -323,6 +357,15 @@ result runtime::execute_line(std::string_view line)
                     output += "\n";
                 }
                 return handled(std::move(output));
+            }
+            /* Stopping cascades to dependents first, so the application that
+             * owns the console can be torn down without ever naming it (for
+             * example through `app stop cyberdeck.event_log`).  Every command
+             * here arrives on that console, so any such cascade would remove the
+             * only path that could bring it back.  The lifecycle API of the
+             * supervisor stays available to whoever controls the boot. */
+            if (words[1] == "stop" && stops_console_owner(words[2])) {
+                return rejected("app: stop would remove the console; stop it from the supervisor");
             }
             const bool changed = words[1] == "start" ? start_application(words[2])
                                                        : stop_application(words[2]);

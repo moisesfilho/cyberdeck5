@@ -246,11 +246,11 @@ def check_shared_help_catalog(help_header: str, help_fixture: str, shell: str,
 
 
 def check_ui_routing(ui: str, session: str) -> None:
-    # The command switch now lives in the extracted session; the UI facade only
-    # delegates execute_line to it.
+    # The command switch now lives in the extracted session, reached through
+    # the foreground shell application that owns the console.
     execute = function_body(session, "void session::execute_line(")
-    require("s_shell_session.execute_line" in ui,
-            "UI facade must delegate execute_line to the extracted session")
+    require("s_shell_app.handle_key(" in ui,
+            "UI must route line submission through the shell application")
     require("CYBERDECK_CMD_SCREEN_ON" in execute and
             "CYBERDECK_CMD_SCREEN_OFF" in execute and
             "CYBERDECK_CMD_SCREEN_TIMEOUT" in execute,

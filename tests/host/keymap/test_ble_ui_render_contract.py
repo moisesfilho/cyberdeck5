@@ -47,7 +47,7 @@ def main() -> int:
     events_source = EVENTS.read_text(encoding="utf-8")
     visible = function_body(source, "bool ble_list_is_visible()")
     sync = function_body(source, "void sync_ble_transient_block()")
-    rendered = function_body(source, "std::string get_rendered_output()")
+    rendered = function_body(source, "std::string get_rendered_output(")
     terminal = function_body(source, "void render_terminal() {")
     key = function_body(session, "void session::handle_key(")
     process = function_body(source, "void process_ble_events(lv_timer_t *)")
@@ -76,7 +76,7 @@ def main() -> int:
     # Every repaint reads the current model list, rather than a stale string or
     # the scan staging list.  device_list::render owns the selected marker.
     assert "s_ble_model.devices().render()" in rendered
-    assert "get_rendered_output()" in terminal
+    assert "get_rendered_output(view)" in terminal
     assert "s_ble_scan_devices.render()" not in source
 
     # Pairing/connecting/connected status is a repaint-only transient.  It is
@@ -104,7 +104,7 @@ def main() -> int:
     # no auth request is routed through notice/history/output persistence.
     auth_block = rendered[rendered.index("if (ble_screen == cyberdeck_ble::screen::auth"):]
     assert 'output += "Passkey input: ";' in auth_block
-    assert "output.append(s_shell_session.ble_auth_input().size(), '*');" in auth_block
+    assert "output.append(s_shell_app.ble_auth_input_size(), '*');" in auth_block
     assert "ble_screen == cyberdeck_ble::screen::auth &&" in auth_block
     assert "s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input" in auth_block
     assert "clear_ble_auth_input()" in process
@@ -132,9 +132,15 @@ def main() -> int:
     # Ownership release must synchronize before the repaint, allowing the
     # local marker to return without disturbing Wi-Fi/shell/SSH routing.
     assert "host_.sync_ble_transient()" in key
-    assert "s_ble_model.owns_input()" in terminal
-    assert "s_wifi_ui_state" in terminal
-    assert "service_ports::ssh_state" in terminal
+    # Prompt composition belongs to the shell application, so the surface state
+    # that suppresses the local marker is resolved next to the repaint.
+    compose = function_body(source, "cyberdeck_shell_console::line_view compose_console_line()")
+    assert "s_ble_model.owns_input()" in compose
+    assert "surface.input_owned_elsewhere" in compose
+    assert "compose_console_line()" in terminal
+    assert "s_shell_app.compose_line(surface)" in compose
+    assert "s_wifi_ui_state" in compose
+    assert "service_ports::ssh_state" in compose
     assert "execute_line()" in key
 
     print("PASS: BLE transient UI rendering/ownership contract")

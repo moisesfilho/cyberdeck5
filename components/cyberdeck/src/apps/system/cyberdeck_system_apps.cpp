@@ -6,6 +6,7 @@
 #include "apps/screenshot/screenshot_server.h"
 #include "apps/serial/cyberdeck_serial_bridge.h"
 #include "apps/system/cyberdeck_service_ports.h"
+#include "apps/shell/cyberdeck_shell_app.h"
 #include "apps/ssh/ssh_client.h"
 #include "apps/wifi/wifi_mgr.h"
 #include "platform/logging/event_log.h"
@@ -27,9 +28,6 @@ constexpr uint32_t k_ble_command_queue_depth = 8;
 constexpr uint32_t k_serial_task_stack_bytes = 8192;
 constexpr uint32_t k_screenshot_task_stack_bytes = 6144;
 constexpr uint32_t k_screenshot_control_queue_depth = 8;
-
-bool start_shell() { return true; }
-bool stop_shell() { return false; }
 
 bool start_event_log() { return event_log_init() == ESP_OK; }
 bool stop_event_log() { return false; }
@@ -166,12 +164,9 @@ service_application s_event_log{make_manifest("cyberdeck.event_log", "Event log 
                                                cyberdeck_apps::app_type::service,
                                                {"logging"}, 6144, 16),
                                 start_event_log, stop_event_log};
-service_application s_shell{make_manifest("cyberdeck.shell", "Terminal shell",
-                                           "Primary foreground terminal application", {"cyberdeck.event_log"},
-                                           {"display", "input", "storage"}, 1000,
-                                           cyberdeck_apps::app_type::foreground,
-                                           {"display", "input", "storage", "shell"}, 8192, 8),
-                            start_shell, stop_shell};
+/* cyberdeck.shell is registered as the real foreground application from
+ * cyberdeck_shell_app: the supervisor owns the console lifecycle, while the UI
+ * composition only lends its session host (see attach_console). */
 /* Wi-Fi brings up the C6 radio, SD storage and the STA netif, so its lifecycle
  * budget is larger than the trivial services. */
 service_application s_wifi{make_manifest("cyberdeck.wifi", "Wi-Fi service",
@@ -208,7 +203,9 @@ service_application s_bluetooth{make_manifest("cyberdeck.bluetooth", "Bluetooth 
                                   start_bluetooth, stop_bluetooth, true};
 
 cyberdeck_apps::application *const k_apps[] = {
-    &s_event_log, &s_shell, &s_wifi, &s_serial, &s_ssh, &s_screenshot, &s_bluetooth, &s_demo,
+    &s_event_log,
+    &cyberdeck_shell_app::global_application(),
+    &s_wifi, &s_serial, &s_ssh, &s_screenshot, &s_bluetooth, &s_demo,
 };
 
 bool s_registered = false;

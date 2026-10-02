@@ -70,12 +70,12 @@ def main() -> int:
 
     # Once BLE releases ownership, rendering returns to the local prompt and
     # the ordinary local/Wi-Fi/SSH paths remain in the same UI.
-    rendered = body(ui, "std::string get_rendered_output")
-    assert 's_local_shell.cwd() + "$ "' in rendered
+    rendered = body(ui, "cyberdeck_shell_console::line_view compose_console_line()")
+    assert "surface.cwd = s_local_shell.cwd();" in rendered
     assert "s_ble_model.owns_input()" in rendered
     terminal = body(ui, "void render_terminal()")
-    assert "s_wifi_ui_state" in terminal
-    assert "service_ports::ssh_state" in terminal
+    assert "s_wifi_ui_state" in body(ui, "cyberdeck_shell_console::line_view compose_console_line()")
+    assert "service_ports::ssh_state" in rendered
     execute = body(session, "void session::execute_line(bool line_already_sent)")
     assert "CYBERDECK_CMD_WIFI" in execute
     assert "host_.ssh_send_data" in execute

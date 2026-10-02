@@ -57,6 +57,11 @@ struct manifest {
     std::uint32_t queue_depth = 0;
     std::array<std::string_view, k_max_commands> commands{};
     std::size_t command_count = 0;
+    /* Declares that the application owns the only user console.  The commands
+     * that reach the supervisor travel on that console, so the supervisor must
+     * refuse to stop the console owner from inside itself: it would remove the
+     * only path that could bring it back. */
+    bool owns_console = false;
 };
 
 enum class result_status {
@@ -100,6 +105,14 @@ public:
     logger *app_logger() const { return logger_; }
     application *find(std::string_view id);
     const application *find(std::string_view id) const;
+    /* Bounded enumeration in registration order.  Returns nullptr when the
+     * index is outside the registered range. */
+    const application *at(std::size_t index) const;
+    /* True when stopping `id` would also stop the application that owns the
+     * console, either directly or through its dependent chain.  Stopping a
+     * dependency cascades to dependents first, so the console owner can be
+     * reached without naming it. */
+    bool stops_console_owner(std::string_view id) const;
     app_state state(std::string_view id) const;
     std::string_view failure_reason(std::string_view id) const;
     bool resources(std::string_view id, std::array<std::string_view, k_max_resources> &out,
@@ -116,6 +129,9 @@ private:
     bool start_index(std::size_t index, std::array<bool, k_max_applications> &visiting);
     bool stop_index(std::size_t index);
     std::size_t index_of(std::string_view id) const;
+    /* Bounded transitive search over the dependent tree of `index`. */
+    bool cascade_stops_console(std::size_t index,
+                               std::array<bool, k_max_applications> &visited) const;
 };
 
 } // namespace cyberdeck_apps

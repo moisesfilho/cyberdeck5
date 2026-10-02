@@ -7,6 +7,7 @@
 #include "platform/input/tab5_keyboard.h"
 #include "platform/input/cyberdeck_keyboard_dispatch.h"
 #include "apps/shell/cyberdeck_shell_session.h"
+#include "apps/shell/cyberdeck_shell_app.h"
 #include "platform/display/cyberdeck_wifi_indicator.h"
 #include "platform/display/cyberdeck_wifi_icon.h"
 #include "platform/display/cyberdeck_clock.h"
@@ -48,7 +49,12 @@ namespace {
 /* Wi-Fi flow state lives in cyberdeck_shell_session::wifi_ui_state_t so the
  * session controller, the LVGL pump and the renderer share one definition. */
 
-constexpr size_t TERMINAL_LIMIT = 12288;
+/* The scrollback budget must stay identical to the shell console budget: the
+ * textarea renders scrollback plus prompt and line in one buffer, so any drift
+ * here would overflow the terminal bound the console enforces. */
+constexpr size_t TERMINAL_LIMIT = cyberdeck_shell_console::k_terminal_limit;
+static_assert(TERMINAL_LIMIT == cyberdeck_edit_line::limit,
+              "the scrollback budget must match the console line budget");
 constexpr UBaseType_t CAT_WORK_QUEUE_CAPACITY = 8;
 static_assert(CAT_WORK_QUEUE_CAPACITY == 8, "cat handoff capacity is bounded");
 const lv_color_t BLACK = lv_color_hex(0x000000);
@@ -196,7 +202,10 @@ struct shell_session_host final : public cyberdeck_shell_session::host {
 };
 
 shell_session_host s_shell_session_host{};
-cyberdeck_shell_session::session s_shell_session{s_shell_session_host};
+/* The shell application owns the console (history, editing, prompt and the SSH
+ * session mode).  The UI is only the view: it lends its session host and
+ * applies whatever the application composes. */
+cyberdeck_shell_app::application &s_shell_app = cyberdeck_shell_app::global_application();
 
 void append_line(const std::string &line);
 void append_output(const char *data, size_t len, bool repaint = true);
@@ -397,7 +406,7 @@ void process_ble_events(lv_timer_t *)
                 static_cast<cyberdeck_ble::auth_request_kind>(event.auth_request.kind),
                 event.auth_request.passkey,
                 static_cast<cyberdeck_ble::auth_io_action>(event.auth_request.io_action));
-            s_shell_session.clear_ble_auth_input();
+            s_shell_app.clear_ble_auth_input();
             break;
         case BLE_MGR_EVT_PAIR_FINISHED:
             s_ble_model.pairing_finished(event.token,
@@ -417,7 +426,7 @@ void process_ble_events(lv_timer_t *)
      * pending event), keep the background observer progressing without
      * touching the visible screen or the terminal. */
     s_ble_background.maybe_reconnect(s_ble_model);
-    if (s_ble_model.current_screen() != cyberdeck_ble::screen::auth) s_shell_session.clear_ble_auth_input();
+    if (s_ble_model.current_screen() != cyberdeck_ble::screen::auth) s_shell_app.clear_ble_auth_input();
     refresh_ble_status();
     if (changed) {
         ble_submit_actions();
@@ -433,8 +442,9 @@ void process_ble_events(lv_timer_t *)
 
 void destroy_ui_resource_handles()
 {
-    /* A deinit during BLE authentication must not leave the passkey resident. */
-    s_shell_session.clear_ble_auth_input();
+    /* A deinit during BLE authentication must not leave the passkey resident.
+     * Detaching also drops the console the shell application owns. */
+    s_shell_app.detach_console();
     if (s_terminal_output_timer != nullptr) {
         lv_timer_del(s_terminal_output_timer);
         s_terminal_output_timer = nullptr;
@@ -474,9 +484,6 @@ void destroy_ui_resource_handles()
 }
 
 void hidden(lv_obj_t *obj, bool value);
-void sync_editor();
-void sync_line();
-void execute_line(bool line_already_sent = false);
 void local_key(uint32_t key);
 
 void on_cat_result(const char *output, size_t output_length, bool accepted, void *)
@@ -535,9 +542,9 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier,
         /* A modified key is an SSH escape sequence, not text.  The session
          * owns that decision; the UI only reports the modifier. */
         if (modifier & 0x01U && length == 1) {
-            (void)s_shell_session.insert_modified_key(text[0], modifier);
+            (void)s_shell_app.insert_modified_key(text[0], modifier);
         } else {
-            (void)s_shell_session.insert_physical_text(text, length);
+            (void)s_shell_app.insert_physical_text(text, length);
         }
     } else if (special_key) {
         local_key(special_key);
@@ -572,55 +579,12 @@ void wipe_wifi_actions(std::vector<cyberdeck_wifi::action> &actions) {
 }
 
 
-size_t utf8_char_count(const std::string &str) {
-    size_t count = 0;
-    for (size_t i = 0; i < str.size(); ) {
-        unsigned char c = static_cast<unsigned char>(str[i]);
-        if (c < 0x80) i += 1;
-        else if ((c & 0xE0) == 0xC0) i += 2;
-        else if ((c & 0xF0) == 0xE0) i += 3;
-        else if ((c & 0xF8) == 0xF0) i += 4;
-        else i += 1;
-        count++;
-    }
-    return count;
-}
-
-size_t utf8_valid_start_offset(const std::string &str, size_t drop_bytes) {
-    if (drop_bytes >= str.size()) return str.size();
-    while (drop_bytes < str.size() && (static_cast<unsigned char>(str[drop_bytes]) & 0xC0) == 0x80) {
-        drop_bytes++;
-    }
-    return drop_bytes;
-}
-
-std::string truncate_left_utf8(const std::string &str, size_t max_bytes) {
-    if (str.size() <= max_bytes) return str;
-    if (max_bytes == 0) return {};
-    const size_t drop_bytes = str.size() - max_bytes;
-    return str.substr(utf8_valid_start_offset(str, drop_bytes));
-}
-
-std::string fit_prompt_marker(const std::string &marker) {
-    if (marker.size() <= TERMINAL_LIMIT) return marker;
-
-    /* The local prompt must retain its final directory component and the
-     * shell terminator even when a deeply nested path exceeds the terminal
-     * budget.  The marker is always formed as <cwd> + "$ ". */
-    constexpr size_t prompt_suffix_size = 2;
-    if (marker.size() >= prompt_suffix_size && marker.compare(marker.size() - prompt_suffix_size,
-                                                               prompt_suffix_size, "$ ") == 0) {
-        const size_t cwd_budget = TERMINAL_LIMIT > prompt_suffix_size
-                                ? TERMINAL_LIMIT - prompt_suffix_size : 0;
-        return truncate_left_utf8(marker.substr(0, marker.size() - prompt_suffix_size), cwd_budget) + "$ ";
-    }
-    return truncate_left_utf8(marker, TERMINAL_LIMIT);
-}
-
-std::string fit_visible_line(const std::string &line, size_t marker_bytes) {
-    const size_t budget = TERMINAL_LIMIT > marker_bytes ? TERMINAL_LIMIT - marker_bytes : 0;
-    return truncate_left_utf8(line, budget);
-}
+/* Prompt, line fitting and the UTF-8 helpers belong to the shell application
+ * (cyberdeck_shell_console); the view only measures the scrollback it renders
+ * around them. */
+using cyberdeck_shell_console::truncate_left_utf8;
+using cyberdeck_shell_console::utf8_char_count;
+using cyberdeck_shell_console::utf8_valid_start_offset;
 
 void disable_scrolling(lv_obj_t *obj) {
     lv_obj_set_scroll_dir(obj, LV_DIR_NONE);
@@ -705,29 +669,29 @@ void process_wifi_state(lv_timer_t *) {
     const bool enabled = update.enabled;
     s_latest_wifi_status = *status;
     if (s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::CONNECTING &&
-        s_wifi_model.active_connection_token() == s_shell_session.wifi_model_connection_token() &&
-        status->connection_token == s_shell_session.wifi_connection_token()) {
+        s_wifi_model.active_connection_token() == s_shell_app.wifi_model_connection_token() &&
+        status->connection_token == s_shell_app.wifi_connection_token()) {
         if (status->connected && status->has_ip) {
-            s_wifi_model.connection_callback(s_shell_session.wifi_model_connection_token(),
+            s_wifi_model.connection_callback(s_shell_app.wifi_model_connection_token(),
                                              cyberdeck_wifi::connection_event::connected);
-            s_wifi_model.connection_callback(s_shell_session.wifi_model_connection_token(),
+            s_wifi_model.connection_callback(s_shell_app.wifi_model_connection_token(),
                                              cyberdeck_wifi::connection_event::has_ip);
             auto completed_actions = s_wifi_model.take_actions();
             wipe_wifi_actions(completed_actions);
-            s_shell_session.invalidate_wifi_connection();
+            s_shell_app.invalidate_wifi_connection();
             append_line("Wi-Fi connected.\n");
             s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
-            s_shell_session.clear_editor();
+            s_shell_app.clear_editor();
             render_terminal();
         } else if (!status->connected) {
-            s_wifi_model.connection_callback(s_shell_session.wifi_model_connection_token(),
+            s_wifi_model.connection_callback(s_shell_app.wifi_model_connection_token(),
                                              cyberdeck_wifi::connection_event::failed);
             auto failed_actions = s_wifi_model.take_actions();
             wipe_wifi_actions(failed_actions);
-            s_shell_session.invalidate_wifi_connection();
+            s_shell_app.invalidate_wifi_connection();
             append_line("Wi-Fi connection failed or timed out.\n");
             s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
-            s_shell_session.clear_editor();
+            s_shell_app.clear_editor();
             render_terminal();
         }
     }
@@ -899,15 +863,28 @@ void on_wifi_scan_done(const wifi_ap_record_t *aps, int count, void *ctx) {
     delete scan;
 }
 
-std::string get_rendered_output() {
+cyberdeck_shell_console::line_view compose_console_line() {
+    /* The prompt and the command line belong to the shell application.  The UI
+     * only resolves which surface owns the input right now and hands that
+     * state over; the application returns the marker, the fitted line and the
+     * cursor already clamped to the visible window. */
     const ssh_client_state_t state = cyberdeck_apps::service_ports::ssh_state();
-    const bool password = (state == SSH_CLIENT_NEED_PASSWORD) || (s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SEARCH_PASSWORD);
-    const bool connected = state == SSH_CLIENT_CONNECTED;
-    sync_editor();
-    const std::string visible_line = connected ? s_shell_session.editor().visible_line() : (password ? std::string(s_shell_session.line().size(), '*') : s_shell_session.line());
-    const std::string marker = connected ? "" : (password ? "Password: " : (s_ble_model.owns_input() || s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SAVED_SELECT || s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SAVED_CONFIRM ? "" : fit_prompt_marker(s_local_shell.cwd() + "$ ")));
-    const std::string fitted_line = fit_visible_line(visible_line, marker.size());
-    const size_t used = marker.size() + fitted_line.size();
+    cyberdeck_shell_console::surface_state surface;
+    surface.ssh_connected = state == SSH_CLIENT_CONNECTED;
+    surface.password_pending =
+        (state == SSH_CLIENT_NEED_PASSWORD) ||
+        (s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SEARCH_PASSWORD);
+    surface.input_owned_elsewhere =
+        s_ble_model.owns_input() ||
+        s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SEARCH_SELECT ||
+        s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SAVED_SELECT ||
+        s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SAVED_CONFIRM;
+    surface.cwd = s_local_shell.cwd();
+    return s_shell_app.compose_line(surface);
+}
+
+std::string get_rendered_output(const cyberdeck_shell_console::line_view &view) {
+    const size_t used = view.reserved();
     const size_t available = TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0;
     std::string output = s_output;
     if (s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SEARCH_SELECT) {
@@ -929,7 +906,7 @@ std::string get_rendered_output() {
         if (ble_screen == cyberdeck_ble::screen::auth &&
             s_ble_model.pending_auth_action() == cyberdeck_ble::auth_io_action::input) {
             output += "Passkey input: ";
-            output.append(s_shell_session.ble_auth_input().size(), '*');
+            output.append(s_shell_app.ble_auth_input_size(), '*');
             output += "\n";
         }
     }
@@ -939,30 +916,18 @@ std::string get_rendered_output() {
 
 void render_terminal() {
     if (!s_terminal) return;
-    const ssh_client_state_t state = cyberdeck_apps::service_ports::ssh_state();
-    const bool password = (state == SSH_CLIENT_NEED_PASSWORD) || (s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SEARCH_PASSWORD);
-    const bool connected = state == SSH_CLIENT_CONNECTED;
-    sync_editor();
-    const std::string visible_line = connected ? s_shell_session.editor().visible_line() : (password ? std::string(s_shell_session.line().size(), '*') : s_shell_session.line());
-    const std::string marker = connected ? "" : (password ? "Password: " : (s_ble_model.owns_input() || s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SEARCH_SELECT || s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SAVED_SELECT || s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SAVED_CONFIRM ? "" : fit_prompt_marker(s_local_shell.cwd() + "$ ")));
-    const std::string fitted_line = fit_visible_line(visible_line, marker.size());
-
-    std::string output = get_rendered_output();
-    std::string text = output + marker + fitted_line;
+    const cyberdeck_shell_console::line_view view = compose_console_line();
+    std::string output = get_rendered_output(view);
+    std::string text = output + view.text();
 
     RenderGuard guard;
     lv_textarea_set_text(s_terminal, text.c_str());
 
     /* The textarea is also the editing surface while SSH is connected.  Do
      * not reset its cursor to the beginning: the model remains authoritative
-     * in every session. */
-    size_t cursor_bytes = s_shell_session.cursor();
-    if (cursor_bytes > s_shell_session.line().size()) cursor_bytes = s_shell_session.line().size();
-    const size_t line_start = visible_line.size() - fitted_line.size();
-    if (cursor_bytes < line_start) cursor_bytes = line_start;
-
-    uint32_t char_pos = static_cast<uint32_t>(utf8_char_count(output) + utf8_char_count(marker) +
-                                              utf8_char_count(visible_line.substr(line_start, cursor_bytes - line_start)));
+     * in every session, and the application already clamped it to the fitted
+     * UTF-8 window. */
+    uint32_t char_pos = static_cast<uint32_t>(utf8_char_count(output) + view.cursor_chars());
     lv_textarea_set_cursor_pos(s_terminal, char_pos);
     s_terminal_output_dirty = false;
 }
@@ -1035,7 +1000,7 @@ void process_ssh_state(ssh_client_state_t state, const char *message) {
         append_output(retained.data(), displayed);
     }
     if (state == SSH_CLIENT_NEED_PASSWORD || state == SSH_CLIENT_CONNECTED) {
-        s_shell_session.clear_editor();
+        s_shell_app.clear_editor();
     }
     render_terminal();
 }
@@ -1146,7 +1111,7 @@ void terminal_insert(lv_event_t *event) {
      * decisions.  LVGL edits the textarea as part of this event, so the
      * session re-renders and the widget is restored afterwards. */
     bool virtual_enter_handled = false;
-    (void)s_shell_session.insert_virtual_text(inserted, &virtual_enter_handled);
+    (void)s_shell_app.insert_virtual_text(inserted, &virtual_enter_handled);
     s_virtual_enter_handled = virtual_enter_handled;
     render_terminal();
 }
@@ -1367,14 +1332,15 @@ cyberdeck_shell_session::key translate_session_key(uint32_t key)
     }
 }
 
-void sync_editor() { s_shell_session.sync_editor(); }
-void sync_line() { s_shell_session.sync_line(); }
-void execute_line(bool line_already_sent) { s_shell_session.execute_line(line_already_sent); }
-void local_key(uint32_t key) { s_shell_session.handle_key(translate_session_key(key)); }
+void local_key(uint32_t key) { s_shell_app.handle_key(translate_session_key(key)); }
 
 } // namespace
 
 extern "C" esp_err_t cyberdeck_ui_init(void) {
+       /* Lend the session host to the shell application before anything can
+        * compose a prompt or dispatch a key.  The console itself is created by
+        * the supervisor's start hook, so the shell owns its own lifecycle. */
+       s_shell_app.attach_console(s_shell_session_host);
        if (!s_keyboard_dispatch.start(on_keyboard_event, nullptr)) return ESP_ERR_NO_MEM;
        s_wifi_state_queue = xQueueCreate(1, sizeof(wifi_state_update));
        if (s_wifi_state_queue == nullptr) {

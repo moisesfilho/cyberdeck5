@@ -19,7 +19,7 @@ def main() -> int:
     terminal_view = TERMINAL_VIEW.read_text(encoding="utf-8")
     worker = WORKER.read_text(encoding="utf-8")
 
-    require("constexpr size_t TERMINAL_LIMIT = 12288" in ui,
+    require("constexpr size_t TERMINAL_LIMIT = cyberdeck_shell_console::k_terminal_limit" in ui,
             "UI terminal limit must be explicit and equal to the cat byte budget")
     require("lv_textarea_set_one_line(s_terminal, false)" in terminal_view,
             "cat output must target an explicitly multiline textarea")

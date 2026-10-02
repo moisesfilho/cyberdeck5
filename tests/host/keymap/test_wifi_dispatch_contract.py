@@ -173,7 +173,7 @@ def test_ui_delegates_to_session(source: str) -> None:
     local_key_def = re.search(
         r"void\s+local_key\s*\(\s*uint32_t\s+\w+\s*\)\s*\{[^}]*\}", source)
     require(local_key_def is not None and
-            "s_shell_session.handle_key(translate_session_key(key))" in local_key_def.group(0),
+            "s_shell_app.handle_key(translate_session_key(key))" in local_key_def.group(0),
             "UI local_key facade must delegate to the extracted session key handler")
 
 

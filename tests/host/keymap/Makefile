@@ -25,6 +25,13 @@ CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O2
 
 KEYMAP_SRC       := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp
 SHELL_UTILS_SRC  := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp
+# Fase 7: console puro (prompt/linha + politica de despacho) e a aplicacao de
+# primeiro plano que possui o console.  Ambos linkam no host sem LVGL/ESP-IDF
+# quando ligado com os mesmos shims do harness de sessao.
+SHELL_CONSOLE_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp
+SHELL_CONSOLE_HDR := ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_console.h
+SHELL_APP_SRC     := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_app.cpp
+SHELL_APP_HDR     := ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_app.h
 SHELL_HELP_HDR   := ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h
 HISTORY_SRC      := ../../../components/cyberdeck/src/apps/shell/cyberdeck_history.cpp
 KEYBOARD_EVENT_SRC := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp
@@ -133,9 +140,9 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_cat_worker test_ble_background test_keyboard_dispatch test_display_views $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_cat_worker test_ble_background test_keyboard_dispatch test_display_views $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
-.PHONY: all test verify clean test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard
+.PHONY: all test verify clean test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract
 
 all: test
 
@@ -331,13 +338,14 @@ test_terminal_output_contract: $(TERMINAL_OUTPUT_CONTRACT) ../../../components/c
 # BLE/Wi-Fi, shell_utils, local_shell, protecao de tela e bateria).
 test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
+		$(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
 		$(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) $(BATTERY_PROTECTION_SRC) \
 		$(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) $(WIFI_STATE_MACHINE_SRC) \
 		$(BLE_TYPES_SRC) $(BLE_STATE_SRC) \
 		shim/esp_err.h shim/esp_wifi_types.h shim/freertos/FreeRTOS.h
 	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_session.cpp \
-		$(SESSION_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
+		$(SESSION_SRC) $(SHELL_CONSOLE_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
 		$(LOCAL_SHELL_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
 		$(APP_RUNTIME_SRC) \
 		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
@@ -346,6 +354,28 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 
 test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR)
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_app_runtime.cpp $(APP_RUNTIME_SRC) -o test_app_runtime
+
+# Aplicacao shell de primeiro plano (Fase 7): ownership do console, modos de
+# sessao (SSH como modo), politica de despacho e composicao do prompt.  Liga o
+# console puro, a aplicacao e o runtime reais contra um host de sessao falso.
+test_shell_app: test_shell_app.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
+		$(SHELL_APP_SRC) $(SHELL_APP_HDR) $(SESSION_SRC) $(SESSION_HDR) \
+		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
+		$(APP_RUNTIME_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
+		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
+		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) $(BLE_STATE_SRC)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_app.cpp \
+		$(SHELL_CONSOLE_SRC) $(SHELL_APP_SRC) \
+		$(SESSION_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
+		$(LOCAL_SHELL_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
+		$(APP_RUNTIME_SRC) \
+		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
+		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) \
+		$(BLE_STATE_SRC) -o test_shell_app
+
+test_shell_app_contract: test_shell_app_contract.py $(SHELL_APP_SRC) $(SHELL_APP_HDR) \
+		$(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h
+	$(PYTHON) test_shell_app_contract.py
 
 test_system_apps_contract: test_system_apps_contract.py ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp ../../../components/cyberdeck/src/apps/ssh/ssh_client.cpp
 	$(PYTHON) test_system_apps_contract.py
@@ -741,6 +771,9 @@ test: $(BINS)
 	@./test_shell_session
 	@echo "==> Executando testes do runtime de aplicacoes compiladas"
 	@./test_app_runtime
+	@echo "==> Executando aplicacao shell de primeiro plano e seu contrato"
+	@./test_shell_app
+	@$(MAKE) --no-print-directory test_shell_app_contract
 	@echo "==> Executando contrato dos system apps"
 	@$(MAKE) --no-print-directory test_system_apps_contract
 	@$(MAKE) --no-print-directory test_screenshot_lifecycle_contract

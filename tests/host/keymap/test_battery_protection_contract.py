@@ -298,10 +298,13 @@ def check_ui_shell_and_serial(failures: list[str]) -> None:
                                         shell_header, re.IGNORECASE) is not None,
                     "shell public contract must expose battery protection command")
 
-    # The command switch moved to the extracted session; the UI only delegates.
+    # The command switch moved to the extracted session, reached through the
+    # foreground shell application that owns the console.
     session = strip_comments(read(SESSION, failures))
-    require_all(failures, "s_shell_session.execute_line(line_already_sent)" in ui,
-                "UI facade must delegate execute_line to the extracted session")
+    require_all(failures, "s_shell_app.handle_key(" in ui,
+                "UI must route keys through the shell application")
+    require_all(failures, "local_key(uint32_t key) { s_shell_app.handle_key(" in ui,
+                "the local key facade must delegate to the shell application")
     execute = function_body(session, "void session::execute_line(")
     require_all(failures, execute is not None,
                 "session command dispatch seam is missing")

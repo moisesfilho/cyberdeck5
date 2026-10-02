@@ -106,8 +106,8 @@ def main() -> int:
     session = SESSION.read_text(encoding="utf-8")
     simplified_flow = "wifi audit save" in session
     require("wifi audit" in session, "TUI must recognize wifi audit")
-    require("s_shell_session.execute_line" in ui,
-            "the UI facade must delegate the command switch to the session")
+    require("s_shell_app.handle_key(" in ui,
+            "the UI must route the command switch through the shell application")
     if simplified_flow:
         require("wifi audit export" not in session,
                 "simplified flow must retire the old export command")

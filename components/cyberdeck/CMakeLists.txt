@@ -14,6 +14,10 @@ idf_component_register(
         # Stateful shell session (line dispatch + key routing); firmware-only,
         # like cyberdeck_ui: the host suite pins it through structural contracts.
         "src/apps/shell/cyberdeck_shell_session.cpp"
+        # Prompt/line composition and command dispatch owned by the foreground
+        # shell application (Fase 7), plus the application that owns the console.
+        "src/apps/shell/cyberdeck_shell_console.cpp"
+        "src/apps/shell/cyberdeck_shell_app.cpp"
         "src/platform/display/cyberdeck_wifi_indicator.cpp"
         "src/platform/display/cyberdeck_wifi_icon.cpp"
         "src/apps/wifi/cyberdeck_wifi_menu.cpp"

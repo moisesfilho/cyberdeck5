@@ -70,9 +70,9 @@ def main() -> int:
     consumer = function_body(ui, "void on_keyboard_event(")
     require("local_key(special_key)" in consumer,
             "special keys must remain routed through the UI local_key facade")
-    require("s_shell_session.insert_physical_text(text, length)" in consumer,
+    require("s_shell_app.insert_physical_text(text, length)" in consumer,
             "physical text must be routed through the session, which owns the decision")
-    require("s_shell_session.insert_modified_key(" in consumer,
+    require("s_shell_app.insert_modified_key(" in consumer,
             "a modified physical key must be routed through the session")
     require("insert_physical(" not in consumer and "insert_virtual(" not in consumer,
             "the UI facade must not decide how text or a modified key is interpreted")
@@ -85,7 +85,7 @@ def main() -> int:
     local_key_def = re.search(
         r"void\s+local_key\s*\(\s*uint32_t\s+\w+\s*\)\s*\{[^}]*\}", ui)
     require(local_key_def is not None and
-            "s_shell_session.handle_key(translate_session_key(key))" in local_key_def.group(0),
+            "s_shell_app.handle_key(translate_session_key(key))" in local_key_def.group(0),
             "local_key must delegate to the extracted session key handler")
 
     terminal_changed = function_body(ui, "void terminal_changed(")

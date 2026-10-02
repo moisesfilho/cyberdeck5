@@ -5,6 +5,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 UI_PATH = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
+CONSOLE_PATH = (ROOT / "components/cyberdeck/src/apps/shell/"
+                "cyberdeck_shell_console.cpp")
+CONSOLE_HEADER = (ROOT / "components/cyberdeck/include/apps/shell/"
+                  "cyberdeck_shell_console.h")
 FILTER_TEST = ROOT / "tests/host/keymap/test_terminal_filter.cpp"
 
 
@@ -31,6 +35,8 @@ def body(source: str, signature: str) -> str:
 
 def main() -> int:
     source = UI_PATH.read_text(encoding="utf-8")
+    CONSOLE_SOURCE = CONSOLE_PATH.read_text(encoding="utf-8")
+    console_header = CONSOLE_HEADER.read_text(encoding="utf-8")
     append = body(source, "void append_output(const char *data, size_t len, bool repaint)")
     process = body(source, "void process_terminal_output(lv_timer_t *)")
     ssh_data_callback = body(source, "void on_ssh_data(ssh_client_generation_t generation, const char *data, size_t length)")
@@ -70,12 +76,17 @@ def main() -> int:
     assert "lv_timer_create(process_terminal_output, 100, nullptr);" in init
 
     # T-BOUND-01/02, REQ-2/AC-2.
-    assert "constexpr size_t TERMINAL_LIMIT = 12288;" in source
+    # The scrollback budget is derived from the shell console budget so the
+    # prompt, the line and the retained output cannot drift apart.
+    assert "constexpr size_t TERMINAL_LIMIT = cyberdeck_shell_console::k_terminal_limit;" in source
+    assert "static_assert(TERMINAL_LIMIT == cyberdeck_edit_line::limit," in source
+    assert "constexpr std::size_t k_terminal_limit = cyberdeck_edit_line::limit;" in console_header
+    assert "return std::string(text.substr(utf8_valid_start_offset(text, text.size() - max_bytes)));" \
+        in CONSOLE_SOURCE
     assert "k_ssh_event_queue_capacity = 8" in source
     assert "if (s_output.size() > TERMINAL_LIMIT)" in append
     assert "s_output.erase(0, safe_offset);" in append
     assert "utf8_valid_start_offset(s_output, excess)" in append
-    assert "return str.substr(utf8_valid_start_offset(str, drop_bytes));" in source
 
     # T-CTX-01/02, REQ-3/AC-3.
     assert "bsp_display_lock" not in process
@@ -101,11 +112,15 @@ def main() -> int:
                    "test_utf8_preserved"):
         assert marker in filter_source, f"missing filter scenario {marker}"
 
-    # T-REG-01: rendering preserves the session-owned editing line/cursor.
+    # T-REG-01: rendering preserves the shell-application-owned line/cursor.
+    # The prompt, the fitted line and the cursor now come from the foreground
+    # shell application; the view only applies them.
     render = body(source, "void render_terminal()")
-    assert "s_shell_session.cursor()" in render
+    assert "s_shell_app.compose_line(surface)" in body(source, "cyberdeck_shell_console::line_view compose_console_line()")
+    assert "view.cursor_chars()" in render
     assert "lv_textarea_set_cursor_pos(s_terminal, char_pos);" in render
-    assert "s_shell_session.line()" in render
+    assert "view.text()" in render
+    assert "s_shell_app.cursor()" not in render and "s_shell_app.line()" not in render
 
     print("PASS: terminal output structural contract")
     return 0
@@ -115,5 +130,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (AssertionError, OSError, UnicodeError) as error:
-        print(f"FAIL: {error}")
+        print(f"FAIL: {error or type(error).__name__}")
         raise SystemExit(1)

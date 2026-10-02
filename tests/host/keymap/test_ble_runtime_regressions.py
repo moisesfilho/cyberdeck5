@@ -160,10 +160,17 @@ def main() -> int:
     assert "append_line(s_ble_model.devices().render());" not in process
     assert "append_line(notice + \"\\n\")" in process
 
-    render = function_body(ui, "void render_terminal()")
-    marker = render.index("const std::string marker =")
-    assert "s_ble_model.owns_input()" in render[marker:]
-    assert "fit_prompt_marker(s_local_shell.cwd() + \"$ \")" in render[marker:]
+    # Prompt composition moved to the foreground shell application; the UI still
+    # resolves BLE ownership before handing the surface state over.
+    compose = function_body(ui, "cyberdeck_shell_console::line_view compose_console_line()")
+    assert "s_ble_model.owns_input()" in compose
+    assert "surface.cwd = s_local_shell.cwd();" in compose
+    assert "s_shell_app.compose_line(surface)" in compose
+    console = Path(__file__).resolve().parents[3] / (
+        "components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp")
+    console_source = console.read_text(encoding="utf-8")
+    assert "input_owned_elsewhere" in console_source
+    assert 'view.marker = fit_prompt_marker(state.cwd + "$ ");' in console_source
     assert "render_terminal();" in process[process.index("if (changed)"):]
 
     print("PASS: BLE runtime regressions (active cancel/terminal recovery/UI timeout/log secrecy)")

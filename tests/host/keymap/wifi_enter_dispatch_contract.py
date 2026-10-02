@@ -56,7 +56,7 @@ def main() -> int:
 
     # The session key handler is the single owner of menu selection, and the
     # UI facade must delegate to it.
-    require("s_shell_session.handle_key(translate_session_key(key))" in source,
+    require("s_shell_app.handle_key(translate_session_key(key))" in source,
             "UI local_key facade must delegate to the extracted session handler")
     require("wifi_search_menu().selected_item()" in local_key,
             "search Enter must inspect the selected AP")
@@ -75,9 +75,9 @@ def main() -> int:
     require("wifi_connection_token_ = host_.wifi_current_token();" in connect,
             "the connection token must come from the manager, not the model token")
     pump = function_body(source, "void process_wifi_state(")
-    require("status->connection_token == s_shell_session.wifi_connection_token()" in pump,
+    require("status->connection_token == s_shell_app.wifi_connection_token()" in pump,
             "manager status must be matched against the manager-reported token")
-    require("s_wifi_model.active_connection_token() == s_shell_session.wifi_model_connection_token()" in pump,
+    require("s_wifi_model.active_connection_token() == s_shell_app.wifi_model_connection_token()" in pump,
             "the model token must be matched against the session attempt token")
     require("invalidate_wifi_connection()" in connect,
             "a refused connection must clear both tokens")
