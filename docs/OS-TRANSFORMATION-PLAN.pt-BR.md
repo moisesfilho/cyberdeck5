@@ -210,6 +210,13 @@ e mantém `/system` como metadata-only. `/dev` não entrega handles e `/apps`
 não executa conteúdo. O `/sdcard` físico continua sendo `host_root`, separado
 do catálogo.
 
+Validação física do segundo recorte em `/dev/ttyACM0` (ESP32-P4, fw
+`e3323db`, IDF 5.5.5): `ping` e `sys.info` responderam; `cd /data` e `ls`
+exibiram o diretório persistente `com.tab5.notas`; `ls
+/data/com.tab5.notas` exibiu `nota.txt`; `cd /apps/tools` foi rejeitado como
+caminho inválido. O uptime permaneceu contínuo (`00:00:07` -> `00:00:25`),
+sem reboot, panic ou queda relevante de heap.
+
 ### 7. Shell como Userland
 
 - [ ] Transformar o shell em uma aplicacao de primeiro plano completa.
