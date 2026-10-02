@@ -138,8 +138,8 @@ bus global.
 - [x] Associar fila e mutex ao lifecycle da aplicacao.
 - [x] Tornar start e stop idempotentes.
 - [x] Exigir join antes de destruir recursos.
-- [ ] Integrar watchdog e limites de execucao.
-- [ ] Manter operacoes pesadas fora da task LVGL e de callbacks ESP-IDF.
+- [x] Integrar watchdog e limites de execucao.
+- [x] Manter operacoes pesadas fora da task LVGL e de callbacks ESP-IDF.
 
 O campo `lifecycle_timeout_ms` do runtime e um orcamento de observabilidade:
 start e stop sao hooks sincronos, portanto o runtime so mede o tempo depois que
@@ -150,7 +150,13 @@ nem bloqueia dependentes por esse motivo. Os limites efetivos ficam nos joins
 cooperativos bounded dos servicos, que devem reter/quarentenar recursos quando
 a task nao confirma quiescencia. Falha real do hook continua fail-closed.
 
-Recorte inicial da Etapa 5: o app SSH agora usa `disconnect_and_wait()` no
+O sdkconfig mantém o Task WDT global como política do firmware, com timeout de
+5 s e panic desabilitado. Esta etapa não adiciona `esp_task_wdt` por task nem
+feeds genéricos: os limites efetivos de lifecycle são os joins cooperativos
+bounded, e timeout retém recursos em quarentena e bloqueia restart. Hooks
+síncronos continuam com orçamento diagnóstico pós-retorno no runtime.
+
+Finalização da Etapa 5: o app SSH agora usa `disconnect_and_wait()` no
 stop, com espera bounded de 1000 ms, e seu manifesto declara a stack dinamica
 de 24576 bytes e a fila de eventos bounded de 8 itens. O adaptador de
 `service_application` torna somente os lifecycles de SSH e BLE idempotentes,
@@ -160,14 +166,13 @@ ultima operacao sobre filas, mutexes e estado de lifecycle, marca seu handle
 como encerrado e se auto-exclui. `ble_mgr_stop()` exige essa confirmacao antes
 de parar o NimBLE e destruir filas, mutexes e semaforos; em timeout retorna
 `ESP_ERR_TIMEOUT` e retém os recursos. O manifesto BLE declara a stack real do
-host de 8192 bytes e fila de comandos de 8 itens. O sub-recorte seguro desta
-etapa endurece somente o rollback de `wifi_mgr_start()` para o `wifi_evt_worker`:
-a solicitação de parada é cooperativa, o worker é acordado e há join bounded por
-uma barreira de quiescência antes da destruição de filas, mutex e coordinator. Se
-a barreira expira, os recursos dependentes ficam retidos/quarentenados e o start
-falha com `ESP_ERR_TIMEOUT`; não há `vTaskDelete` de worker vivo. Isso não cria
-`wifi_mgr_stop` público e não altera `net_worker` nem Screenshot. O teardown
-completo e o stop simétrico do Wi-Fi continuam pendentes. Para Serial-JTAG, `bridge_start()`
+host de 8192 bytes e fila de comandos de 8 itens. O Wi-Fi agora expõe
+`wifi_mgr_stop(timeout_ms)`, com estados explícitos, invalidação de
+gerações/tokens, cancelamento de timers e join cooperativo de
+`wifi_event_worker` e `net_worker` antes de qualquer destruição. Timeout marca
+quarentena, retém os recursos e bloqueia restart; não há `vTaskDelete` de
+worker vivo. O system app para SSH e Screenshot antes do Wi-Fi pela árvore de
+dependências existente e o stop do Wi-Fi é idempotente. Para Serial-JTAG, `bridge_start()`
 aguarda o handshake da task `serial_brg` e `serial_stop()` solicita saída
 cooperativa e faz join bounded de até 2000 ms. Timeout deixa o estado em
 `stopping`, preserva o handle e impede restart concorrente; a task observa o

@@ -270,6 +270,9 @@ test_wifi_audit_save_contract: $(WIFI_AUDIT_SAVE_CONTRACT) ../../../components/c
 test_wifi_evt_worker_lifecycle_contract: test_wifi_evt_worker_lifecycle_contract.py ../../../components/cyberdeck/src/apps/wifi/wifi_mgr.cpp ../../../code-map.md Makefile
 	$(PYTHON) test_wifi_evt_worker_lifecycle_contract.py
 
+test_wifi_mgr_lifecycle_contract: test_wifi_mgr_lifecycle_contract.py ../../../components/cyberdeck/src/apps/wifi/wifi_mgr.cpp ../../../components/cyberdeck/include/apps/wifi/wifi_mgr.h ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp Makefile
+	$(PYTHON) test_wifi_mgr_lifecycle_contract.py
+
 
 # Logica pura (sem LVGL): formatador do relogio do header (plano aprovado:
 # clock "DD/MM/YYYY HH:MM" em GMT-3 no centro do header, NENHUM status SSH no

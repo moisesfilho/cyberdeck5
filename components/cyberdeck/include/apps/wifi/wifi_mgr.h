@@ -24,6 +24,9 @@ typedef struct {
 typedef void (*wifi_state_cb_t)(const wifi_status_t *status, bool enabled, void *ctx);
 
 esp_err_t wifi_mgr_start(void);
+/* Stops both Wi-Fi workers and releases the driver resources.  A timeout is
+ * fail-safe: resources are retained and the manager is quarantined. */
+esp_err_t wifi_mgr_stop(uint32_t timeout_ms);
 
 #define WIFI_MGR_MAX_STATE_LISTENERS 4
 

@@ -19,6 +19,7 @@ namespace {
 
 constexpr const char *TAG = "system_apps";
 constexpr uint32_t k_ssh_lifecycle_timeout_ms = 1000;
+constexpr uint32_t k_wifi_lifecycle_timeout_ms = 8000;
 constexpr uint32_t k_ssh_task_stack_bytes = 24576;
 constexpr uint32_t k_ssh_event_queue_depth = 8;
 constexpr uint32_t k_ble_host_task_stack_bytes = 8192;
@@ -57,6 +58,7 @@ bool stop_screenshot()
 }
 
 bool start_wifi() { return wifi_mgr_start() == ESP_OK; }
+bool stop_wifi() { return wifi_mgr_stop(k_wifi_lifecycle_timeout_ms) == ESP_OK; }
 
 bool start_serial() { return cyberdeck_apps::service_ports::serial_start(); }
 bool stop_serial() { return cyberdeck_apps::service_ports::serial_stop(2000); }
@@ -175,9 +177,9 @@ service_application s_shell{make_manifest("cyberdeck.shell", "Terminal shell",
 service_application s_wifi{make_manifest("cyberdeck.wifi", "Wi-Fi service",
                                           "Wi-Fi connectivity and network management", {"cyberdeck.event_log"},
                                          {"network", "storage"}, 8000,
-                                         cyberdeck_apps::app_type::service,
-                                         {"network", "storage"}, 4096, 8),
-                           start_wifi, nullptr};
+                                          cyberdeck_apps::app_type::service,
+                                          {"network", "storage"}, 4096, 8),
+                            start_wifi, stop_wifi, true};
 service_application s_serial{make_manifest("cyberdeck.serial", "Serial bridge",
                                             "USB Serial-JTAG NDJSON control bridge",
                                              {"cyberdeck.event_log", "cyberdeck.shell"}, {"serial", "input"}, 2000,

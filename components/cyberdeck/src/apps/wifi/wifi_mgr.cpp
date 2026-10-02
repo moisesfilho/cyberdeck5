@@ -30,6 +30,7 @@ static const char *TAG = "tab5_wifi";
 #define CONNECT_TIMEOUT_MS 15000
 #define NET_SESSION_EVENT_QUEUE_LENGTH 4
 #define WIFI_EVENT_WORKER_JOIN_TIMEOUT_MS 1000
+#define WIFI_NET_WORKER_JOIN_TIMEOUT_MS 1000
 
 struct wifi_callback_update { wifi_status_t status; bool enabled; };
 enum class net_session_event : uint8_t {
@@ -70,6 +71,8 @@ public:
  * second lifetime.  This also makes ownership auditable and prevents the old
  * collection of unrelated process globals from leaking state across starts. */
 struct wifi_manager_context {
+    enum class lifecycle_state : uint8_t { stopped, starting, running, stopping, quarantined };
+    lifecycle_state lifecycle = lifecycle_state::stopped;
     TimerHandle_t scan_timer = NULL;
     TimerHandle_t retry_timer = NULL;
     TimerHandle_t connect_timeout_timer = NULL;
@@ -107,8 +110,14 @@ struct wifi_manager_context {
     SemaphoreHandle_t wifi_event_mutex = NULL;
     SemaphoreHandle_t wifi_event_worker_wake = NULL;
     SemaphoreHandle_t wifi_event_worker_quiesced = NULL;
+    SemaphoreHandle_t net_worker_wake = NULL;
+    SemaphoreHandle_t net_worker_quiesced = NULL;
+    std::atomic<bool> retry_timer_pending{false};
+    std::atomic<bool> scan_timer_pending{false};
+    std::atomic<bool> connect_timeout_pending{false};
     SemaphoreHandle_t state_listener_mutex = NULL;
     std::atomic<bool> wifi_event_stop_requested{false};
+    std::atomic<bool> net_stop_requested{false};
     bool wifi_event_worker_quarantined = false;
     cyberdeck_wifi_test::event_dispatch wifi_dispatch;
     cyberdeck_wifi_test::persistence_queue wifi_persistence;
@@ -189,8 +198,15 @@ public:
 #define s_wifi_event_mutex (wifi_context().wifi_event_mutex)
 #define s_wifi_event_worker_wake (wifi_context().wifi_event_worker_wake)
 #define s_wifi_event_worker_quiesced (wifi_context().wifi_event_worker_quiesced)
+#define s_net_worker_wake (wifi_context().net_worker_wake)
+#define s_net_worker_quiesced (wifi_context().net_worker_quiesced)
+#define s_retry_timer_pending (wifi_context().retry_timer_pending)
+#define s_scan_timer_pending (wifi_context().scan_timer_pending)
+#define s_connect_timeout_pending (wifi_context().connect_timeout_pending)
 #define s_wifi_event_stop_requested (wifi_context().wifi_event_stop_requested)
 #define s_wifi_event_worker_quarantined (wifi_context().wifi_event_worker_quarantined)
+#define s_net_stop_requested (wifi_context().net_stop_requested)
+#define s_lifecycle (wifi_context().lifecycle)
 #define s_wifi_dispatch (wifi_context().wifi_dispatch)
 #define s_wifi_persistence (wifi_context().wifi_persistence)
 #define s_ui_notify_pending (wifi_context().ui_notify_pending)
@@ -216,28 +232,43 @@ public:
 /* Startup is transactional.  Every resource created before a late failure is
  * released here, including the radio feature and the default netif/event
  * loop; otherwise a second start observes stale handlers and task handles. */
+static bool join_worker(TaskHandle_t &task, SemaphoreHandle_t quiesced,
+                        SemaphoreHandle_t wake, TickType_t timeout)
+{
+    if (task == NULL) return true;
+    if (wake != NULL) (void)xSemaphoreGive(wake);
+    if (quiesced == NULL || xSemaphoreTake(quiesced, timeout) != pdTRUE) return false;
+    task = NULL;
+    return true;
+}
+
 static esp_err_t rollback_start(bool wifi_started, esp_err_t failure)
 {
-    /* The event worker owns the persistence coordinator while it is alive.
-     * Stop and join it before touching any of the objects in its context. */
+    /* Both workers must quiesce before any coordinator, queue, mutex or IDF
+     * object is touched.  A timeout deliberately retains the whole lifetime. */
+    s_wifi_event_stop_requested.store(true, std::memory_order_release);
+    s_net_stop_requested.store(true, std::memory_order_release);
+    s_retry_timer_pending.store(false, std::memory_order_release);
+    s_scan_timer_pending.store(false, std::memory_order_release);
+    s_connect_timeout_pending.store(false, std::memory_order_release);
+    bool event_joined = true;
     if (s_wifi_event_worker != NULL) {
-        s_wifi_event_stop_requested.store(true, std::memory_order_release);
-        if (s_wifi_event_worker_wake != NULL) {
-            (void)xSemaphoreGive(s_wifi_event_worker_wake);
-        }
-        if (s_wifi_event_worker_quiesced == NULL ||
-            xSemaphoreTake(s_wifi_event_worker_quiesced,
-                           pdMS_TO_TICKS(WIFI_EVENT_WORKER_JOIN_TIMEOUT_MS)) != pdTRUE) {
-            s_wifi_event_worker_quarantined = true;
-            ESP_LOGE(TAG, "wifi_evt_worker nao confirmou quiescencia; rollback retido");
-            return ESP_ERR_TIMEOUT;
-        }
-        /* Returning from the task is its cooperative self-deletion.  Never
-         * call vTaskDelete on a worker whose final resource access is unknown. */
-        s_wifi_event_worker = NULL;
+        if (s_wifi_event_worker_wake != NULL) (void)xSemaphoreGive(s_wifi_event_worker_wake);
+        event_joined = s_wifi_event_worker_quiesced != NULL &&
+                       xSemaphoreTake(s_wifi_event_worker_quiesced,
+                                      pdMS_TO_TICKS(WIFI_EVENT_WORKER_JOIN_TIMEOUT_MS)) == pdTRUE;
+        if (event_joined) s_wifi_event_worker = NULL;
+    }
+    const bool net_joined = join_worker(s_net_worker, s_net_worker_quiesced,
+                                        s_net_worker_wake,
+                                        pdMS_TO_TICKS(WIFI_NET_WORKER_JOIN_TIMEOUT_MS));
+    if (!event_joined || !net_joined) {
+        s_wifi_event_worker_quarantined = true;
+        s_lifecycle = wifi_manager_context::lifecycle_state::quarantined;
+        ESP_LOGE(TAG, "worker Wi-Fi nao confirmou quiescencia; rollback retido");
+        return ESP_ERR_TIMEOUT;
     }
     wipe_sensitive_state(true);
-    if (s_net_worker != NULL) { vTaskDelete(s_net_worker); s_net_worker = NULL; }
     if (s_net_session_event_queue != NULL) {
         vQueueDelete(s_net_session_event_queue);
         s_net_session_event_queue = NULL;
@@ -273,8 +304,11 @@ static esp_err_t rollback_start(bool wifi_started, esp_err_t failure)
     if (s_wifi_event_mutex != NULL) { vSemaphoreDelete(s_wifi_event_mutex); s_wifi_event_mutex = NULL; }
     if (s_wifi_event_worker_wake != NULL) { vSemaphoreDelete(s_wifi_event_worker_wake); s_wifi_event_worker_wake = NULL; }
     if (s_wifi_event_worker_quiesced != NULL) { vSemaphoreDelete(s_wifi_event_worker_quiesced); s_wifi_event_worker_quiesced = NULL; }
+    if (s_net_worker_wake != NULL) { vSemaphoreDelete(s_net_worker_wake); s_net_worker_wake = NULL; }
+    if (s_net_worker_quiesced != NULL) { vSemaphoreDelete(s_net_worker_quiesced); s_net_worker_quiesced = NULL; }
     if (s_net_mutex != NULL) { vSemaphoreDelete(s_net_mutex); s_net_mutex = NULL; }
     if (s_scan_mutex != NULL) { vSemaphoreDelete(s_scan_mutex); s_scan_mutex = NULL; }
+    if (s_state_listener_mutex != NULL) { vSemaphoreDelete(s_state_listener_mutex); s_state_listener_mutex = NULL; }
     /* No callback/context from the failed lifetime may be observed by the
      * next start.  Rollback is only entered before the public start returns,
      * so no caller can concurrently own an active completion here. */
@@ -289,6 +323,9 @@ static esp_err_t rollback_start(bool wifi_started, esp_err_t failure)
     s_active_scan_cb_ctx = NULL;
     ++s_scan_generation;
     s_cancel_connect_pending.store(false, std::memory_order_release);
+    s_retry_timer_pending.store(false, std::memory_order_release);
+    s_scan_timer_pending.store(false, std::memory_order_release);
+    s_connect_timeout_pending.store(false, std::memory_order_release);
     s_wifi_disconnect_pending.store(false, std::memory_order_release);
     s_ui_notify_pending.store(false, std::memory_order_release);
     s_scan_done_pending.store(false, std::memory_order_release);
@@ -297,9 +334,12 @@ static esp_err_t rollback_start(bool wifi_started, esp_err_t failure)
     s_wifi_enabled = true;
     s_wifi_persistence_coordinator.teardown();
     s_net_coordinator.reset();
+    memset(s_state_listeners, 0, sizeof(s_state_listeners));
     s_started = false;
     s_wifi_event_stop_requested.store(false, std::memory_order_release);
+    s_net_stop_requested.store(false, std::memory_order_release);
     s_wifi_event_worker_quarantined = false;
+    s_lifecycle = wifi_manager_context::lifecycle_state::stopped;
     s_has_cfg = false;
     s_cfg.ssid[0] = '\0';
     clear_secret(s_cfg.password, sizeof(s_cfg.password));
@@ -366,6 +406,8 @@ static void notify_state(void)
 
 void wifi_mgr_process_state_callbacks(void)
 {
+    lifecycle_guard lifecycle;
+    if (!lifecycle.owner) return;
     if (s_state_callback_queue == NULL) return;
     wifi_callback_update update = {};
     if (xQueueReceive(s_state_callback_queue, &update, 0) != pdTRUE) return;
@@ -686,10 +728,9 @@ static void schedule_retry(void)
 static void retry_timer_cb(TimerHandle_t timer)
 {
     if (pvTimerGetTimerID(timer) != &wifi_context()) return;
-    if (net_lock()) {
-        s_net_coordinator.on_retry_timer_tick(s_wifi_enabled, s_has_cfg, s_connected);
-        net_unlock();
-    }
+    if (s_net_stop_requested.load(std::memory_order_acquire)) return;
+    s_retry_timer_pending.store(true, std::memory_order_release);
+    if (s_net_worker_wake != NULL) (void)xSemaphoreGive(s_net_worker_wake);
 }
 
 static void ip_event_handler(void *arg, esp_event_base_t base, int32_t event_id, void *event_data)
@@ -782,10 +823,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t event_i
 static void scan_timer_cb(TimerHandle_t timer)
 {
     if (pvTimerGetTimerID(timer) != &wifi_context()) return;
-    if (net_lock()) {
-        s_net_coordinator.on_scan_timer_tick(s_wifi_enabled, s_has_cfg, s_connected);
-        net_unlock();
-    }
+    if (s_net_stop_requested.load(std::memory_order_acquire)) return;
+    s_scan_timer_pending.store(true, std::memory_order_release);
+    if (s_net_worker_wake != NULL) (void)xSemaphoreGive(s_net_worker_wake);
 }
 
 static esp_err_t wifi_mgr_disconnect_impl(void)
@@ -828,23 +868,21 @@ static esp_err_t wifi_mgr_cancel_connection_impl(void)
 static void connect_timeout_timer_cb(TimerHandle_t timer)
 {
     if (pvTimerGetTimerID(timer) != &wifi_context()) return;
-    if (!s_manual_connect || s_has_ip) return;
     /* Timer callbacks only signal work.  In particular, the driver disconnect
      * operation must run from the network worker, not from the FreeRTOS timer
      * task.  The coordinator coalesces this with an explicit cancellation, so
      * a timeout racing with the prompt's cancel path still tears down exactly
      * once. */
-    s_cancel_connect_pending.store(true, std::memory_order_release);
-    if (net_lock()) {
-        (void)submit_cancel_connect_locked();
-        net_unlock();
-    }
+    if (s_net_stop_requested.load(std::memory_order_acquire)) return;
+    s_connect_timeout_pending.store(true, std::memory_order_release);
+    if (s_net_worker_wake != NULL) (void)xSemaphoreGive(s_net_worker_wake);
 }
 
 static void net_worker(void *arg)
 {
     if (arg != &wifi_context()) return;
     for (;;) {
+        if (s_net_stop_requested.load(std::memory_order_acquire)) break;
         cyberdeck_net_drain_result item{};
         if (net_lock()) {
             net_session_event session_event{};
@@ -862,6 +900,14 @@ static void net_worker(void *arg)
                     break;
                 }
             }
+            if (s_retry_timer_pending.exchange(false, std::memory_order_acq_rel))
+                s_net_coordinator.on_retry_timer_tick(s_wifi_enabled, s_has_cfg, s_connected);
+            if (s_scan_timer_pending.exchange(false, std::memory_order_acq_rel))
+                s_net_coordinator.on_scan_timer_tick(s_wifi_enabled, s_has_cfg, s_connected);
+            if (s_connect_timeout_pending.exchange(false, std::memory_order_acq_rel) &&
+                s_manual_connect && !s_has_ip) {
+                s_cancel_connect_pending.store(true, std::memory_order_release);
+            }
             if (s_cancel_connect_pending.load(std::memory_order_acquire))
                 (void)submit_cancel_connect_locked();
             if (s_wifi_disconnect_pending.load(std::memory_order_acquire))
@@ -869,6 +915,7 @@ static void net_worker(void *arg)
             item = s_net_coordinator.drain_pending();
             net_unlock();
         }
+        if (s_net_stop_requested.load(std::memory_order_acquire)) break;
         switch (item.work) {
         case cyberdeck_net_work::TEARDOWN_SSH: ssh_client_disconnect(); break;
         case cyberdeck_net_work::TEARDOWN_WIFI: wifi_mgr_disconnect_impl(); break;
@@ -881,7 +928,12 @@ static void net_worker(void *arg)
         case cyberdeck_net_work::CANCEL_CONNECT: wifi_mgr_cancel_connection_impl(); break;
         default: vTaskDelay(pdMS_TO_TICKS(10)); break;
         }
+        if (s_net_stop_requested.load(std::memory_order_acquire)) break;
     }
+    /* This is the last operation of the worker.  The stopper may now destroy
+     * the queue, mutex and coordinator without racing this task. */
+    (void)xSemaphoreGive(s_net_worker_quiesced);
+    vTaskDelete(NULL);
 }
 
 bool wifi_mgr_is_enabled(void)
@@ -901,6 +953,7 @@ void wifi_mgr_net_session_connecting(void)
         record_net_session_event_drop();
         ESP_LOGW(TAG, "evento de sessao SSH descartado (fila cheia/indisponivel)");
     }
+    if (s_net_worker_wake != NULL) (void)xSemaphoreGive(s_net_worker_wake);
 }
 
 void wifi_mgr_net_session_online(void)
@@ -910,6 +963,7 @@ void wifi_mgr_net_session_online(void)
         record_net_session_event_drop();
         ESP_LOGW(TAG, "evento de sessao SSH descartado (fila cheia/indisponivel)");
     }
+    if (s_net_worker_wake != NULL) (void)xSemaphoreGive(s_net_worker_wake);
 }
 
 void wifi_mgr_net_session_socket_error(void)
@@ -919,6 +973,7 @@ void wifi_mgr_net_session_socket_error(void)
         record_net_session_event_drop();
         ESP_LOGW(TAG, "evento de sessao SSH descartado (fila cheia/indisponivel)");
     }
+    if (s_net_worker_wake != NULL) (void)xSemaphoreGive(s_net_worker_wake);
 }
 
 esp_err_t wifi_mgr_add_state_callback(wifi_state_cb_t cb, void *ctx)
@@ -1199,12 +1254,120 @@ esp_err_t wifi_mgr_get_status(wifi_status_t *status)
     return ESP_OK;
 }
 
+esp_err_t wifi_mgr_stop(uint32_t timeout_ms)
+{
+    lifecycle_guard lifecycle;
+    if (!lifecycle.owner) return ESP_ERR_INVALID_STATE;
+    if (s_lifecycle == wifi_manager_context::lifecycle_state::stopped) return ESP_OK;
+    if (s_lifecycle == wifi_manager_context::lifecycle_state::quarantined) return ESP_ERR_TIMEOUT;
+    if (s_lifecycle != wifi_manager_context::lifecycle_state::running) return ESP_ERR_INVALID_STATE;
+
+    s_lifecycle = wifi_manager_context::lifecycle_state::stopping;
+    s_started = false;
+    s_wifi_event_stop_requested.store(true, std::memory_order_release);
+    s_net_stop_requested.store(true, std::memory_order_release);
+    s_retry_timer_pending.store(false, std::memory_order_release);
+    s_scan_timer_pending.store(false, std::memory_order_release);
+    s_connect_timeout_pending.store(false, std::memory_order_release);
+    s_connection_token.fetch_add(1, std::memory_order_acq_rel);
+    s_scan_done_pending.store(false, std::memory_order_release);
+    s_ui_notify_pending.store(false, std::memory_order_release);
+    if (s_scan_mutex != NULL && scan_state_lock()) {
+        ++s_scan_generation;
+        s_scan_in_progress = false;
+        s_scan_callback_pending = false;
+        s_pending_scan_cb = NULL;
+        s_pending_scan_cb_ctx = NULL;
+        s_scan_cb = NULL;
+        s_scan_cb_ctx = NULL;
+        scan_state_unlock();
+    }
+    if (s_scan_timer != NULL) (void)xTimerStop(s_scan_timer, 0);
+    if (s_retry_timer != NULL) (void)xTimerStop(s_retry_timer, 0);
+    if (s_connect_timeout_timer != NULL) (void)xTimerStop(s_connect_timeout_timer, 0);
+    (void)esp_wifi_scan_stop();
+
+    /* No new IDF callback can be admitted after this point.  Existing
+     * callbacks are made harmless by the token/generation invalidation above. */
+    if (s_got_ip_handler_registered) {
+        (void)esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, ip_event_handler);
+        s_got_ip_handler_registered = false;
+    }
+    if (s_lost_ip_handler_registered) {
+        (void)esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_LOST_IP, ip_event_handler);
+        s_lost_ip_handler_registered = false;
+    }
+    if (s_wifi_handler_registered) {
+        (void)esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler);
+        s_wifi_handler_registered = false;
+    }
+
+    const TickType_t started_at = xTaskGetTickCount();
+    const TickType_t budget = pdMS_TO_TICKS(timeout_ms);
+    const auto remaining = [&]() -> TickType_t {
+        const TickType_t elapsed = xTaskGetTickCount() - started_at;
+        return elapsed >= budget ? 0 : budget - elapsed;
+    };
+    if (s_wifi_event_worker_wake != NULL) (void)xSemaphoreGive(s_wifi_event_worker_wake);
+    if (s_net_worker_wake != NULL) (void)xSemaphoreGive(s_net_worker_wake);
+    const bool event_joined = join_worker(s_wifi_event_worker, s_wifi_event_worker_quiesced,
+                                          s_wifi_event_worker_wake, remaining());
+    const bool net_joined = join_worker(s_net_worker, s_net_worker_quiesced,
+                                        s_net_worker_wake, remaining());
+    if (!event_joined || !net_joined) {
+        s_wifi_event_worker_quarantined = true;
+        s_lifecycle = wifi_manager_context::lifecycle_state::quarantined;
+        ESP_LOGE(TAG, "stop Wi-Fi excedeu o limite; recursos retidos em quarentena");
+        return ESP_ERR_TIMEOUT;
+    }
+
+    wipe_sensitive_state(true);
+    if (s_radio_enabled) (void)esp_wifi_stop();
+    if (s_wifi_initialized) { (void)esp_wifi_deinit(); s_wifi_initialized = false; }
+    if (s_sta_netif != NULL) { (void)esp_netif_destroy(s_sta_netif); s_sta_netif = NULL; }
+    s_netif_initialized = false;
+    if (s_event_loop_created) { (void)esp_event_loop_delete_default(); s_event_loop_created = false; }
+    if (s_radio_enabled) (void)bsp_feature_enable(BSP_FEATURE_WIFI, false);
+    s_radio_enabled = false;
+    if (s_scan_timer != NULL) { (void)xTimerDelete(s_scan_timer, portMAX_DELAY); s_scan_timer = NULL; }
+    if (s_retry_timer != NULL) { (void)xTimerDelete(s_retry_timer, portMAX_DELAY); s_retry_timer = NULL; }
+    if (s_connect_timeout_timer != NULL) { (void)xTimerDelete(s_connect_timeout_timer, portMAX_DELAY); s_connect_timeout_timer = NULL; }
+    if (s_net_session_event_queue != NULL) { vQueueDelete(s_net_session_event_queue); s_net_session_event_queue = NULL; }
+    if (s_state_callback_queue != NULL) { vQueueDelete(s_state_callback_queue); s_state_callback_queue = NULL; }
+    if (s_wifi_event_mutex != NULL) { vSemaphoreDelete(s_wifi_event_mutex); s_wifi_event_mutex = NULL; }
+    if (s_wifi_event_worker_wake != NULL) { vSemaphoreDelete(s_wifi_event_worker_wake); s_wifi_event_worker_wake = NULL; }
+    if (s_wifi_event_worker_quiesced != NULL) { vSemaphoreDelete(s_wifi_event_worker_quiesced); s_wifi_event_worker_quiesced = NULL; }
+    if (s_net_worker_wake != NULL) { vSemaphoreDelete(s_net_worker_wake); s_net_worker_wake = NULL; }
+    if (s_net_worker_quiesced != NULL) { vSemaphoreDelete(s_net_worker_quiesced); s_net_worker_quiesced = NULL; }
+    if (s_net_mutex != NULL) { vSemaphoreDelete(s_net_mutex); s_net_mutex = NULL; }
+    if (s_scan_mutex != NULL) { vSemaphoreDelete(s_scan_mutex); s_scan_mutex = NULL; }
+    if (s_state_listener_mutex != NULL) { vSemaphoreDelete(s_state_listener_mutex); s_state_listener_mutex = NULL; }
+    s_wifi_persistence_coordinator.teardown();
+    s_net_coordinator.reset();
+    memset(s_state_listeners, 0, sizeof(s_state_listeners));
+    s_wifi_event_stop_requested.store(false, std::memory_order_release);
+    s_net_stop_requested.store(false, std::memory_order_release);
+    s_retry_timer_pending.store(false, std::memory_order_release);
+    s_scan_timer_pending.store(false, std::memory_order_release);
+    s_connect_timeout_pending.store(false, std::memory_order_release);
+    s_wifi_event_worker_quarantined = false;
+    s_lifecycle = wifi_manager_context::lifecycle_state::stopped;
+    return ESP_OK;
+}
+
 esp_err_t wifi_mgr_start(void)
 {
     lifecycle_guard lifecycle;
     if (!lifecycle.owner) return ESP_ERR_INVALID_STATE;
-    if (s_started) return ESP_OK;
-    if (s_wifi_event_worker_quarantined || s_wifi_event_worker != NULL) return ESP_ERR_TIMEOUT;
+    if (s_lifecycle == wifi_manager_context::lifecycle_state::running) return ESP_OK;
+    if (s_lifecycle == wifi_manager_context::lifecycle_state::starting ||
+        s_lifecycle == wifi_manager_context::lifecycle_state::stopping ||
+        s_lifecycle == wifi_manager_context::lifecycle_state::quarantined) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_wifi_event_worker_quarantined || s_wifi_event_worker != NULL) return ESP_ERR_INVALID_STATE;
+    if (s_net_worker != NULL) return ESP_ERR_INVALID_STATE;
+    s_lifecycle = wifi_manager_context::lifecycle_state::starting;
     if (s_scan_mutex == NULL) {
         s_scan_mutex = xSemaphoreCreateMutex();
     }
@@ -1216,10 +1379,17 @@ esp_err_t wifi_mgr_start(void)
     if (s_wifi_event_mutex == NULL) { return rollback_start(false, ESP_ERR_NO_MEM); }
     if (s_wifi_event_worker_wake == NULL) s_wifi_event_worker_wake = xSemaphoreCreateBinary();
     if (s_wifi_event_worker_quiesced == NULL) s_wifi_event_worker_quiesced = xSemaphoreCreateBinary();
-    if (s_wifi_event_worker_wake == NULL || s_wifi_event_worker_quiesced == NULL) {
+    if (s_net_worker_wake == NULL) s_net_worker_wake = xSemaphoreCreateBinary();
+    if (s_net_worker_quiesced == NULL) s_net_worker_quiesced = xSemaphoreCreateBinary();
+    if (s_wifi_event_worker_wake == NULL || s_wifi_event_worker_quiesced == NULL ||
+        s_net_worker_wake == NULL || s_net_worker_quiesced == NULL) {
         return rollback_start(false, ESP_ERR_NO_MEM);
     }
     s_wifi_event_stop_requested.store(false, std::memory_order_release);
+    s_net_stop_requested.store(false, std::memory_order_release);
+    s_retry_timer_pending.store(false, std::memory_order_release);
+    s_scan_timer_pending.store(false, std::memory_order_release);
+    s_connect_timeout_pending.store(false, std::memory_order_release);
     if (s_state_callback_queue == NULL) {
         s_state_callback_queue = xQueueCreate(1, sizeof(wifi_callback_update));
         if (s_state_callback_queue == NULL) { return rollback_start(false, ESP_ERR_NO_MEM); }
@@ -1323,6 +1493,7 @@ esp_err_t wifi_mgr_start(void)
     }
 
     s_started = true;
+    s_lifecycle = wifi_manager_context::lifecycle_state::running;
     notify_state();
     ESP_LOGI(TAG, "WiFi iniciado (radio C6 via SDIO, habilitado=%d)", (int)s_wifi_enabled);
     return ESP_OK;
