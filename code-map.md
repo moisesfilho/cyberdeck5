@@ -107,7 +107,7 @@ de 15 px), ambos definem `flex_grow=0`, a celula BLE usa
 SSH. Estados SSH vao para o terminal e event log; diagnostico Wi-Fi e obtido
 pelo comando `wifi` e pela auditoria local.
 
-### Shell local
+### Shell local (Etapa 6 concluida)
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |

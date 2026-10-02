@@ -208,7 +208,7 @@ retorna enquanto um callback estiver em execução.
 - [x] Manter `/system` para configuracoes e estado interno.
 - [x] Expor dispositivos por interfaces virtuais em `/dev`.
 - [x] Preservar confinamento, limites e protecao contra traversal e symlink.
-- [ ] Manter execucao de binarios do SD fora do escopo inicial.
+- [x] Manter execucao de binarios do SD fora do escopo inicial.
 
 O recorte atual mapeia `/data` e `/system` para seus diretórios sob
 `host_root`; somente `/data` aceita as mutações bounded do shell. `/dev/null` é a única interface virtual exposta;
