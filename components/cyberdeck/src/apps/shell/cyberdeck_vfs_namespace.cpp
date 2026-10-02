@@ -113,6 +113,13 @@ bool is_filesystem_backend(const resolved_path &path) noexcept
            path.namespace_index == k_system_namespace_index;
 }
 
+bool is_null_device(const resolved_path &path) noexcept
+{
+    return path.kind == path_kind::namespace_path &&
+           path.namespace_index == k_dev_namespace_index &&
+           std::strcmp(path.path, "/dev/null") == 0;
+}
+
 bool is_namespace_root(const char *path) noexcept
 {
     resolved_path result{};

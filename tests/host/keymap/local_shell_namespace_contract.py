@@ -34,6 +34,8 @@ def main() -> int:
             "the /data backend index must be fixed")
     require("k_system_namespace_index = 4" in header,
             "the /system backend index must be fixed")
+    require("is_null_device" in header and "is_null_device" in source,
+            "the /dev/null interface must be explicit")
     require("virtual namespace is read-only metadata" in shell,
             "virtual namespace operations must fail explicitly")
     require("src/apps/shell/cyberdeck_vfs_namespace.cpp" in

@@ -191,11 +191,15 @@ void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
     CHECK_EQ(shell.execute("ls").output, "config\n");
     CHECK_EQ(shell.execute("cat /system/config/mode.txt").output, "safe\n");
     CHECK(shell.execute("cd /").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.execute("ls /dev").output, "null\n");
+    CHECK_EQ(shell.execute("ls /dev/null").output, "null\n");
+    CHECK_EQ(shell.execute("cat /dev/null").output, "");
+    CHECK(shell.execute("cat /dev/tty").status == cyberdeck_local_shell_status::rejected);
 
     const char *readonly_commands[] = {
         "cat /apps/should-not-run", "touch /apps/new", "mkdir /data/new",
         "touch /data/new.txt", "rm /data/notes/readme.txt", "rm /dev/raw",
-        "rmdir /system", "cat /tmp/content", "touch /system/new.txt"
+        "rmdir /system", "cat /tmp/content", "touch /system/new.txt", "touch /dev/null"
     };
     for (const char *command : readonly_commands) {
         result = execute_without_exception(shell, command);

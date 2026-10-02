@@ -338,6 +338,9 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root,
     cyberdeck_vfs_namespace::resolved_path namespace_target{};
     if (cyberdeck_vfs_namespace::resolve(current.c_str(), argument.c_str(), namespace_target) &&
         namespace_target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path &&
+        cyberdeck_vfs_namespace::is_null_device(namespace_target))
+        return {cyberdeck_local_shell_status::handled, {}};
+    if (namespace_target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path &&
         !cyberdeck_vfs_namespace::is_filesystem_backend(namespace_target))
         return reject_cat("cat: virtual namespace is read-only metadata");
     const std::string relative = virtual_path.size() > virtual_root.size()
@@ -521,8 +524,13 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
             return {cyberdeck_local_shell_status::handled, output};
         }
         if (is_virtual_target && !is_filesystem_target) {
-            if (cyberdeck_vfs_namespace::is_namespace_root(namespace_target.path))
+            if (cyberdeck_vfs_namespace::is_null_device(namespace_target))
+                return {cyberdeck_local_shell_status::handled, "null\n"};
+            if (cyberdeck_vfs_namespace::is_namespace_root(namespace_target.path)) {
+                if (namespace_target.namespace_index == cyberdeck_vfs_namespace::k_dev_namespace_index)
+                    return {cyberdeck_local_shell_status::handled, "null\n"};
                 return {cyberdeck_local_shell_status::handled, {}};
+            }
             return reject("ls: invalid path");
         }
         errno = 0;
@@ -560,6 +568,9 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     }
     if (command == "cat") {
         if (argument.empty()) return reject("missing operand");
+        if (is_virtual_target && !is_filesystem_target)
+            if (cyberdeck_vfs_namespace::is_null_device(namespace_target))
+                return {cyberdeck_local_shell_status::handled, {}};
         if (is_virtual_target && !is_filesystem_target)
             return reject("cat: virtual namespace is read-only metadata");
         const int descriptor = secure_open_regular(fs::path(host_root_), host);
