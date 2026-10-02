@@ -1,7 +1,9 @@
 #include "apps/ssh/ssh_client.h"
 #include "cyberdeck_paths.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -136,7 +138,7 @@ void ssh_client_task(void *pvParameters)
         ESP_LOGE(TAG, "Falha ao alocar sessão SSH");
         set_state_locked(generation, SSH_CLIENT_ERROR, "Erro interno ao alocar sessão SSH.");
         s_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
 
@@ -166,7 +168,7 @@ void ssh_client_task(void *pvParameters)
         set_state_locked(generation, SSH_CLIENT_ERROR, err_msg.c_str());
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
 
@@ -178,7 +180,7 @@ void ssh_client_task(void *pvParameters)
         set_state_locked(generation, SSH_CLIENT_ERROR, err_msg.c_str());
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
 
@@ -187,7 +189,7 @@ void ssh_client_task(void *pvParameters)
         ssh_free(session);
         set_state_locked(generation, SSH_CLIENT_DISCONNECTED, "Conexão cancelada pelo usuário.");
         s_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
 
@@ -195,7 +197,7 @@ void ssh_client_task(void *pvParameters)
         ssh_disconnect(session);
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
 
@@ -209,7 +211,7 @@ void ssh_client_task(void *pvParameters)
         ssh_disconnect(session);
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
 
@@ -233,7 +235,7 @@ void ssh_client_task(void *pvParameters)
             ssh_free(session);
             set_state_locked(generation, SSH_CLIENT_DISCONNECTED, "Autenticação cancelada.");
             s_task_handle.store(nullptr, std::memory_order_release);
-            vTaskDelete(NULL);
+            vTaskDeleteWithCaps(NULL);
             return;
         }
 
@@ -250,7 +252,7 @@ void ssh_client_task(void *pvParameters)
             ssh_disconnect(session);
             ssh_free(session);
             s_task_handle.store(nullptr, std::memory_order_release);
-            vTaskDelete(NULL);
+            vTaskDeleteWithCaps(NULL);
             return;
         }
     }
@@ -264,7 +266,7 @@ void ssh_client_task(void *pvParameters)
         ssh_disconnect(session);
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
 
@@ -278,7 +280,7 @@ void ssh_client_task(void *pvParameters)
         ssh_disconnect(session);
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
 
@@ -299,7 +301,7 @@ void ssh_client_task(void *pvParameters)
         ssh_disconnect(session);
         ssh_free(session);
         s_task_handle.store(nullptr, std::memory_order_release);
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
 
@@ -378,7 +380,7 @@ void ssh_client_task(void *pvParameters)
 
     set_state_locked(generation, SSH_CLIENT_DISCONNECTED, "Conexão SSH encerrada.");
     s_task_handle.store(nullptr, std::memory_order_release);
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
 }
 
 } // namespace
@@ -433,10 +435,14 @@ esp_err_t ssh_client_connect(const char *user, const char *host, int port, ssh_r
     s_stop_requested.store(false, std::memory_order_release);
 
     TaskHandle_t task = nullptr;
-    BaseType_t ret = xTaskCreate(ssh_client_task, "ssh_client", 24576,
-                                 reinterpret_cast<void *>(static_cast<uintptr_t>(generation)), 5, &task);
+    BaseType_t ret = xTaskCreateWithCaps(ssh_client_task, "ssh_client", 24576,
+                                         reinterpret_cast<void *>(static_cast<uintptr_t>(generation)), 5, &task,
+                                         MALLOC_CAP_SPIRAM);
     if (ret == pdPASS) {
         s_task_handle.store(task, std::memory_order_release);
+    } else {
+        s_task_handle.store(nullptr, std::memory_order_release);
+        ESP_LOGE(TAG, "Falha ao criar a task SSH em PSRAM: ret=%d", (int)ret);
     }
 
     xSemaphoreGive(s_state_mutex);

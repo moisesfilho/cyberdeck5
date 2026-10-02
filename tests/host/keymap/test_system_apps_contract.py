@@ -79,8 +79,13 @@ def main() -> int:
     ssh_manifest = re.search(r'service_application s_ssh\{(?P<body>.*?)\n\s*start_ssh, stop_ssh, true\};', apps, re.S)
     if ssh_manifest is None:
         failures.append("SSH service must opt into idempotent lifecycle hooks")
-    if "xTaskCreate(ssh_client_task, \"ssh_client\", 24576" not in ssh:
+    # BUG-SSH-001: the 24576-byte stack no longer fits the internal heap, so the
+    # caps-aware API is mandatory; the match is whitespace/line-break tolerant
+    # but still pins the entry point, the task name and the stack size.
+    if re.search(r'xTaskCreateWithCaps\(\s*ssh_client_task,\s*"ssh_client",\s*24576\b', ssh) is None:
         failures.append("SSH task stack must remain 24576 bytes")
+    if "xTaskCreate(" in ssh:
+        failures.append("SSH task must not fall back to the internal-heap xTaskCreate()")
     if "ssh_client_disconnect_and_wait" not in ssh or "s_task_handle.load" not in ssh:
         failures.append("SSH disconnect contract must join by observing the task handle")
     join_position = ui.find("ssh_disconnect_and_wait(k_ssh_disconnect_timeout_ms)")

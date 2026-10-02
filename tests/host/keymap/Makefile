@@ -708,6 +708,13 @@ test_ble_bond_name_contract: test_ble_bond_name_contract.py $(BLE_MGR_SRC) $(BLE
 test_net_session_ipc_contract: test_net_session_ipc_contract.py ../../../components/cyberdeck/src/apps/wifi/wifi_mgr.cpp ../../../components/cyberdeck/src/apps/ssh/ssh_client.cpp Makefile
 	$(PYTHON) test_net_session_ipc_contract.py
 
+# BUG-SSH-001: a task SSH nao linka no host (ESP-IDF/FreeRTOS/libssh), portanto
+# este contrato inspeciona o fonte de producao: stack externa em PSRAM
+# (xTaskCreateWithCaps + MALLOC_CAP_SPIRAM), 12 autoexclusoes com
+# vTaskDeleteWithCaps(NULL), ramo de falha observavel e documentacao no mapa.
+test_ssh_task_alloc_contract: test_ssh_task_alloc_contract.py ../../../components/cyberdeck/src/apps/ssh/ssh_client.cpp ../../../code-map.md Makefile
+	$(PYTHON) test_ssh_task_alloc_contract.py
+
 # Focused aggregate for the boot/reconnect/name requirements; intentionally
 # excludes the complete host suite.
 test_ble_bond_reconnect: test_ble_state_machine test_ble_event_dispatch test_ble_store
@@ -779,6 +786,8 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_screenshot_lifecycle_contract
 	@$(MAKE) --no-print-directory test_serial_lifecycle_contract
 	@$(MAKE) --no-print-directory test_net_session_ipc_contract
+	@echo "==> Executando contrato da alocacao externa da task SSH (PSRAM)"
+	@$(MAKE) --no-print-directory test_ssh_task_alloc_contract
 	@echo "==> Executando testes do coordenador de teardown Wi-Fi/SSH e timers"
 	@./test_net_coordinator
 	@echo "==> Executando testes da guarda incremental de eco remoto do SSH"
