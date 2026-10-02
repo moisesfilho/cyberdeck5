@@ -196,6 +196,8 @@ retorna enquanto um callback estiver em execução.
 
 - [x] Primeiro recorte: catálogo compilado e resolver readonly bounded para
   `/apps`, `/data`, `/dev`, `/tmp` e `/system`, integrado ao shell local.
+- [x] Segundo recorte: backend físico readonly bounded para `/data`, confinado a
+  `<host_root>/data` e reutilizando as proteções de path/descritor do shell.
 - [ ] Consolidar o namespace virtual do dispositivo com backends.
 - [ ] Manter `/data` para dados persistentes do usuario.
 - [ ] Manter `/system` para configuracoes e estado interno.
@@ -203,9 +205,10 @@ retorna enquanto um callback estiver em execução.
 - [ ] Preservar confinamento, limites e protecao contra traversal e symlink.
 - [ ] Manter execucao de binarios do SD fora do escopo inicial.
 
-O recorte atual expõe somente metadados: `/data` e `/system` ainda não têm
-mapeamento persistente, `/dev` não entrega handles e `/apps` não executa
-conteúdo. O `/sdcard` físico continua sendo `host_root`, separado do catálogo.
+O recorte atual mapeia somente `/data` para `<host_root>/data`, sem mutações,
+e mantém `/system` como metadata-only. `/dev` não entrega handles e `/apps`
+não executa conteúdo. O `/sdcard` físico continua sendo `host_root`, separado
+do catálogo.
 
 ### 7. Shell como Userland
 

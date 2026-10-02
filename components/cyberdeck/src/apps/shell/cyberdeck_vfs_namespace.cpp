@@ -41,7 +41,7 @@ int namespace_index(const char *component, std::size_t length) noexcept
 bool normalize(const char *cwd, const char *operand, char *output,
                std::size_t &output_length) noexcept
 {
-    if (cwd == nullptr || operand == nullptr || cwd[0] != '/' || cwd[1] == '\0')
+    if (cwd == nullptr || operand == nullptr || cwd[0] != '/')
         return false;
     const bool absolute = operand[0] == '/';
     const std::size_t input_count = absolute ? 1 : 2;
@@ -104,6 +104,12 @@ bool resolve(const char *cwd, const char *operand, resolved_path &result) noexce
     result.kind = path_kind::namespace_path;
     result.namespace_index = static_cast<std::size_t>(index);
     return true;
+}
+
+bool is_data_backend(const resolved_path &path) noexcept
+{
+    return path.kind == path_kind::namespace_path &&
+           path.namespace_index == k_data_namespace_index;
 }
 
 bool is_namespace_root(const char *path) noexcept

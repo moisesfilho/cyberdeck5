@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Structural contract for the fixed, metadata-only virtual namespaces."""
+"""Structural contract for fixed namespaces and the bounded /data backend."""
 
 from pathlib import Path
 
@@ -28,6 +28,10 @@ def main() -> int:
         require(forbidden not in source.lower(), f"pure namespace module imports {forbidden}")
     require("cyberdeck_vfs_namespace::resolve" in shell,
             "local shell must consult the namespace resolver")
+    require("is_data_backend" in header and "is_data_backend" in source,
+            "the /data backend must be explicit")
+    require("k_data_namespace_index = 1" in header,
+            "the /data backend index must be fixed")
     require("virtual namespace is read-only metadata" in shell,
             "virtual namespace operations must fail explicitly")
     require("src/apps/shell/cyberdeck_vfs_namespace.cpp" in

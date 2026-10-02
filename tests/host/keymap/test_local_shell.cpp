@@ -164,6 +164,8 @@ void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
     std::error_code error;
     fs::create_directory(f.root / "apps", error);
     std::ofstream(f.root / "apps" / "should-not-run") << "payload";
+    fs::create_directories(f.root / "data" / "notes", error);
+    std::ofstream(f.root / "data" / "notes" / "readme.txt") << "persistent data\n";
     cyberdeck_local_shell shell(f.root.string());
 
     auto result = execute_without_exception(shell, "ls /");
@@ -177,9 +179,17 @@ void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
     CHECK_EQ(shell.cwd(), "/apps");
     CHECK(shell.execute("ls").output.empty());
 
+    CHECK(shell.execute("cd /data").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.execute("ls").output, "notes\n");
+    CHECK(shell.execute("cd notes").status == cyberdeck_local_shell_status::handled);
+    CHECK_EQ(shell.execute("cat readme.txt").output, "persistent data\n");
+    CHECK_EQ(shell.execute("cat /data/notes/readme.txt").output, "persistent data\n");
+    CHECK(shell.execute("cd /").status == cyberdeck_local_shell_status::handled);
+
     const char *readonly_commands[] = {
         "cat /apps/should-not-run", "touch /apps/new", "mkdir /data/new",
-        "rm /dev/raw", "rmdir /system", "cat /tmp/content"
+        "touch /data/new.txt", "rm /data/notes/readme.txt", "rm /dev/raw",
+        "rmdir /system", "cat /tmp/content"
     };
     for (const char *command : readonly_commands) {
         result = execute_without_exception(shell, command);
@@ -188,7 +198,9 @@ void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
     }
     CHECK(fs::is_regular_file(f.root / "apps" / "should-not-run"));
     CHECK(!fs::exists(f.root / "apps" / "new"));
-    CHECK(!fs::exists(f.root / "data"));
+    CHECK(!fs::exists(f.root / "data" / "new"));
+    CHECK(!fs::exists(f.root / "data" / "new.txt"));
+    CHECK(fs::is_regular_file(f.root / "data" / "notes" / "readme.txt"));
 }
 
 void test_root_listing_resolves_exact_physical_root(fixture &f) {
