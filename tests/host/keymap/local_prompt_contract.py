@@ -144,37 +144,57 @@ def prompt_contract(source: str, console: str, header: str, session: str) -> Non
 
 
 def visual_separator_contract(source: str) -> None:
-    """REQ-002/AC-002: one visual LF, only when the output lacks one.
+    """REQ-SSH-01/AC-SSH-01: no artificial LF, only truncation by `available`.
 
-    `get_rendered_output()` is the only place allowed to close a scrollback that
-    does not end in a newline, and it must do so exactly once, within the bytes
-    the composed tail really reserves.  The rule is asserted structurally here
-    and behaviourally in test_prompt_behavior.py, which compiles these exact
-    production statements on the host.
+    `get_rendered_output()` is the only place allowed to shorten a scrollback
+    that no longer fits the bytes the composed tail really reserves, and it may
+    only *drop* bytes from the left.  It must not fabricate one: a real
+    trailing LF the remote sent stays exactly once and a stream without one
+    stays without one, so the displayed band never gains a line the host did
+    not produce.  The rule is asserted structurally here and behaviourally in
+    test_prompt_behavior.py, which compiles these exact production statements on
+    the host against an independent oracle.
     """
     rendered = function_body(source,
                              "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view)")
     require("const size_t used = view.reserved();" in rendered and
             "const size_t available = TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0;" in rendered,
-            "REQ-002/AC-002: the scrollback budget must come from the composed tail reservation")
-    require("const bool needs_visual_separator = !output.empty() && output.back() != '\\n';" in rendered,
-            "REQ-002/AC-002: the separator must be conditional on the output not ending in LF")
-    require("needs_visual_separator && available > 0" in rendered and
-            "? available - 1" in rendered,
-            "REQ-002/AC-002: the truncation budget must reserve one byte for the separator")
-    require("if (output.size() > output_limit) output = truncate_left_utf8(output, output_limit);" in rendered,
-            "REQ-002/AC-002: the scrollback must be trimmed to the separator-aware budget")
-    require("if (needs_visual_separator && output.size() < available) output.push_back('\\n');" in rendered,
-            "REQ-002/AC-002: the visual LF is appended once, only while it still fits")
-    require(rendered.count("push_back") == 1,
-            "REQ-002/AC-002: the separator rule must append exactly one byte")
-    require(rendered.rstrip().endswith("return output;"),
-            "REQ-002/AC-002: nothing may run between the separator and the return")
+            "REQ-SSH-01/AC-SSH-01: the scrollback budget must come from the composed tail "
+            "reservation")
 
-    # REQ-003/AC-003: the visual LF is a view artefact.  It is never written back
-    # into the retained scrollback, so re-rendering cannot accumulate newlines.
+    # Two regions, because they have different rights.  The Wi-Fi/BLE overlay may
+    # only append its own menus to `output`; the rule that decides what the band
+    # finally shows may not create a byte at all.
+    anchor = "std::string output = s_output;"
+    rule_start = "if (output.size() > available)"
+    require(anchor in rendered and rule_start in rendered,
+            "REQ-SSH-01/AC-SSH-01: the rule region must be reachable from the real scrollback")
+    overlay = rendered[rendered.index(anchor) + len(anchor):rendered.index(rule_start)]
+    for forbidden in ("push_back", "pop_back", "clear()", "resize", "output = "):
+        require(forbidden not in overlay,
+                f"REQ-SSH-01/AC-SSH-01: the overlay may only append menus ({forbidden})")
+    rule = rendered[rendered.index(rule_start):]
+    # No fabricated byte of any kind, and above all no LF, may reach the band.
+    for forbidden in ("push_back", "+=", "'\\n'", '"\\n"', "append"):
+        require(forbidden not in rule,
+                f"REQ-SSH-01/AC-SSH-01: the truncation rule must not fabricate bytes ({forbidden})")
+    require("truncate_left_utf8(output, available)" in rule,
+            "REQ-SSH-01/AC-SSH-01: the rule must keep trimming UTF-8 to the whole budget")
+    require("output_limit" not in rendered and "available - 1" not in rendered,
+            "REQ-SSH-01/AC-SSH-01: no separator-aware budget may shrink the real bytes the "
+            "composed tail leaves free")
+    require("needs_visual_separator" not in rendered,
+            "REQ-SSH-01/AC-SSH-01: no condition may exist to fabricate a closing LF")
+    require(rendered.rstrip().endswith("return output;"),
+            "REQ-SSH-01/AC-SSH-01: nothing may run between the truncation rule and the return")
+    require(rule.rstrip().endswith("truncate_left_utf8(output, available);\n    return output;") or
+            rule.rstrip().endswith("truncate_left_utf8(output, available);return output;"),
+            "REQ-SSH-01/AC-SSH-01: the truncation must be the last statement before the return")
+
+    # REQ-SSH-01/AC-SSH-01 + REQ-003/AC-003: nothing is ever written back into
+    # the retained scrollback, so re-rendering cannot accumulate newlines.
     require("s_output.push_back" not in source,
-            "REQ-003: the visual LF must never be written back into the retained scrollback")
+            "REQ-003: no byte may be written back into the retained scrollback")
     append = function_body(source, "void append_output(const char *data, size_t len, bool repaint)")
     require("s_output.append(data, len);" in append and "s_output.erase(0, safe_offset);" in append,
             "REQ-003: the retained scrollback stays byte-for-byte the filtered remote stream")
@@ -254,8 +274,12 @@ def truncation_contract(source: str, console: str) -> None:
     # Two independent buffers must stay UTF-8 safe: the rendered scrollback is
     # trimmed with truncate_left_utf8, and the retained buffer is trimmed with
     # utf8_valid_start_offset directly.
-    require("truncate_left_utf8(output, output_limit)" in source,
-            "rendered scrollback must be trimmed on a codepoint boundary")
+    require("truncate_left_utf8(output, available)" in source,
+            "rendered scrollback must be trimmed to the whole composed-tail budget on a "
+            "codepoint boundary")
+    require("output_limit" not in source,
+            "no separator-aware budget may exist: the composed tail reserves no byte for a "
+            "fabricated LF")
     require("utf8_valid_start_offset(s_output, excess)" in source,
             "retained output buffer must be trimmed on a codepoint boundary")
 
@@ -274,7 +298,7 @@ def main() -> int:
         print(f"FAIL: {error}")
         return 1
     print("PASS: contextual local prompt, remote prompt preservation, "
-          "visual LF rule and UI preservation contract")
+          "no-artificial-LF truncation rule and UI preservation contract")
     return 0
 
 

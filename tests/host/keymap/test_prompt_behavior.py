@@ -344,40 +344,54 @@ def extracted_rendered_tail() -> str:
     """Verbatim production statements for the scrollback budget and the LF rule.
 
     `get_rendered_output()` lives in the LVGL view, which is not host-linkable.
-    Lifting the two production statements *as source text* keeps the assertions
+    Lifting the production statements *as source text* keeps the assertions
     below behavioural against production: any change to the budget, to the
-    `needs_visual_separator` guard or to the push fails this test, because the
-    extracted text is what gets compiled and run.
+    truncation or to the return fails this test, because the extracted text is
+    what gets compiled and run.
 
-    The Wi-Fi/BLE overlay region between the two statements is dropped.  It is
+    REQ-SSH-01/AC-SSH-01: the extracted rule region must NOT append anything.
+    The structural guards below fail if a `push_back`, an `+=` or any LF literal
+    reappears between the overlay and the return, so the "no artificial LF"
+    criterion cannot be satisfied by a stub while the real rule regresses.
+
+    The Wi-Fi/BLE overlay region between the statements is dropped.  It is
     dropped only after proving it can merely append to `output`, so the extracted
     pair is the whole of the scrollback-to-view transformation under test.
     """
     body = _function_body(UI.read_text(encoding="utf-8"), RENDERED_SIGNATURE)
     budget = _slice(body, "const size_t used = view.reserved();",
                     "std::string output = s_output;")
-    rule = _slice(body, "const bool needs_visual_separator", "push_back('\\n');")
+    rule = _slice(body, "if (output.size() > available)",
+                  "truncate_left_utf8(output, available);")
 
     anchor = "std::string output = s_output;"
     overlay = body[body.index(anchor) + len(anchor):
-                   body.index("const bool needs_visual_separator")]
+                   body.index("if (output.size() > available)")]
     for forbidden in ("push_back", "pop_back", "clear()", "resize", "output = "):
         if forbidden in overlay:
             raise AssertionError(f"overlay region is not append-only: {forbidden}")
-    if body.count("push_back") != 1:
-        raise AssertionError("the visual LF must be the only byte the rule appends")
-    tail = body[body.index("push_back('\\n');") + len("push_back('\\n');"):]
+    # REQ-SSH-01: no byte, and above all no LF, may be fabricated by the rule.
+    for forbidden in ("push_back", "+=", "'\\n'", '"\\n"', "append"):
+        if forbidden in rule:
+            raise AssertionError(f"the LF rule region fabricates bytes: {forbidden}")
+    if "truncate_left_utf8(output, available)" not in rule:
+        raise AssertionError("the rule must keep trimming UTF-8 to the budget")
+    end = "truncate_left_utf8(output, available);"
+    tail = body[body.index(end) + len(end):]
     if tail.strip() != "return output;":
-        raise AssertionError("nothing may run between the LF rule and the return")
+        raise AssertionError("nothing may run between the budget rule and the return")
     return budget + "\n" + rule
 
 
 def rendered_output_harness(tail: str) -> str:
     """Compile the extracted production rule and drive the LF matrix.
 
-    REQ-2/AC-2: exactly one visual LF, appended only when the normalized output
-    does not already end in one, bounded by the bytes the composed tail really
-    reserves, and idempotent across repeated renders.
+    REQ-SSH-01/AC-SSH-01 + REQ-SSH-02/AC-SSH-02: the rendered scrollback is
+    exactly the scrollback the host sent, trimmed left on a UTF-8 boundary to fit
+    the bytes the composed tail really reserves.  No LF is ever appended, so a
+    stream without a trailing LF stays without one and a real trailing LF is
+    preserved exactly once.  Re-rendering is idempotent because the rule is a
+    pure projection of its input.
     """
     return r'''#include "apps/shell/cyberdeck_shell_console.h"
 #include "apps/shell/cyberdeck_terminal_filter.h"
@@ -396,6 +410,16 @@ static std::string rendered(const line_view &view, const std::string &s_output)
 {
 ''' + tail + r'''
     return output;
+}
+
+/* Prova de nao-fabricacao: quantos '\n' existem num texto. */
+static size_t count_char(const std::string &text, char c)
+{
+    size_t total = 0;
+    for (const char byte : text) {
+        if (byte == c) ++total;
+    }
+    return total;
 }
 
 /* The view whose composed tail reserves exactly TERMINAL_LIMIT - available
@@ -440,22 +464,16 @@ static line_view connected_view_for_available(size_t available)
     return view;
 }
 
-/* Oracle for REQ-2, stated from the acceptance criterion and deliberately not
- * derived from the production statements under test. */
+/* Oracle for REQ-SSH-01, stated from the acceptance criterion and deliberately
+ * not derived from the production statements under test: the rendered scrollback
+ * is the scrollback itself, trimmed to `available` on a UTF-8 boundary, with no
+ * byte added — not even a trailing LF. */
 static std::string expected(size_t available, const std::string &scrollback)
 {
-    if (scrollback.empty()) return {};
-    if (scrollback.back() == '\n') {
-        return scrollback.size() <= available
-                   ? scrollback
-                   : truncate_left_utf8(scrollback, available);
-    }
     if (available == 0) return {};
-    std::string base = scrollback.size() > available - 1
-                           ? truncate_left_utf8(scrollback, available - 1)
-                           : scrollback;
-    if (base.size() < available) base.push_back('\n');
-    return base;
+    return scrollback.size() <= available
+               ? scrollback
+               : truncate_left_utf8(scrollback, available);
 }
 
 static void check_view(const line_view &view, size_t available, const std::string &scrollback)
@@ -464,12 +482,15 @@ static void check_view(const line_view &view, size_t available, const std::strin
 
     const std::string once = rendered(view, scrollback);
     assert(once == expected(available, scrollback));
-    /* AC-002: idempotencia.  A segunda passagem nao acrescenta nada, porque a
-     * primeira ja terminou em LF sempre que acrescentou um. */
+    /* AC-SSH-002: idempotencia.  A regra e uma projecao pura, entao uma segunda
+     * passagem devolve exatamente o mesmo texto. */
     assert(rendered(view, once) == once);
     /* O scrollback nunca invade o orcamento reservado pela cauda composta. */
     assert(once.size() <= available);
-    /* AC-004: scrollback + cauda composta cabem no limite do terminal, e o
+    /* AC-SSH-01: contagem exata de LF — a regra nao fabrica e nao engole. */
+    assert(count_char(once, '\n') == count_char(truncate_left_utf8(scrollback, available),
+                                                 '\n'));
+    /* AC-SSH-004: scrollback + cauda composta cabem no limite do terminal, e o
      * cursor relativo continua apontando para dentro da area renderizada. */
     assert(once.size() + view.text().size() <= TERMINAL_LIMIT);
     assert(utf8_char_count(once) + view.cursor_chars() <=
@@ -521,7 +542,8 @@ int main() {
     check_case(TERMINAL_LIMIT, "");
     check_case(0, "");
 
-    /* REQ-2/AC-2: saida que ja termina em LF nao recebe um segundo LF. */
+    /* REQ-SSH-01/AC-SSH-01: saida que ja termina em LF nao recebe um segundo
+     * LF, e saida sem LF permanece sem LF. */
     check_case(TERMINAL_LIMIT, "out\n");
     check_case(TERMINAL_LIMIT, "out\n\n");
     check_case(TERMINAL_LIMIT, "user@host:~$ ls\n");
@@ -529,7 +551,8 @@ int main() {
     check_case(16, "0123456789abcdef\n");  /* um byte acima: apara, sem LF extra */
     check_case(1, "\n");
 
-    /* REQ-2/AC-2: saida sem LF recebe exatamente um LF visual. */
+    /* REQ-SSH-01/AC-SSH-01: saida sem LF NAO recebe LF algum — nem visual, nem
+     * de separacao.  A faixa renderizada e a saida remota intacta. */
     check_case(TERMINAL_LIMIT, "out");
     check_case(TERMINAL_LIMIT, "user@host:~$ ");
     check_case(TERMINAL_LIMIT, "sem quebra de linha no fim");
@@ -537,7 +560,7 @@ int main() {
     check_case(16, "0123456789abcdef");     /* exatamente o orcamento */
     check_case(16, "0123456789abcdefghij"); /* acima do orcamento */
     check_case(1, "x");                     /* orcamento de um byte */
-    check_case(1, "xy");                    /* apara e ainda assim fecha em LF */
+    check_case(1, "xy");                    /* apara e nao acrescenta LF */
     check_case(2, "xy");
 
     /* Limite: com a cauda ocupando tudo, nao sobra orcamento e nada e escrito. */
@@ -546,7 +569,7 @@ int main() {
     check_case(0, "user@host:~$ ");
 
     /* Varredura de limites: nenhum tamanho de scrollback pode estourar o
-     * orcamento, duplicar o LF ou deixar de termina-lo. */
+     * orcamento, duplicar o LF, perder um LF real ou inventar um. */
     for (size_t available = 0; available <= 64; ++available) {
         for (size_t length = 0; length <= 80; ++length) {
             const std::string scrollback(length, 'y');
@@ -555,28 +578,28 @@ int main() {
         }
     }
 
-    /* REQ-1/AC-1 + REQ-2: o prompt remoto chega literal pelo fluxo remoto e a
-     * saida normalizada e o que decide se existe um LF visual. */
+    /* REQ-1/AC-1 + REQ-SSH-01: o prompt remoto chega literal pelo fluxo remoto e
+     * a regra nao acrescenta nada: um prompt sem LF continua sem LF. */
     const line_view view = view_for_available(64);
     assert(rendered(view, "") == "");
-    assert(rendered(view, "root@host:~# ") == "root@host:~# \n");
+    assert(rendered(view, "root@host:~# ") == "root@host:~# ");
     assert(rendered(view, "root@host:~# \n") == "root@host:~# \n");
 
-    /* REQ-1/AC-1 + REQ-2: a mesma regra sobre a superficie conectada, cuja cauda
-     * e a propria linha remota sem prompt local.  O scrollback observado e o que
-     * o host remoto enviou, intacto. */
+    /* REQ-1/AC-1 + REQ-SSH-01: a mesma regra sobre a superficie conectada, cuja
+     * cauda e a propria linha remota sem prompt local.  O scrollback observado e
+     * o que o host remoto enviou, intacto. */
     const line_view connected_view = connected_view_for_available(64);
     assert(connected_view.marker.empty());
     assert(rendered(connected_view, "") == "");
-    assert(rendered(connected_view, "root@host:~# ") == "root@host:~# \n");
+    assert(rendered(connected_view, "root@host:~# ") == "root@host:~# ");
     assert(rendered(connected_view, "root@host:~# \n") == "root@host:~# \n");
     assert(rendered(connected_view, filter_all("root@host:~$ ls\r\n")) ==
            "root@host:~$ ls\n");
     assert(rendered(connected_view, filter_all("root@host:~$ ")) ==
-           "root@host:~$ \n");
+           "root@host:~$ ");
 
-    /* REQ-2/AC-2 na superficie conectada: o LF visual continua unico,
-     * condicional ao fim da saida e dentro do orcamento reservado. */
+    /* REQ-SSH-01/AC-SSH-01 na superficie conectada: nenhum LF visual e
+     * condicionado ao fim da saida; tudo cabe no orcamento reservado. */
     check_connected_case(TERMINAL_LIMIT, "");
     check_connected_case(TERMINAL_LIMIT, "out");
     check_connected_case(TERMINAL_LIMIT, "out\n");
@@ -597,15 +620,15 @@ int main() {
     }
 
     /* CR e CRLF remotos sao normalizados em um unico LF pelo filtro, entao a
-     * regra visual nao acrescenta nada: e a saida normalizada que decide. */
+     * regra nao acrescenta nada: e a saida normalizada que decide. */
     assert(filter_all("root@host:~$ ls\r\n") == "root@host:~$ ls\n");
     assert(rendered(view, filter_all("root@host:~$ ls\r\n")) == "root@host:~$ ls\n");
     assert(filter_all("root@host:~$ ls\r") == "root@host:~$ ls\n");
     assert(rendered(view, filter_all("root@host:~$ ls\r")) == "root@host:~$ ls\n");
-    assert(rendered(view, filter_all("root@host:~$ ")) == "root@host:~$ \n");
+    assert(rendered(view, filter_all("root@host:~$ ")) == "root@host:~$ ");
 
     /* ANSI removido e fragmentacao irrelevante: o texto remoto preservado
-     * continua sendo a unica entrada da regra visual. */
+     * continua sendo a unica entrada da regra. */
     assert(filter_all("\x1B[32mroot@host\x1B[0m:~$ \x1B[1mls -la\x1B[0m\r\n") ==
            "root@host:~$ ls -la\n");
     for (size_t step = 1; step <= 8; ++step) {
@@ -613,8 +636,9 @@ int main() {
                "root@host:~$ ls\n");
     }
 
-    /* REQ-3: o LF visual e apenas view.  Ele nao volta para o scrollback nem
-     * para o payload: reaplicar a regra ao proprio resultado nao cresce. */
+    /* REQ-SSH-03: a regra e uma projecao pura.  Ela nao grava nada de volta no
+     * scrollback: reaplicar ao proprio resultado nao cresce, e o ponto fixo NAO
+     * termina em LF — a prova de que nenhuma quebra e fabricada. */
     std::string scrollback = "out";
     for (int round = 0; round < 8; ++round) {
         const std::string next = rendered(view, scrollback);
@@ -623,7 +647,13 @@ int main() {
         scrollback = next;
     }
     assert(rendered(view, scrollback) == scrollback);
-    assert(scrollback.back() == '\n');
+    assert(scrollback == "out");
+    assert(scrollback.back() != '\n');
+
+    /* O mesmo para um scrollback que ja termina em LF: ele sobrevive inteiro,
+     * uma unica vez, sem LF visual adicional. */
+    assert(rendered(view, "out\n") == "out\n");
+    assert(count_char(rendered(view, "out\n"), '\n') == 1);
     return 0;
 }
 '''
@@ -674,4 +704,4 @@ if __name__ == "__main__":
     test_visual_separator_executes_production_statements()
     test_invalid_cd_invokes_real_local_shell()
     print("PASS: prompt UTF-8 limits, cursor, remote prompt preservation, "
-          "visual LF rule and cd preservation")
+          "LF-free scrollback rule and cd preservation")

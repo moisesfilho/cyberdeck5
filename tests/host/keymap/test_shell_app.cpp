@@ -15,6 +15,7 @@
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "apps/shell/cyberdeck_edit_line.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
 
@@ -418,29 +419,36 @@ void remote_prompt_literal_contract() {
           "AC-3: the line composer is armed by the submitted line");
 
     /* AC-3: o compositor foi armado com o payload cru.  O eco remoto exato do
-     * payload e suprimido e resta apenas o separador unico. */
+     * payload e suprimido por inteiro e devolve ZERO bytes: nenhuma quebra e
+     * fabricada depois do comando local.  O canario prova a nao-escrita. */
     char band[16];
+    std::fill(band, band + sizeof(band), '\xAA');
     const std::size_t produced = host.ssh_composer().feed("pwd\n", 4, band, sizeof(band));
-    check(produced == 1 && band[0] == '\n',
-          "AC-3: the remote echo of the bare payload is suppressed");
+    check(produced == 0,
+          "AC-3: the remote echo of the bare payload is suppressed and emits zero bytes");
+    check(std::string(band, sizeof(band)) == std::string(sizeof(band), '\xAA'),
+          "AC-3: the suppressed echo writes no separator byte at all");
     check(!host.ssh_composer().active(),
           "AC-3: the composer resolves after the bare payload echo");
     check(host.composer_discards == 0,
           "AC-3: the armed composer is not discarded by a successful send");
 
     /* REQ-1/AC-1 + REQ-3: um prompt remoto que volta pelo fluxo remoto diverge do
-     * payload e nao e engolido pela regra de eco.  Ele sobrevive com o separador
-     * unico, e nenhum byte dele volta para o payload enviado ao PTY. */
+     * payload e nao e engolido pela regra de eco.  Ele sobrevive verbatim, sem
+     * nenhum LF acrescentado, e nenhum byte dele volta para o payload do PTY. */
     cyberdeck_ssh_line_composer &composer = host.ssh_composer();
     char prompt_band[64];
+    std::fill(prompt_band, prompt_band + sizeof(prompt_band), '\xAA');
     const std::size_t armed = composer.begin("ls", 2, prompt_band, sizeof(prompt_band));
     check(armed == 2 && std::string(prompt_band, armed) == "ls",
           "REQ-3: the composer is armed with the bare payload, never with a prompt");
     const std::string remote_prompt = "user@host:~$ ";
     const std::size_t kept = composer.feed(remote_prompt.data(), remote_prompt.size(),
                                            prompt_band, sizeof(prompt_band));
-    check(std::string(prompt_band, kept) == "\n" + remote_prompt,
+    check(kept == remote_prompt.size() && std::string(prompt_band, kept) == remote_prompt,
           "REQ-1/AC-1: a remote prompt diverges from the payload and is kept verbatim");
+    check(std::string(prompt_band, sizeof(prompt_band)).find('\n') == std::string::npos,
+          "REQ-1/AC-1: no separator byte is fabricated before the remote prompt");
     check(!composer.active(),
           "REQ-1/AC-1: the remote prompt resolves the pending echo without swallowing it");
     check(host.ssh_sent.find("user@host") == std::string::npos,

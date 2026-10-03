@@ -204,30 +204,71 @@ def main() -> int:
     for scenario in ("test_remote_prompt_never_matches_the_echo_guard",):
         assert scenario in composer_test, f"missing composer scenario {scenario}"
 
-    # T-REG-03 (REQ-2/AC-2 + AC-4): o scrollback e aparado pelos bytes que a
-    # cauda composta realmente reserva, o cursor e contado em codepoints depois
-    # desse mesmo scrollback, e o LF visual fecha a saida exatamente uma vez,
-    # apenas quando a saida normalizada nao termina em LF.
+    # T-REG-03 (REQ-SSH-01/AC-SSH-01 + REQ-2/AC-2 + AC-4): o scrollback e aparado
+    # pelos bytes que a cauda composta realmente reserva e o cursor e contado em
+    # codepoints depois desse mesmo scrollback.  Nenhum byte e fabricado: a regra
+    # nao acrescenta LF, e o compositor tambem nao injeta separador.  Um LF real
+    # do remoto permanece exatamente uma vez e um fluxo sem LF final permanece
+    # sem LF; o orcamento e o `available` inteiro, sem reservar byte para uma
+    # quebra que nao existe.
     rendered = body(source, "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view)")
     assert "const size_t used = view.reserved();" in rendered
     assert "const size_t available = TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0;" in rendered
-    assert "truncate_left_utf8(output, output_limit)" in rendered
-    assert ("const bool needs_visual_separator = !output.empty() && "
-            "output.back() != '\\n';") in rendered
-    assert "needs_visual_separator && available > 0" in rendered
-    assert "? available - 1" in rendered
-    assert ("if (needs_visual_separator && output.size() < available) "
-            "output.push_back('\\n');") in rendered
-    assert rendered.count("push_back") == 1
-    # REQ-3: o LF visual e apenas view e nunca volta para o scrollback retido.
+    assert "truncate_left_utf8(output, available)" in rendered
+
+    # The overlay may only append its own menus; the rule that decides the final
+    # band may not create a byte at all.  The two regions have different rights,
+    # so the fabrication ban is scoped to the rule instead of the whole function.
+    anchor = "std::string output = s_output;"
+    rule_start = "if (output.size() > available)"
+    assert anchor in rendered and rule_start in rendered
+    overlay = rendered[rendered.index(anchor) + len(anchor):rendered.index(rule_start)]
+    for forbidden in ("push_back", "pop_back", "clear()", "resize", "output = "):
+        assert forbidden not in overlay, f"the overlay may only append menus ({forbidden})"
+    rule = rendered[rendered.index(rule_start):]
+    for forbidden in ("push_back", "+=", "'\\n'", '"\\n"', "append"):
+        assert forbidden not in rule, f"the truncation rule must not fabricate bytes ({forbidden})"
+    assert rendered.rstrip().endswith("return output;")
+    assert rule.rstrip().endswith("truncate_left_utf8(output, available);\n    return output;") or \
+        rule.rstrip().endswith("truncate_left_utf8(output, available);return output;"), \
+        "the truncation must be the last statement before the return"
+
+    # No separator-aware budget and no closing-LF condition may reappear: both
+    # would shrink the real bytes the composed tail leaves free.
+    assert "output_limit" not in rendered and "available - 1" not in rendered
+    assert "needs_visual_separator" not in rendered
+    assert rendered.count("push_back") == 0
+
+    # REQ-SSH-01/AC-SSH-01: the composer carries the same rule -- no pending
+    # separator to emit on echo completion, divergence or flush.  Its unit test
+    # pins the resulting band behaviourally.
+    assert "m_separator_pending" not in composer_implementation
+    for scenario in ("test_echo_suppressed_without_artificial_lf",
+                     "test_no_echo_output_is_verbatim",
+                     "test_output_starting_with_newline",
+                     "test_remote_prompt_never_matches_the_echo_guard"):
+        assert scenario in composer_test, f"missing composer scenario {scenario}"
+    for behaviour in ("feed_ok(g, \"cmd\\n\");", "CHECK_EQ(f, \"\");",
+                      "feed_ok(g, \"result\\n\");", "CHECK_EQ(f, \"result\\n\");"):
+        assert behaviour in composer_test, \
+            f"composer band must stay verbatim/no-fabrication: {behaviour}"
+
+    # REQ-3: no fabricated byte is ever written back into the retained scrollback,
+    # so re-rendering cannot accumulate newlines.
     assert "s_output.push_back" not in source
     # O comportamento da regra e executado no host em test_prompt_behavior.py, que
-    # compila estas mesmas sentencas de producao.
+    # compila estas mesmas sentencas de producao contra uma oracle independente.
     prompt_behavior = ROOT / "tests/host/keymap/test_prompt_behavior.py"
     prompt_behavior_source = prompt_behavior.read_text(encoding="utf-8")
     for scenario in ("test_prompt_matrix_executes_production_composition",
                      "test_visual_separator_executes_production_statements"):
         assert scenario in prompt_behavior_source, f"missing behavioural scenario {scenario}"
+    # The no-fabrication oracle is stated in that harness, not borrowed from the
+    # production statements under test.
+    for oracle in ("static std::string expected(size_t available, const std::string &scrollback)",
+                   "count_char(once, '\\n') == count_char(truncate_left_utf8(scrollback, available)",
+                   "rendered(view, once) == once"):
+        assert oracle in prompt_behavior_source, f"missing rendered-output oracle {oracle}"
 
     # T-REG-01: rendering preserves the shell-application-owned line/cursor.
     # The prompt, the fitted line and the cursor now come from the foreground

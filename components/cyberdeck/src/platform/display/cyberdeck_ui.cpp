@@ -912,12 +912,7 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view) 
             output += "\n";
         }
     }
-    const bool needs_visual_separator = !output.empty() && output.back() != '\n';
-    const size_t output_limit = needs_visual_separator && available > 0
-                                    ? available - 1
-                                    : available;
-    if (output.size() > output_limit) output = truncate_left_utf8(output, output_limit);
-    if (needs_visual_separator && output.size() < available) output.push_back('\n');
+    if (output.size() > available) output = truncate_left_utf8(output, available);
     return output;
 }
 

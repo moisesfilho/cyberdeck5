@@ -7,7 +7,7 @@ text, exactly like `test_prompt_behavior.py` does for `get_rendered_output()` --
 against the real, host-linkable production translation units they drive:
 
   * `cyberdeck_terminal_filter.cpp`  (ANSI removal + CR/LF + UTF-8 passthrough)
-  * `cyberdeck_ssh_line_composer.cpp` (echo suppression + separator)
+  * `cyberdeck_ssh_line_composer.cpp` (echo suppression, no fabricated LF)
   * `cyberdeck_shell_console.cpp`    (`truncate_left_utf8`/`utf8_valid_start_offset`)
 
 Everything asserted below therefore fails the moment production changes the
@@ -1194,7 +1194,10 @@ static void req04_connect_adopts_the_current_discard_epoch()
 
 /* AC-004: the gap reset touches the ANSI filter only.  A pending echo armed
  * before the gap still matches, the command is displayed exactly once and the
- * remote echo is still suppressed with exactly one separator. */
+ * remote echo is still suppressed.  REQ-SSH-01/AC-SSH-01: the suppression is
+ * total -- the echo takes its own LF with it and the compositor fabricates no
+ * separator to replace it, so a real LF that arrives afterwards still survives
+ * byte for byte. */
 static void req04_gap_reset_preserves_the_payload_and_echo_invariants()
 {
     std::string band(repeated(' ', cyberdeck_edit_line::limit + 1), '\0');
@@ -1216,15 +1219,28 @@ static void req04_gap_reset_preserves_the_payload_and_echo_invariants()
     assert(s_ssh_line_composer.active());  /* the reset never disarmed it */
     assert(s_output.empty());
 
+    /* The complete echo is suppressed as a whole: zero bytes reach the
+     * scrollback, and no separator is fabricated to close it.  The command is
+     * still displayed exactly once, by begin(). */
     send(7, "d\n");
     drain();
-    assert(s_output == "\n");              /* echo suppressed, one separator */
+    assert(s_output.empty());
     assert(!s_ssh_line_composer.active());
     assert(band.compare(0, 3, "pwd") == 0);  /* command shown exactly once */
     assert_no_control_leak(s_output);
 
+    /* NAO-VACUIDADE: the empty scrollback above is a suppression, not a swallow.
+     * A real LF sent by the remote right after the suppressed echo is preserved
+     * exactly once, because the composer is back in IDLE pass-through. */
+    send(7, "\n");
+    drain();
+    assert(s_output == "\n");
+    assert(!s_ssh_line_composer.active());
+    assert_no_control_leak(s_output);
+
     /* A divergence after the gap still releases the retained prefix, the
-     * divergent byte and the rest of the chunk exactly once each. */
+     * divergent byte and the rest of the chunk exactly once each, with no LF
+     * injected before them. */
     begin_session(7);
     band.assign(repeated(' ', cyberdeck_edit_line::limit + 1), '\0');
     assert(s_ssh_line_composer.begin("ls -la", 6, &band[0], band.size()) == 6);
@@ -1232,8 +1248,9 @@ static void req04_gap_reset_preserves_the_payload_and_echo_invariants()
     drain();
     send(7, "ls -laX\r\n");
     drain();
-    assert(s_output == "\nls -laX\n");
+    assert(s_output == "ls -laX\n");
     assert(!s_ssh_line_composer.active());
+    assert_no_control_leak(s_output);
 
     /* While a line is pending a second armed command is refused, so no gap and
      * no re-arm can manufacture a duplicated command. */

@@ -12,7 +12,6 @@ size_t cyberdeck_ssh_line_composer::begin(const char *command, size_t len,
     m_payload.assign(command, len);
     m_payload.push_back('\n');
     m_matched = 0;
-    m_separator_pending = true;
     m_active = true;
 
     const size_t written = std::min(len, out_cap);
@@ -44,44 +43,33 @@ size_t cyberdeck_ssh_line_composer::feed(const char *data, size_t len,
             ++m_matched;
             ++pos;
             if (m_matched == m_payload.size()) {
-                if (m_separator_pending) emit('\n');
                 m_active = false;
                 m_payload.clear();
                 m_matched = 0;
-                m_separator_pending = false;
             }
             continue;
         }
 
-        /* A leading LF is already the separator.  For every other
-         * divergence release the retained prefix and the divergent byte. */
-        if (m_matched == 0 && c == '\n') {
-            emit(c);
-        } else {
-            emit('\n');
-            for (size_t i = 0; i < m_matched; ++i) emit(m_payload[i]);
-            emit(c);
-        }
+        /* Release the retained prefix and the divergent byte verbatim. */
+        for (size_t i = 0; i < m_matched; ++i) emit(m_payload[i]);
+        emit(c);
         ++pos;
         m_active = false;
         m_payload.clear();
         m_matched = 0;
-        m_separator_pending = false;
     }
 
     return written;
 }
 
-size_t cyberdeck_ssh_line_composer::flush(char *out, size_t out_cap)
+size_t cyberdeck_ssh_line_composer::flush(char *, size_t)
 {
     if (!m_active) return 0;
 
     size_t written = 0;
-    if (out != nullptr && out_cap != 0 && m_separator_pending) out[written++] = '\n';
     m_active = false;
     m_payload.clear();
     m_matched = 0;
-    m_separator_pending = false;
     return written;
 }
 
