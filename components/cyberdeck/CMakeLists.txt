@@ -32,6 +32,7 @@ idf_component_register(
         "src/apps/shell/cyberdeck_vfs_namespace.cpp"
         "src/apps/shell/cyberdeck_cat_worker.cpp"
         "src/apps/runtime/cyberdeck_app_runtime.cpp"
+        "src/apps/runtime/cyberdeck_app_facades.cpp"
         "src/apps/runtime/cyberdeck_window_manager.cpp"
         "src/apps/demo/cyberdeck_demo_app.cpp"
         "src/apps/system/cyberdeck_system_apps.cpp"

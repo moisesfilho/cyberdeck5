@@ -9,6 +9,25 @@ namespace {
 constexpr std::size_t k_max_line_bytes = 256;
 constexpr std::size_t k_max_tokens = 8;
 
+constexpr std::uint16_t resource_bit(resource value)
+{
+    return static_cast<std::uint16_t>(1u << static_cast<unsigned>(value));
+}
+
+bool manifest_resources_valid(const manifest &item, std::uint16_t &mask)
+{
+    if (item.resource_count > item.resources.size()) return false;
+    mask = 0;
+    for (std::size_t i = 0; i < item.resource_count; ++i) {
+        resource value{};
+        if (!resource_from_name(item.resources[i], value)) return false;
+        const std::uint16_t bit = resource_bit(value);
+        if ((mask & bit) != 0) return false;
+        mask = static_cast<std::uint16_t>(mask | bit);
+    }
+    return true;
+}
+
 bool split_words(std::string_view line, std::array<std::string_view, k_max_tokens> &words,
                  std::size_t &count)
 {
@@ -40,6 +59,48 @@ constexpr std::size_t k_not_found = static_cast<std::size_t>(-1);
 
 } // namespace
 
+const char *resource_name(resource value)
+{
+    switch (value) {
+    case resource::display: return "display";
+    case resource::input: return "input";
+    case resource::storage: return "storage";
+    case resource::network: return "network";
+    case resource::ble: return "ble";
+    case resource::serial: return "serial";
+    case resource::screenshot: return "screenshot";
+    case resource::event_log: return "event_log";
+    case resource::clock: return "clock";
+    case resource::battery: return "battery";
+    }
+    return "";
+}
+
+bool resource_from_name(std::string_view name, resource &out)
+{
+    for (unsigned value = 0; value <= static_cast<unsigned>(resource::battery); ++value) {
+        const auto candidate = static_cast<resource>(value);
+        if (name == resource_name(candidate)) { out = candidate; return true; }
+    }
+    return false;
+}
+
+bool grant::valid() const
+{
+    return runtime_ != nullptr && runtime_->grant_is_valid(index_, generation_, resource_mask_);
+}
+
+bool grant::allows(resource value) const
+{
+    return valid() && (resource_mask_ & resource_bit(value)) != 0;
+}
+
+bool grant::allows(std::string_view name) const
+{
+    resource value{};
+    return resource_from_name(name, value) && allows(value);
+}
+
 const char *app_state_name(app_state state)
 {
     switch (state) {
@@ -66,10 +127,15 @@ const char *app_type_name(app_type type)
 bool runtime::register_application(application &app)
 {
     if (count_ == applications_.size() || find(app.get_manifest().id) != nullptr) return false;
+    std::uint16_t mask = 0;
+    if (!manifest_resources_valid(app.get_manifest(), mask) ||
+        app.get_manifest().capability_count > app.get_manifest().capabilities.size()) return false;
     app.set_logger(logger_);
     applications_[count_] = &app;
     states_[count_] = app_state::registered;
     failures_[count_].clear();
+    grant_generations_[count_] = 0;
+    grant_masks_[count_] = mask;
     ++count_;
     return true;
 }
@@ -177,17 +243,30 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     }
     visiting[index] = false;
     states_[index] = app_state::starting;
+    ++grant_generations_[index];
+    if (grant_generations_[index] == 0) ++grant_generations_[index];
+    grant application_grant{};
+    application_grant.runtime_ = this;
+    application_grant.index_ = index;
+    application_grant.generation_ = grant_generations_[index];
+    application_grant.resource_mask_ = grant_masks_[index];
+    application_grant.owner_ = item.id;
+    applications_[index]->grant_ = application_grant;
     const auto started = std::chrono::steady_clock::now();
     const bool initialized = applications_[index]->init();
     const bool started_ok = initialized && applications_[index]->start();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - started).count();
     if (!initialized) {
+        applications_[index]->grant_ = {};
+        ++grant_generations_[index];
         states_[index] = app_state::failed;
         failures_[index] = "init hook failed";
         return false;
     }
     if (!started_ok) {
+        applications_[index]->grant_ = {};
+        ++grant_generations_[index];
         states_[index] = app_state::failed;
         failures_[index] = "start hook failed";
         return false;
@@ -246,6 +325,10 @@ bool runtime::stop_index(std::size_t index)
         }
     }
     states_[index] = app_state::stopping;
+    /* Revoke before teardown so callbacks that outlive the hook cannot use a
+     * resource.  The generation check also invalidates copied facades. */
+    applications_[index]->grant_ = {};
+    ++grant_generations_[index];
     const auto started = std::chrono::steady_clock::now();
     const bool stopped = applications_[index]->teardown();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -290,6 +373,28 @@ bool runtime::resources(std::string_view id, std::array<std::string_view, k_max_
     count = item.resource_count;
     for (std::size_t i = 0; i < count; ++i) out[i] = item.resources[i];
     return true;
+}
+
+grant runtime::app_grant(std::string_view id) const
+{
+    const std::size_t index = index_of(id);
+    if (index == k_not_found ||
+        (states_[index] != app_state::starting && states_[index] != app_state::running)) return {};
+    grant out{};
+    out.runtime_ = this;
+    out.index_ = index;
+    out.generation_ = grant_generations_[index];
+    out.resource_mask_ = grant_masks_[index];
+    out.owner_ = applications_[index]->get_manifest().id;
+    return out;
+}
+
+bool runtime::grant_is_valid(std::size_t index, std::uint64_t generation,
+                             std::uint16_t mask) const
+{
+    return index < count_ && generation != 0 && generation == grant_generations_[index] &&
+           (states_[index] == app_state::starting || states_[index] == app_state::running) &&
+           mask == grant_masks_[index];
 }
 
 result runtime::execute_line(std::string_view line)

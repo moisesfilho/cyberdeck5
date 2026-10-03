@@ -365,10 +365,19 @@ fora do escopo e sao trabalho da Fase 9.
 
 ### 9. Recursos e Capacidades
 
-- [ ] Definir APIs controladas para display, input, storage e network.
-- [ ] Definir APIs controladas para BLE, Serial-JTAG e Screenshot.
-- [ ] Definir APIs controladas para event log, clock e bateria.
-- [ ] Entregar a cada app somente os recursos declarados no manifesto.
+- [x] Definir APIs controladas para display, input, storage e network.
+- [x] Definir APIs controladas para BLE, Serial-JTAG e Screenshot.
+- [x] Definir APIs controladas para event log, clock e bateria.
+- [x] Entregar a cada app somente os recursos declarados no manifesto.
+
+Execucao da Fase 9: `manifest.resources` e a autoridade de autorizacao; nomes
+desconhecidos, duplicados, ausentes ou acima do limite de 8 recusam o registro.
+`capabilities` permanece metadado de diagnostico. O runtime entrega grants
+opacos por aplicacao apenas durante `running`; cada operacao das facades tipadas
+revalida o grant e a geracao, com revogacao antes do teardown. Display e input
+reutilizam o `view_context` do window manager, sem expor a arvore LVGL. Os
+limites de 16 apps, 8 recursos, 8 capabilities e 8 superficies/notificacoes
+continuam bounded e nao existe loader dinamico.
 
 ### 10. Persistencia e Recuperacao
 

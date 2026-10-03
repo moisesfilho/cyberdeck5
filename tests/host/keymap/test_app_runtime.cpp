@@ -58,7 +58,7 @@ public:
 private:
     const cyberdeck_apps::manifest manifest_{
         "dependent.app", "Dependent app", "1.0.0", "dependent host app", {},
-        {"test.app"}, 1, {"test-resource"}, 1, 1000};
+         {"test.app"}, 1, {"storage"}, 1, 1000};
     bool running_ = false;
 };
 
@@ -215,7 +215,7 @@ int main()
     std::size_t resource_count = 0;
     check(runtime.resources("dependent.app", resources, resource_count),
           "manifest resources are exposed");
-    check(resource_count == 1 && resources[0] == "test-resource", "resource list is bounded");
+    check(resource_count == 1 && resources[0] == "storage", "resource list is bounded");
     check(runtime.restart_application("dependent.app"), "running app can be restarted");
 
     auto unknown = runtime.execute_line("app info missing");

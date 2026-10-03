@@ -16,6 +16,34 @@ constexpr std::size_t k_max_resources = 8;
 constexpr std::size_t k_max_capabilities = 8;
 constexpr std::size_t k_max_commands = 4;
 
+enum class resource : std::uint8_t {
+    display, input, storage, network, ble, serial, screenshot, event_log, clock, battery,
+};
+
+const char *resource_name(resource value);
+bool resource_from_name(std::string_view name, resource &out);
+
+class runtime;
+
+/* A grant is an opaque, revocable view of one manifest's resources.  Facades
+ * must retain this object rather than copying manifest metadata: every
+ * operation re-checks the generation and therefore fails closed after stop. */
+class grant final {
+public:
+    bool valid() const;
+    bool allows(resource value) const;
+    bool allows(std::string_view name) const;
+    std::string_view owner() const { return owner_; }
+
+private:
+    friend class runtime;
+    const runtime *runtime_ = nullptr;
+    std::size_t index_ = 0;
+    std::uint64_t generation_ = 0;
+    std::uint16_t resource_mask_ = 0;
+    std::string_view owner_{};
+};
+
 enum class app_type {
     service,
     foreground,
@@ -87,9 +115,12 @@ public:
     virtual result execute(std::string_view command, std::string_view args) = 0;
     void set_logger(logger *value) { logger_ = value; }
     logger *app_logger() const { return logger_; }
+    const grant &app_grant() const { return grant_; }
 
 private:
+    friend class runtime;
     logger *logger_ = nullptr;
+    grant grant_{};
 };
 
 class runtime {
@@ -117,18 +148,24 @@ public:
     std::string_view failure_reason(std::string_view id) const;
     bool resources(std::string_view id, std::array<std::string_view, k_max_resources> &out,
                    std::size_t &count) const;
+    grant app_grant(std::string_view id) const;
     std::size_t size() const { return count_; }
 
 private:
+    friend class grant;
     std::array<application *, k_max_applications> applications_{};
     std::array<app_state, k_max_applications> states_{};
     std::array<std::string, k_max_applications> failures_{};
     std::size_t count_ = 0;
     logger *logger_ = nullptr;
+    std::array<std::uint64_t, k_max_applications> grant_generations_{};
+    std::array<std::uint16_t, k_max_applications> grant_masks_{};
 
     bool start_index(std::size_t index, std::array<bool, k_max_applications> &visiting);
     bool stop_index(std::size_t index);
     std::size_t index_of(std::string_view id) const;
+    bool grant_is_valid(std::size_t index, std::uint64_t generation,
+                        std::uint16_t mask) const;
     /* Bounded transitive search over the dependent tree of `index`. */
     bool cascade_stops_console(std::size_t index,
                                std::array<bool, k_max_applications> &visited) const;

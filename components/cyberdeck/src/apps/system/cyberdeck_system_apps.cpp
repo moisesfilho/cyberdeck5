@@ -138,13 +138,21 @@ cyberdeck_apps::manifest make_manifest(std::string_view id, std::string_view nam
         item.dependencies[item.dependency_count++] = dependency;
     }
     for (const std::string_view resource : resources) {
-        if (item.resource_count == item.resources.size()) break;
+        if (item.resource_count == item.resources.size()) {
+            /* Preserve overflow for the runtime validator instead of silently
+             * turning a max+1 declaration into a valid manifest. */
+            ++item.resource_count;
+            break;
+        }
         item.resources[item.resource_count++] = resource;
     }
     item.lifecycle_timeout_ms = lifecycle_timeout_ms;
     item.type = type;
     for (const std::string_view capability : capabilities) {
-        if (item.capability_count == item.capabilities.size()) break;
+        if (item.capability_count == item.capabilities.size()) {
+            ++item.capability_count;
+            break;
+        }
         item.capabilities[item.capability_count++] = capability;
     }
     item.stack_bytes = stack_bytes;
@@ -160,9 +168,9 @@ cyberdeck_apps::demo_application s_demo;
 event_log_logger s_event_logger;
 service_application s_event_log{make_manifest("cyberdeck.event_log", "Event log service",
                                                "Persistent bounded event log for applications", {},
-                                               {"storage", "logging"}, 1000,
+                                               {"storage", "event_log"}, 1000,
                                                cyberdeck_apps::app_type::service,
-                                               {"logging"}, 6144, 16),
+                                               {"event_log"}, 6144, 16),
                                 start_event_log, stop_event_log};
 /* cyberdeck.shell is registered as the real foreground application from
  * cyberdeck_shell_app: the supervisor owns the console lifecycle, while the UI
@@ -196,9 +204,9 @@ service_application s_screenshot{make_manifest("cyberdeck.screenshot", "Screensh
                                                 k_screenshot_control_queue_depth),
                                    start_screenshot, stop_screenshot, true};
 service_application s_bluetooth{make_manifest("cyberdeck.bluetooth", "Bluetooth service",
-                                                "ESP-Hosted BLE manager", {"cyberdeck.event_log"}, {"bluetooth"}, 1000,
+                                                 "ESP-Hosted BLE manager", {"cyberdeck.event_log"}, {"ble"}, 1000,
                                                cyberdeck_apps::app_type::background,
-                                               {"bluetooth"}, k_ble_host_task_stack_bytes,
+                                                {"ble"}, k_ble_host_task_stack_bytes,
                                                k_ble_command_queue_depth),
                                   start_bluetooth, stop_bluetooth, true};
 

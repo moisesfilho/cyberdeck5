@@ -137,6 +137,9 @@ SESSION_SRC     := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_
 SESSION_HDR     := ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h
 APP_RUNTIME_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp
 APP_RUNTIME_HDR := ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h
+APP_FACADES_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_facades.cpp
+APP_FACADES_HDR := ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_facades.h
+PHASE9_CAPABILITIES_TEST := test_phase9_capabilities.cpp
 # O contrato do limite de payload da saida SSH e derivado do produtor, entao os
 # dois testes do seam dependem deste TU.
 SSH_CLIENT_SRC := ../../../components/cyberdeck/src/apps/ssh/ssh_client.cpp
@@ -156,7 +159,11 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+
+.PHONY: test_phase9_capabilities test_phase9_capabilities_contract
+test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9_CAPABILITIES_TEST) Makefile
+	$(PYTHON) test_phase9_capabilities_contract.py
 
 .PHONY: all test verify clean test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
 
@@ -379,6 +386,12 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 
 test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR)
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_app_runtime.cpp $(APP_RUNTIME_SRC) -o test_app_runtime
+
+test_phase9_capabilities: $(PHASE9_CAPABILITIES_TEST) $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
+		$(APP_FACADES_SRC) $(APP_FACADES_HDR) $(WINDOW_MANAGER_SRC) $(WINDOW_MANAGER_HDR)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include \
+		$(PHASE9_CAPABILITIES_TEST) $(APP_RUNTIME_SRC) $(APP_FACADES_SRC) \
+		$(WINDOW_MANAGER_SRC) -o test_phase9_capabilities
 
 test_demo_app: test_demo_app.cpp $(DEMO_APP_SRC) $(DEMO_APP_HDR) $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR)
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_demo_app.cpp $(DEMO_APP_SRC) $(APP_RUNTIME_SRC) -o test_demo_app
@@ -842,6 +855,9 @@ test: $(BINS)
 	@./test_shell_session
 	@echo "==> Executando testes do runtime de aplicacoes compiladas"
 	@./test_app_runtime
+	@echo "==> Executando testes de capabilities da Fase 9"
+	@./test_phase9_capabilities
+	@$(MAKE) --no-print-directory test_phase9_capabilities_contract
 	@echo "==> Executando testes do app demo compilado"
 	@./test_demo_app
 	@echo "==> Executando aplicacao shell de primeiro plano e seu contrato"
