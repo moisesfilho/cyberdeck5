@@ -346,12 +346,22 @@ passaram a ser compilados a partir do TU de producao em
 
 ### 8. Window Manager LVGL
 
-- [ ] Criar superficie principal por aplicacao.
-- [ ] Centralizar foco e ownership de input.
-- [ ] Criar barra de sistema persistente.
-- [ ] Adicionar notificacoes e transicoes entre apps.
-- [ ] Impedir acesso direto das aplicacoes a arvore LVGL.
-- [ ] Expor uma API controlada de view/contexto.
+- [x] Criar superficie principal por aplicacao.
+- [x] Centralizar foco e ownership de input.
+- [x] Criar barra de sistema persistente.
+- [x] Adicionar notificacoes e transicoes entre apps.
+- [x] Impedir acesso direto das aplicacoes a arvore LVGL.
+- [x] Expor uma API controlada de view/contexto.
+
+Execucao da Fase 8: o window manager mantem limites bounded de ate 8
+superficies e 8 notificacoes FIFO. O adaptador e o unico owner da arvore LVGL
+composta pela tela, barra de sistema persistente e area de conteudo; as
+aplicacoes recebem somente uma API opaca de `view_context`, com geracao para
+invalidar handles durante teardown. Foco e ownership de input ficam
+centralizados, e notificacoes/transicoes entre apps passam pelo manager, com
+descarte seguro de capacidades expiradas e payloads fora do limite. A fase nao
+inclui multiplos consoles nem APIs de capabilities: esses itens permanecem
+fora do escopo e sao trabalho da Fase 9.
 
 ### 9. Recursos e Capacidades
 

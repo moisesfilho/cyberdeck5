@@ -44,6 +44,7 @@ bool view::create(lv_obj_t *screen, lv_obj_t *parent, std::size_t max_length,
 
     s_keyboard = lv_keyboard_create(screen);
     if (s_keyboard == nullptr) return false;
+    lv_obj_set_ignore_layout(s_keyboard, true);
     lv_obj_set_hidden(s_keyboard, true);
     lv_keyboard_set_textarea(s_keyboard, s_terminal);
     if (callbacks.virtual_keyboard_changed != nullptr) {

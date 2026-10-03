@@ -4,23 +4,52 @@
 #include <string>
 #include <vector>
 
+/* `lvgl.h` includes `lv_version.h`, so `LVGL_VERSION_MAJOR` is defined on every
+ * device build of a `#if defined(LVGL_VERSION_MAJOR)` branch.  The host shim must
+ * mirror that, or it silently compiles the branch out and stops testing it. */
+#define LVGL_VERSION_MAJOR 9
+
 struct lv_color_t { std::uint32_t value{}; };
+
+/* The enumerations a composed root sets stay ahead of `_lv_obj_t`, because the
+ * object records its scroll state with the LVGL 9 defaults `lv_obj_constructor()`
+ * installs: a fresh object scrolls in every direction, shows an automatic
+ * scrollbar and chains scrolling to its parent.  A recorded value of 0 therefore
+ * means production disabled it, not that the shim defaulted to it. */
+inline constexpr int LV_DIR_NONE=0, LV_DIR_ALL=1, LV_SCROLLBAR_MODE_OFF=0,
+    LV_SCROLLBAR_MODE_AUTO=3,
+    LV_LAYOUT_FLEX=1, LV_LAYOUT_NONE=0, LV_FLEX_FLOW_ROW=0, LV_FLEX_FLOW_COLUMN=1,
+    LV_FLEX_ALIGN_START=0,
+    LV_FLEX_ALIGN_CENTER=1, LV_FLEX_ALIGN_END=2, LV_TEXT_ALIGN_CENTER=1,
+    LV_PART_MAIN=0, LV_PART_INDICATOR=1, LV_PART_KNOB=2, LV_OPA_TRANSP=0,
+    LV_OPA_COVER=255, LV_RADIUS_CIRCLE=999, LV_EVENT_SIZE_CHANGED=1,
+    LV_EVENT_FOCUSED=2, LV_EVENT_INSERT=3, LV_EVENT_VALUE_CHANGED=4,
+    LV_EVENT_KEY=5;
+
 struct _lv_obj_t {
     _lv_obj_t *parent{}; std::vector<_lv_obj_t *> children; std::string text;
-    int32_t width{}, height{}, x{}, y{}; bool hidden{}; std::uint32_t color{};
+    int32_t width{}, height{}, x{}, y{}; bool hidden{};
+    /* -1 means the shim never saw a background/arc color applied, so "the bar is
+     * painted black" cannot pass on a default that already reads as black. */
+    std::uint32_t color{static_cast<std::uint32_t>(-1)};
+    bool ignore_layout{};
+    /* LVGL 9 exposes no public getter for a style property, for the layout or
+     * for the flex attributes, so the shim records what the code under test
+     * applied and the host suite reads the fields.  A style still holding -1 was
+     * never set: that keeps an explicit zero distinguishable from an absent
+     * style, so a "the chrome is zero" assertion cannot pass on a default. */
+    int32_t border_width{-1}, pad_top{-1}, pad_bottom{-1}, pad_left{-1},
+        pad_right{-1}, pad_row{-1}, pad_column{-1}, flex_grow{-1}, layout{-1},
+        flex_flow{-1};
+    /* Scroll state, defaulted as `lv_obj_constructor()` leaves a new object. */
+    int32_t scroll_dir{LV_DIR_ALL}, scrollbar_mode{LV_SCROLLBAR_MODE_AUTO};
+    bool scroll_chain{true};
 };
 using lv_obj_t = _lv_obj_t;
 struct lv_event_t { lv_obj_t *target{}; };
 using lv_event_cb_t = void (*)(lv_event_t *);
 using lv_result_t = int;
 inline constexpr lv_result_t LV_RESULT_OK = 0, LV_RESULT_INVALID = -1;
-inline constexpr int LV_DIR_NONE=0, LV_DIR_ALL=1, LV_SCROLLBAR_MODE_OFF=0,
-    LV_LAYOUT_FLEX=1, LV_LAYOUT_NONE=0, LV_FLEX_FLOW_ROW=0, LV_FLEX_ALIGN_START=0,
-    LV_FLEX_ALIGN_CENTER=1, LV_FLEX_ALIGN_END=2, LV_TEXT_ALIGN_CENTER=1,
-    LV_PART_MAIN=0, LV_PART_INDICATOR=1, LV_PART_KNOB=2, LV_OPA_TRANSP=0,
-    LV_OPA_COVER=255, LV_RADIUS_CIRCLE=999, LV_EVENT_SIZE_CHANGED=1,
-    LV_EVENT_FOCUSED=2, LV_EVENT_INSERT=3, LV_EVENT_VALUE_CHANGED=4,
-    LV_EVENT_KEY=5;
 inline constexpr int LV_SIZE_CONTENT=-1;
 inline constexpr int LV_LABEL_LONG_CLIP=0;
 inline constexpr const char *LV_SYMBOL_BLUETOOTH="BT", *LV_SYMBOL_CHARGE="CHG",
@@ -35,15 +64,41 @@ inline lv_obj_t *lv_arc_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_textarea_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_keyboard_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline void lv_obj_delete(lv_obj_t *o) { delete o; }
+/* LVGL 9 keeps the v8 spelling alive through its API map; mirror it so the
+ * shim never decides which name a production adapter is allowed to use. */
+inline void lv_obj_del(lv_obj_t *o) { lv_obj_delete(o); }
+/* Single fake display root.  Only adapters that own the LVGL root may call
+ * lv_scr_act(); a host test clears it to model a display that is not ready. */
+inline lv_obj_t *&lv_shim_active_screen() { static lv_obj_t *screen = nullptr; return screen; }
+inline lv_obj_t *lv_scr_act() { return lv_shim_active_screen(); }
 inline void lv_obj_set_size(lv_obj_t *o,int32_t w,int32_t h){if(o){o->width=w;o->height=h;}}
 inline void lv_obj_set_width(lv_obj_t *o,int32_t w){if(o)o->width=w;} inline void lv_obj_set_height(lv_obj_t *o,int32_t h){if(o)o->height=h;}
-inline int32_t lv_obj_get_width(lv_obj_t *o){return o?o->width:0;} inline lv_obj_t *lv_obj_get_child(lv_obj_t *o,int i){return o&&i>=0&&i<(int)o->children.size()?o->children[i]:nullptr;}
+inline int32_t lv_obj_get_width(lv_obj_t *o){return o?o->width:0;} inline int32_t lv_obj_get_height(lv_obj_t *o){return o?o->height:0;} inline lv_obj_t *lv_obj_get_child(lv_obj_t *o,int i){return o&&i>=0&&i<(int)o->children.size()?o->children[i]:nullptr;}
 inline void lv_obj_set_x(lv_obj_t*o,int32_t v){if(o)o->x=v;} inline void lv_obj_set_y(lv_obj_t*o,int32_t v){if(o)o->y=v;}
 inline void lv_obj_set_hidden(lv_obj_t*o,bool v){if(o)o->hidden=v;} inline bool lv_obj_has_flag(lv_obj_t*o,int){return o&&o->hidden;}
-inline void lv_obj_set_layout(lv_obj_t*,int){} inline void lv_obj_set_flex_flow(lv_obj_t*,int){} inline void lv_obj_set_flex_align(lv_obj_t*,int,int,int){} inline void lv_obj_set_flex_grow(lv_obj_t*,int){}
-inline void lv_obj_set_scroll_dir(lv_obj_t*,int){} inline void lv_obj_set_scroll_chain(lv_obj_t*,bool){} inline void lv_obj_set_scrollbar_mode(lv_obj_t*,int){} inline void lv_obj_set_scrollable(lv_obj_t*,bool){} inline void lv_obj_set_overflow_visible(lv_obj_t*,bool){}
-inline void lv_obj_set_style_bg_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_text_color(lv_obj_t*,lv_color_t,int){} inline void lv_obj_set_style_border_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_border_color(lv_obj_t*,lv_color_t,int){}
-inline void lv_obj_set_style_pad_all(lv_obj_t*,int,int){} inline void lv_obj_set_style_pad_column(lv_obj_t*,int,int){} inline void lv_obj_set_style_pad_row(lv_obj_t*,int,int){} inline void lv_obj_set_style_pad_left(lv_obj_t*,int,int){} inline void lv_obj_set_style_pad_right(lv_obj_t*,int,int){} inline void lv_obj_set_style_bg_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_radius(lv_obj_t*,int,int){}
+/* LVGL 9 keeps ignore_layout as a property behind a dedicated setter, because
+ * `lv_obj_add_flag(obj, LV_OBJ_FLAG_IGNORE_LAYOUT)` is LV_DEPRECATED there.
+ * Mirror the 9.x setter/getter only: the host must not decide which spelling of
+ * the overlay exclusion production is allowed to use. */
+inline void lv_obj_set_ignore_layout(lv_obj_t*o,bool v){if(o)o->ignore_layout=v;}
+inline bool lv_obj_is_ignore_layout(const lv_obj_t*o){return o&&o->ignore_layout;}
+inline void lv_obj_set_layout(lv_obj_t*o,int v){if(o)o->layout=v;} inline void lv_obj_set_flex_flow(lv_obj_t*o,int v){if(o)o->flex_flow=v;} inline void lv_obj_set_flex_align(lv_obj_t*,int,int,int){} inline void lv_obj_set_flex_grow(lv_obj_t*o,int v){if(o)o->flex_grow=v;}
+inline void lv_obj_set_scroll_dir(lv_obj_t*o,int v){if(o)o->scroll_dir=v;} inline void lv_obj_set_scroll_chain(lv_obj_t*o,bool v){if(o)o->scroll_chain=v;} inline void lv_obj_set_scrollbar_mode(lv_obj_t*o,int v){if(o)o->scrollbar_mode=v;} inline void lv_obj_set_scrollable(lv_obj_t*,bool){} inline void lv_obj_set_overflow_visible(lv_obj_t*,bool){}
+/* Public LVGL 9 read-backs for the scroll state, so the host suite asserts the
+ * device-visible result instead of the spelling that produced it. */
+inline int lv_obj_get_scroll_dir(const lv_obj_t*o){return o?o->scroll_dir:LV_DIR_NONE;} inline int lv_obj_get_scrollbar_mode(const lv_obj_t*o){return o?o->scrollbar_mode:LV_SCROLLBAR_MODE_OFF;}
+/* `lv_obj_get_style_space_*_internal()` in LVGL 9 is the border width plus the
+ * padding (with the default full border side), and `lv_obj_get_content_*` is
+ * the object size minus the space on both sides.  Mirroring both lets the host
+ * suite place a child the way the device does, from the applied chrome. */
+inline int32_t lv_shim_style_inset(int32_t style){return style<0?0:style;}
+inline int32_t lv_obj_get_content_width(const lv_obj_t*o){if(!o)return 0;return o->width-lv_shim_style_inset(o->border_width)-lv_shim_style_inset(o->pad_left)-lv_shim_style_inset(o->pad_right);}
+inline int32_t lv_obj_get_content_height(const lv_obj_t*o){if(!o)return 0;return o->height-lv_shim_style_inset(o->border_width)-lv_shim_style_inset(o->pad_top)-lv_shim_style_inset(o->pad_bottom);}
+inline void lv_obj_set_style_bg_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_text_color(lv_obj_t*,lv_color_t,int){} inline void lv_obj_set_style_border_width(lv_obj_t*o,int v,int){if(o)o->border_width=v;} inline void lv_obj_set_style_border_color(lv_obj_t*,lv_color_t,int){}
+/* `lv_obj_set_style_pad_all()` sets the four sides only, exactly as LVGL 9 does
+ * (it delegates to the per-side setters and leaves pad_row/pad_column alone). */
+inline void lv_obj_set_style_pad_all(lv_obj_t*o,int v,int){if(o){o->pad_left=o->pad_right=o->pad_top=o->pad_bottom=v;}}
+inline void lv_obj_set_style_pad_column(lv_obj_t*o,int v,int){if(o)o->pad_column=v;} inline void lv_obj_set_style_pad_row(lv_obj_t*o,int v,int){if(o)o->pad_row=v;} inline void lv_obj_set_style_pad_left(lv_obj_t*o,int v,int){if(o)o->pad_left=v;} inline void lv_obj_set_style_pad_right(lv_obj_t*o,int v,int){if(o)o->pad_right=v;} inline void lv_obj_set_style_pad_top(lv_obj_t*o,int v,int){if(o)o->pad_top=v;} inline void lv_obj_set_style_pad_bottom(lv_obj_t*o,int v,int){if(o)o->pad_bottom=v;} inline void lv_obj_set_style_bg_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_radius(lv_obj_t*,int,int){}
 inline void lv_obj_set_style_text_align(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_arc_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_opa(lv_obj_t*,int,int){}
 inline void lv_obj_update_layout(lv_obj_t*){} inline void lv_obj_align(lv_obj_t*,int,int,int){} inline void lv_obj_add_state(lv_obj_t*,int){}
 inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline void lv_label_set_long_mode(lv_obj_t*,int){}

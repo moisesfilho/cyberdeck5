@@ -29,6 +29,7 @@
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "platform/display/cyberdeck_screen_protection.h"
 #include "platform/display/screen_off.h"
+#include "platform/display/cyberdeck_window_manager_adapter.h"
 
 #include <cstdio>
 #include <cstring>
@@ -79,6 +80,7 @@ std::string s_last_clock_text;
 cyberdeck_local_shell s_local_shell("/sdcard", "/");
 cyberdeck_header_view::view s_header_view;
 cyberdeck_terminal_view::view s_terminal_view;
+cyberdeck_window_manager::view_context s_shell_view_context;
 bool s_cat_worker_ready = false;
 cyberdeck_shell_session::wifi_ui_state_t s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
 cyberdeck_wifi_search_menu s_wifi_search_menu;
@@ -447,6 +449,13 @@ void destroy_ui_resource_handles()
     /* A deinit during BLE authentication must not leave the passkey resident.
      * Detaching also drops the console the shell application owns. */
     s_shell_app.detach_console();
+    auto &window_manager = cyberdeck_window_manager_adapter::global();
+    if (!s_shell_view_context.empty()) {
+        (void)window_manager.policy().begin_teardown(s_shell_view_context);
+        (void)window_manager.policy().remove(s_shell_view_context);
+        s_shell_view_context = {};
+    }
+    window_manager.deinit();
     if (s_terminal_output_timer != nullptr) {
         lv_timer_del(s_terminal_output_timer);
         s_terminal_output_timer = nullptr;
@@ -1418,9 +1427,19 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
           }
          s_ble_observer = cyberdeck_apps::service_ports::ble_register_observer(on_ble_event, nullptr);
          s_cat_worker_ready = cyberdeck_cat_worker_start("/sdcard", on_cat_result, nullptr);
-     s_screen = lv_scr_act(); style_base(s_screen, BLACK, WHITE); lv_obj_set_style_pad_all(s_screen, 12, 0); lv_obj_set_layout(s_screen, LV_LAYOUT_NONE); disable_scrolling(s_screen);
-    s_menu = lv_obj_create(s_screen); lv_obj_set_size(s_menu, LV_PCT(100), LV_PCT(100)); style_base(s_menu, BLACK, WHITE); lv_obj_set_style_pad_all(s_menu, 0, 0); lv_obj_set_flex_flow(s_menu, LV_FLEX_FLOW_COLUMN); disable_scrolling(s_menu);
-     (void)s_header_view.create(s_menu);
+      auto &window_manager = cyberdeck_window_manager_adapter::global();
+      if (!window_manager.init()) {
+          destroy_ui_resource_handles();
+          return ESP_ERR_NO_MEM;
+      }
+      if (window_manager.policy().create(1, s_shell_view_context) != cyberdeck_window_manager::view_status::ok) {
+          destroy_ui_resource_handles();
+          return ESP_ERR_NO_MEM;
+      }
+      s_screen = window_manager.screen();
+      s_menu = window_manager.content();
+      style_base(s_menu, BLACK, WHITE); lv_obj_set_style_pad_all(s_menu, 0, 0); disable_scrolling(s_menu);
+      (void)s_header_view.create(window_manager.system_bar());
      cyberdeck_apps::service_ports::wifi_set_state_callback(on_wifi_state, nullptr);
 s_last_clock_text.clear();
     update_clock(nullptr);
