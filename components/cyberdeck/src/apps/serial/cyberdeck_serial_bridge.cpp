@@ -695,7 +695,7 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
     out.type = type_f.s;
 
     static const char *const k_known[] = {"ping",       "ui.echo",     "ui.clear",  "ui.click",  "ui.tap",
-                                          "ui.type",    "ui.dump",     "screen.shot", "screen.dump", "sys.info",
+                                          "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
                                           "wifi.status", "wifi.scan",  "fs.write"};
     bool known = false;
     for (const char *k : k_known) {
@@ -1220,6 +1220,19 @@ dispatch_result err_result(const request &req, dispatch_error err, const std::st
 constexpr int k_clear_backspaces = 64;
 constexpr std::uint32_t k_inject_delay_ms = 30;
 
+std::string truncate_left_utf8_local(const std::string &s, std::size_t limit)
+{
+    if (s.size() <= limit) {
+        return s;
+    }
+    const std::size_t start = s.size() - limit;
+    std::size_t safe = start;
+    while (safe < s.size() && (static_cast<unsigned char>(s[safe]) & 0xC0) == 0x80) {
+        ++safe;
+    }
+    return s.substr(safe);
+}
+
 void inject_text(const char *text, std::size_t len)
 {
     if (text == nullptr || len == 0) {
@@ -1700,6 +1713,43 @@ device_result exec_screen_shot(const request &req)
     return d;
 }
 
+constexpr std::size_t k_term_dump_max_bytes = 3000;
+constexpr std::size_t k_term_dump_envelope_limit = 3500;
+
+device_result exec_term_dump(const request &req)
+{
+    device_result d;
+    d.handled = true;
+    std::vector<char> raw(k_term_dump_max_bytes);
+    std::size_t bytes = 0;
+    int truncated = 0;
+    const esp_err_t err = cyberdeck_ui_term_dump(raw.data(), raw.size(), &bytes, &truncated);
+    if (err != ESP_OK) {
+        d.result = err_result(req, dispatch_error::internal,
+                              err == ESP_ERR_TIMEOUT ? "display busy" : "terminal indisponivel");
+        return d;
+    }
+
+    std::string text(raw.data(), bytes);
+    for (;;) {
+        std::string result = "{\"text\":";
+        append_json_string(result, text);
+        result += ",\"truncated\":";
+        result += truncated != 0 ? "true" : "false";
+        result += ",\"bytes\":";
+        result += std::to_string(text.size());
+        result += ",\"limit\":";
+        result += std::to_string(k_term_dump_max_bytes);
+        result.push_back('}');
+        d.result = ok_result(req, std::move(result));
+        if (d.result.envelope_json.size() <= k_term_dump_envelope_limit || text.empty()) {
+            return d;
+        }
+        truncated = 1;
+        text = truncate_left_utf8_local(text, text.size() - std::min<std::size_t>(128, text.size()));
+    }
+}
+
 device_result device_exec(const request &req, const std::vector<json_field> &fields)
 {
     device_result d;
@@ -1716,6 +1766,9 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
     }
     if (req.type == "screen.shot") {
         return exec_screen_shot(req);
+    }
+    if (req.type == "term.dump") {
+        return exec_term_dump(req);
     }
     if (req.type == "ui.clear") {
         d.handled = true;

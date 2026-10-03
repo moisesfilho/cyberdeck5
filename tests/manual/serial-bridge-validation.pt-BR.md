@@ -4,12 +4,13 @@
 **Escopo:** ponte manual NDJSON na porta USB Serial-JTAG (`bridge_start`) e a
 CLI host `tools/cyberdeck_cli.py`, exercitando correlacao por `rid`, envelopes
 de sucesso/erro, tolerancia a logs intercalados, comandos de UI (`ui.*`),
-contratos `sys.info`/`wifi.*` e a captura `screen.shot`/`screen.dump` (BMP em
+contratos `sys.info`/`wifi.*`, `term.dump` e a captura `screen.shot`/`screen.dump` (BMP em
 chunks Base64 com CRC32).
 **Estado sob validacao:** task `serial_brg` iniciada ao fim do boot; protocolo
 NDJSON com uma linha por mensagem, limite de 4096 bytes, `{"rid","ok":true,
 "result":...}` no sucesso e `{"rid","ok":false,"error","error_code"}` no erro;
-`screen.dump` em frames `start`/`chunk`/`end` com chunks de 1024 bytes.
+`screen.dump` em frames `start`/`chunk`/`end` com chunks de 1024 bytes;
+`term.dump` devolve um snapshot textual bounded do terminal.
 **Firmware:** `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp`,
 `main/app_main.cpp` (`bridge_start`), host `tools/cyberdeck_cli.py`.
 **Duracao estimada:** 30-45 min por execucao.
@@ -83,7 +84,63 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 | U11 | `ui.dump` | `result.nodes` com `class/text/x/y/w/h`; acao visivel refletida no dump (ex.: dump apos `ui.click` mostra o estado novo) |  |  |
 | U12 | `ui.dump` com UI ocupada (roda de log girando) | Resposta sob `bsp_display_lock`, sem deadlock; UI permanece responsiva ao toque |  |  |
 
-## 5. sys.info / wifi
+### 4.1. Estratégia preferencial de validação textual
+
+Após uma ação que altere o terminal, especialmente `ui.type`, use primeiro
+`term.dump` para validar o texto/retorno efetivamente apresentado. A recuperação
+textual pela ponte é mais rápida e objetiva que screenshot/OCR e não depende da
+interpretação visual da imagem.
+
+Fluxo preferencial:
+
+```bash
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.type "help"
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump
+```
+
+Use `ui.dump` quando a pergunta for sobre estrutura, estado ou geometria dos
+widgets (por exemplo, confirmar que uma tela foi aberta). Reserve
+`screen.dump`/screenshot para validar layout, cores, orientação ou outros
+aspectos visuais que o texto não representa; não use OCR como primeira opção
+para conferir uma resposta textual.
+
+## 5. `term.dump`: snapshot textual do terminal
+
+`term.dump` nao recebe argumentos de comando. A requisicao NDJSON e
+`{"rid":"<id>","type":"term.dump"}`; pela CLI, use
+`python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump`. A resposta feliz
+e um envelope unico, por exemplo:
+
+```json
+{"rid":"cli-1","ok":true,"result":{"text":"$ help\n...","truncated":false,"bytes":42,"limit":3000}}
+```
+
+`text` e o snapshot textual renderizado (scrollback visivel mais a linha de
+edicao composta), nao uma arvore de widgets nem uma captura BMP. `bytes` e o
+tamanho UTF-8 retornado e `limit` e 3000 bytes. Em erro, a resposta permanece
+`ok:false` com `error_code=internal`: `error="display busy"` indica timeout do
+lock de display e `error="terminal indisponivel"` indica terminal ausente.
+
+| ID | Acao | Resultado esperado | Pass/Fail | Obs |
+|----|------|--------------------|-----------|-----|
+| T1 | No menu, executar `ui.type "help"` e depois `term.dump` | `ok:true`; `result.text` contem o eco/prompt e a saida textual de `help`, com `bytes` coerente |  |  |
+| T2 | Repetir `term.dump` sem alterar a UI | Mesmo snapshot textual (salvo mudanca normal de estado), novo `rid`; sem nodes, geometria ou BMP |  |  |
+| T3 | Injetar texto UTF-8 longo com `ui.type` e executar `term.dump` | Se exceder o limite, `truncated:true`, `bytes <= 3000` e o texto inicia em fronteira de code point UTF-8; nao ha caractere corrompido |  |  |
+| T4 | Forcar resposta com display ocupado e repetir apos ~1 s | Primeira resposta `ok:false`, `error="display busy"`; nova tentativa apos liberar o lock pode retornar `ok:true`; nao considerar busy como snapshot valido |  |  |
+| T5 | Terminal indisponivel durante inicializacao/teardown | `ok:false`, `error="terminal indisponivel"`; registrar o momento e nao fazer flood de retries |  |  |
+| T6 | No menu, `ui.type "ssh user@host[:port]"`, concluir senha/host-key e executar comando remoto; depois `term.dump` | Snapshot inclui a saida remota/prompt recebido literalmente e a linha atual do mesmo terminal, sem criar marcador `ssh>` |  | Requer servidor SSH e credenciais validas |
+| T7 | Encerrar a sessao SSH, voltar ao menu e executar `ui.type "help"` + `term.dump` | O terminal continua respondendo, conserva o texto esperado da sessao e volta ao prompt/menu local; novo `rid` funciona |  |  |
+| T8 | Desconectar e reconectar USB Serial-JTAG; executar `term.dump` novamente | Nova sessao CLI descarta entrada residual, recebe rid novo e retorna snapshot ou erro tipado; sem atribuir validacao do device ao host |  |  |
+
+O truncamento ocorre em duas camadas bounded: a API copia no maximo 3000
+bytes e corta pela esquerda em fronteira UTF-8; se o envelope JSON ainda passar
+de 3500 bytes, a ponte reduz a cauda novamente em passos de ate 128 bytes,
+sempre preservando fronteiras UTF-8 e mantendo `truncated:true`. Validar a
+resposta concreta no device e obrigatorio: esta secao foi documentada apos
+`review_approved`, mas a validacao em device ainda aguarda hardware conectado,
+firmware correspondente e uma execucao deste roteiro.
+
+## 6. sys.info / wifi
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
@@ -122,7 +179,7 @@ ip: <valor>
 |----|------|--------------------|-----------|-----|
 | A4 | Depois de A2, executar `wifi audit save` e aguardar a resposta do worker | O comando exibe `wifi audit save requested`; apos a publicacao duravel, exibe uma unica vez `wifi audit saved: /sdcard/wifi-audit/wifi-audit-YYYYMMDD-HHMMSS.txt`. O nome usa data e hora GMT-3, fica dentro de `/sdcard/wifi-audit/` e nao substitui um arquivo existente. Se a transacao falhar, o terminal mostra `wifi audit save failed` e nenhum caminho de sucesso |  |  |
 
-## 6. screen.shot / screen.dump
+## 7. screen.shot / screen.dump
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
@@ -133,7 +190,7 @@ ip: <valor>
 | D5 | Dump duas vezes seguidas | Sessao anterior encerrada corretamente; segunda captura consistente (rid novo) |  |  |
 | D6 | `screen.dump` durante rotacao da tela | Sem crash; se falhar, erro tipado + frame `end` quando a sessao ja comecou |  |  |
 
-## 7. Integracao de boot e concorrencia
+## 8. Integracao de boot e concorrencia
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
@@ -143,7 +200,7 @@ ip: <valor>
 | B4 | Toque fisico durante `ui.type` longo | Entrada fisica nao perde eventos da injeccao (fila bounded + delay) |  |  |
 | B5 | Desconectar/reconectar USB em uso | Nova sessao CLI conecta limpa (`_discard_input`); rid `cli-N` recomeca por sessao |  |  |
 
-## 8. Criterios de aceite do plano
+## 9. Criterios de aceite do plano
 
 - P10-P20, L1-L4, U1-U12, W1-W5, A1-A4, D1-D6, B1-B5: **todos Pass** em pelo menos
   uma execucao com monitor serial ativo (L-series obrigatorio). A1-A3 validam o
@@ -157,7 +214,7 @@ ip: <valor>
   reproducao e encaminhar ao reviewer via handoff (nunca corrigir em producao
   como tester).
 
-## 9. Riscos conhecidos (escopo do plano)
+## 10. Riscos conhecidos (escopo do plano)
 
 | Risco | Mitigacao |
 |-------|-----------|
@@ -170,7 +227,7 @@ ip: <valor>
 | Rotacao muda a captura mid-dump | D6: erro tipado + `end` quando a sessao ja iniciou |
 | Base64 canonico / padding variante | CLI exige `b64encode(b64decode(s)) == s` |
 
-## 10. Registro de execucao
+## 11. Registro de execucao
 
 | Data | Executor | Device | Commit | Resultado | Observacoes |
 |------|----------|--------|--------|-----------|-------------|
@@ -178,7 +235,7 @@ ip: <valor>
 
 ---
 
-## 11. Cobertura host-side e limitacao
+## 12. Cobertura host-side e limitacao
 
 **Cobertura automatizada** (`make -C tests/host/keymap`):
 

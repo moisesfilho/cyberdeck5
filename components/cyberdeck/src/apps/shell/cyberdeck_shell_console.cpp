@@ -107,12 +107,9 @@ line_view compose(const surface_state &state, const line_input &input, std::size
                             ? input.visible_line
                             : (state.password_pending ? std::string(input.line.size(), '*')
                                                       : input.line);
-    if (state.ssh_connected) {
-        /* SSH online: o terminal remoto desenha o proprio prompt. */
-        view.marker.clear();
-    } else if (state.password_pending) {
+    if (state.password_pending) {
         view.marker = "Password: ";
-    } else if (!state.input_owned_elsewhere) {
+    } else if (!state.ssh_connected && !state.input_owned_elsewhere) {
         view.marker = fit_prompt_marker(state.cwd + "$ ");
     }
     view.fitted_line = fit_visible_line(view.visible_line, view.marker.size(), limit);

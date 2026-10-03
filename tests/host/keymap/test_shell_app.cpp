@@ -34,13 +34,21 @@ void check(bool condition, const char *message)
 
 /* Host falso: registra apenas o que a aplicacao precisa para compor o prompt
  * e o modo de sessao.  Todo o resto e no-op porque estes testes exercitam a
- * propriedade de ownership, nao os fluxos de servico. */
+ * propriedade de ownership, nao os fluxos de servico.
+ *
+ * As portas SSH sao gravadas porque o prompt e a linha em SSH sao comprovadamente
+ * apenas view (REQ-1/AC-1 e REQ-3/AC-3): o payload do PTY, o eco remoto, a
+ * senha, a confirmacao de host key e a banda local do compositor precisam ser
+ * observaveis byte a byte. */
 class fake_host final : public cyberdeck_shell_session::host {
 public:
-    void append_output_line(const std::string &) override {}
-    void write_output(const char *, std::size_t) override {}
-    void append_output_text(const std::string &) override {}
-    void clear_output() override {}
+    void append_output_line(const std::string &line) override { output += line; }
+    void write_output(const char *data, std::size_t length) override
+    {
+        if (data != nullptr) written.append(data, length);
+    }
+    void append_output_text(const std::string &text) override { output += text; }
+    void clear_output() override { output.clear(); written.clear(); }
     void render() override { ++renders; }
 
     cyberdeck_ble::state_machine &ble_model() override { return ble_; }
@@ -73,13 +81,21 @@ public:
     bool wifi_storage_find(const char *, char *, std::size_t) override { return false; }
 
     cyberdeck_session_state ssh_phase() const override { return ssh; }
-    esp_err_t ssh_send_data(const char *, std::size_t) override { return ESP_OK; }
-    esp_err_t ssh_send_password(const char *) override { return ESP_OK; }
-    void ssh_accept_host_key() override {}
+    esp_err_t ssh_send_data(const char *data, std::size_t length) override
+    {
+        if (data != nullptr) ssh_sent.append(data, length);
+        return ESP_OK;
+    }
+    esp_err_t ssh_send_password(const char *password) override
+    {
+        if (password != nullptr) ssh_password = password;
+        return ESP_OK;
+    }
+    void ssh_accept_host_key() override { ++host_key_accepted; }
 
     void set_ssh_visible(bool) override {}
-    void reset_ssh_filter() override {}
-    void discard_ssh_composer() override {}
+    void reset_ssh_filter() override { ++ssh_filter_resets; }
+    void discard_ssh_composer() override { ++composer_discards; }
     cyberdeck_ssh_line_composer &ssh_composer() override { return composer_; }
     esp_err_t ssh_connect(const char *, const char *, int) override { return ESP_OK; }
 
@@ -102,6 +118,15 @@ public:
 
     std::size_t renders = 0;
     mutable cyberdeck_session_state ssh = cyberdeck_session_state::MENU;
+
+    /* Portas SSH gravadas, para provar que o prompt local nunca as alcanca. */
+    std::string output;
+    std::string written;
+    std::string ssh_sent;
+    std::string ssh_password;
+    int host_key_accepted = 0;
+    int ssh_filter_resets = 0;
+    int composer_discards = 0;
 
 private:
     cyberdeck_local_shell local_{"/tmp", "/"};
@@ -188,21 +213,320 @@ void prompt_composition_contract() {
     state.ssh_connected = true;
     const cyberdeck_shell_console::line_view remote =
         cyberdeck_shell_console::compose(state, input);
-    check(remote.marker.empty(), "SSH online renders no local prompt");
+    check(remote.marker.empty(),
+          "REQ-1/AC-1: SSH online composes no prompt at all, fixed or local");
     check(remote.fitted_line == "pwd", "SSH online uses the editor visible line");
+    check(remote.text() == "pwd",
+          "REQ-1/AC-1: the connected tail is the remotely edited line alone");
+    check(remote.text().find("ssh> ") == std::string::npos,
+          "REQ-1/AC-1: no fixed SSH marker survives in the composed tail");
+    check(remote.text().find("/data$ ") == std::string::npos,
+          "REQ-1/AC-1: the local cwd prompt is not replayed into the connected tail");
+    check(remote.reserved() == remote.text().size(),
+          "AC-4: a prompt-free tail reserves only the edited line");
     state.ssh_connected = false;
 
-    /* O cwd nunca pode vazar para os modos SSH ou senha. */
+    /* O cwd nunca pode vazar para o modo de senha. */
     state.cwd = "/very/secret/path";
     state.password_pending = true;
     check(cyberdeck_shell_console::compose(state, input).marker.find("secret") ==
               std::string::npos,
           "the local cwd must not leak into the password marker");
     state.password_pending = false;
+    /* REQ-1/AC-1: o estado conectado nunca sintetiza um prompt remoto, nem
+     * conserva o prompt do cwd local.  O prompt que o host remoto enviou chega
+    * pelo fluxo remoto, nao pela composicao. */
     state.ssh_connected = true;
-    check(cyberdeck_shell_console::compose(state, input).marker.find("secret") ==
-              std::string::npos,
-          "the local cwd must not leak into the SSH marker");
+    const cyberdeck_shell_console::line_view inferred =
+        cyberdeck_shell_console::compose(state, input);
+    check(inferred.marker.empty(),
+          "REQ-1/AC-1: no remote prompt is ever synthesized from the connected state");
+    check(inferred.marker.find("root@") == std::string::npos &&
+              inferred.marker.find("@host") == std::string::npos &&
+              inferred.marker.find("ssh") == std::string::npos &&
+              inferred.marker.find("/very") == std::string::npos,
+          "REQ-1/AC-1: the connected tail carries neither a remote nor a local prompt");
+    check(inferred.text() == "pwd" && inferred.visible_line == "pwd",
+          "REQ-1/AC-1: only the remotely edited line is visible while connected");
+    state.ssh_connected = false;
+}
+
+/* REQ-1/AC-1, REQ-3/AC-3, AC-4: a linha remota em SSH, sem marcador algum.
+ *
+ * Nao existe marcador local nem inferencia de prompt remoto: o prompt que veio do
+ * host remoto viaja com o fluxo remoto e e preservado literal, e a cauda conectada
+ * mostra somente a linha editada.  Prompt e linha continuam sendo derivacao
+ * de view -- nunca entram no payload do PTY, no eco remoto, no protocolo de
+ * senha/host-key nem no compositor. */
+void remote_prompt_literal_contract() {
+    fake_host host;
+    cyberdeck_shell_app::application shell;
+    shell.attach_console(host);
+    check(shell.start(), "the shell starts before composing an SSH line");
+
+    cyberdeck_shell_console::surface_state remote;
+    remote.ssh_connected = true;
+    remote.cwd = "/secret";
+
+    /* REQ-1/AC-1: nao ha constante de marcador nem prompt do cwd local; a linha
+     * remota aparece sozinha, porque o prompt remoto nao pode ser adivinhado e o
+     * prompt do deck mentiria sobre o host. */
+    check(shell.insert_physical_text("pwd", 3), "the console accepts a typed command");
+    const cyberdeck_shell_console::line_view typed = shell.compose_line(remote);
+    check(typed.marker.empty(),
+          "REQ-1/AC-1: SSH online composes no prompt at all, fixed or local");
+    check(typed.text() == "pwd",
+          "REQ-1/AC-1: the connected tail is the remotely edited line alone");
+    check(typed.text().find("ssh> ") == std::string::npos &&
+              typed.text().find("root@") == std::string::npos &&
+              typed.text().find("/secret") == std::string::npos &&
+              typed.text().find("$ ") == std::string::npos,
+          "REQ-1/AC-1: neither a fixed, an inferred nor a local prompt reaches the tail");
+    check(typed.visible_line == "pwd",
+          "REQ-3: the connected line is not masked and not rewritten");
+    check(typed.fitted_line == "pwd",
+          "REQ-3: the visible line is forwarded verbatim behind nothing");
+
+    /* Ausencia de prompt: sem dono local da entrada a cauda nao muda, e a linha
+     * remota continua visivel e intacta. */
+    cyberdeck_shell_console::surface_state busy = remote;
+    busy.input_owned_elsewhere = true;
+    const cyberdeck_shell_console::line_view promptless = shell.compose_line(busy);
+    check(promptless.marker.empty(),
+          "REQ-1/AC-1: no prompt while another surface owns the input");
+    check(promptless.text() == "pwd" && promptless.fitted_line == "pwd",
+          "REQ-1/AC-1: the remote line stays visible even with no prompt at all");
+
+    /* O estado conectado e o que suprime o prompt local: a diferenca real entre
+     * as duas superficies e o prompt, e a linha continua remota nos dois casos. */
+    cyberdeck_shell_console::surface_state menu = remote;
+    menu.ssh_connected = false;
+    check(shell.compose_line(menu).marker == "/secret$ ",
+          "REQ-1/AC-1: the local prompt is back the moment SSH is not connected");
+    check(shell.compose_line(menu).text() == "/secret$ pwd",
+          "REQ-1/AC-1: the disconnected tail is the local prompt plus the same line");
+    menu.input_owned_elsewhere = true;
+    check(shell.compose_line(menu).marker.empty(),
+          "REQ-1/AC-1: a disconnected session also drops the prompt when another owner appears");
+    menu.input_owned_elsewhere = false;
+
+    /* AC-4: o cursor relativo conta so os codepoints da linha remota visivel,
+     * porque a cauda conectada nao reserva prompt, e cai no inicio da linha
+     * quando o cursor esta em zero. */
+    const std::size_t marker_chars = cyberdeck_shell_console::utf8_char_count(typed.marker);
+    check(marker_chars == 0, "AC-4: the connected tail reserves no prompt codepoints");
+    check(typed.cursor_chars() == marker_chars + 3,
+          "AC-4: the cursor counts the remotely edited line codepoints");
+    check(typed.reserved() == typed.text().size(),
+          "AC-4: reserved() discounts nothing from a prompt-free tail");
+
+    /* AC-4: o cursor e medido em codepoints, nunca em bytes. */
+    shell.clear_editor();
+    check(shell.insert_physical_text("p\xC3\xA9", 3), "the console accepts a UTF-8 line");
+    const cyberdeck_shell_console::line_view utf8_line = shell.compose_line(remote);
+    check(utf8_line.cursor_chars() == marker_chars + 2,
+          "AC-4: a multi-byte line adds codepoints, not bytes, to the cursor");
+    shell.handle_key(cyberdeck_shell_session::key::home);
+    const cyberdeck_shell_console::line_view at_home = shell.compose_line(remote);
+    check(at_home.cursor_chars() == marker_chars,
+          "AC-4: the cursor at the start of the line sits at the start of the tail");
+    check(at_home.text() == "p\xC3\xA9",
+          "AC-4: the line survives a cursor at the first codepoint, with no prompt");
+
+    /* AC-4: no console local a aritmetica do prompt continua valendo, entao a
+     * supressao do modo conectado nao pode ter derrubado a cobertura do prompt. */
+    cyberdeck_shell_console::surface_state local = remote;
+    local.ssh_connected = false;
+    const cyberdeck_shell_console::line_view local_home = shell.compose_line(local);
+    const std::size_t local_marker_chars =
+        cyberdeck_shell_console::utf8_char_count(local_home.marker);
+    check(local_home.marker == "/secret$ " && local_marker_chars == 9,
+          "AC-4: the local prompt is still nine codepoints wide when disconnected");
+    check(local_home.cursor_chars() == local_marker_chars,
+          "AC-4: the disconnected cursor still starts right after the local prompt");
+    shell.handle_key(cyberdeck_shell_session::key::end);
+    const cyberdeck_shell_console::line_view local_end = shell.compose_line(local);
+    check(local_end.cursor_chars() == local_marker_chars + 2,
+          "AC-4: the cursor still counts the local prompt codepoints plus the line");
+    check(local_end.text() == "/secret$ p\xC3\xA9",
+          "AC-4: the disconnected tail is the local prompt plus the same UTF-8 line");
+
+    /* AC-4/limite: o orcamento visivel e o scrollback seguem derivados da cauda,
+     * e o cursor no prefixo oculto clampa na janela visivel. */
+    cyberdeck_shell_console::line_input oversized;
+    oversized.line = std::string(cyberdeck_shell_console::k_terminal_limit + 40, 'x');
+    oversized.visible_line = oversized.line;
+    oversized.cursor_bytes = 1;
+    const cyberdeck_shell_console::line_view bounded =
+        cyberdeck_shell_console::compose(remote, oversized);
+    check(bounded.marker.empty(), "AC-4: the bounded SSH line keeps no prompt");
+    check(bounded.line_start > 0, "AC-4: an oversized SSH line is left-truncated");
+    check(bounded.cursor_bytes == bounded.line_start,
+          "AC-4: a cursor inside the hidden prefix clamps to the visible window");
+    check(bounded.cursor_chars() == marker_chars,
+          "AC-4: the clamped cursor lands at the start of the tail");
+    check(bounded.fitted_line.size() <= cyberdeck_shell_console::k_terminal_limit -
+              bounded.marker.size(),
+          "AC-4: the visible line budget is derived from the composed marker");
+    check(bounded.text().size() <= cyberdeck_shell_console::k_terminal_limit,
+          "AC-4: the composed SSH tail never exceeds the terminal bound");
+    check(bounded.reserved() == bounded.text().size() &&
+              bounded.reserved() == bounded.marker.size() + bounded.fitted_line.size(),
+          "AC-4: reserved() discounts the prompt bytes from the scrollback");
+
+    /* O console local continua descontando os bytes do prompt do orcamento
+     * visivel: a correcao do modo conectado nao pode ter afrouxado esse limite. */
+    const cyberdeck_shell_console::line_view bounded_local =
+        cyberdeck_shell_console::compose(local, oversized);
+    check(bounded_local.marker == "/secret$ ",
+          "AC-4: the bounded local line keeps the local prompt");
+    check(bounded_local.fitted_line.size() <= cyberdeck_shell_console::k_terminal_limit -
+              bounded_local.marker.size(),
+          "AC-4: the prompt bytes are discounted from the visible line budget");
+    check(bounded_local.text().size() <= cyberdeck_shell_console::k_terminal_limit,
+          "AC-4: the composed local tail never exceeds the terminal bound");
+    check(bounded_local.reserved() == bounded_local.text().size() &&
+              bounded_local.reserved() ==
+                  bounded_local.marker.size() + bounded_local.fitted_line.size(),
+          "AC-4: reserved() discounts the prompt bytes from the local scrollback");
+
+    /* REQ-3/AC-3: o prompt e a linha continuam sendo apenas view.  O payload do
+     * PTY, a banda local do compositor e o reset do filtro seguem derivados da
+     * linha editada. */
+    host.ssh = cyberdeck_session_state::CONNECTED;
+    check(shell.mode() == cyberdeck_shell_console::session_mode::ssh_interactive,
+          "AC-3: the connected SSH session is an interactive mode of the console");
+    shell.clear_editor();
+    check(shell.insert_physical_text("pwd", 3), "the console accepts the submitted command");
+    shell.execute_line();
+    check(host.ssh_sent == "pwd\n",
+          "AC-3: the PTY payload is exactly the edited line plus the newline");
+    check(host.ssh_sent.find("/secret$ ") == std::string::npos &&
+              host.ssh_sent.find("ssh> ") == std::string::npos,
+          "AC-3: neither the local prompt nor a marker enters the PTY payload");
+    check(host.written == "pwd",
+          "AC-3: the local band writes the bare command, without any prompt");
+    check(host.output.empty(),
+          "AC-3: a connected command adds no local echo, prompted or not");
+    check(host.ssh_password.empty(),
+          "AC-3: a connected command never becomes a password");
+    check(host.host_key_accepted == 0,
+          "AC-3: a connected command never becomes a host-key acceptance");
+    check(host.ssh_filter_resets == 1,
+          "REQ-3: submitting a line still resets the incremental ANSI filter");
+    check(host.ssh_composer().active(),
+          "AC-3: the line composer is armed by the submitted line");
+
+    /* AC-3: o compositor foi armado com o payload cru.  O eco remoto exato do
+     * payload e suprimido e resta apenas o separador unico. */
+    char band[16];
+    const std::size_t produced = host.ssh_composer().feed("pwd\n", 4, band, sizeof(band));
+    check(produced == 1 && band[0] == '\n',
+          "AC-3: the remote echo of the bare payload is suppressed");
+    check(!host.ssh_composer().active(),
+          "AC-3: the composer resolves after the bare payload echo");
+    check(host.composer_discards == 0,
+          "AC-3: the armed composer is not discarded by a successful send");
+
+    /* REQ-1/AC-1 + REQ-3: um prompt remoto que volta pelo fluxo remoto diverge do
+     * payload e nao e engolido pela regra de eco.  Ele sobrevive com o separador
+     * unico, e nenhum byte dele volta para o payload enviado ao PTY. */
+    cyberdeck_ssh_line_composer &composer = host.ssh_composer();
+    char prompt_band[64];
+    const std::size_t armed = composer.begin("ls", 2, prompt_band, sizeof(prompt_band));
+    check(armed == 2 && std::string(prompt_band, armed) == "ls",
+          "REQ-3: the composer is armed with the bare payload, never with a prompt");
+    const std::string remote_prompt = "user@host:~$ ";
+    const std::size_t kept = composer.feed(remote_prompt.data(), remote_prompt.size(),
+                                           prompt_band, sizeof(prompt_band));
+    check(std::string(prompt_band, kept) == "\n" + remote_prompt,
+          "REQ-1/AC-1: a remote prompt diverges from the payload and is kept verbatim");
+    check(!composer.active(),
+          "REQ-1/AC-1: the remote prompt resolves the pending echo without swallowing it");
+    check(host.ssh_sent.find("user@host") == std::string::npos,
+          "REQ-3: the remote prompt never returns to the payload sent to the PTY");
+
+    /* AC-3/limite: a linha vazia em SSH envia apenas o newline, sem prompt. */
+    shell.clear_editor();
+    shell.execute_line();
+    check(host.ssh_sent == "pwd\n\n",
+          "AC-3: an empty connected line sends only its newline, never a prompt");
+    shell.clear_editor();
+}
+
+/* REQ-3/AC-4: senha, confirmacao de host key e a volta ao console local
+ * continuam derivados de `surface_state`/`ssh_phase()`.  A linha remota em SSH nao
+ * pode invadir nenhum desses modos nem deixar residuo. */
+void ssh_mode_preservation_contract() {
+    fake_host host;
+    cyberdeck_shell_app::application shell;
+    shell.attach_console(host);
+    check(shell.start(), "the shell starts before the SSH mode round trip");
+
+    cyberdeck_shell_console::surface_state local;
+    local.cwd = "/data";
+
+    /* Senha: marcador proprio, linha mascarada e porta dedicada. */
+    host.ssh = cyberdeck_session_state::PASSWORD;
+    check(shell.mode() == cyberdeck_shell_console::session_mode::ssh_password,
+          "REQ-3: the password phase is still a mode of the same console");
+    cyberdeck_shell_console::surface_state secret = local;
+    secret.password_pending = true;
+    check(shell.insert_physical_text("hunter2", 7), "the password line is accepted");
+    const cyberdeck_shell_console::line_view masked = shell.compose_line(secret);
+    check(masked.marker == "Password: ",
+          "REQ-3/AC-4: the password surface keeps its own marker");
+    check(masked.text().find("/data$ ") == std::string::npos &&
+              masked.text().find("ssh> ") == std::string::npos,
+          "REQ-3: the local prompt and any marker never replace the password marker");
+    check(masked.fitted_line == "*******" && masked.fitted_line.find('h') == std::string::npos,
+          "REQ-3/AC-4: the pending password is still masked");
+    shell.execute_line();
+    check(host.ssh_password == "hunter2",
+          "REQ-3/AC-4: the password still travels through its own port");
+    check(host.ssh_sent.empty(),
+          "REQ-3: the masked line never reaches the interactive PTY payload");
+
+    /* Host key: TOFU intocado, prompt local preservado. */
+    host.ssh = cyberdeck_session_state::HOST_KEY;
+    check(shell.mode() == cyberdeck_shell_console::session_mode::ssh_host_key,
+          "REQ-3: the host-key phase is still a mode of the same console");
+    check(shell.insert_physical_text("y", 1), "the host-key confirmation is accepted");
+    const cyberdeck_shell_console::line_view confirming = shell.compose_line(local);
+    check(confirming.marker == "/data$ ",
+          "REQ-3/AC-4: host-key confirmation keeps the local prompt");
+    check(confirming.text().find("Password: ") == std::string::npos &&
+              confirming.text().find("ssh> ") == std::string::npos,
+          "REQ-3/AC-4: neither the password marker nor a marker appears during host-key confirmation");
+    shell.execute_line();
+    check(host.host_key_accepted == 1 && host.ssh_sent.empty(),
+          "REQ-3/AC-4: host-key acceptance still goes through its own port");
+
+    /* Ida e volta: a linha remota em SSH nao tem prompt local, e a desconexao
+     * devolve o console ao modo de menu com o prompt de volta e sem residuo. */
+    cyberdeck_shell_console::surface_state remote = local;
+    remote.ssh_connected = true;
+    host.ssh = cyberdeck_session_state::CONNECTED;
+    check(shell.insert_physical_text("ls", 2), "the connected line is accepted");
+    check(shell.compose_line(remote).marker.empty(),
+          "REQ-1: connecting suppresses the local prompt entirely");
+    check(shell.compose_line(remote).text() == "ls",
+          "REQ-1/AC-3: the connected tail is the edited line alone");
+    check(shell.compose_line(remote).text().find("/data$ ") == std::string::npos,
+          "REQ-1: the local cwd prompt is not replayed while connected");
+
+    host.ssh = cyberdeck_session_state::MENU;
+    check(shell.mode() == cyberdeck_shell_console::session_mode::menu,
+          "REQ-3/AC-4: disconnecting returns the console to the menu mode");
+    const cyberdeck_shell_console::line_view back = shell.compose_line(local);
+    check(back.marker == "/data$ ",
+          "REQ-3/AC-4: disconnecting restores the local prompt");
+    check(back.text() == "/data$ ls" &&
+              back.text().find("ssh> ") == std::string::npos &&
+              back.text().find("Password: ") == std::string::npos,
+          "REQ-3/AC-4: no residual marker or password prompt survives the disconnection");
+    check(back.cursor_chars() == back.marker.size() + 2,
+          "REQ-3/AC-4: the cursor returns to the local prompt after disconnecting");
 }
 
 void utf8_and_mode_helpers_contract() {
@@ -667,6 +991,8 @@ void supervisor_ownership_contract() {
 int main()
 {
     prompt_composition_contract();
+    remote_prompt_literal_contract();
+    ssh_mode_preservation_contract();
     utf8_and_mode_helpers_contract();
     bounded_composition_contract();
     dispatch_contract();

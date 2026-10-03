@@ -930,6 +930,68 @@ void test_null_inputs_and_capacity()
     CHECK(i.active() == false);
 }
 
+/* REQ-001/AC-001 + REQ-003: nao existe marcador local da linha em SSH, portanto
+ * o compositor nao conhece nenhum prompt.  O prompt remoto chega pelo fluxo
+ * remoto e e opaco para a regra de eco: como ele diverge do payload enviado
+ * (divergencia em k == 0), recebe o separador unico e NAO e suprimido.  Isso
+ * impede a regressao em que a supressao de eco passasse a casar um prompt
+ * sintetizado e engolisse a saida legitima do remoto. */
+void test_remote_prompt_never_matches_the_echo_guard()
+{
+    /* Prompt tipico do host remoto logo apos o comando: divergencia em k == 0,
+     * separador unico + bytes remotos, nada engolido. */
+    cyberdeck_ssh_line_composer typed;
+    CHECK_EQ(begin_ok(typed, "pwd"), "pwd");
+    CHECK_EQ(feed_ok(typed, "user@host:~$ "), "\nuser@host:~$ ");
+    CHECK(typed.active() == false);
+
+    /* O eco real do comando passa direto, porque a pendencia ja foi resolvida
+     * pela divergencia e o compositor nunca conheceu o prompt. */
+    CHECK_EQ(feed_ok(typed, "pwd\n"), "pwd\n");
+
+    /* Prompt remoto com a grafia que o deck usava antes continua sendo texto
+     * remoto ordinario: nao casa com o payload e nao e engolido. */
+    cyberdeck_ssh_line_composer legacy_grafia;
+    CHECK_EQ(begin_ok(legacy_grafia, "pwd"), "pwd");
+    CHECK_EQ(feed_ok(legacy_grafia, "ssh> "), "\nssh> ");
+    CHECK(legacy_grafia.active() == false);
+
+    /* Ausencia de prompt: o prompt so reaparece no fluxo seguinte, integral. */
+    cyberdeck_ssh_line_composer sem_prompt;
+    CHECK_EQ(begin_ok(sem_prompt, "pwd"), "pwd");
+    CHECK_EQ(feed_ok(sem_prompt, "/home/user\n"), "\n/home/user\n");
+    CHECK_EQ(feed_ok(sem_prompt, "user@host:~$ "), "user@host:~$ ");
+
+    /* Fragmentacao nao muda o resultado: um prompt remoto cortado byte a byte
+     * continua divergindo do payload e sendo emitido integralmente. */
+    cyberdeck_ssh_line_composer fragmented;
+    CHECK_EQ(begin_ok(fragmented, "pwd"), "pwd");
+    std::string out;
+    const std::string remote = "user@host:~$ ";
+    for (std::size_t i = 0; i < remote.size(); ++i) {
+        out += feed_ok(fragmented, remote.substr(i, 1));
+    }
+    CHECK_EQ(out, "\nuser@host:~$ ");
+    CHECK(fragmented.active() == false);
+
+    /* Um comando cujo prefixo coincide com o prompt remoto nao pode ser
+     * confundido com ele: o eco exato do payload ainda e suprimido e resta so
+     * o separador unico. */
+    cyberdeck_ssh_line_composer prefixo;
+    CHECK_EQ(begin_ok(prefixo, "user@host"), "user@host");
+    CHECK_EQ(feed_ok(prefixo, "user@host:~$ "), "\nuser@host:~$ ");
+    CHECK(prefixo.active() == false);
+
+    /* REQ-003: o separador e apenas view.  Ele nao volta para o payload nem
+     * para a faixa local, e o begin() seguinte nao o carrega. */
+    cyberdeck_ssh_line_composer separador;
+    CHECK_EQ(begin_ok(separador, "pwd"), "pwd");
+    CHECK_EQ(feed_ok(separador, "user@host:~$ "), "\nuser@host:~$ ");
+    CHECK_EQ(begin_ok(separador, "ls"), "ls");
+    CHECK_EQ(feed_ok(separador, "ls\n"), "\n");
+    CHECK(separador.active() == false);
+}
+
 } // namespace
 
 int main()
@@ -950,6 +1012,7 @@ int main()
     test_flush_single_pending_capacity();
     test_refused_begin_invariance();
     test_null_inputs_and_capacity();
+    test_remote_prompt_never_matches_the_echo_guard();
 
     if (s_failures == 0) {
         std::printf("PASS: cyberdeck_ssh_line_composer (%d checks)\n", s_checks);

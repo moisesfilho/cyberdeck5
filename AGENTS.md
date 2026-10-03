@@ -79,8 +79,11 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.click 100 100
 ```
 
 `ui.type` injeta texto e Enter. Para testar entrada multilinha, use `\\n` no
-argumento; a CLI deve preservar a ordem dos segmentos. Use `ui.dump` depois da
-ação para verificar texto, estado e geometria dos nós visíveis. A ponte usa
+argumento; a CLI deve preservar a ordem dos segmentos. Depois de ações que
+alterem o terminal, como `ui.type`, prefira `term.dump` para validar o texto e
+o retorno apresentado, pois a recuperação textual pela ponte é mais rápida e
+objetiva que screenshot/OCR. Use `ui.dump` para estrutura, estado e geometria
+dos widgets. A ponte usa
 fila bounded para entrada, portanto não substitua a validação por um flood de
 comandos sem observar possíveis perdas ou bloqueios.
 
@@ -105,8 +108,10 @@ validacao e nao deve ser incluido no `code-map.md`.
 1. Execute `sys.info` antes do cenario para registrar versao, heap e uptime.
 2. Execute o comando ou injete a interacao com `ui.type`, `ui.tap` ou
    `ui.click`.
-3. Capture `ui.dump` para estado textual/estrutural e `screen.dump` para estado
-   visual.
+3. Após `ui.type` ou outra ação textual, use preferencialmente `term.dump` para
+   validar texto/retorno. Capture `ui.dump` para estrutura/estado dos widgets.
+   Reserve `screen.dump`/screenshot para validação visual, layout, cores,
+   orientação ou quando o texto não for suficiente.
 4. Execute `sys.info` novamente para verificar reboot, queda de uptime ou
    degradacao evidente de heap.
 5. Registre a porta, identificacao do dispositivo, commit, horario, comandos,
@@ -119,8 +124,9 @@ Ausencia de resposta, timeout, `Guru Meditation`, reboot ou queda inesperada de
 uptime tambem deve ser reportada como falha do cenário.
 
 Nao declare uma implementacao validada apenas porque `ui.type` foi aceito: a
-validacao deve confirmar o efeito com `ui.dump`, `screen.dump`, resposta
-especifica do comando ou log correspondente. Para cobertura completa, execute o
+validacao deve confirmar o efeito com `term.dump` (preferencialmente para
+texto/retorno), `ui.dump` (estrutura/estado), `screen.dump`/screenshot (visual)
+ou resposta especifica do comando/log correspondente. Para cobertura completa, execute o
 roteiro manual, incluindo logs intercalados, scan Wi-Fi, auditoria, captura
 repetida, rotacao e desconexao/reconexao USB. Testes host validam a camada pura,
 mas nao substituem a validacao da secao `ESP_PLATFORM` no dispositivo.

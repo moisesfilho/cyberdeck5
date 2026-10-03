@@ -58,6 +58,11 @@ public:
      */
     size_t feed(const char *data, size_t len, char *out, size_t out_cap);
 
+    /* After loss, discard only a bounded plausible SGR tail ([0-9;]*m).
+     * A non-matching byte is reprocessed as text; missing bytes are never
+     * reconstructed and recovery cannot consume text indefinitely. */
+    void resync_after_gap();
+
     /*
      * Fim do fluxo: descarta sequencia de controle incompleta pendente
      * (ESC/CSI/OSC cortados no ultimo chunk) e, se houver '\r' pendente,
@@ -121,6 +126,10 @@ private:
         SEQ_OSC_ST,  /* ESC dentro do OSC: aguardando '\\' do ST */
     };
 
+    static constexpr unsigned char k_gap_parameter_limit = 16;
+
     seq_state_t m_seq = SEQ_GROUND;
     bool m_pending_cr = false; /* '\r' no fim do ultimo chunk (aguarda lookahead) */
+    bool m_discard_gap_tail = false;
+    unsigned char m_gap_parameter_bytes = 0;
 };

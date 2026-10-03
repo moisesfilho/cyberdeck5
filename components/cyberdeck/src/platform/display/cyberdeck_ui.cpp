@@ -105,21 +105,21 @@ QueueHandle_t s_ble_event_queue = nullptr;
 ble_mgr_observer_handle_t s_ble_observer = nullptr;
 constexpr std::size_t k_ssh_event_queue_capacity = 8;
 /* State messages are short and fully described by the enum plus a small tag.
- * Keeping the queue element tiny matters: the LVGL timer reclaims events by
- * value, so a large element would be copied on the LVGL task stack every tick.
- * A first version carrying 1 KB of inline payload overflowed that stack and
- * froze the boot right after wifi_mgr_start(). */
+ * The data slot matches the largest chunk delivered by ssh_client: its 1024
+ * byte receive buffer leaves at most 1023 bytes for one callback. The queue
+ * element is reclaimed into s_ssh_event_slot, so the LVGL timer does not copy
+ * it by value onto its stack. */
 constexpr std::size_t k_ssh_event_state_message_limit = 64;
-constexpr std::size_t k_ssh_event_data_limit = 256;
+constexpr std::size_t k_ssh_event_data_limit = 1023;
 constexpr uint32_t k_ssh_disconnect_timeout_ms = 1000;
 enum class ssh_ui_event_kind : uint8_t { data, state };
 struct ssh_ui_event {
     ssh_client_generation_t generation = 0;
+    uint32_t discard_epoch = 0;
     ssh_ui_event_kind kind = ssh_ui_event_kind::data;
     ssh_client_state_t state = SSH_CLIENT_DISCONNECTED;
     char message[k_ssh_event_state_message_limit]{};
-    /* Data payloads are small; larger chunks are truncated rather than queued
-     * as a single oversized element. */
+    /* The producer rejects chunks above the transport contract before copying. */
     char data[k_ssh_event_data_limit]{};
     uint16_t length = 0;
 };
@@ -133,6 +133,8 @@ QueueHandle_t s_ssh_event_queue = nullptr;
 ssh_client_generation_t s_ssh_expected_generation = 0;
 std::atomic<uint32_t> s_ssh_data_queue_drop_count{0};
 std::atomic<uint32_t> s_ssh_state_queue_drop_count{0};
+std::atomic<uint32_t> s_ssh_discard_epoch{0};
+uint32_t s_ssh_applied_discard_epoch = 0;
 cyberdeck_ble::state_machine s_ble_model;
 cyberdeck_ble::device_list s_ble_scan_devices;
 std::string s_ble_last_notice;
@@ -910,7 +912,12 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view) 
             output += "\n";
         }
     }
-    if (output.size() > available) output = truncate_left_utf8(output, available);
+    const bool needs_visual_separator = !output.empty() && output.back() != '\n';
+    const size_t output_limit = needs_visual_separator && available > 0
+                                    ? available - 1
+                                    : available;
+    if (output.size() > output_limit) output = truncate_left_utf8(output, output_limit);
+    if (needs_visual_separator && output.size() < available) output.push_back('\n');
     return output;
 }
 
@@ -951,6 +958,22 @@ void process_terminal_output(lv_timer_t *)
 
 void reset_ssh_output_filter() {
     s_ssh_output_filter.flush(nullptr, 0);
+}
+
+uint32_t mark_ssh_event_discarded(std::atomic<uint32_t> &counter) {
+    uint32_t dropped = counter.load(std::memory_order_relaxed);
+    while (dropped != std::numeric_limits<uint32_t>::max() &&
+           !counter.compare_exchange_weak(dropped, dropped + 1, std::memory_order_relaxed)) {}
+
+    uint32_t epoch = s_ssh_discard_epoch.load(std::memory_order_relaxed);
+    while (epoch != std::numeric_limits<uint32_t>::max() &&
+           !s_ssh_discard_epoch.compare_exchange_weak(epoch, epoch + 1,
+                                                      std::memory_order_relaxed)) {}
+    return epoch;
+}
+
+uint32_t current_ssh_discard_epoch() {
+    return s_ssh_discard_epoch.load(std::memory_order_relaxed);
 }
 
 void discard_ssh_line_composer() {
@@ -1008,26 +1031,25 @@ void process_ssh_state(ssh_client_state_t state, const char *message) {
 void on_ssh_data(ssh_client_generation_t generation, const char *data, size_t length)
 {
     if (s_ssh_event_queue == nullptr || data == nullptr || length == 0) return;
+    if (length > k_ssh_event_data_limit) {
+        /* Do not partially enqueue an invalid transport chunk: advance the
+         * epoch so the ANSI consumer resynchronizes at the next event. */
+        mark_ssh_event_discarded(s_ssh_data_queue_drop_count);
+        return;
+    }
     if (uxQueueMessagesWaiting(s_ssh_event_queue) >= k_ssh_event_queue_capacity - 1) {
-        uint32_t dropped = s_ssh_data_queue_drop_count.load(std::memory_order_relaxed);
-        while (dropped != std::numeric_limits<uint32_t>::max() &&
-               !s_ssh_data_queue_drop_count.compare_exchange_weak(
-                   dropped, dropped + 1, std::memory_order_relaxed)) {}
+        mark_ssh_event_discarded(s_ssh_data_queue_drop_count);
         return;
     }
     ssh_ui_event &event = s_ssh_data_event;
     event = {};
     event.generation = generation;
+    event.discard_epoch = current_ssh_discard_epoch();
     event.kind = ssh_ui_event_kind::data;
-    event.length = length > k_ssh_event_data_limit
-                       ? static_cast<uint16_t>(k_ssh_event_data_limit)
-                       : static_cast<uint16_t>(length);
+    event.length = static_cast<uint16_t>(length);
     std::memcpy(event.data, data, event.length);
     if (xQueueSend(s_ssh_event_queue, &event, 0) != pdTRUE) {
-        uint32_t dropped = s_ssh_data_queue_drop_count.load(std::memory_order_relaxed);
-        while (dropped != std::numeric_limits<uint32_t>::max() &&
-               !s_ssh_data_queue_drop_count.compare_exchange_weak(
-                   dropped, dropped + 1, std::memory_order_relaxed)) {}
+        mark_ssh_event_discarded(s_ssh_data_queue_drop_count);
     }
 }
 
@@ -1037,6 +1059,7 @@ void on_ssh_state(ssh_client_generation_t generation, ssh_client_state_t state, 
     ssh_ui_event &event = s_ssh_state_event;
     event = {};
     event.generation = generation;
+    event.discard_epoch = current_ssh_discard_epoch();
     event.kind = ssh_ui_event_kind::state;
     event.state = state;
     if (message != nullptr) {
@@ -1049,18 +1072,14 @@ void on_ssh_state(ssh_client_generation_t generation, ssh_client_state_t state, 
     ssh_ui_event &discarded = s_ssh_discarded_event;
     if (xQueueReceive(s_ssh_event_queue, &discarded, 0) == pdTRUE &&
         discarded.kind == ssh_ui_event_kind::data) {
+        mark_ssh_event_discarded(s_ssh_data_queue_drop_count);
+        event.discard_epoch = current_ssh_discard_epoch();
         if (xQueueSend(s_ssh_event_queue, &event, 0) != pdTRUE) {
-            uint32_t dropped = s_ssh_state_queue_drop_count.load(std::memory_order_relaxed);
-            while (dropped != std::numeric_limits<uint32_t>::max() &&
-                   !s_ssh_state_queue_drop_count.compare_exchange_weak(
-                       dropped, dropped + 1, std::memory_order_relaxed)) {}
+            mark_ssh_event_discarded(s_ssh_state_queue_drop_count);
         }
         return;
     }
-    uint32_t dropped = s_ssh_state_queue_drop_count.load(std::memory_order_relaxed);
-    while (dropped != std::numeric_limits<uint32_t>::max() &&
-           !s_ssh_state_queue_drop_count.compare_exchange_weak(
-               dropped, dropped + 1, std::memory_order_relaxed)) {}
+    mark_ssh_event_discarded(s_ssh_state_queue_drop_count);
 }
 
 void process_ssh_events(lv_timer_t *)
@@ -1070,6 +1089,13 @@ void process_ssh_events(lv_timer_t *)
      * must not be materialized on the LVGL task stack. */
     while (xQueueReceive(s_ssh_event_queue, &s_ssh_event_slot, 0) == pdTRUE) {
         if (s_ssh_event_slot.generation != s_ssh_expected_generation) continue;
+        if (s_ssh_event_slot.discard_epoch > s_ssh_applied_discard_epoch) {
+            /* A queue gap can leave an ANSI sequence half-consumed.  Drop only
+             * that uncertain parser tail; never synthesize or replay bytes. */
+            reset_ssh_output_filter();
+            s_ssh_output_filter.resync_after_gap();
+            s_ssh_applied_discard_epoch = s_ssh_event_slot.discard_epoch;
+        }
         if (s_ssh_event_slot.kind == ssh_ui_event_kind::data) {
             process_ssh_data(s_ssh_event_slot.data, s_ssh_event_slot.length);
         } else {
@@ -1246,6 +1272,7 @@ esp_err_t shell_session_host::ssh_connect(const char *user, const char *host, in
         user, host, port, on_ssh_data, on_ssh_state);
     if (result == ESP_OK) {
         s_ssh_expected_generation = cyberdeck_apps::service_ports::ssh_generation();
+        s_ssh_applied_discard_epoch = current_ssh_discard_epoch();
     }
     return result;
 }
@@ -1335,6 +1362,35 @@ cyberdeck_shell_session::key translate_session_key(uint32_t key)
 void local_key(uint32_t key) { s_shell_app.handle_key(translate_session_key(key)); }
 
 } // namespace
+
+extern "C" esp_err_t cyberdeck_ui_term_dump(char *buffer, size_t capacity, size_t *out_bytes,
+                                             int *out_truncated)
+{
+    if (out_bytes == nullptr || out_truncated == nullptr || (capacity > 0 && buffer == nullptr)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_bytes = 0;
+    *out_truncated = 0;
+    if (!bsp_display_lock(pdMS_TO_TICKS(1000))) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (s_terminal == nullptr) {
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    const cyberdeck_shell_console::line_view view = compose_console_line();
+    const std::string rendered = get_rendered_output(view) + view.text();
+    const std::string snapshot = rendered.size() > capacity
+                                     ? truncate_left_utf8(rendered, capacity)
+                                     : rendered;
+    if (!snapshot.empty()) {
+        std::memcpy(buffer, snapshot.data(), snapshot.size());
+    }
+    *out_bytes = snapshot.size();
+    *out_truncated = rendered.size() > snapshot.size() ? 1 : 0;
+    bsp_display_unlock();
+    return ESP_OK;
+}
 
 extern "C" esp_err_t cyberdeck_ui_init(void) {
        /* Lend the session host to the shell application before anything can

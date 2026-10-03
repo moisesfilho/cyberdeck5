@@ -2,6 +2,14 @@
 
 cyberdeck_terminal_filter::cyberdeck_terminal_filter() = default;
 
+void cyberdeck_terminal_filter::resync_after_gap()
+{
+    m_seq = SEQ_GROUND;
+    m_pending_cr = false;
+    m_discard_gap_tail = true;
+    m_gap_parameter_bytes = 0;
+}
+
 size_t cyberdeck_terminal_filter::feed(const char *data, size_t len, char *out, size_t out_cap)
 {
     if (!data || len == 0) return 0;
@@ -16,6 +24,25 @@ size_t cyberdeck_terminal_filter::feed(const char *data, size_t len, char *out, 
     size_t pos = 0;
     while (pos < len) {
         const unsigned char c = static_cast<unsigned char>(data[pos]);
+
+        if (m_discard_gap_tail) {
+            if (c == 'm') {
+                m_discard_gap_tail = false;
+                ++pos;
+                continue;
+            }
+            if ((c >= '0' && c <= '9') || c == ';') {
+                ++m_gap_parameter_bytes;
+                ++pos;
+                if (m_gap_parameter_bytes >= k_gap_parameter_limit) {
+                    m_discard_gap_tail = false;
+                }
+                continue;
+            }
+            m_discard_gap_tail = false;
+            m_gap_parameter_bytes = 0;
+            /* Reprocess the first non-tail byte in GROUND. */
+        }
 
         /* CR is resolved before interpreting the next byte.  LF consumes the
          * pending CR; every other byte is reprocessed normally afterwards. */
@@ -103,6 +130,8 @@ size_t cyberdeck_terminal_filter::flush(char *out, size_t out_cap)
     const bool emit_lf = m_pending_cr;
     m_pending_cr = false;
     m_seq = SEQ_GROUND;
+    m_discard_gap_tail = false;
+    m_gap_parameter_bytes = 0;
     if (emit_lf && out && out_cap) {
         out[0] = '\n';
         return 1;

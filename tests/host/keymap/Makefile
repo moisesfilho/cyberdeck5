@@ -37,7 +37,9 @@ HISTORY_SRC      := ../../../components/cyberdeck/src/apps/shell/cyberdeck_histo
 KEYBOARD_EVENT_SRC := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp
 EVENT_LOG_RECENT_SRC := ../../../components/cyberdeck/src/platform/logging/event_log_recent.cpp
 TERMINAL_FILTER_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_terminal_filter.cpp
+TERMINAL_FILTER_HDR := ../../../components/cyberdeck/include/apps/shell/cyberdeck_terminal_filter.h
 TERMINAL_OUTPUT_CONTRACT := test_terminal_output_contract.py
+SSH_OUTPUT_GAP_TEST := test_ssh_output_gap.py
 EDIT_LINE_SRC    := ../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp
 NET_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/networking/cyberdeck_net_coordinator.cpp
 ECHO_GUARD_SRC   := ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_echo_guard.cpp
@@ -126,6 +128,9 @@ SESSION_SRC     := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_
 SESSION_HDR     := ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h
 APP_RUNTIME_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp
 APP_RUNTIME_HDR := ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h
+# O contrato do limite de payload da saida SSH e derivado do produtor, entao os
+# dois testes do seam dependem deste TU.
+SSH_CLIENT_SRC := ../../../components/cyberdeck/src/apps/ssh/ssh_client.cpp
 DEMO_APP_SRC := ../../../components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp
 DEMO_APP_HDR := ../../../components/cyberdeck/include/apps/demo/cyberdeck_demo_app.h
 LOCAL_SHELL_HDR := ../../../components/cyberdeck/include/apps/shell/cyberdeck_local_shell.h
@@ -142,9 +147,9 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
-.PHONY: all test verify clean test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract
+.PHONY: all test verify clean test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract
 
 all: test
 
@@ -321,8 +326,17 @@ test_screen_protection_contract: $(SCREEN_PROTECTION_CONTRACT) $(SCREEN_PROTECTI
 test_terminal_filter: test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_terminal_filter.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) -o test_terminal_filter
 
-test_terminal_output_contract: $(TERMINAL_OUTPUT_CONTRACT) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp test_terminal_filter.cpp Makefile
+test_terminal_output_contract: $(TERMINAL_OUTPUT_CONTRACT) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SSH_CLIENT_SRC) test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) $(TERMINAL_FILTER_HDR) $(LINE_COMPOSER_SRC) test_ssh_line_composer.cpp $(SESSION_SRC) $(SHELL_CONSOLE_HDR) $(SSH_OUTPUT_GAP_TEST) Makefile
 	$(PYTHON) $(TERMINAL_OUTPUT_CONTRACT)
+
+# Comportamental do seam de gap da saida SSH (REQ-01/02/03/04). A UI nao e
+# linkavel no host, entao o harness extrai *verbatim* as sentencas de producao
+# da guarda de epoch, dos dois callbacks e do timer LVGL, e as compila contra os
+# TUs reais do filtro ANSI, do compositor de linha, do console e do runtime. So a
+# fila bounded e os efeitos de LVGL sao duplos do harness. O limite de payload e
+# derivado do buffer de leitura de ssh_client.cpp e entra como `static_assert`.
+test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SSH_CLIENT_SRC) $(TERMINAL_FILTER_SRC) $(LINE_COMPOSER_SRC) $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) Makefile
+	$(PYTHON) $(SSH_OUTPUT_GAP_TEST)
 
 # Logica pura (sem LVGL): modelo da linha de edicao + sessao SSH (contrato em
 # cyberdeck_edit_line.h; bug aprovado A: cada caractere aparece exatamente uma
@@ -549,7 +563,7 @@ test_keyboard_input_contract: test_keyboard_input_contract.py ../../../component
 test_ui_resource_contract: test_ui_resource_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
 	$(PYTHON) test_ui_resource_contract.py
 
-test_local_prompt_contract: local_prompt_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+test_local_prompt_contract: local_prompt_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(SESSION_SRC)
 	$(PYTHON) local_prompt_contract.py
 
 test_cat_contract: cat_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h
@@ -579,7 +593,7 @@ local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../compo
 local_shell_namespace_contract: $(LOCAL_SHELL_NAMESPACE_CONTRACT) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_SRC) $(VFS_NAMESPACE_HDR) ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md
 	$(PYTHON) $(LOCAL_SHELL_NAMESPACE_CONTRACT)
 
-test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR)
+test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(TERMINAL_FILTER_SRC) $(TERMINAL_FILTER_HDR)
 	$(PYTHON) test_prompt_behavior.py
 
 test_wifi_dispatch_contract: test_wifi_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
@@ -606,6 +620,19 @@ test_serial_cli_tolerance: test_serial_cli_tolerance.cpp $(SERIAL_BRIDGE_SRC) $(
 
 test_serial_sysinfo_wifi: test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_sysinfo_wifi
+
+# term.dump (REQ-TERM-001 / AC-TERM-001..005): type conhecido, envelope/rid,
+# resultado bounded e truncamento UTF-8-safe na camada host-testavel.
+test_serial_term_dump: test_serial_term_dump.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_term_dump.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_term_dump
+
+# exec_term_dump/cyberdeck_ui_term_dump vivem sob ESP_PLATFORM: o contrato e
+# estrutural sobre as fontes reais (sem link de hardware).
+test_term_dump_contract: test_term_dump_contract.py $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/platform/display/cyberdeck_ui.h ../../../tools/cyberdeck_cli.py Makefile
+	$(PYTHON) test_term_dump_contract.py
+
+test_term_dump_cli: test_term_dump_cli.py ../../../tools/cyberdeck_cli.py
+	$(PYTHON) test_term_dump_cli.py
 
 # fs.write seguro (REQ-001..REQ-011) — TDD RED: produção ausente
 test_fs_write_dispatch: test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR)
@@ -820,6 +847,8 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_ui_resource_contract
 	@echo "==> Executando contrato estrutural da saida do terminal SSH"
 	@$(MAKE) --no-print-directory test_terminal_output_contract
+	@echo "==> Executando o seam de gap da saida SSH (REQ-01/02/03/04)"
+	@$(MAKE) --no-print-directory test_ssh_output_gap
 	@echo "==> Executando contrato do prompt local contextual"
 	@$(MAKE) --no-print-directory test_local_prompt_contract
 	@echo "==> Executando contrato TDD do cat local confinado e assincrono"
@@ -851,6 +880,13 @@ test: $(BINS)
 	@echo "==> Executando contrato TDD de sys.info/wifi sem hardware (REQ-008/009)"
 	@$(MAKE) --no-print-directory test_serial_sysinfo_wifi
 	@./test_serial_sysinfo_wifi
+	@echo "==> Executando contrato TDD do term.dump bounded/truncado na ponte serial (REQ-TERM-001/AC-TERM-001)"
+	@$(MAKE) --no-print-directory test_serial_term_dump
+	@./test_serial_term_dump
+	@echo "==> Executando contrato estrutural de exec_term_dump/cyberdeck_ui_term_dump (AC-TERM-002..005)"
+	@$(MAKE) --no-print-directory test_term_dump_contract
+	@echo "==> Executando contrato da CLI term.dump sem argumentos (TEST-TERM-007/AC-TERM-005)"
+	@$(MAKE) --no-print-directory test_term_dump_cli
 	@echo "==> Executando contrato TDD do fs.write seguro (REQ-001..REQ-011)"
 	@$(MAKE) --no-print-directory test_fs_write_dispatch
 	@./test_fs_write_dispatch

@@ -223,6 +223,8 @@ def build_request(args) -> dict:
         return {"type": "ui.type", "text": args.text}
     if args.command == "ui.dump":
         return {"type": "ui.dump"}
+    if args.command == "term.dump":
+        return {"type": "term.dump"}
     if args.command == "ui.clear":
         return {"type": "ui.clear"}
     if args.command == "screen.shot":
@@ -399,6 +401,7 @@ def make_parser() -> argparse.ArgumentParser:
     p_type = sub.add_parser("ui.type", help="digita texto no prompt + Enter")
     p_type.add_argument("text")
     sub.add_parser("ui.dump", help="arvore visivel (classes/texto/coordenadas)")
+    sub.add_parser("term.dump", help="snapshot textual do terminal renderizado")
     sub.add_parser("ui.clear", help="limpa a linha e executa `clear`")
     sub.add_parser("screen.shot", help="metadados do frame atual (BMP)")
     p_dump = sub.add_parser("screen.dump", help="stream BMP em chunks com CRC32 (REQ-006/007)")
