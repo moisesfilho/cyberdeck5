@@ -2,6 +2,7 @@
 
 #include <utility>
 #include <chrono>
+#include <cstdio>
 
 namespace cyberdeck_apps {
 namespace {
@@ -221,6 +222,7 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     if (visiting[index]) {
         states_[index] = app_state::failed;
         failures_[index] = "dependency cycle";
+        log_lifecycle(index, "failure", "dependency_cycle");
         return false;
     }
     visiting[index] = true;
@@ -228,6 +230,7 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     if (item.dependency_count > item.dependencies.size()) {
         failures_[index] = "invalid dependency declaration";
         states_[index] = app_state::failed;
+        log_lifecycle(index, "failure", "invalid_dependency");
         visiting[index] = false;
         return false;
     }
@@ -237,6 +240,7 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
             failures_[index] = "dependency unavailable: ";
             failures_[index] += item.dependencies[dep];
             states_[index] = app_state::failed;
+            log_lifecycle(index, "failure", "dependency_unavailable");
             visiting[index] = false;
             return false;
         }
@@ -252,6 +256,7 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     application_grant.resource_mask_ = grant_masks_[index];
     application_grant.owner_ = item.id;
     applications_[index]->grant_ = application_grant;
+    log_lifecycle(index, "start", "begin");
     const auto started = std::chrono::steady_clock::now();
     const bool initialized = applications_[index]->init();
     const bool started_ok = initialized && applications_[index]->start();
@@ -262,6 +267,7 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
         ++grant_generations_[index];
         states_[index] = app_state::failed;
         failures_[index] = "init hook failed";
+        log_lifecycle(index, "failure", "init_hook_failed");
         return false;
     }
     if (!started_ok) {
@@ -269,6 +275,7 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
         ++grant_generations_[index];
         states_[index] = app_state::failed;
         failures_[index] = "start hook failed";
+        log_lifecycle(index, "failure", "start_hook_failed");
         return false;
     }
     states_[index] = app_state::running;
@@ -277,9 +284,9 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
          * budget is checked only after return: synchronous hooks cannot be
          * preempted, so this diagnostic must not block dependents. */
         failures_[index] = "start hook timeout";
-    } else {
-        failures_[index].clear();
+        log_lifecycle(index, "timeout", "start_hook");
     }
+    log_lifecycle(index, "start", "running");
     return true;
 }
 
@@ -329,6 +336,7 @@ bool runtime::stop_index(std::size_t index)
      * resource.  The generation check also invalidates copied facades. */
     applications_[index]->grant_ = {};
     ++grant_generations_[index];
+    log_lifecycle(index, "stop", "begin");
     const auto started = std::chrono::steady_clock::now();
     const bool stopped = applications_[index]->teardown();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -336,6 +344,7 @@ bool runtime::stop_index(std::size_t index)
     if (!stopped) {
         states_[index] = app_state::failed;
         failures_[index] = "stop hook failed";
+        log_lifecycle(index, "failure", "stop_hook_failed");
         return false;
     }
     /* A successful stop, including one that exceeded the budget, leaves the
@@ -344,9 +353,9 @@ bool runtime::stop_index(std::size_t index)
     states_[index] = app_state::registered;
     if (elapsed > applications_[index]->get_manifest().lifecycle_timeout_ms) {
         failures_[index] = "stop hook timeout";
-    } else {
-        failures_[index].clear();
+        log_lifecycle(index, "timeout", "stop_hook");
     }
+    log_lifecycle(index, "stop", "registered");
     return true;
 }
 
@@ -361,6 +370,14 @@ std::string_view runtime::failure_reason(std::string_view id) const
     const std::size_t index = index_of(id);
     return index == k_not_found ? std::string_view{"application not found"} :
                                   std::string_view{failures_[index]};
+}
+
+bool runtime::restore_failure_reason(std::string_view id, std::string_view reason)
+{
+    const std::size_t index = index_of(id);
+    if (index == k_not_found || reason.empty() || reason.size() > 127) return false;
+    failures_[index] = reason;
+    return true;
 }
 
 bool runtime::resources(std::string_view id, std::array<std::string_view, k_max_resources> &out,
@@ -397,6 +414,16 @@ bool runtime::grant_is_valid(std::size_t index, std::uint64_t generation,
            mask == grant_masks_[index];
 }
 
+void runtime::log_lifecycle(std::size_t index, const char *event, const char *outcome) const
+{
+    if (logger_ == nullptr || index >= count_ || event == nullptr || outcome == nullptr) return;
+    char message[192];
+    const std::string_view id = applications_[index]->get_manifest().id;
+    std::snprintf(message, sizeof(message), "app=%.*s event=%s outcome=%s",
+                  static_cast<int>(id.size()), id.data(), event, outcome);
+    logger_->write('I', "app.lifecycle", message);
+}
+
 result runtime::execute_line(std::string_view line)
 {
     std::array<std::string_view, k_max_tokens> words{};
@@ -423,6 +450,7 @@ result runtime::execute_line(std::string_view line)
             if (target == nullptr) return rejected("app: application not found");
             const manifest &item = target->get_manifest();
             if (words[1] == "info") {
+                /* app info includes the bounded, persisted last error. */
                 std::string output;
                 output += "id: "; output.append(item.id.data(), item.id.size()); output += "\n";
                 output += "name: "; output.append(item.name.data(), item.name.size()); output += "\n";
@@ -455,6 +483,9 @@ result runtime::execute_line(std::string_view line)
                 output += "\n";
                 output += "state: ";
                 output += app_state_name(states_[index_of(words[2])]);
+                output += "\n";
+                output += "last_error: ";
+                output += failures_[index_of(words[2])].empty() ? "none" : failures_[index_of(words[2])];
                 output += "\n";
                 if (!failures_[index_of(words[2])].empty()) {
                     output += "failure: ";

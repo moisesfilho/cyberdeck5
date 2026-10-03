@@ -28,6 +28,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "apps/wifi/wifi_mgr.h"
+#include "apps/system/cyberdeck_recovery.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -696,7 +697,7 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
 
     static const char *const k_known[] = {"ping",       "ui.echo",     "ui.clear",  "ui.click",  "ui.tap",
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
-                                          "wifi.status", "wifi.scan",  "fs.write"};
+                                           "wifi.status", "wifi.scan",  "fs.write", "sys.safe_mode.clear"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -760,6 +761,12 @@ std::string sys_info_to_json(const SysInfo &info)
     out += std::to_string(info.free_heap);
     out += ",\"uptime\":";
     append_json_string(out, info.uptime);
+    out += ",\"safe_mode\":";
+    out += info.safe_mode ? "true" : "false";
+    out += ",\"interrupted_boots\":";
+    out += std::to_string(info.interrupted_boots);
+    out += ",\"recovery_persisted\":";
+    out += info.recovery_persisted ? "true" : "false";
     out.push_back('}');
     return out;
 }
@@ -827,6 +834,9 @@ std::string handle_sys_info(const std::string &rid)
     std::snprintf(up, sizeof(up), "%02d:%02d:%02d", static_cast<int>(total_secs / 3600),
                   static_cast<int>((total_secs / 60) % 60), static_cast<int>(total_secs % 60));
     info.uptime = up;
+    info.safe_mode = cyberdeck_recovery::safe_mode();
+    info.interrupted_boots = cyberdeck_recovery::current().interrupted_boots;
+    info.recovery_persisted = cyberdeck_recovery::persistent();
 #else
     /* host: placeholder deterministico (contrato do teste) */
     info.fw_version = "0.0.0-host";
@@ -1774,6 +1784,13 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
         d.handled = true;
         exec_ui_clear();
         d.result = ok_result(req, "{\"ok\":true}");
+        return d;
+    }
+    if (req.type == "sys.safe_mode.clear") {
+        d.handled = true;
+        d.result = cyberdeck_recovery::clear_safe_mode() == ESP_OK
+                       ? ok_result(req, "{\"cleared\":true}")
+                       : err_result(req, dispatch_error::internal, "recovery indisponivel");
         return d;
     }
     if (req.type == "ui.type") {

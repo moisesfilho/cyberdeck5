@@ -108,6 +108,9 @@ struct SysInfo {
     std::string chip;
     int free_heap = 0;
     std::string uptime;
+    bool safe_mode = false;
+    std::uint32_t interrupted_boots = 0;
+    bool recovery_persisted = false;
 };
 
 struct WifiNet {

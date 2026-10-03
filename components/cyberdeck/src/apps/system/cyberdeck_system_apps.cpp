@@ -10,6 +10,7 @@
 #include "apps/ssh/ssh_client.h"
 #include "apps/wifi/wifi_mgr.h"
 #include "platform/logging/event_log.h"
+#include "apps/system/cyberdeck_recovery.h"
 
 #include "esp_log.h"
 
@@ -169,9 +170,9 @@ event_log_logger s_event_logger;
 service_application s_event_log{make_manifest("cyberdeck.event_log", "Event log service",
                                                "Persistent bounded event log for applications", {},
                                                {"storage", "event_log"}, 1000,
-                                               cyberdeck_apps::app_type::service,
-                                               {"event_log"}, 6144, 16),
-                                start_event_log, stop_event_log};
+                                 cyberdeck_apps::app_type::service,
+                                                {"event_log"}, 6144, 16),
+                                 start_event_log, stop_event_log, true};
 /* cyberdeck.shell is registered as the real foreground application from
  * cyberdeck_shell_app: the supervisor owns the console lifecycle, while the UI
  * composition only lends its session host (see attach_console). */
@@ -229,6 +230,11 @@ extern "C" esp_err_t cyberdeck_system_apps_register(void)
             ESP_LOGE(TAG, "failed to register system app");
             return ESP_ERR_NO_MEM;
         }
+        const auto &saved = cyberdeck_recovery::current();
+        const std::string_view reason = cyberdeck_recovery::error_for(saved, app->get_manifest().id);
+        if (!reason.empty()) {
+            (void)cyberdeck_apps::global_runtime().restore_failure_reason(app->get_manifest().id, reason);
+        }
     }
     s_registered = true;
     return ESP_OK;
@@ -243,15 +249,38 @@ extern "C" esp_err_t cyberdeck_system_apps_start_logging(void)
 extern "C" esp_err_t cyberdeck_system_apps_start(void)
 {
     cyberdeck_apps::runtime &runtime = cyberdeck_apps::global_runtime();
-    if (!runtime.start_all()) {
-        for (const char *id : {"cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial",
+    const bool started = runtime.start_all();
+    if (!started) {
+        for (const char *id : {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial",
                                "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth"}) {
             if (runtime.state(id) == cyberdeck_apps::app_state::failed) {
+                cyberdeck_recovery::record_app_error(id, runtime.failure_reason(id).data());
                 ESP_LOGW(TAG, "system app failed: %s (%.*s)", id,
                          static_cast<int>(runtime.failure_reason(id).size()),
                          runtime.failure_reason(id).data());
             }
         }
     }
-    return ESP_OK;
+    return started ? ESP_OK : ESP_FAIL;
+}
+
+extern "C" esp_err_t cyberdeck_system_apps_start_safe_mode(void)
+{
+    cyberdeck_apps::runtime &runtime = cyberdeck_apps::global_runtime();
+    esp_err_t result = ESP_OK;
+    for (const char *id : {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.serial"}) {
+        if (!runtime.start_application(id)) {
+            cyberdeck_recovery::record_app_error(id, runtime.failure_reason(id).data());
+            ESP_LOGE(TAG, "safe-mode app failed: %s (%.*s)", id,
+                     static_cast<int>(runtime.failure_reason(id).size()),
+                     runtime.failure_reason(id).data());
+            result = ESP_FAIL;
+        }
+    }
+    return result;
+}
+
+extern "C" esp_err_t cyberdeck_system_apps_commit_ready(void)
+{
+    return cyberdeck_recovery::commit_ready();
 }

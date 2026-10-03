@@ -381,12 +381,24 @@ continuam bounded e nao existe loader dinamico.
 
 ### 10. Persistencia e Recuperacao
 
-- [ ] Persistir estado de aplicacoes quando necessario.
-- [ ] Criar recovery de boot apos falha.
-- [ ] Registrar ultimo erro por aplicacao.
-- [ ] Criar modo seguro contra loops de reinicializacao.
-- [ ] Estruturar logs de lifecycle.
-- [ ] Expor diagnostico por `sys.info` e `app info`.
+- [x] Persistir estado de aplicacoes quando necessario.
+- [x] Criar recovery de boot apos falha.
+- [x] Registrar ultimo erro por aplicacao.
+- [x] Criar modo seguro contra loops de reinicializacao.
+- [x] Estruturar logs de lifecycle.
+- [x] Expor diagnostico por `sys.info` e `app info`.
+
+Execucao da Fase 10: `cyberdeck_recovery_policy` concentra as transicoes puras
+de boot pendente, checkpoint de prontidao, contador de tres boots interrompidos,
+latch de safe mode e erros bounded por aplicacao. O adaptador NVS usa um blob
+versionado e nunca apaga NVS corrompido ou indisponivel automaticamente. A
+tentativa e persistida antes do startup; o commit ocorre somente depois de
+display, input e apps estarem prontos. Safe mode permite apenas
+`cyberdeck.event_log`, `cyberdeck.shell` e `cyberdeck.serial`; o latch sai por
+`sys.safe_mode.clear` (acao explicita via Serial-JTAG) ou reset/reflash externo,
+nao por boot normal. Erros restaurados sao exibidos pelo diagnostico existente
+de `app info`, e `sys.info` expoe o estado de recovery e o contador de boots.
+Os hooks do supervisor continuam gerando lifecycle logs pelo event log.
 
 ### 11. Distribuicao Futura
 

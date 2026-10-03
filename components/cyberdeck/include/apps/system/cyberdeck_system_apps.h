@@ -16,6 +16,13 @@ esp_err_t cyberdeck_system_apps_start_logging(void);
  * non-fatal at boot, matching the previous app_main behavior. */
 esp_err_t cyberdeck_system_apps_start(void);
 
+/* Best-effort start of only the recovery surface: event log, shell and
+ * Serial-JTAG. Failed apps are recorded and do not abort the boot task. */
+esp_err_t cyberdeck_system_apps_start_safe_mode(void);
+
+/* Called only after the firmware readiness checkpoint has completed. */
+esp_err_t cyberdeck_system_apps_commit_ready(void);
+
 #ifdef __cplusplus
 }
 #endif

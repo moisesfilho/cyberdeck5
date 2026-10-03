@@ -146,6 +146,8 @@ public:
     bool stops_console_owner(std::string_view id) const;
     app_state state(std::string_view id) const;
     std::string_view failure_reason(std::string_view id) const;
+    /* Restores bounded diagnostics before a new lifecycle attempt. */
+    bool restore_failure_reason(std::string_view id, std::string_view reason);
     bool resources(std::string_view id, std::array<std::string_view, k_max_resources> &out,
                    std::size_t &count) const;
     grant app_grant(std::string_view id) const;
@@ -166,6 +168,7 @@ private:
     std::size_t index_of(std::string_view id) const;
     bool grant_is_valid(std::size_t index, std::uint64_t generation,
                         std::uint16_t mask) const;
+    void log_lifecycle(std::size_t index, const char *event, const char *outcome) const;
     /* Bounded transitive search over the dependent tree of `index`. */
     bool cascade_stops_console(std::size_t index,
                                std::array<bool, k_max_applications> &visited) const;
