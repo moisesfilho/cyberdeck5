@@ -589,16 +589,19 @@ static void start_scan_command(const ble_mgr_cmd_t &cmd)
     s_dispatch.publish_scan_started(token);
 
     struct ble_gap_disc_params params = {
-        .itvl = 0, .window = 0, .filter_policy = 0, .limited = 0,
-         .passive = 0, .filter_duplicates = 1,
+        .itvl = 0,
+        .window = 0,
+        .filter_policy = 0,
+        .limited = 0,
+        .passive = 0,
+        .filter_duplicates = 1,
     };
     const uint8_t own_addr_type = s_own_addr_type;
     ESP_LOGI(TAG, "BLE scan start token=%llu addr_type=%u interval=%u window=%u passive=%u dup=%u",
-             static_cast<unsigned long long>(token), own_addr_type,
-             static_cast<unsigned>(params.itvl), static_cast<unsigned>(params.window),
-             static_cast<unsigned>(params.passive), static_cast<unsigned>(params.filter_duplicates));
-    int rc = ble_gap_disc(own_addr_type, 5000, &params, ble_gap_event_cb,
-                      (void *)(uintptr_t)token);
+             static_cast<unsigned long long>(token), own_addr_type, static_cast<unsigned>(params.itvl),
+             static_cast<unsigned>(params.window), static_cast<unsigned>(params.passive),
+             static_cast<unsigned>(params.filter_duplicates));
+    int rc = ble_gap_disc(own_addr_type, 5000, &params, ble_gap_event_cb, (void *)(uintptr_t)token);
     if (rc == BLE_HS_EALREADY) {
         /* The host believes a discovery is still in progress from a previous
          * generation.  Force the GAP state back to idle so the next window can
@@ -678,8 +681,12 @@ static void ble_mgr_task(void *arg)
              * possibly stale task handle from outside the task. */
             s_ble_task_quiesced = true;
             s_ble_task = NULL;
-            if (s_stop_done != NULL) xSemaphoreGive(s_stop_done);
-            if (s_task_quiesced != NULL) xSemaphoreGive(s_task_quiesced);
+            if (s_stop_done != NULL) {
+                xSemaphoreGive(s_stop_done);
+            }
+            if (s_task_quiesced != NULL) {
+                xSemaphoreGive(s_task_quiesced);
+            }
             vTaskDelete(NULL);
             return;
         case BLE_MGR_CMD_SCAN_START: {
