@@ -6,6 +6,7 @@ sdkconfig.old
 .cache/
 **/__pycache__/
 compile_commands.json
+*.gcov.json.gz
 # Artefatos compilados dos testes host sao executaveis sem extensao
 # (mesmo prefixo "test_" das fontes). Ignora o prefixo e reinsere as
 # extensoes de fonte, para que novos testes sejam rastreados sem precisar

@@ -13,6 +13,8 @@ Mapa de navegacao do firmware monolitico ESP-IDF para o M5Stack Tab5
   das implementacoes dependentes do ESP-IDF.
 - A inicializacao da bateria e um fluxo nao fatal: o reader INA226 publica
   snapshots a partir de task dedicada e a UI apenas os consome.
+- Artefatos de cobertura gcov comprimidos (`*.gcov.json.gz`) sao ignorados pelo
+  Git para manter o repositorio livre de relatorios gerados.
 - O plano de transformacao em sistema operacional embarcado fica em
   `docs/OS-TRANSFORMATION-PLAN.pt-BR.md`, com o status das fases concluidas e
   pendentes, a estrutura-alvo e os gates de validacao.
