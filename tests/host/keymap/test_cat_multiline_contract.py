@@ -21,10 +21,33 @@ def main() -> int:
 
     require("constexpr size_t TERMINAL_LIMIT = cyberdeck_shell_console::k_terminal_limit" in ui,
             "UI terminal limit must be explicit and equal to the cat byte budget")
-    require("lv_textarea_set_one_line(s_terminal, false)" in terminal_view,
-            "cat output must target an explicitly multiline textarea")
+    # The textarea is deliberately hidden and one-line: it is only LVGL's
+    # keyboard/editing target.  Multiline output belongs to the continuous
+    # label-slot surface, not to the input widget.
+    require("lv_obj_set_hidden(s_terminal, true)" in terminal_view,
+            "textarea must remain hidden behind the terminal surface")
+    require("lv_textarea_set_one_line(s_terminal, true)" in terminal_view,
+            "hidden textarea must be the one-line keyboard input target")
+    require("lv_keyboard_set_textarea(s_keyboard, s_terminal)" in terminal_view,
+            "virtual keyboard must target the hidden textarea")
+    require("lv_textarea_set_one_line(s_terminal, false)" not in terminal_view,
+            "multiline output must not be delegated to the textarea")
     require("max_length" in terminal_view and "lv_textarea_set_max_length" in terminal_view,
             "textarea must enforce the explicit terminal limit")
+
+    # The visual terminal owns multiline rendering through bounded, reusable
+    # labels.  Keep the newline split and slot assignment explicit so a cat
+    # result cannot collapse into the first line or a fabricated single line.
+    require("kMaxLines" in terminal_view and "s_line_count" in terminal_view,
+            "terminal visual must provide bounded multiline label slots")
+    require("void view::render(const std::string &text)" in terminal_view,
+            "terminal visual must expose the multiline render path")
+    require("bounded_text[i] != '\\n'" in terminal_view,
+            "terminal visual must preserve newline boundaries")
+    require("lv_label_set_text(s_lines[slot]" in terminal_view,
+            "terminal visual must render output through label slots")
+    require("s_terminal_view.render(visual)" in ui,
+            "UI must render the composed terminal through the visual surface")
 
     # The worker must hand the complete owned string to the callback.  A C
     # string API would truncate at embedded NULs and is not an acceptable seam.
@@ -32,6 +55,9 @@ def main() -> int:
             "worker must pass pointer plus explicit byte length")
     require("std::string output" in worker and "local.output" in worker,
             "worker result must retain the complete cat string")
+    require("cyberdeck_cat_worker_process_request" in worker and
+            "cyberdeck_local_shell_cat" in worker,
+            "cat flow must use the bounded cat-specific worker seam")
 
     # The UI must consume exactly that length, sanitize byte-by-byte, and append
     # the resulting whole string.  In particular, no first-line extraction or
@@ -44,6 +70,8 @@ def main() -> int:
             "permitted single-byte content must be preserved")
     require("append_line(safe_output)" in ui,
             "sanitized output must be appended as one complete payload")
+    require("render_terminal()" in ui[ui.find("void on_cat_result"):],
+            "cat output must repaint the multiline visual surface")
     require("append_line(output, output_length)" not in ui,
             "raw callback data must not bypass explicit-length sanitization")
     for forbidden in ("output[0]", "strchr(output", "strlen(output", "std::string(output)"):

@@ -4,6 +4,7 @@ idf_component_register(
         "src/platform/display/cyberdeck_header_view.cpp"
         "src/platform/display/cyberdeck_display_port.cpp"
         "src/platform/display/cyberdeck_terminal_view.cpp"
+        "src/platform/display/cyberdeck_terminal_scrollback.cpp"
         "src/apps/shell/cyberdeck_edit_line.cpp"
         "src/platform/networking/cyberdeck_net_coordinator.cpp"
         "src/apps/shell/cyberdeck_terminal_filter.cpp"

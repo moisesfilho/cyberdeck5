@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include <deque>
 
 /* `lvgl.h` includes `lv_version.h`, so `LVGL_VERSION_MAJOR` is defined on every
  * device build of a `#if defined(LVGL_VERSION_MAJOR)` branch.  The host shim must
@@ -10,6 +11,7 @@
 #define LVGL_VERSION_MAJOR 9
 
 struct lv_color_t { std::uint32_t value{}; };
+struct lv_font_t { int32_t line_height{16}; };
 
 /* The enumerations a composed root sets stay ahead of `_lv_obj_t`, because the
  * object records its scroll state with the LVGL 9 defaults `lv_obj_constructor()`
@@ -75,6 +77,8 @@ inline void lv_obj_set_size(lv_obj_t *o,int32_t w,int32_t h){if(o){o->width=w;o-
 inline void lv_obj_set_width(lv_obj_t *o,int32_t w){if(o)o->width=w;} inline void lv_obj_set_height(lv_obj_t *o,int32_t h){if(o)o->height=h;}
 inline int32_t lv_obj_get_width(lv_obj_t *o){return o?o->width:0;} inline int32_t lv_obj_get_height(lv_obj_t *o){return o?o->height:0;} inline lv_obj_t *lv_obj_get_child(lv_obj_t *o,int i){return o&&i>=0&&i<(int)o->children.size()?o->children[i]:nullptr;}
 inline void lv_obj_set_x(lv_obj_t*o,int32_t v){if(o)o->x=v;} inline void lv_obj_set_y(lv_obj_t*o,int32_t v){if(o)o->y=v;}
+inline void lv_obj_set_pos(lv_obj_t*o,int32_t x,int32_t y){if(o){o->x=x;o->y=y;}}
+inline int32_t lv_font_get_line_height(const lv_font_t*f){return f?f->line_height:0;}
 inline void lv_obj_set_hidden(lv_obj_t*o,bool v){if(o)o->hidden=v;} inline bool lv_obj_has_flag(lv_obj_t*o,int){return o&&o->hidden;}
 /* LVGL 9 keeps ignore_layout as a property behind a dedicated setter, because
  * `lv_obj_add_flag(obj, LV_OBJ_FLAG_IGNORE_LAYOUT)` is LV_DEPRECATED there.
@@ -100,10 +104,49 @@ inline void lv_obj_set_style_bg_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color
 inline void lv_obj_set_style_pad_all(lv_obj_t*o,int v,int){if(o){o->pad_left=o->pad_right=o->pad_top=o->pad_bottom=v;}}
 inline void lv_obj_set_style_pad_column(lv_obj_t*o,int v,int){if(o)o->pad_column=v;} inline void lv_obj_set_style_pad_row(lv_obj_t*o,int v,int){if(o)o->pad_row=v;} inline void lv_obj_set_style_pad_left(lv_obj_t*o,int v,int){if(o)o->pad_left=v;} inline void lv_obj_set_style_pad_right(lv_obj_t*o,int v,int){if(o)o->pad_right=v;} inline void lv_obj_set_style_pad_top(lv_obj_t*o,int v,int){if(o)o->pad_top=v;} inline void lv_obj_set_style_pad_bottom(lv_obj_t*o,int v,int){if(o)o->pad_bottom=v;} inline void lv_obj_set_style_bg_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_radius(lv_obj_t*,int,int){}
 inline void lv_obj_set_style_text_align(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_arc_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_opa(lv_obj_t*,int,int){}
+inline void lv_obj_set_style_text_font(lv_obj_t*,const lv_font_t*,int){}
 inline void lv_obj_update_layout(lv_obj_t*){} inline void lv_obj_align(lv_obj_t*,int,int,int){} inline void lv_obj_add_state(lv_obj_t*,int){}
 inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline void lv_label_set_long_mode(lv_obj_t*,int){}
 inline void lv_textarea_set_one_line(lv_obj_t*,bool){} inline void lv_textarea_set_max_length(lv_obj_t*,std::uint32_t){} inline void lv_keyboard_set_textarea(lv_obj_t*,lv_obj_t*){}
 inline void lv_arc_set_bg_angles(lv_obj_t*,int,int){} inline void lv_arc_set_angles(lv_obj_t*,int,int){}
 inline void lv_obj_add_event_cb(lv_obj_t*,lv_event_cb_t,int,void*){}
 inline lv_obj_t *lv_event_get_target(lv_event_t *e){return e?e->target:nullptr;}
-inline lv_result_t lv_async_call(void (*cb)(void*),void*p){cb(p);return LV_RESULT_OK;}
+struct shim_async_call { void (*callback)(void*){}; void *parameter{}; };
+inline std::deque<shim_async_call> &lv_shim_async_calls()
+{
+    static std::deque<shim_async_call> calls;
+    return calls;
+}
+inline lv_result_t &lv_shim_next_async_result()
+{
+    static lv_result_t result = LV_RESULT_OK;
+    return result;
+}
+inline void lv_shim_reset_async()
+{
+    lv_shim_async_calls().clear();
+    lv_shim_next_async_result() = LV_RESULT_OK;
+}
+inline void lv_shim_set_next_async_result(lv_result_t result)
+{
+    lv_shim_next_async_result() = result;
+}
+inline std::size_t lv_shim_pending_async_calls()
+{
+    return lv_shim_async_calls().size();
+}
+inline bool lv_shim_run_one_async()
+{
+    if (lv_shim_async_calls().empty()) return false;
+    const shim_async_call call = lv_shim_async_calls().front();
+    lv_shim_async_calls().pop_front();
+    if (call.callback != nullptr) call.callback(call.parameter);
+    return true;
+}
+inline lv_result_t lv_async_call(void (*cb)(void*),void*p)
+{
+    const lv_result_t result = lv_shim_next_async_result();
+    lv_shim_next_async_result() = LV_RESULT_OK;
+    if (result == LV_RESULT_OK) lv_shim_async_calls().push_back({cb, p});
+    return result;
+}

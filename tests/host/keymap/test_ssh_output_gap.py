@@ -8,7 +8,8 @@ against the real, host-linkable production translation units they drive:
 
   * `cyberdeck_terminal_filter.cpp`  (ANSI removal + CR/LF + UTF-8 passthrough)
   * `cyberdeck_ssh_line_composer.cpp` (echo suppression, no fabricated LF)
-  * `cyberdeck_shell_console.cpp`    (`truncate_left_utf8`/`utf8_valid_start_offset`)
+   * `cyberdeck_shell_console.cpp`    (`truncate_left_utf8`/`utf8_valid_start_offset`)
+  * `cyberdeck_terminal_scrollback.cpp` (bounded retained output model)
 
 Everything asserted below therefore fails the moment production changes the
 epoch discipline, the gap guard, the ordering against the stale-generation
@@ -66,11 +67,12 @@ UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 FILTER_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_terminal_filter.cpp"
 COMPOSER_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp"
 CONSOLE_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp"
+SCROLLBACK_SRC = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_terminal_scrollback.cpp"
 RUNTIME_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp"
 SSH_CLIENT_SRC = ROOT / "components/cyberdeck/src/apps/ssh/ssh_client.cpp"
 
 PRODUCTION_SOURCES = [str(FILTER_SRC), str(COMPOSER_SRC), str(CONSOLE_SRC),
-                      str(RUNTIME_SRC)]
+                       str(RUNTIME_SRC), str(SCROLLBACK_SRC)]
 
 
 def transport_chunk_limit() -> int:
@@ -160,6 +162,7 @@ EXTRACTED_GLOBALS = (
     "ssh_ui_event s_ssh_discarded_event;",
     "QueueHandle_t s_ssh_event_queue",
     "ssh_client_generation_t s_ssh_expected_generation",
+    "cyberdeck_terminal_scrollback::model s_scrollback;",
     "std::atomic<uint32_t> s_ssh_data_queue_drop_count",
     "std::atomic<uint32_t> s_ssh_state_queue_drop_count",
     "std::atomic<uint32_t> s_ssh_discard_epoch",
@@ -235,6 +238,7 @@ PRELUDE = r"""
 #include "apps/shell/cyberdeck_shell_console.h"
 #include "apps/shell/cyberdeck_ssh_line_composer.h"
 #include "apps/shell/cyberdeck_terminal_filter.h"
+#include "platform/display/cyberdeck_terminal_scrollback.h"
 #include "apps/ssh/ssh_client.h"
 
 #include <atomic>
@@ -274,7 +278,7 @@ size_t uxQueueMessagesWaiting(QueueHandle_t queue);
 /* LVGL-side effects the extracted production statements call. */
 extern cyberdeck_terminal_filter s_ssh_output_filter;
 extern cyberdeck_ssh_line_composer s_ssh_line_composer;
-extern std::string s_output;
+extern cyberdeck_terminal_scrollback::model s_scrollback;
 extern bool s_terminal_output_dirty;
 extern size_t s_render_count;
 extern std::vector<std::pair<ssh_client_state_t, std::string>> s_state_log;
@@ -334,7 +338,6 @@ BaseType_t xQueueReceive(QueueHandle_t queue, void *item, int wait)
  * shell host.  Only the LVGL repaint and the SSH status line are simulated. */
 cyberdeck_terminal_filter s_ssh_output_filter;
 cyberdeck_ssh_line_composer s_ssh_line_composer;
-std::string s_output;
 bool s_terminal_output_dirty = false;
 size_t s_render_count = 0;
 std::vector<std::pair<ssh_client_state_t, std::string>> s_state_log;
@@ -345,6 +348,10 @@ void process_ssh_state(ssh_client_state_t state, const char *message)
 {
     s_state_log.emplace_back(state, message == nullptr ? std::string() : std::string(message));
 }
+
+/* Keep the long behavioural matrix readable while every observation goes
+ * through the real bounded scrollback model, never through a second buffer. */
+#define s_output (s_scrollback.text())
 
 namespace cyberdeck_apps {
 namespace service_ports {
@@ -364,7 +371,7 @@ static void begin_session(ssh_client_generation_t generation)
 {
     delete s_ssh_event_queue;
     s_ssh_event_queue = xQueueCreate(k_ssh_event_queue_capacity, sizeof(ssh_ui_event));
-    s_output.clear();
+    s_scrollback.clear();
     s_terminal_output_dirty = false;
     s_render_count = 0;
     s_state_log.clear();

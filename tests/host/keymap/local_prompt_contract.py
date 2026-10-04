@@ -156,17 +156,19 @@ def visual_separator_contract(source: str) -> None:
     the host against an independent oracle.
     """
     rendered = function_body(source,
-                             "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view)")
+                             "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,")
     require("const size_t used = view.reserved();" in rendered and
-            "const size_t available = TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0;" in rendered,
+            "const size_t available = complete" in rendered and
+            "TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0" in rendered and
+            "s_terminal_view.viewport_capacity()" in rendered,
             "REQ-SSH-01/AC-SSH-01: the scrollback budget must come from the composed tail "
             "reservation")
 
     # Two regions, because they have different rights.  The Wi-Fi/BLE overlay may
     # only append its own menus to `output`; the rule that decides what the band
     # finally shows may not create a byte at all.
-    anchor = "std::string output = s_output;"
-    rule_start = "if (output.size() > available)"
+    anchor = "std::string output = complete ? s_scrollback.text() : s_scrollback.viewport(viewport);"
+    rule_start = "if (!complete && output.size() > available)"
     require(anchor in rendered and rule_start in rendered,
             "REQ-SSH-01/AC-SSH-01: the rule region must be reachable from the real scrollback")
     overlay = rendered[rendered.index(anchor) + len(anchor):rendered.index(rule_start)]
@@ -193,21 +195,29 @@ def visual_separator_contract(source: str) -> None:
 
     # REQ-SSH-01/AC-SSH-01 + REQ-003/AC-003: nothing is ever written back into
     # the retained scrollback, so re-rendering cannot accumulate newlines.
-    require("s_output.push_back" not in source,
+    require("s_output" not in source,
             "REQ-003: no byte may be written back into the retained scrollback")
     append = function_body(source, "void append_output(const char *data, size_t len, bool repaint)")
-    require("s_output.append(data, len);" in append and "s_output.erase(0, safe_offset);" in append,
-            "REQ-003: the retained scrollback stays byte-for-byte the filtered remote stream")
+    require("s_scrollback.append(data, len);" in append and
+            "s_scrollback.clear()" not in append,
+            "REQ-003: append must preserve filtered remote bytes in the model")
+    require("s_scrollback.clear();" in source and
+            "s_scrollback.text()" in source and
+            "s_scrollback.viewport(viewport)" in source,
+            "REQ-LAT-04: clear, complete text and bounded viewport must use the model")
 
 
 def preservation_contract(source: str, session: str, console: str) -> None:
     render = function_body(source, "void render_terminal()")
     require("lv_textarea_set_cursor_pos" in render,
             "render must restore the model cursor after setting textarea text")
-    require("view.cursor_chars()" in render and "utf8_char_count" in render,
+    require("view.cursor_chars()" in render and
+            "const std::string editor = view.text();" in render and
+            "static_cast<unsigned char>(editor[cursor_byte])" in render,
             "cursor placement must remain UTF-8/codepoint aware")
-    require("utf8_char_count(output) + view.cursor_chars()" in render,
-            "cursor must be counted in codepoints after the scrollback")
+    require("visual.insert(output.size() + cursor_byte, \"|\");" in render and
+            "cursor_chars < view.cursor_chars()" in render,
+            "cursor must be inserted at the model codepoint position after scrollback")
     require(re.search(
         r"if\s*\(\s*view\.cursor_bytes\s*<\s*view\.line_start\s*\)\s*view\.cursor_bytes\s*=\s*view\.line_start\s*;",
         console,
@@ -280,8 +290,9 @@ def truncation_contract(source: str, console: str) -> None:
     require("output_limit" not in source,
             "no separator-aware budget may exist: the composed tail reserves no byte for a "
             "fabricated LF")
-    require("utf8_valid_start_offset(s_output, excess)" in source,
-            "retained output buffer must be trimmed on a codepoint boundary")
+    require("s_scrollback" in source and
+            "s_scrollback.append" in source,
+            "retained scrollback must be bounded by cyberdeck_terminal_scrollback::model")
 
 
 def main() -> int:

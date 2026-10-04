@@ -20,6 +20,9 @@ COMPOSER_SRC = (ROOT / "components/cyberdeck/src/apps/shell/"
                 "cyberdeck_ssh_line_composer.cpp")
 COMPOSER_TEST = ROOT / "tests/host/keymap/test_ssh_line_composer.cpp"
 SESSION_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+SCROLLBACK_SRC = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_terminal_scrollback.cpp"
+SCROLLBACK_HEADER = ROOT / "components/cyberdeck/include/platform/display/cyberdeck_terminal_scrollback.h"
+TERMINAL_VIEW_SRC = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp"
 
 
 def body(source: str, signature: str) -> str:
@@ -79,6 +82,9 @@ def transport_chunk_limit() -> int:
 
 def main() -> int:
     source = UI_PATH.read_text(encoding="utf-8")
+    scrollback_source = SCROLLBACK_SRC.read_text(encoding="utf-8")
+    scrollback_header = SCROLLBACK_HEADER.read_text(encoding="utf-8")
+    terminal_view_source = TERMINAL_VIEW_SRC.read_text(encoding="utf-8")
     CONSOLE_SOURCE = CONSOLE_PATH.read_text(encoding="utf-8")
     console_header = CONSOLE_HEADER.read_text(encoding="utf-8")
     append = body(source, "void append_output(const char *data, size_t len, bool repaint)")
@@ -100,7 +106,13 @@ def main() -> int:
     assert "s_ssh_data_queue_drop_count" in ssh_data_callback
     assert "xQueueReceive(s_ssh_event_queue, &discarded, 0)" in ssh_state_callback
     assert "discarded.kind == ssh_ui_event_kind::data" in ssh_state_callback
-    assert "s_output.append(data, len);" in append
+    # REQ-1/AC-1: output is handed to the bounded model verbatim.  The UI seam
+    # must not manufacture a separator, truncate a prefix, or retain a second
+    # output buffer whose contents could diverge from term.dump.
+    assert "if (!data || !len) return;" in append
+    assert "s_scrollback.append(data, len);" in append
+    assert "s_output.append" not in append
+    assert "s_output.push_back" not in append
     assert "s_terminal_output_dirty = true;" in append
     assert "if (repaint) render_terminal();" in append
     assert process.count("render_terminal();") == 1
@@ -132,18 +144,21 @@ def main() -> int:
     assert "if (s_terminal_output_dirty) render_terminal();" in process
     assert "lv_timer_create(process_terminal_output, 100, nullptr);" in init
 
-    # T-BOUND-01/02, REQ-2/AC-2.
-    # The scrollback budget is derived from the shell console budget so the
-    # prompt, the line and the retained output cannot drift apart.
-    assert "constexpr size_t TERMINAL_LIMIT = cyberdeck_shell_console::k_terminal_limit;" in source
-    assert "static_assert(TERMINAL_LIMIT == cyberdeck_edit_line::limit," in source
+    # T-BOUND-01/02, REQ-2/AC-2.  Bounded retention is now the model's
+    # responsibility; the UI only composes a bounded viewport for LVGL.
+    assert "cyberdeck_terminal_scrollback::model s_scrollback;" in source
+    assert "#include \"platform/display/cyberdeck_terminal_scrollback.h\"" in source
+    assert "static constexpr std::size_t k_capacity = 12288;" in scrollback_header
+    assert "if (length >= k_capacity)" in scrollback_source
+    assert "s_text.assign(data + offset, length - offset);" in scrollback_source
+    assert "if (s_text.size() + length > k_capacity)" in scrollback_source
+    assert "s_text.erase(0, valid_start_offset(s_text, excess));" in scrollback_source
+    assert "s_text.append(data, length);" in scrollback_source
     assert "constexpr std::size_t k_terminal_limit = cyberdeck_edit_line::limit;" in console_header
     assert "return std::string(text.substr(utf8_valid_start_offset(text, text.size() - max_bytes)));" \
         in CONSOLE_SOURCE
     assert "k_ssh_event_queue_capacity = 8" in source
-    assert "if (s_output.size() > TERMINAL_LIMIT)" in append
-    assert "s_output.erase(0, safe_offset);" in append
-    assert "utf8_valid_start_offset(s_output, excess)" in append
+    assert "s_output.size()" not in append
 
     # T-CTX-01/02, REQ-3/AC-3.
     assert "bsp_display_lock" not in process
@@ -157,7 +172,7 @@ def main() -> int:
     assert "s_ssh_output_filter.flush(pending, sizeof(pending))" in ssh_state
     assert "s_ssh_line_composer.flush(&retained[0], retained.size())" in ssh_state
     assert ssh_state.rfind("render_terminal();") > ssh_state.find("s_ssh_line_composer.flush")
-    assert "void shell_session_host::clear_output() { s_output.clear(); }" in source
+    assert "void shell_session_host::clear_output() { s_scrollback.clear(); }" in source
     assert "void shell_session_host::render() { render_terminal(); }" in source
 
     # T-FILTER-01, REQ-5/AC-5.
@@ -211,16 +226,17 @@ def main() -> int:
     # do remoto permanece exatamente uma vez e um fluxo sem LF final permanece
     # sem LF; o orcamento e o `available` inteiro, sem reservar byte para uma
     # quebra que nao existe.
-    rendered = body(source, "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view)")
+    rendered = body(source, "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,")
     assert "const size_t used = view.reserved();" in rendered
-    assert "const size_t available = TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0;" in rendered
+    assert "const size_t available = complete" in rendered
+    assert "TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0" in rendered
     assert "truncate_left_utf8(output, available)" in rendered
 
     # The overlay may only append its own menus; the rule that decides the final
     # band may not create a byte at all.  The two regions have different rights,
     # so the fabrication ban is scoped to the rule instead of the whole function.
-    anchor = "std::string output = s_output;"
-    rule_start = "if (output.size() > available)"
+    anchor = "std::string output = complete ? s_scrollback.text() : s_scrollback.viewport(viewport);"
+    rule_start = "if (!complete && output.size() > available)"
     assert anchor in rendered and rule_start in rendered
     overlay = rendered[rendered.index(anchor) + len(anchor):rendered.index(rule_start)]
     for forbidden in ("push_back", "pop_back", "clear()", "resize", "output = "):
@@ -256,6 +272,7 @@ def main() -> int:
     # REQ-3: no fabricated byte is ever written back into the retained scrollback,
     # so re-rendering cannot accumulate newlines.
     assert "s_output.push_back" not in source
+    assert "s_scrollback.append(data, len);" in append
     # O comportamento da regra e executado no host em test_prompt_behavior.py, que
     # compila estas mesmas sentencas de producao contra uma oracle independente.
     prompt_behavior = ROOT / "tests/host/keymap/test_prompt_behavior.py"
@@ -266,7 +283,7 @@ def main() -> int:
     # The no-fabrication oracle is stated in that harness, not borrowed from the
     # production statements under test.
     for oracle in ("static std::string expected(size_t available, const std::string &scrollback)",
-                   "count_char(once, '\\n') == count_char(truncate_left_utf8(scrollback, available)",
+                   "count_char(once, '\\n') == count_char(scrollback, '\\n')",
                    "rendered(view, once) == once"):
         assert oracle in prompt_behavior_source, f"missing rendered-output oracle {oracle}"
 
@@ -279,6 +296,33 @@ def main() -> int:
     assert "lv_textarea_set_cursor_pos(s_terminal, char_pos);" in render
     assert "view.text()" in render
     assert "s_shell_app.cursor()" not in render and "s_shell_app.line()" not in render
+
+    # The model is the complete term.dump source.  The visual path is a single
+    # bounded surface: scrollback, prompt/editor text, and cursor are composed
+    # before the reusable line slots receive the result.  The textarea remains
+    # an input target only and must never render scrollback.
+    assert "std::string output = get_rendered_output(view);" in render
+    assert "const std::string editor = view.text();" in render
+    assert "std::string visual = output + editor;" in render
+    assert "visual.insert(output.size() + cursor_byte, \"|\");" in render
+    assert "s_terminal_view.render(visual);" in render
+    assert "lv_textarea_set_text(s_terminal, editor.c_str());" in render
+    assert "s_terminal_view.render(output);" not in render
+    assert "s_scrollback_view" not in source
+    assert "lv_label_set_text(s_scrollback_view" not in terminal_view_source
+    assert "std::string output = complete ? s_scrollback.text()" in rendered
+    assert "if (!complete && output.size() > available)" in rendered
+    assert "constexpr size_t viewport_bytes = 4096;" in source
+    term_dump = body(source, "extern \"C\" esp_err_t cyberdeck_ui_term_dump(")
+    assert "const std::string rendered = get_rendered_output(view, true) + view.text();" in term_dump
+    assert "truncate_left_utf8(rendered, capacity)" in term_dump
+    assert "*out_bytes = snapshot.size();" in term_dump
+    assert "*out_truncated = rendered.size() > snapshot.size() ? 1 : 0;" in term_dump
+    assert "lv_label_create(s_surface)" in terminal_view_source
+    assert "lv_textarea_create(parent)" in terminal_view_source
+    assert "lv_textarea_set_one_line(s_terminal, true)" in terminal_view_source
+    assert "lv_obj_set_hidden(s_terminal, true)" in terminal_view_source
+    assert "lv_textarea_set_text(s_terminal, output.c_str())" not in render
 
     # T-GAP-01/02/03 (REQ-01/AC-01, REQ-02/AC-02, REQ-04/AC-04): a queue gap
     # leaves the ANSI filter holding a half-consumed sequence, so every discard

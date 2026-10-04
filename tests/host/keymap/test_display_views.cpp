@@ -4,6 +4,8 @@
 #include <cassert>
 #include <iostream>
 
+extern const lv_font_t cyberdeck_font{16};
+
 static void noop(lv_event_t *) {}
 
 int main()
@@ -31,6 +33,7 @@ int main()
      * fail if the keyboard stops being excluded from the column. */
     lv_obj_t content{};
     content.width = LV_PCT(100);
+    content.height = 100;
     assert(!terminal.create(nullptr, &screen, 64, {}));
     cyberdeck_terminal_view::callbacks callbacks{noop, noop, noop, noop, noop};
     assert(terminal.create(&screen, &content, 256, callbacks));
@@ -41,6 +44,15 @@ int main()
     assert(terminal.keyboard()->hidden);
     /* Showing the overlay must not make it take a row or a size of the column. */
     assert(terminal.keyboard()->width == 0 && terminal.keyboard()->height == 0);
+    terminal.render("one");
+    const auto *surface = terminal.scrollback();
+    assert(surface->children.size() >= 4);
+    /* TEST-LAT04-01: a short transcript is bottom anchored, not top padded. */
+    assert(surface->children[3]->text == "one");
+    terminal.render("one\ntwo\nthree\nfour\nfive");
+    /* TEST-LAT04-02: excess output keeps the newest lines in the fixed window. */
+    assert(surface->children[0]->text == "two");
+    assert(surface->children[3]->text == "five");
     cyberdeck_terminal_view::view no_callbacks;
     assert(no_callbacks.create(&screen, &content, 0, {}));
     std::cout << "display view tests passed\n";

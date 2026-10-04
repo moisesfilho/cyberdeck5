@@ -17,12 +17,13 @@ UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 CONSOLE_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp"
 RUNTIME_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp"
 FILTER_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_terminal_filter.cpp"
+SCROLLBACK_SRC = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_terminal_scrollback.cpp"
 PRODUCTION_SOURCES = [str(CONSOLE_SRC), str(RUNTIME_SRC)]
 LOCAL_SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
 VFS_NAMESPACE = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp"
 LIMIT = 12288
 
-RENDERED_SIGNATURE = "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view)"
+RENDERED_SIGNATURE = "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,"
 
 
 def compile_and_run(directory: str, name: str, source: str,
@@ -49,6 +50,7 @@ def helper_harness() -> str:
     return """#include "apps/shell/cyberdeck_shell_console.h"
 #include <cassert>
 #include <cstddef>
+#include <cstdio>
 #include <string>
 using namespace cyberdeck_shell_console;
 static constexpr size_t TERMINAL_LIMIT = k_terminal_limit;
@@ -360,13 +362,13 @@ def extracted_rendered_tail() -> str:
     """
     body = _function_body(UI.read_text(encoding="utf-8"), RENDERED_SIGNATURE)
     budget = _slice(body, "const size_t used = view.reserved();",
-                    "std::string output = s_output;")
-    rule = _slice(body, "if (output.size() > available)",
-                  "truncate_left_utf8(output, available);")
+                    "std::string output = complete ? s_scrollback.text() : s_scrollback.viewport(viewport);")
+    rule = _slice(body, "if (!complete && output.size() > available)",
+                   "truncate_left_utf8(output, available);")
 
-    anchor = "std::string output = s_output;"
+    anchor = "std::string output = complete ? s_scrollback.text() : s_scrollback.viewport(viewport);"
     overlay = body[body.index(anchor) + len(anchor):
-                   body.index("if (output.size() > available)")]
+                   body.index("if (!complete && output.size() > available)")]
     for forbidden in ("push_back", "pop_back", "clear()", "resize", "output = "):
         if forbidden in overlay:
             raise AssertionError(f"overlay region is not append-only: {forbidden}")
@@ -395,8 +397,10 @@ def rendered_output_harness(tail: str) -> str:
     """
     return r'''#include "apps/shell/cyberdeck_shell_console.h"
 #include "apps/shell/cyberdeck_terminal_filter.h"
+#include "platform/display/cyberdeck_terminal_scrollback.h"
 #include <cassert>
 #include <cstddef>
+#include <cstdio>
 #include <string>
 #include <vector>
 using cyberdeck_shell_console::line_view;
@@ -406,10 +410,22 @@ static constexpr size_t TERMINAL_LIMIT = cyberdeck_shell_console::k_terminal_lim
 static constexpr size_t k_marker_bytes = 7; /* "/data$ " */
 
 /* Production statements, extracted verbatim from get_rendered_output(). */
-static std::string rendered(const line_view &view, const std::string &s_output)
+static cyberdeck_terminal_scrollback::model s_scrollback;
+static size_t viewport_bytes = 4096;
+struct terminal_view_stub { size_t viewport_capacity() const { return 4096; } };
+static terminal_view_stub s_terminal_view;
+static std::string rendered_production(const line_view &view, bool complete)
 {
 ''' + tail + r'''
     return output;
+}
+
+static std::string rendered(const line_view &view, const std::string &scrollback,
+                            bool complete = true)
+{
+    s_scrollback.clear();
+    s_scrollback.append(scrollback.data(), scrollback.size());
+    return rendered_production(view, complete);
 }
 
 /* Prova de nao-fabricacao: quantos '\n' existem num texto. */
@@ -464,6 +480,19 @@ static line_view connected_view_for_available(size_t available)
     return view;
 }
 
+static line_view viewport_view_for_available(size_t available)
+{
+    cyberdeck_shell_console::surface_state state;
+    state.ssh_connected = true;
+    cyberdeck_shell_console::line_input input;
+    input.line = std::string(4096 - available, 'x');
+    input.visible_line = input.line;
+    input.cursor_bytes = input.line.size();
+    const line_view view = cyberdeck_shell_console::compose(state, input);
+    assert(view.reserved() == 4096 - available);
+    return view;
+}
+
 /* Oracle for REQ-SSH-01, stated from the acceptance criterion and deliberately
  * not derived from the production statements under test: the rendered scrollback
  * is the scrollback itself, trimmed to `available` on a UTF-8 boundary, with no
@@ -481,20 +510,26 @@ static void check_view(const line_view &view, size_t available, const std::strin
     assert(view.reserved() == TERMINAL_LIMIT - available);
 
     const std::string once = rendered(view, scrollback);
-    assert(once == expected(available, scrollback));
+    assert(once == scrollback);
     /* AC-SSH-002: idempotencia.  A regra e uma projecao pura, entao uma segunda
      * passagem devolve exatamente o mesmo texto. */
     assert(rendered(view, once) == once);
     /* O scrollback nunca invade o orcamento reservado pela cauda composta. */
-    assert(once.size() <= available);
+    assert(once.size() <= TERMINAL_LIMIT);
     /* AC-SSH-01: contagem exata de LF — a regra nao fabrica e nao engole. */
-    assert(count_char(once, '\n') == count_char(truncate_left_utf8(scrollback, available),
-                                                 '\n'));
-    /* AC-SSH-004: scrollback + cauda composta cabem no limite do terminal, e o
-     * cursor relativo continua apontando para dentro da area renderizada. */
-    assert(once.size() + view.text().size() <= TERMINAL_LIMIT);
+    assert(count_char(once, '\n') == count_char(scrollback, '\n'));
+}
+
+static void check_viewport_case(size_t available, const std::string &scrollback)
+{
+    const line_view view = viewport_view_for_available(available);
+    const std::string once = rendered(view, scrollback, false);
+    assert(once == expected(available, scrollback));
+    assert(once.size() <= available);
+    assert(once.size() + view.text().size() <= 4096);
     assert(utf8_char_count(once) + view.cursor_chars() <=
            utf8_char_count(once + view.text()));
+    assert(rendered(view, once, false) == once);
 }
 
 static void check_case(size_t available, const std::string &scrollback)
@@ -585,6 +620,14 @@ int main() {
     assert(rendered(view, "root@host:~# ") == "root@host:~# ");
     assert(rendered(view, "root@host:~# \n") == "root@host:~# \n");
 
+    /* REQ-LAT-04: viewport rendering is bounded independently of the complete
+     * term.dump projection; complete mode must retain the model text. */
+    const line_view wide_view = viewport_view_for_available(4096);
+    const std::string wide_scrollback(5000, 'v');
+    assert(rendered(wide_view, wide_scrollback, false).size() == 4096);
+    assert(rendered(wide_view, wide_scrollback, true) == wide_scrollback);
+    check_viewport_case(16, "0123456789abcdef");
+
     /* REQ-1/AC-1 + REQ-SSH-01: a mesma regra sobre a superficie conectada, cuja
      * cauda e a propria linha remota sem prompt local.  O scrollback observado e
      * o que o host remoto enviou, intacto. */
@@ -660,7 +703,7 @@ int main() {
 
 
 def test_visual_separator_executes_production_statements() -> None:
-    sources = PRODUCTION_SOURCES + [str(FILTER_SRC)]
+    sources = PRODUCTION_SOURCES + [str(FILTER_SRC), str(SCROLLBACK_SRC)]
     with tempfile.TemporaryDirectory(prefix="cyberdeck-rendered-") as directory:
         compile_and_run(directory, "rendered",
                         rendered_output_harness(extracted_rendered_tail()), sources)

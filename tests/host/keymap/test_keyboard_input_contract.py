@@ -47,6 +47,11 @@ def main() -> int:
             "rejected snapshots must be released")
     require("lv_async_call(process_async, nullptr)" in submit,
             "physical input must use lv_async_call")
+    require("lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr)" in submit,
+            "successful async scheduling must wake the LVGL port task")
+    require(submit.index("lv_async_call(process_async, nullptr)") <
+            submit.index("lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr)"),
+            "the port task must be woken after async scheduling")
     require("xSemaphoreTake(s_mutex" in submit and
             "xSemaphoreGive(s_mutex)" in submit,
             "producer must serialize enqueue and async rollback")

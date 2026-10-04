@@ -14,6 +14,7 @@
 #include "platform/display/cyberdeck_battery_view.h"
 #include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_terminal_view.h"
+#include "platform/display/cyberdeck_terminal_scrollback.h"
 #include "platform/sensors/battery_protection.h"
 #include "apps/shell/cyberdeck_terminal_filter.h"
 #include "apps/shell/cyberdeck_ssh_line_composer.h"
@@ -54,6 +55,7 @@ namespace {
  * textarea renders scrollback plus prompt and line in one buffer, so any drift
  * here would overflow the terminal bound the console enforces. */
 constexpr size_t TERMINAL_LIMIT = cyberdeck_shell_console::k_terminal_limit;
+constexpr size_t viewport_bytes = 4096;
 static_assert(TERMINAL_LIMIT == cyberdeck_edit_line::limit,
               "the scrollback budget must match the console line budget");
 constexpr UBaseType_t CAT_WORK_QUEUE_CAPACITY = 8;
@@ -69,7 +71,7 @@ lv_obj_t *s_terminal = nullptr;
 lv_obj_t *s_keyboard = nullptr;
 lv_timer_t *s_battery_timer = nullptr;
 lv_timer_t *s_terminal_output_timer = nullptr;
-std::string s_output;
+cyberdeck_terminal_scrollback::model s_scrollback;
 
 cyberdeck_terminal_filter s_ssh_output_filter;
 cyberdeck_ssh_line_composer s_ssh_line_composer;
@@ -456,6 +458,8 @@ void destroy_ui_resource_handles()
         s_shell_view_context = {};
     }
     window_manager.deinit();
+    s_terminal = nullptr;
+    s_keyboard = nullptr;
     if (s_terminal_output_timer != nullptr) {
         lv_timer_del(s_terminal_output_timer);
         s_terminal_output_timer = nullptr;
@@ -734,12 +738,12 @@ void process_wifi_scan(lv_timer_t *) {
         }
         s_wifi_model.scan_complete(result->generation, model_aps);
         if (count == 0) {
-            s_output += "No Wi-Fi networks found.\n";
+            append_line("No Wi-Fi networks found.\n");
             s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
         } else {
             s_wifi_search_menu.set_aps(result->aps, count);
             if (s_wifi_search_menu.count() == 0) {
-                s_output += "No Wi-Fi networks found.\n";
+                append_line("No Wi-Fi networks found.\n");
                 s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
             } else {
                 s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::SEARCH_SELECT;
@@ -894,10 +898,18 @@ cyberdeck_shell_console::line_view compose_console_line() {
     return s_shell_app.compose_line(surface);
 }
 
-std::string get_rendered_output(const cyberdeck_shell_console::line_view &view) {
+std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,
+                                bool complete = false) {
     const size_t used = view.reserved();
-    const size_t available = TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0;
-    std::string output = s_output;
+    const size_t available = complete
+                                 ? (TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0)
+                                 : (std::min(viewport_bytes, TERMINAL_LIMIT) > used
+                                        ? std::min(viewport_bytes, TERMINAL_LIMIT) - used
+                                        : 0);
+    const size_t viewport = complete
+                                ? TERMINAL_LIMIT
+                                : std::min(viewport_bytes, s_terminal_view.viewport_capacity());
+    std::string output = complete ? s_scrollback.text() : s_scrollback.viewport(viewport);
     if (s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SEARCH_SELECT) {
         output += s_wifi_search_menu.render();
     } else if (s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SAVED_SELECT || s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SAVED_CONFIRM) {
@@ -921,7 +933,8 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view) 
             output += "\n";
         }
     }
-    if (output.size() > available) output = truncate_left_utf8(output, available);
+    if (!complete && output.size() > available)
+        output = truncate_left_utf8(output, available);
     return output;
 }
 
@@ -929,28 +942,36 @@ void render_terminal() {
     if (!s_terminal) return;
     const cyberdeck_shell_console::line_view view = compose_console_line();
     std::string output = get_rendered_output(view);
-    std::string text = output + view.text();
+    const std::string editor = view.text();
+    std::string visual = output + editor;
+    std::size_t cursor_byte = 0;
+    std::size_t cursor_chars = 0;
+    while (cursor_byte < editor.size() && cursor_chars < view.cursor_chars()) {
+        ++cursor_byte;
+        while (cursor_byte < editor.size() &&
+               (static_cast<unsigned char>(editor[cursor_byte]) & 0xC0U) == 0x80U) ++cursor_byte;
+        ++cursor_chars;
+    }
+    visual.insert(output.size() + cursor_byte, "|");
 
     RenderGuard guard;
-    lv_textarea_set_text(s_terminal, text.c_str());
+    /* The line slots are the only visible surface.  The textarea remains an
+     * input target for LVGL's keyboard and never receives visual scrollback. */
+    s_terminal_view.render(visual);
+    lv_textarea_set_text(s_terminal, editor.c_str());
 
     /* The textarea is also the editing surface while SSH is connected.  Do
      * not reset its cursor to the beginning: the model remains authoritative
      * in every session, and the application already clamped it to the fitted
      * UTF-8 window. */
-    uint32_t char_pos = static_cast<uint32_t>(utf8_char_count(output) + view.cursor_chars());
+    uint32_t char_pos = static_cast<uint32_t>(view.cursor_chars());
     lv_textarea_set_cursor_pos(s_terminal, char_pos);
     s_terminal_output_dirty = false;
 }
 
 void append_output(const char *data, size_t len, bool repaint) {
     if (!data || !len) return;
-    s_output.append(data, len);
-    if (s_output.size() > TERMINAL_LIMIT) {
-        size_t excess = s_output.size() - TERMINAL_LIMIT;
-        size_t safe_offset = utf8_valid_start_offset(s_output, excess);
-        s_output.erase(0, safe_offset);
-    }
+    s_scrollback.append(data, len);
     s_terminal_output_dirty = true;
     if (repaint) render_terminal();
 }
@@ -1184,8 +1205,8 @@ void shell_session_host::write_output(const char *data, std::size_t length)
 {
     append_output(data, length);
 }
-void shell_session_host::append_output_text(const std::string &text) { s_output.append(text); }
-void shell_session_host::clear_output() { s_output.clear(); }
+void shell_session_host::append_output_text(const std::string &text) { s_scrollback.append(text.data(), text.size()); }
+void shell_session_host::clear_output() { s_scrollback.clear(); }
 void shell_session_host::render() { render_terminal(); }
 cyberdeck_ble::state_machine &shell_session_host::ble_model() { return s_ble_model; }
 cyberdeck_ble::device_list &shell_session_host::ble_scan_devices() { return s_ble_scan_devices; }
@@ -1383,7 +1404,7 @@ extern "C" esp_err_t cyberdeck_ui_term_dump(char *buffer, size_t capacity, size_
         return ESP_ERR_INVALID_STATE;
     }
     const cyberdeck_shell_console::line_view view = compose_console_line();
-    const std::string rendered = get_rendered_output(view) + view.text();
+    const std::string rendered = get_rendered_output(view, true) + view.text();
     const std::string snapshot = rendered.size() > capacity
                                      ? truncate_left_utf8(rendered, capacity)
                                      : rendered;
@@ -1458,13 +1479,15 @@ s_last_clock_text.clear();
       const cyberdeck_terminal_view::callbacks terminal_callbacks{
          focused, terminal_insert, terminal_changed, terminal_key,
          virtual_keyboard_changed};
-      (void)s_terminal_view.create(s_screen, s_menu, TERMINAL_LIMIT, terminal_callbacks);
-      s_terminal = s_terminal_view.textarea();
+       (void)s_terminal_view.create(s_screen, s_menu, TERMINAL_LIMIT, terminal_callbacks);
+       s_terminal = s_terminal_view.textarea();
       reset_ssh_output_filter();
      discard_ssh_line_composer();
      s_ble_transient_active = false;
      s_ble_transient_committed = false;
-     s_output = "CYBERDECK5 READY\n"; render_terminal();
+      s_scrollback.clear();
+      s_scrollback.append("CYBERDECK5 READY\n", sizeof("CYBERDECK5 READY\n") - 1);
+      render_terminal();
 
       s_keyboard = s_terminal_view.keyboard();
     return ESP_OK;

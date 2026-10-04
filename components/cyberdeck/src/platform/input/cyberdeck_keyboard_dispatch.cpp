@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "esp_lvgl_port.h"
 #include "lvgl.h"
 
 namespace cyberdeck_keyboard_dispatch {
@@ -124,6 +125,10 @@ void dispatcher::submit(const char *text, std::size_t length, std::uint8_t modif
     if (result != LV_RESULT_OK) {
         discard_from_queue(pending);
         free(pending);
+    } else {
+        // lv_async_call queues the callback but does not wake the port task.
+        // Wake it explicitly so the configured timer period remains unchanged.
+        (void)lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr);
     }
     xSemaphoreGive(s_mutex);
 }

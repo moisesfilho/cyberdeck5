@@ -48,6 +48,10 @@ EVENT_LOG_RECENT_SRC := ../../../components/cyberdeck/src/platform/logging/event
 TERMINAL_FILTER_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_terminal_filter.cpp
 TERMINAL_FILTER_HDR := ../../../components/cyberdeck/include/apps/shell/cyberdeck_terminal_filter.h
 TERMINAL_OUTPUT_CONTRACT := test_terminal_output_contract.py
+TERMINAL_SCROLLBACK_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_terminal_scrollback.cpp
+TERMINAL_SCROLLBACK_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_terminal_scrollback.h
+LAT03_CONTRACT := test_lat03_contract.py
+LAT04_CONTRACT := test_lat04_contract.py
 SSH_OUTPUT_GAP_TEST := test_ssh_output_gap.py
 EDIT_LINE_SRC    := ../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp
 NET_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/networking/cyberdeck_net_coordinator.cpp
@@ -162,7 +166,7 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
 .PHONY: test_phase9_capabilities test_phase9_capabilities_contract
 test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9_CAPABILITIES_TEST) Makefile
@@ -171,6 +175,7 @@ test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9
 .PHONY: all test verify clean test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
 
 .PHONY: test_recovery_policy test_phase10_contract
+.PHONY: test_terminal_scrollback test_lat03_contract test_lat04_contract
 
 all: test
 
@@ -360,6 +365,18 @@ test_screen_protection_contract: $(SCREEN_PROTECTION_CONTRACT) $(SCREEN_PROTECTI
 test_terminal_filter: test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_terminal_filter.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) -o test_terminal_filter
 
+# REQ-LAT-03-01..04/11: real bounded scrollback model, UTF-8 pruning and
+# independent 4096-byte viewport.  Sanitizers remain enabled locally while
+# external compile/link flags (including CI coverage) are preserved.
+test_terminal_scrollback: test_terminal_scrollback.cpp $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) Makefile
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -fsanitize=address,undefined -I../../../components/cyberdeck/include test_terminal_scrollback.cpp $(TERMINAL_SCROLLBACK_SRC) $(LDFLAGS) $(LDLIBS) -o test_terminal_scrollback
+
+test_lat03_contract: $(LAT03_CONTRACT) test_terminal_scrollback.cpp $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp Makefile
+	$(PYTHON) $(LAT03_CONTRACT)
+
+test_lat04_contract: $(LAT04_CONTRACT) ../../../components/cyberdeck/include/platform/display/cyberdeck_terminal_view.h $(TERMINAL_VIEW_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
+	$(PYTHON) $(LAT04_CONTRACT)
+
 test_terminal_output_contract: $(TERMINAL_OUTPUT_CONTRACT) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SSH_CLIENT_SRC) test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) $(TERMINAL_FILTER_HDR) $(LINE_COMPOSER_SRC) test_ssh_line_composer.cpp $(SESSION_SRC) $(SHELL_CONSOLE_HDR) $(SSH_OUTPUT_GAP_TEST) Makefile
 	$(PYTHON) $(TERMINAL_OUTPUT_CONTRACT)
 
@@ -369,7 +386,7 @@ test_terminal_output_contract: $(TERMINAL_OUTPUT_CONTRACT) ../../../components/c
 # TUs reais do filtro ANSI, do compositor de linha, do console e do runtime. So a
 # fila bounded e os efeitos de LVGL sao duplos do harness. O limite de payload e
 # derivado do buffer de leitura de ssh_client.cpp e entra como `static_assert`.
-test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SSH_CLIENT_SRC) $(TERMINAL_FILTER_SRC) $(LINE_COMPOSER_SRC) $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) Makefile
+test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SSH_CLIENT_SRC) $(TERMINAL_FILTER_SRC) $(LINE_COMPOSER_SRC) $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) Makefile
 	$(PYTHON) $(SSH_OUTPUT_GAP_TEST)
 
 # Logica pura (sem LVGL): modelo da linha de edicao + sessao SSH (contrato em
@@ -626,7 +643,7 @@ test_keyboard_input_contract: test_keyboard_input_contract.py ../../../component
 test_ui_resource_contract: test_ui_resource_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
 	$(PYTHON) test_ui_resource_contract.py
 
-test_local_prompt_contract: local_prompt_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(SESSION_SRC)
+test_local_prompt_contract: local_prompt_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(SESSION_SRC) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR)
 	$(PYTHON) local_prompt_contract.py
 
 test_cat_contract: cat_contract.py ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h
@@ -656,7 +673,7 @@ local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../compo
 local_shell_namespace_contract: $(LOCAL_SHELL_NAMESPACE_CONTRACT) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_SRC) $(VFS_NAMESPACE_HDR) ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md
 	$(PYTHON) $(LOCAL_SHELL_NAMESPACE_CONTRACT)
 
-test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(TERMINAL_FILTER_SRC) $(TERMINAL_FILTER_HDR)
+test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(TERMINAL_FILTER_SRC) $(TERMINAL_FILTER_HDR) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR)
 	$(PYTHON) test_prompt_behavior.py
 
 test_wifi_dispatch_contract: test_wifi_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
@@ -707,8 +724,8 @@ test_cat_worker: test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(VFS_
 test_ble_background: test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) $(BLE_BACKGROUND_HDR)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) -o test_ble_background
 
-test_keyboard_dispatch: test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) shim/full/lvgl.h shim/full/freertos/FreeRTOS.h
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) -o test_keyboard_dispatch
+test_keyboard_dispatch: test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) shim/full/lvgl.h shim/full/esp_lvgl_port.h shim/full/freertos/FreeRTOS.h shim/full/freertos/queue.h shim/full/freertos/semphr.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -Ishim/full -I../../../components/cyberdeck/include test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) -o test_keyboard_dispatch
 
 test_display_views: test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) shim/full/lvgl.h
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) -o test_display_views
@@ -867,6 +884,10 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_screen_protection_contract
 	@echo "==> Executando testes do filtro de saida SSH"
 	@./test_terminal_filter
+	@echo "==> Executando testes do modelo de scrollback do terminal"
+	@./test_terminal_scrollback
+	@$(MAKE) --no-print-directory test_lat03_contract
+	@$(MAKE) --no-print-directory test_lat04_contract
 	@echo "==> Executando testes do modelo da linha de edicao/sessao SSH"
 	@./test_edit_line
 	@echo "==> Executando testes comportamentais da sessao de shell"
