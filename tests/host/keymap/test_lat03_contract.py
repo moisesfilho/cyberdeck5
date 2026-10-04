@@ -17,6 +17,13 @@ def require(condition, message):
 
 
 def main():
+    display_test = (ROOT / "tests/host/keymap/test_display_views.cpp").read_text()
+    for marker in ("TEST-TERM-SCROLL-01", "TEST-TERM-SCROLL-02",
+                   "TEST-TERM-SCROLL-03", "TEST-TERM-SCROLL-04",
+                   "TEST-TERM-SCROLL-06"):
+        require(marker in display_test,
+                f"missing touch scroll scenario: {marker}")
+
     # TEST-LAT03-01/02/03: one bounded model owns bytes and cuts only at UTF-8
     # boundaries; clear is the only reset operation.
     require("k_capacity = 12288" in MODEL_H, "scrollback capacity changed")

@@ -43,6 +43,15 @@ static std::vector<std::string> visible_line_texts(
     return lines;
 }
 
+static void touch_swipe(cyberdeck_terminal_view::view &terminal, lv_indev_t &touch,
+                        int32_t start_y, int32_t end_y)
+{
+    lv_shim_set_pointer(&touch, start_y);
+    lv_shim_emit_event(terminal.scrollback(), LV_EVENT_PRESSED);
+    lv_shim_set_pointer(&touch, end_y);
+    lv_shim_emit_event(terminal.scrollback(), LV_EVENT_RELEASED);
+}
+
 int main()
 {
     lv_obj_t screen{};
@@ -202,6 +211,54 @@ int main()
     /* TEST-LAT04-02: excess output keeps the newest lines in the fixed window. */
     assert(surface->children[0]->text == "two");
     assert(surface->children[3]->text == "five");
+
+    /* TEST-TERM-SCROLL-01: touch is the only navigation input.  A large
+     * downward gesture reaches the oldest bounded window, clamps there, and an
+     * upward gesture returns to the bottom anchor. */
+    /* TEST-TERM-SCROLL-06: the same downward gesture is the bottom-anchoring
+     * regression check at the end of the transcript. */
+    terminal.scrollback()->width = 240;
+    terminal.scrollback()->height = 72;
+    const std::string transcript =
+        "zero\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine";
+    terminal.render(transcript);
+    lv_indev_t touch{};
+    touch_swipe(terminal, touch, -120, 120);
+    std::vector<std::string> oldest = visible_line_texts(terminal);
+    assert(oldest.size() == 2);
+    assert(oldest[0] == "zero" && oldest[1] == "one");
+    touch_swipe(terminal, touch, -120, 120);
+    assert(visible_line_texts(terminal) == oldest);
+    touch_swipe(terminal, touch, 120, -120);
+    const std::vector<std::string> newest = visible_line_texts(terminal);
+    assert(newest.size() == 2);
+    assert(newest[0] == "eight" && newest[1] == "nine");
+    touch_swipe(terminal, touch, 120, -120);
+    assert(visible_line_texts(terminal) == newest);
+
+    /* TEST-TERM-SCROLL-02/03: UTF-8 remains intact in the navigable window,
+     * while the input target stays hidden and the visible prompt surface is
+     * unaffected by touch navigation. */
+    terminal.render("prompt: \xC3\xA9\neditor: \xE7\x8C\xAB\nend");
+    touch_swipe(terminal, touch, -120, 120);
+    const std::vector<std::string> utf8_window = visible_line_texts(terminal);
+    assert(utf8_window.size() == 2);
+    assert(utf8_window[0] == "prompt: \xC3\xA9");
+    assert(utf8_window[1] == "editor: \xE7\x8C\xAB");
+    assert(terminal.textarea()->hidden);
+    assert(terminal.keyboard()->hidden);
+    assert(terminal.textarea()->text.empty());
+
+    /* TEST-TERM-SCROLL-03: new output and resize preserve bounded slots. */
+    terminal.render("prompt: \xC3\xA9\neditor: \xE7\x8C\xAB\nend\nnew output");
+    assert(terminal.scrollback()->children.size() >= 2);
+    terminal.scrollback()->height = 108;
+    lv_shim_emit_event(terminal.scrollback(), LV_EVENT_SIZE_CHANGED);
+    terminal.render("prompt: \xC3\xA9\neditor: \xE7\x8C\xAB\nend\nnew output");
+    assert_visible_lines_fit(terminal, lv_obj_get_content_width(terminal.scrollback()));
+    /* TEST-TERM-SCROLL-04: this visual window is deliberately not the source
+     * of term.dump; its complete-output contract is tested independently. */
+    assert(terminal.textarea()->text.empty());
     cyberdeck_terminal_view::view no_callbacks;
     assert(no_callbacks.create(&screen, &content, 0, {}));
     std::cout << "display view tests passed\n";

@@ -12,12 +12,15 @@
 #define LVGL_VERSION_MAJOR 9
 
 struct lv_color_t { std::uint32_t value{}; };
+using lv_coord_t = int32_t;
 struct lv_font_t { int32_t line_height{16}; };
 struct lv_font_glyph_dsc_t { int32_t adv_w{}; };
 struct _lv_obj_t;
 using lv_obj_t = _lv_obj_t;
 struct lv_event_t { lv_obj_t *target{}; void *user_data{}; };
 using lv_event_cb_t = void (*)(lv_event_t *);
+struct lv_point_t { int32_t x{}; int32_t y{}; };
+struct lv_indev_t { int type{}; lv_point_t point{}; };
 
 /* The enumerations a composed root sets stay ahead of `_lv_obj_t`, because the
  * object records its scroll state with the LVGL 9 defaults `lv_obj_constructor()`
@@ -30,9 +33,11 @@ inline constexpr int LV_DIR_NONE=0, LV_DIR_ALL=1, LV_SCROLLBAR_MODE_OFF=0,
     LV_FLEX_ALIGN_START=0,
     LV_FLEX_ALIGN_CENTER=1, LV_FLEX_ALIGN_END=2, LV_TEXT_ALIGN_CENTER=1,
     LV_PART_MAIN=0, LV_PART_INDICATOR=1, LV_PART_KNOB=2, LV_OPA_TRANSP=0,
-    LV_OPA_COVER=255, LV_RADIUS_CIRCLE=999, LV_EVENT_SIZE_CHANGED=1,
-    LV_EVENT_FOCUSED=2, LV_EVENT_INSERT=3, LV_EVENT_VALUE_CHANGED=4,
-    LV_EVENT_KEY=5;
+     LV_OPA_COVER=255, LV_RADIUS_CIRCLE=999, LV_EVENT_SIZE_CHANGED=1,
+     LV_EVENT_FOCUSED=2, LV_EVENT_INSERT=3, LV_EVENT_VALUE_CHANGED=4,
+     LV_EVENT_KEY=5, LV_EVENT_PRESSED=6, LV_EVENT_RELEASED=7,
+     LV_INDEV_TYPE_POINTER=1, LV_INDEV_TYPE_KEYPAD=2;
+inline constexpr int LV_OBJ_FLAG_CLICKABLE=1, LV_OBJ_FLAG_CLICK_FOCUSABLE=2;
 
 struct shim_event_cb { lv_event_cb_t callback{}; int filter{}; void *user_data{}; };
 
@@ -88,6 +93,8 @@ inline void lv_obj_set_x(lv_obj_t*o,int32_t v){if(o)o->x=v;} inline void lv_obj_
 inline void lv_obj_set_pos(lv_obj_t*o,int32_t x,int32_t y){if(o){o->x=x;o->y=y;}}
 inline int32_t lv_font_get_line_height(const lv_font_t*f){return f?f->line_height:0;}
 inline void lv_obj_set_hidden(lv_obj_t*o,bool v){if(o)o->hidden=v;} inline bool lv_obj_has_flag(lv_obj_t*o,int){return o&&o->hidden;}
+inline void lv_obj_add_flag(lv_obj_t*, int) {}
+inline void lv_obj_clear_flag(lv_obj_t*, int) {}
 /* LVGL 9 keeps ignore_layout as a property behind a dedicated setter, because
  * `lv_obj_add_flag(obj, LV_OBJ_FLAG_IGNORE_LAYOUT)` is LV_DEPRECATED there.
  * Mirror the 9.x setter/getter only: the host must not decide which spelling of
@@ -130,6 +137,25 @@ inline void lv_shim_emit_event(lv_obj_t *o, int filter)
             entry.callback(&event);
         }
     }
+}
+inline lv_indev_t *&lv_shim_active_indev()
+{
+    static lv_indev_t *indev = nullptr;
+    return indev;
+}
+inline lv_indev_t *lv_indev_active() { return lv_shim_active_indev(); }
+inline int lv_indev_get_type(const lv_indev_t *indev) { return indev ? indev->type : 0; }
+inline void lv_indev_get_point(const lv_indev_t *indev, lv_point_t *point)
+{
+    if (indev != nullptr && point != nullptr) *point = indev->point;
+}
+inline void lv_shim_set_pointer(lv_indev_t *indev, int32_t y)
+{
+    if (indev != nullptr) {
+        indev->type = LV_INDEV_TYPE_POINTER;
+        indev->point.y = y;
+    }
+    lv_shim_active_indev() = indev;
 }
 inline bool lv_font_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t *glyph,
                                   std::uint32_t codepoint, std::uint32_t)

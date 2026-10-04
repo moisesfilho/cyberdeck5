@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 
 extern const lv_font_t cyberdeck_font;
 
@@ -76,6 +77,20 @@ void geometry_changed_cb(lv_event_t *event)
         terminal->geometry_callback()(event);
 }
 
+void touch_pressed_cb(lv_event_t *event)
+{
+    auto *terminal = static_cast<view *>(lv_event_get_user_data(event));
+    if (terminal == nullptr) return;
+    terminal->begin_touch();
+}
+
+void touch_released_cb(lv_event_t *event)
+{
+    auto *terminal = static_cast<view *>(lv_event_get_user_data(event));
+    if (terminal == nullptr) return;
+    terminal->scroll_from_touch();
+}
+
 std::string truncate_left_utf8(const std::string &text, std::size_t limit)
 {
     if (text.size() <= limit) return text;
@@ -96,6 +111,7 @@ bool view::create(lv_obj_t *screen, lv_obj_t *parent, std::size_t max_length,
 
     s_parent = parent;
     s_geometry_changed = callbacks.geometry_changed;
+    s_max_length = max_length;
     s_surface = lv_obj_create(parent);
     if (s_surface == nullptr) return false;
     lv_obj_set_width(s_surface, LV_PCT(100));
@@ -103,7 +119,14 @@ bool view::create(lv_obj_t *screen, lv_obj_t *parent, std::size_t max_length,
     lv_obj_set_layout(s_surface, LV_LAYOUT_NONE);
     style_terminal(s_surface);
     lv_obj_set_style_border_width(s_surface, 0, 0);
+    lv_obj_add_flag(s_surface, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_surface, LV_OBJ_FLAG_CLICK_FOCUSABLE);
+    lv_obj_set_scroll_dir(s_surface, LV_DIR_NONE);
+    lv_obj_set_scroll_chain(s_surface, false);
+    lv_obj_set_scrollbar_mode(s_surface, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_event_cb(s_surface, geometry_changed_cb, LV_EVENT_SIZE_CHANGED, this);
+    lv_obj_add_event_cb(s_surface, touch_pressed_cb, LV_EVENT_PRESSED, this);
+    lv_obj_add_event_cb(s_surface, touch_released_cb, LV_EVENT_RELEASED, this);
 
     const int32_t line_height = std::max<int32_t>(1, lv_font_get_line_height(&cyberdeck_font));
     s_line_count = visible_line_count(s_surface, s_parent, line_height);
@@ -172,6 +195,7 @@ std::size_t view::viewport_capacity() const
 void view::render(const std::string &text)
 {
     if (s_surface == nullptr || s_line_count == 0) return;
+    s_rendered_text = text;
 
     const int32_t line_height = std::max<int32_t>(1, lv_font_get_line_height(&cyberdeck_font));
     const std::size_t visible_lines = visible_line_count(s_surface, s_parent, line_height);
@@ -184,55 +208,55 @@ void view::render(const std::string &text)
         }
     }
 
-    const std::string bounded_text = truncate_left_utf8(text, k_viewport_bytes);
+    const std::string bounded_text = truncate_left_utf8(text, s_max_length);
     int32_t available_width = lv_obj_get_content_width(s_surface);
     if (available_width <= 0 && s_parent != nullptr)
         available_width = lv_obj_get_content_width(s_parent) - (2 * kSurfacePadding);
     available_width = std::max<int32_t>(1, available_width);
     std::array<std::size_t, k_max_lines + 1> starts{};
     std::array<bool, k_max_lines + 1> explicit_breaks{};
-    std::size_t count = 1;
-    starts[0] = 0;
-    int32_t line_width = 0;
-    for (std::size_t i = 0; i < bounded_text.size();) {
-        if (bounded_text[i] == '\n') {
-            explicit_breaks[count - 1] = true;
-            if (count < starts.size()) {
-                starts[count] = i + 1;
-                explicit_breaks[count++] = false;
-            } else {
-                std::move(starts.begin() + 1, starts.end(), starts.begin());
-                std::move(explicit_breaks.begin() + 1, explicit_breaks.end(),
-                          explicit_breaks.begin());
-                starts.back() = i + 1;
-                explicit_breaks.back() = false;
+    const auto scan_lines = [&](auto &&on_line) {
+        std::size_t line = 0;
+        std::size_t line_start = 0;
+        int32_t line_width = 0;
+        for (std::size_t i = 0; i < bounded_text.size();) {
+            if (bounded_text[i] == '\n') {
+                on_line(line++, line_start, true);
+                line_start = i + 1;
+                line_width = 0;
+                ++i;
+                continue;
             }
-            line_width = 0;
-            ++i;
-            continue;
-        }
-        const std::size_t length = codepoint_length(bounded_text, i);
-        const uint32_t codepoint = codepoint_at(bounded_text, i);
-        const uint32_t next = i + length < bounded_text.size() ? codepoint_at(bounded_text, i + length) : 0;
-        const int32_t width = glyph_advance(codepoint, next);
-        if (line_width != 0 && line_width + width > available_width) {
-            explicit_breaks[count - 1] = false;
-            if (count < starts.size()) {
-                starts[count] = i;
-                explicit_breaks[count++] = false;
-            } else {
-                std::move(starts.begin() + 1, starts.end(), starts.begin());
-                std::move(explicit_breaks.begin() + 1, explicit_breaks.end(),
-                          explicit_breaks.begin());
-                starts.back() = i;
-                explicit_breaks.back() = false;
+            const std::size_t length = codepoint_length(bounded_text, i);
+            const uint32_t codepoint = codepoint_at(bounded_text, i);
+            const uint32_t next = i + length < bounded_text.size()
+                                      ? codepoint_at(bounded_text, i + length)
+                                      : 0;
+            const int32_t width = glyph_advance(codepoint, next);
+            if (line_width != 0 && line_width + width > available_width) {
+                on_line(line++, line_start, false);
+                line_start = i;
+                line_width = 0;
             }
-            line_width = 0;
+            line_width += width;
+            i += length;
         }
-        line_width += width;
-        i += length;
-    }
-    const std::size_t first_line = count > visible_lines ? count - visible_lines : 0;
+        on_line(line, line_start, false);
+        return line + 1;
+    };
+    const std::size_t count = scan_lines([](std::size_t, std::size_t, bool) {});
+    const std::size_t maximum_offset = count > visible_lines ? count - visible_lines : 0;
+    const bool was_at_bottom = !s_previous_line_total || s_scroll_offset == 0;
+    s_scroll_offset = was_at_bottom ? 0 : std::min(s_scroll_offset, maximum_offset);
+    s_previous_line_total = count;
+    const std::size_t first_line = maximum_offset > s_scroll_offset
+                                       ? maximum_offset - s_scroll_offset : 0;
+    scan_lines([&](std::size_t line, std::size_t start, bool explicit_break) {
+        if (line >= first_line && line - first_line < starts.size()) {
+            starts[line - first_line] = start;
+            explicit_breaks[line - first_line] = explicit_break;
+        }
+    });
     const std::size_t first_slot = count < visible_lines ? visible_lines - count : 0;
     for (std::size_t slot = 0; slot < visible_lines; ++slot) {
         if (slot < first_slot) {
@@ -240,14 +264,48 @@ void view::render(const std::string &text)
             continue;
         }
         const std::size_t source = first_line + slot - first_slot;
-        const std::size_t begin = starts[source];
+        const std::size_t relative_source = source - first_line;
+        const std::size_t begin = starts[relative_source];
         const std::size_t end = source + 1 < count
-                                    ? starts[source + 1] - (explicit_breaks[source] ? 1 : 0)
+                                    ? starts[relative_source + 1] -
+                                          (explicit_breaks[relative_source] ? 1 : 0)
                                     : bounded_text.size();
         lv_label_set_text(s_lines[slot], bounded_text.substr(begin, end - begin).c_str());
     }
     for (std::size_t slot = visible_lines; slot < k_max_lines; ++slot)
         lv_label_set_text(s_lines[slot], "");
+}
+
+void view::begin_touch()
+{
+    lv_indev_t *indev = lv_indev_active();
+    if (indev == nullptr || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) return;
+    lv_point_t point{};
+    lv_indev_get_point(indev, &point);
+    s_touch_start_y = point.y;
+    s_touch_active = true;
+}
+
+void view::scroll_from_touch()
+{
+    lv_indev_t *indev = lv_indev_active();
+    if (indev == nullptr || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) return;
+    lv_point_t point{};
+    lv_indev_get_point(indev, &point);
+    if (!s_touch_active) return;
+
+    const lv_coord_t delta = point.y - s_touch_start_y;
+    const int32_t line_height = std::max<int32_t>(1, lv_font_get_line_height(&cyberdeck_font));
+    const std::size_t lines = static_cast<std::size_t>(std::abs(delta) / line_height);
+    const std::size_t maximum_offset = s_previous_line_total > s_line_count
+                                           ? s_previous_line_total - s_line_count : 0;
+    if (lines != 0) {
+        if (delta > 0) s_scroll_offset = std::min(maximum_offset, s_scroll_offset + lines);
+        else s_scroll_offset = s_scroll_offset > lines ? s_scroll_offset - lines : 0;
+        s_touch_start_y = point.y;
+        render(s_rendered_text);
+    }
+    s_touch_active = false;
 }
 
 } // namespace cyberdeck_terminal_view

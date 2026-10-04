@@ -16,6 +16,12 @@ def require(condition, message):
 
 
 def main():
+    display_test = (ROOT / "tests/host/keymap/test_display_views.cpp").read_text()
+    require("touch_swipe" in display_test,
+            "touch-only scroll gesture harness is missing")
+    require("terminal.textarea()->text.empty()" in display_test,
+            "prompt/editor input target is not asserted independently")
+
     # TEST-LAT04-01/02/03: fixed reusable slots, bounded at 64, and one
     # continuous surface.  The behavioral test also checks short/long output.
     require("k_max_lines = 64" in VIEW_H, "terminal slot bound changed")

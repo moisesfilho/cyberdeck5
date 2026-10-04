@@ -25,6 +25,8 @@ public:
     lv_obj_t *keyboard() const { return s_keyboard; }
     std::size_t viewport_capacity() const;
     void render(const std::string &text);
+    void begin_touch();
+    void scroll_from_touch();
     lv_event_cb_t geometry_callback() const { return s_geometry_changed; }
 
 private:
@@ -36,6 +38,12 @@ private:
     lv_obj_t *s_keyboard = nullptr;
     lv_obj_t *s_lines[k_max_lines]{};
     std::size_t s_line_count = 0;
+    std::size_t s_scroll_offset = 0;
+    std::size_t s_previous_line_total = 0;
+    std::size_t s_max_length = 0;
+    lv_coord_t s_touch_start_y = 0;
+    bool s_touch_active = false;
+    std::string s_rendered_text;
     lv_event_cb_t s_geometry_changed = nullptr;
 };
 

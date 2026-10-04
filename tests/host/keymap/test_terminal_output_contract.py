@@ -301,7 +301,11 @@ def main() -> int:
     # bounded surface: scrollback, prompt/editor text, and cursor are composed
     # before the reusable line slots receive the result.  The textarea remains
     # an input target only and must never render scrollback.
-    assert "std::string output = get_rendered_output(view);" in render
+    # The continuous surface owns the touch offset.  It must receive the
+    # complete bounded scrollback so a swipe can expose older lines; the
+    # viewport-only mode would make those lines unreachable.
+    assert "std::string output = get_rendered_output(view, true);" in render
+    assert "std::string output = get_rendered_output(view);" not in render
     assert "const std::string editor = view.text();" in render
     assert "std::string visual = output + editor;" in render
     assert "visual.insert(output.size() + cursor_byte, \"|\");" in render

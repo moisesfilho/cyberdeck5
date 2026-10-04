@@ -76,7 +76,10 @@ def main() -> int:
     # Every repaint reads the current model list, rather than a stale string or
     # the scan staging list.  device_list::render owns the selected marker.
     assert "s_ble_model.devices().render()" in rendered
-    assert "get_rendered_output(view)" in terminal
+    # Swipe navigation requires the terminal surface to receive the complete
+    # bounded scrollback, rather than the viewport-only rendering mode.
+    assert "std::string output = get_rendered_output(view, true);" in terminal
+    assert "get_rendered_output(view)" not in terminal
     assert "s_ble_scan_devices.render()" not in source
 
     # Pairing/connecting/connected status is a repaint-only transient.  It is

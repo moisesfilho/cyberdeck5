@@ -962,7 +962,10 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,
 void render_terminal() {
     if (!s_terminal) return;
     const cyberdeck_shell_console::line_view view = compose_console_line();
-    std::string output = get_rendered_output(view);
+    /* The view owns the bounded visual window and its touch offset.  Feed it
+     * the complete bounded scrollback so a swipe can expose older lines; the
+     * textual dump still reads directly from the model below. */
+    std::string output = get_rendered_output(view, true);
     const std::string editor = view.text();
     std::string visual = output + editor;
     std::size_t cursor_byte = 0;

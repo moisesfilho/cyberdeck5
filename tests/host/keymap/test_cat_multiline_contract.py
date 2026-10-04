@@ -50,13 +50,15 @@ def main() -> int:
     require("std::array<bool, k_max_lines + 1> explicit_breaks{}" in terminal_view,
             "terminal visual must track explicit newline boundaries")
     require("if (bounded_text[i] == '\\n')" in terminal_view and
-            "explicit_breaks[count - 1] = true" in terminal_view and
-            "starts[count] = i + 1" in terminal_view,
+            "on_line(line++, line_start, true)" in terminal_view and
+            "line_start = i + 1" in terminal_view,
             "explicit newline must remain a line boundary")
-    require("explicit_breaks[count - 1] = false" in terminal_view and
-            "starts[count] = i" in terminal_view,
+    require("on_line(line++, line_start, false)" in terminal_view and
+            "line_start = i" in terminal_view and
+            "explicit_breaks[line - first_line] = explicit_break" in terminal_view,
             "automatic wrapping must begin at the wrapped byte")
-    require("starts[source + 1] - (explicit_breaks[source] ? 1 : 0)" in terminal_view and
+    require("starts[relative_source + 1] -" in terminal_view and
+            "explicit_breaks[relative_source] ? 1 : 0" in terminal_view and
             ": bounded_text.size()" in terminal_view,
             "explicit breaks may trim only LF and wraps must preserve the final byte")
     require("lv_label_set_text(s_lines[slot]" in terminal_view,
