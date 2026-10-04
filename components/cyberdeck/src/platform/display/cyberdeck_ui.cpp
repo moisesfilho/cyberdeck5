@@ -216,6 +216,7 @@ cyberdeck_shell_app::application &s_shell_app = cyberdeck_shell_app::global_appl
 void append_line(const std::string &line);
 void append_output(const char *data, size_t len, bool repaint = true);
 void render_terminal();
+void terminal_geometry_changed(lv_event_t *) { render_terminal(); }
 void process_terminal_output(lv_timer_t *timer);
 void zero_string(std::string &s);
 void refresh_ble_status();
@@ -1136,7 +1137,8 @@ void focused(lv_event_t *event) {
     (void)event;
     if (s_keyboard && !tab5_keyboard_is_connected()) {
         lv_keyboard_set_textarea(s_keyboard, s_terminal); hidden(s_keyboard, false);
-        lv_obj_set_size(s_keyboard, LV_PCT(100), 300); lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_size(s_keyboard, LV_PCT(100), 300);
+        lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     }
 }
 
@@ -1476,9 +1478,9 @@ s_last_clock_text.clear();
           destroy_ui_resource_handles();
           return ESP_ERR_NO_MEM;
       }
-      const cyberdeck_terminal_view::callbacks terminal_callbacks{
-         focused, terminal_insert, terminal_changed, terminal_key,
-         virtual_keyboard_changed};
+       const cyberdeck_terminal_view::callbacks terminal_callbacks{
+          focused, terminal_insert, terminal_changed, terminal_key,
+          virtual_keyboard_changed, terminal_geometry_changed};
        (void)s_terminal_view.create(s_screen, s_menu, TERMINAL_LIMIT, terminal_callbacks);
        s_terminal = s_terminal_view.textarea();
       reset_ssh_output_filter();

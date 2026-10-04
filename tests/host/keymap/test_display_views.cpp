@@ -4,12 +4,44 @@
 #include <array>
 #include <cassert>
 #include <iostream>
+#include <string>
+#include <vector>
 
 /* Previous header typography was 16 px; the production cyberdeck_font used by
  * the clock is intentionally larger and remains a single shared font object. */
 extern const lv_font_t cyberdeck_font{18};
 
 static void noop(lv_event_t *) {}
+
+static int geometry_events = 0;
+static void geometry_changed(lv_event_t *) { ++geometry_events; }
+
+static void assert_visible_lines_fit(const cyberdeck_terminal_view::view &terminal,
+                                     int32_t width)
+{
+    const auto *surface = terminal.scrollback();
+    for (const auto *line : surface->children) {
+        if (!line->hidden)
+            assert(lv_shim_text_width(&cyberdeck_font, line->text) <= width);
+    }
+}
+
+static std::string last_visible_text(const cyberdeck_terminal_view::view &terminal)
+{
+    const auto *surface = terminal.scrollback();
+    for (auto it = surface->children.rbegin(); it != surface->children.rend(); ++it)
+        if (!(*it)->hidden) return (*it)->text;
+    return {};
+}
+
+static std::vector<std::string> visible_line_texts(
+    const cyberdeck_terminal_view::view &terminal)
+{
+    std::vector<std::string> lines;
+    for (const auto *line : terminal.scrollback()->children)
+        if (!line->hidden) lines.push_back(line->text);
+    return lines;
+}
 
 int main()
 {
@@ -71,7 +103,8 @@ int main()
     content.width = LV_PCT(100);
     content.height = 100;
     assert(!terminal.create(nullptr, &screen, 64, {}));
-    cyberdeck_terminal_view::callbacks callbacks{noop, noop, noop, noop, noop};
+    cyberdeck_terminal_view::callbacks callbacks{noop, noop, noop, noop, noop,
+                                                  geometry_changed};
     assert(terminal.create(&screen, &content, 256, callbacks));
     assert(terminal.textarea() != nullptr && terminal.keyboard() != nullptr);
     /* REQ-LAYOUT-01 / AC-LAYOUT-01: the visible terminal surface has no
@@ -89,6 +122,77 @@ int main()
     assert(terminal.keyboard()->hidden);
     /* Showing the overlay must not make it take a row or a size of the column. */
     assert(terminal.keyboard()->width == 0 && terminal.keyboard()->height == 0);
+    assert(terminal.textarea()->scroll_dir == LV_DIR_ALL);
+    assert(!terminal.textarea()->scroll_chain);
+    assert(terminal.textarea()->scrollbar_mode == LV_SCROLLBAR_MODE_OFF);
+    assert(terminal.keyboard()->scroll_dir == LV_DIR_NONE);
+
+    /* TEST-TERM-ROT-01/04: both portrait and landscape geometries reflow a
+     * long unbroken word and UTF-8 without exposing a clipped line. */
+    terminal.scrollback()->width = 72;
+    terminal.scrollback()->height = 80;
+    terminal.render("supercalifragilistic\n\xC3\xA9\xE7\x8C\xAB\nlast");
+    assert_visible_lines_fit(terminal, lv_obj_get_content_width(terminal.scrollback()));
+    const std::size_t portrait_capacity = terminal.viewport_capacity();
+    terminal.scrollback()->width = 240;
+    terminal.scrollback()->height = 400;
+    lv_shim_emit_event(terminal.scrollback(), LV_EVENT_SIZE_CHANGED);
+    assert(geometry_events == 1);
+    terminal.render("supercalifragilistic\n\xC3\xA9\xE7\x8C" "\xAB\nlast");
+    assert_visible_lines_fit(terminal, lv_obj_get_content_width(terminal.scrollback()));
+    assert(terminal.viewport_capacity() > portrait_capacity);
+    assert(terminal.viewport_capacity() <= 4096);
+
+    /* BUG-TERM-WRAP-01 / REQ-TERM-WRAP-01: automatic width breaks preserve
+     * every byte, including UTF-8 codepoints, while explicit newlines remain
+     * separators.  This catches the old end-exclusive calculation that
+     * dropped the last character of each automatically wrapped segment. */
+    terminal.scrollback()->width = 72;
+    terminal.scrollback()->height = 130;
+    terminal.render("ABCDE\xC3\xA9" "FG\nHIJ\nKLMNOP");
+    const std::vector<std::string> wrapped_lines = visible_line_texts(terminal);
+    const std::vector<std::string> expected_wrapped_lines{
+        "ABCDE", "\xC3\xA9" "FG", "HIJ", "KLMNO", "P"};
+    assert(wrapped_lines.size() == expected_wrapped_lines.size());
+    assert(wrapped_lines == expected_wrapped_lines);
+    assert(wrapped_lines[0] + wrapped_lines[1] + "\n" + wrapped_lines[2] +
+               "\n" + wrapped_lines[3] + wrapped_lines[4] ==
+           "ABCDE\xC3\xA9" "FG\nHIJ\nKLMNOP");
+
+    /* Return to the landscape geometry used by the following viewport tests. */
+    terminal.scrollback()->width = 240;
+
+    /* TEST-TERM-ROT-02: resizing recomputes the line count and preserves the
+     * complete newest line at the bottom of the viewport. */
+    const std::size_t children_before_resize = terminal.scrollback()->children.size();
+    terminal.render("one\ntwo\nthree\nfour\nfive\nsix");
+    assert(last_visible_text(terminal) == "six");
+    terminal.scrollback()->height = 48;
+    terminal.render("one\ntwo\nthree\nfour\nfive\nsix");
+    assert(last_visible_text(terminal) == "six");
+    assert(terminal.scrollback()->children.size() == children_before_resize);
+
+    /* TEST-TERM-ROT-03/04: empty lines, a trailing newline and UTF-8 survive
+     * the same render path used after textarea/keyboard overlay activity. */
+    terminal.scrollback()->height = 100;
+    terminal.render("A\n\n\xE2\x98\x83\n");
+    assert(terminal.scrollback()->children[0]->text == "A");
+    assert(terminal.scrollback()->children[1]->text.empty());
+    assert(terminal.scrollback()->children[2]->text == "\xE2\x98\x83");
+    assert(terminal.textarea()->hidden && terminal.keyboard()->hidden);
+
+    /* TEST-TERM-ROT-05: repeated rendering reuses the fixed line objects and
+     * keeps bottom anchoring instead of accumulating labels. */
+    std::array<const lv_obj_t *, 4> line_objects{};
+    for (std::size_t i = 0; i < line_objects.size(); ++i)
+        line_objects[i] = terminal.scrollback()->children[i];
+    terminal.render("repeat\nrender\nrepeat\nrender\nBOTTOM");
+    terminal.render("repeat\nrender\nrepeat\nrender\nBOTTOM");
+    assert(terminal.scrollback()->children.size() == children_before_resize);
+    assert(last_visible_text(terminal) == "BOTTOM");
+    for (std::size_t i = 0; i < line_objects.size(); ++i)
+        assert(line_objects[i] == terminal.scrollback()->children[i]);
+
     terminal.render("one");
     const auto *surface = terminal.scrollback();
     assert(surface->children.size() >= 4);

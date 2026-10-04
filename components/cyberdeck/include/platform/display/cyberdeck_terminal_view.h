@@ -13,6 +13,7 @@ struct callbacks {
     lv_event_cb_t changed = nullptr;
     lv_event_cb_t key = nullptr;
     lv_event_cb_t virtual_keyboard_changed = nullptr;
+    lv_event_cb_t geometry_changed = nullptr;
 };
 
 class view {
@@ -24,6 +25,7 @@ public:
     lv_obj_t *keyboard() const { return s_keyboard; }
     std::size_t viewport_capacity() const;
     void render(const std::string &text);
+    lv_event_cb_t geometry_callback() const { return s_geometry_changed; }
 
 private:
     static constexpr std::size_t k_max_lines = 64;
@@ -34,6 +36,7 @@ private:
     lv_obj_t *s_keyboard = nullptr;
     lv_obj_t *s_lines[k_max_lines]{};
     std::size_t s_line_count = 0;
+    lv_event_cb_t s_geometry_changed = nullptr;
 };
 
 } // namespace cyberdeck_terminal_view

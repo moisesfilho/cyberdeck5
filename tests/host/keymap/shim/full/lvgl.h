@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include <algorithm>
 
 /* `lvgl.h` includes `lv_version.h`, so `LVGL_VERSION_MAJOR` is defined on every
  * device build of a `#if defined(LVGL_VERSION_MAJOR)` branch.  The host shim must
@@ -12,6 +13,11 @@
 
 struct lv_color_t { std::uint32_t value{}; };
 struct lv_font_t { int32_t line_height{16}; };
+struct lv_font_glyph_dsc_t { int32_t adv_w{}; };
+struct _lv_obj_t;
+using lv_obj_t = _lv_obj_t;
+struct lv_event_t { lv_obj_t *target{}; void *user_data{}; };
+using lv_event_cb_t = void (*)(lv_event_t *);
 
 /* The enumerations a composed root sets stay ahead of `_lv_obj_t`, because the
  * object records its scroll state with the LVGL 9 defaults `lv_obj_constructor()`
@@ -27,6 +33,8 @@ inline constexpr int LV_DIR_NONE=0, LV_DIR_ALL=1, LV_SCROLLBAR_MODE_OFF=0,
     LV_OPA_COVER=255, LV_RADIUS_CIRCLE=999, LV_EVENT_SIZE_CHANGED=1,
     LV_EVENT_FOCUSED=2, LV_EVENT_INSERT=3, LV_EVENT_VALUE_CHANGED=4,
     LV_EVENT_KEY=5;
+
+struct shim_event_cb { lv_event_cb_t callback{}; int filter{}; void *user_data{}; };
 
 struct _lv_obj_t {
     _lv_obj_t *parent{}; std::vector<_lv_obj_t *> children; std::string text;
@@ -48,10 +56,8 @@ struct _lv_obj_t {
     /* Scroll state, defaulted as `lv_obj_constructor()` leaves a new object. */
     int32_t scroll_dir{LV_DIR_ALL}, scrollbar_mode{LV_SCROLLBAR_MODE_AUTO};
     bool scroll_chain{true};
+    std::vector<shim_event_cb> event_callbacks;
 };
-using lv_obj_t = _lv_obj_t;
-struct lv_event_t { lv_obj_t *target{}; };
-using lv_event_cb_t = void (*)(lv_event_t *);
 using lv_result_t = int;
 inline constexpr lv_result_t LV_RESULT_OK = 0, LV_RESULT_INVALID = -1;
 inline constexpr int LV_SIZE_CONTENT=-1;
@@ -111,8 +117,43 @@ inline void lv_obj_update_layout(lv_obj_t*){} inline void lv_obj_align(lv_obj_t*
 inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline void lv_label_set_long_mode(lv_obj_t*,int){}
 inline void lv_textarea_set_one_line(lv_obj_t*,bool){} inline void lv_textarea_set_max_length(lv_obj_t*,std::uint32_t){} inline void lv_keyboard_set_textarea(lv_obj_t*,lv_obj_t*){}
 inline void lv_arc_set_bg_angles(lv_obj_t*,int,int){} inline void lv_arc_set_angles(lv_obj_t*,int,int){}
-inline void lv_obj_add_event_cb(lv_obj_t*,lv_event_cb_t,int,void*){}
+inline void lv_obj_add_event_cb(lv_obj_t*o,lv_event_cb_t cb,int filter,void *user_data)
+{if(o&&cb)o->event_callbacks.push_back({cb,filter,user_data});}
 inline lv_obj_t *lv_event_get_target(lv_event_t *e){return e?e->target:nullptr;}
+inline void *lv_event_get_user_data(lv_event_t *e){return e?e->user_data:nullptr;}
+inline void lv_shim_emit_event(lv_obj_t *o, int filter)
+{
+    if (!o) return;
+    for (const auto &entry : o->event_callbacks) {
+        if (entry.filter == filter) {
+            lv_event_t event{o, entry.user_data};
+            entry.callback(&event);
+        }
+    }
+}
+inline bool lv_font_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t *glyph,
+                                  std::uint32_t codepoint, std::uint32_t)
+{
+    if (!font || !glyph) return false;
+    /* Deterministic monospaced approximation for the host harness: ASCII glyphs
+     * are half the line height and non-ASCII glyphs occupy one full cell. */
+    glyph->adv_w = codepoint < 0x80 ? std::max<int32_t>(1, font->line_height / 2)
+                                    : std::max<int32_t>(1, font->line_height);
+    return true;
+}
+inline int32_t lv_shim_text_width(const lv_font_t *font, const std::string &text)
+{
+    int32_t width = 0;
+    for (std::size_t i = 0; i < text.size();) {
+        const unsigned char first = static_cast<unsigned char>(text[i]);
+        const std::size_t length = first < 0x80 ? 1 : first >= 0xF0 ? 4 : first >= 0xE0 ? 3 : 2;
+        lv_font_glyph_dsc_t glyph{};
+        lv_font_get_glyph_dsc(font, &glyph, first < 0x80 ? first : 0x80, 0);
+        width += glyph.adv_w;
+        i += std::min(length, text.size() - i);
+    }
+    return width;
+}
 struct shim_async_call { void (*callback)(void*){}; void *parameter{}; };
 inline std::deque<shim_async_call> &lv_shim_async_calls()
 {

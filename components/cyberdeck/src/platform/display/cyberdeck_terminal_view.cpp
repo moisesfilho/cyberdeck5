@@ -41,6 +41,41 @@ std::size_t visible_line_count(lv_obj_t *surface, lv_obj_t *parent,
         1, kMaxLines);
 }
 
+std::size_t codepoint_length(const std::string &text, std::size_t offset)
+{
+    const unsigned char first = static_cast<unsigned char>(text[offset]);
+    if (first < 0x80) return 1;
+    if (first >= 0xF0 && offset + 4 <= text.size()) return 4;
+    if (first >= 0xE0 && offset + 3 <= text.size()) return 3;
+    if (first >= 0xC2 && offset + 2 <= text.size()) return 2;
+    return 1;
+}
+
+uint32_t codepoint_at(const std::string &text, std::size_t offset)
+{
+    const std::size_t length = codepoint_length(text, offset);
+    const unsigned char first = static_cast<unsigned char>(text[offset]);
+    if (length == 1) return first;
+    uint32_t codepoint = first & (length == 4 ? 0x07 : length == 3 ? 0x0F : 0x1F);
+    for (std::size_t i = 1; i < length; ++i)
+        codepoint = (codepoint << 6) | (static_cast<unsigned char>(text[offset + i]) & 0x3F);
+    return codepoint;
+}
+
+int32_t glyph_advance(uint32_t codepoint, uint32_t next)
+{
+    lv_font_glyph_dsc_t glyph{};
+    if (!lv_font_get_glyph_dsc(&cyberdeck_font, &glyph, codepoint, next)) return 0;
+    return glyph.adv_w;
+}
+
+void geometry_changed_cb(lv_event_t *event)
+{
+    auto *terminal = static_cast<view *>(lv_event_get_user_data(event));
+    if (terminal != nullptr && terminal->geometry_callback() != nullptr)
+        terminal->geometry_callback()(event);
+}
+
 std::string truncate_left_utf8(const std::string &text, std::size_t limit)
 {
     if (text.size() <= limit) return text;
@@ -60,6 +95,7 @@ bool view::create(lv_obj_t *screen, lv_obj_t *parent, std::size_t max_length,
     if (screen == nullptr || parent == nullptr) return false;
 
     s_parent = parent;
+    s_geometry_changed = callbacks.geometry_changed;
     s_surface = lv_obj_create(parent);
     if (s_surface == nullptr) return false;
     lv_obj_set_width(s_surface, LV_PCT(100));
@@ -67,6 +103,7 @@ bool view::create(lv_obj_t *screen, lv_obj_t *parent, std::size_t max_length,
     lv_obj_set_layout(s_surface, LV_LAYOUT_NONE);
     style_terminal(s_surface);
     lv_obj_set_style_border_width(s_surface, 0, 0);
+    lv_obj_add_event_cb(s_surface, geometry_changed_cb, LV_EVENT_SIZE_CHANGED, this);
 
     const int32_t line_height = std::max<int32_t>(1, lv_font_get_line_height(&cyberdeck_font));
     s_line_count = visible_line_count(s_surface, s_parent, line_height);
@@ -148,17 +185,52 @@ void view::render(const std::string &text)
     }
 
     const std::string bounded_text = truncate_left_utf8(text, k_viewport_bytes);
+    int32_t available_width = lv_obj_get_content_width(s_surface);
+    if (available_width <= 0 && s_parent != nullptr)
+        available_width = lv_obj_get_content_width(s_parent) - (2 * kSurfacePadding);
+    available_width = std::max<int32_t>(1, available_width);
     std::array<std::size_t, k_max_lines + 1> starts{};
+    std::array<bool, k_max_lines + 1> explicit_breaks{};
     std::size_t count = 1;
     starts[0] = 0;
-    for (std::size_t i = 0; i < bounded_text.size(); ++i) {
-        if (bounded_text[i] != '\n') continue;
-        if (count < starts.size()) {
-            starts[count++] = i + 1;
-        } else {
-            std::move(starts.begin() + 1, starts.end(), starts.begin());
-            starts.back() = i + 1;
+    int32_t line_width = 0;
+    for (std::size_t i = 0; i < bounded_text.size();) {
+        if (bounded_text[i] == '\n') {
+            explicit_breaks[count - 1] = true;
+            if (count < starts.size()) {
+                starts[count] = i + 1;
+                explicit_breaks[count++] = false;
+            } else {
+                std::move(starts.begin() + 1, starts.end(), starts.begin());
+                std::move(explicit_breaks.begin() + 1, explicit_breaks.end(),
+                          explicit_breaks.begin());
+                starts.back() = i + 1;
+                explicit_breaks.back() = false;
+            }
+            line_width = 0;
+            ++i;
+            continue;
         }
+        const std::size_t length = codepoint_length(bounded_text, i);
+        const uint32_t codepoint = codepoint_at(bounded_text, i);
+        const uint32_t next = i + length < bounded_text.size() ? codepoint_at(bounded_text, i + length) : 0;
+        const int32_t width = glyph_advance(codepoint, next);
+        if (line_width != 0 && line_width + width > available_width) {
+            explicit_breaks[count - 1] = false;
+            if (count < starts.size()) {
+                starts[count] = i;
+                explicit_breaks[count++] = false;
+            } else {
+                std::move(starts.begin() + 1, starts.end(), starts.begin());
+                std::move(explicit_breaks.begin() + 1, explicit_breaks.end(),
+                          explicit_breaks.begin());
+                starts.back() = i;
+                explicit_breaks.back() = false;
+            }
+            line_width = 0;
+        }
+        line_width += width;
+        i += length;
     }
     const std::size_t first_line = count > visible_lines ? count - visible_lines : 0;
     const std::size_t first_slot = count < visible_lines ? visible_lines - count : 0;
@@ -169,7 +241,9 @@ void view::render(const std::string &text)
         }
         const std::size_t source = first_line + slot - first_slot;
         const std::size_t begin = starts[source];
-        const std::size_t end = source + 1 < count ? starts[source + 1] - 1 : bounded_text.size();
+        const std::size_t end = source + 1 < count
+                                    ? starts[source + 1] - (explicit_breaks[source] ? 1 : 0)
+                                    : bounded_text.size();
         lv_label_set_text(s_lines[slot], bounded_text.substr(begin, end - begin).c_str());
     }
     for (std::size_t slot = visible_lines; slot < k_max_lines; ++slot)

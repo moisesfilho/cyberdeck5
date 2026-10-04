@@ -42,8 +42,23 @@ def main() -> int:
             "terminal visual must provide bounded multiline label slots")
     require("void view::render(const std::string &text)" in terminal_view,
             "terminal visual must expose the multiline render path")
-    require("bounded_text[i] != '\\n'" in terminal_view,
-            "terminal visual must preserve newline boundaries")
+    # Preserve the semantic contract rather than a particular spelling of the
+    # non-newline path: explicit LF boundaries are marked, and only those
+    # boundaries remove the delimiter from the rendered line.  Automatic wraps
+    # start at the current byte and therefore retain the final byte of the
+    # bounded payload.
+    require("std::array<bool, k_max_lines + 1> explicit_breaks{}" in terminal_view,
+            "terminal visual must track explicit newline boundaries")
+    require("if (bounded_text[i] == '\\n')" in terminal_view and
+            "explicit_breaks[count - 1] = true" in terminal_view and
+            "starts[count] = i + 1" in terminal_view,
+            "explicit newline must remain a line boundary")
+    require("explicit_breaks[count - 1] = false" in terminal_view and
+            "starts[count] = i" in terminal_view,
+            "automatic wrapping must begin at the wrapped byte")
+    require("starts[source + 1] - (explicit_breaks[source] ? 1 : 0)" in terminal_view and
+            ": bounded_text.size()" in terminal_view,
+            "explicit breaks may trim only LF and wraps must preserve the final byte")
     require("lv_label_set_text(s_lines[slot]" in terminal_view,
             "terminal visual must render output through label slots")
     require("s_terminal_view.render(visual)" in ui,
