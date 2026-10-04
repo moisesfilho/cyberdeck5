@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -331,6 +332,23 @@ int main()
               "an unknown command reports the parser error");
     }
 
+    /* TEST-ECHO-01/02: the local echo names the directory from before the
+     * command.  In particular, `cd` must not rewrite its own prompt. */
+    {
+        std::filesystem::create_directories("/tmp/opencode/session-harness/child/nested");
+        fake_host h;
+        session s(h);
+        submit(s, "cd child");
+        check_eq(h.shell.cwd(), "/child", "cd enters a nested cwd");
+        check(h.output.find("/$ cd child\n") != std::string::npos,
+              "root command echo captures the root cwd");
+        h.output.clear();
+        submit(s, "cd nested");
+        check_eq(h.shell.cwd(), "/child/nested", "a second cd enters a deeper cwd");
+        check(h.output.find("/child$ cd nested\n") != std::string::npos,
+              "cd echo captures the previous nested cwd");
+    }
+
     {
         fake_host h;
         session s(h);
@@ -483,6 +501,22 @@ int main()
               "the manager token is published for the UI pump to match");
         check(s.wifi_model_connection_token() != 0,
               "the model attempt token is published separately");
+    }
+
+    /* TEST-ECHO-05: Wi-Fi credentials are owned by the connection flow, not
+     * by the terminal echo. */
+    {
+        fake_host h;
+        session s(h);
+        h.search_menu.add_ap("lab", -40, 3, false);
+        h.wifi = wifi_ui_state_t::SEARCH_SELECT;
+        s.handle_key(key::enter);
+        check(h.wifi == wifi_ui_state_t::SEARCH_PASSWORD,
+              "secured Wi-Fi selection enters the password flow");
+        submit(s, "wifi-secret");
+        check_eq(h.connected_password, "wifi-secret", "Wi-Fi password reaches the service port");
+        check(h.output.find("wifi-secret") == std::string::npos,
+              "Wi-Fi password is never echoed to terminal output");
     }
 
     /* A failed connect must clear both tokens and report it. */
@@ -676,6 +710,8 @@ int main()
         session s(h);
         submit(s, "s3cret");
         check_eq(h.ssh_password, "s3cret", "a password phase sends the password");
+        check(h.output.find("s3cret") == std::string::npos,
+              "password input is never echoed to terminal output");
     }
 
     {
@@ -684,6 +720,8 @@ int main()
         session s(h);
         submit(s, "");
         check(h.host_key_accepted == 1, "host key phase accepts on enter");
+        check(h.output.find("confirma") == std::string::npos,
+              "host-key input is never echoed to terminal output");
     }
 
     {
@@ -776,6 +814,8 @@ int main()
             type(s, "123456");
             check_eq(s.ble_auth_input(), "123456", "typed digits reach the passkey buffer");
             check(s.line().empty(), "typed digits never reach the shell line");
+            check(h.output.find("123456") == std::string::npos,
+                  "BLE passkey input is never echoed to terminal output");
             check(!s.insert_physical_text("a", 1), "a non-digit is rejected in the auth screen");
             check_eq(s.ble_auth_input(), "123456", "the rejected digit left the buffer untouched");
             s.handle_key(key::backspace);
@@ -786,6 +826,8 @@ int main()
             s.append_ble_auth_digit('2');
             check_eq(s.ble_auth_input(), "12", "the session owns the passkey buffer");
             check(s.line().empty(), "the passkey buffer is not the shell line");
+            check(h.output.find("12") == std::string::npos,
+                  "BLE passkey fallback input is never echoed to terminal output");
         }
         s.clear_ble_auth_input();
         check(s.ble_auth_input().empty(), "the passkey buffer can be wiped");
@@ -842,10 +884,10 @@ int main()
         session s(h);
         bool enter_handled = false;
         s.insert_virtual_text("pwd\npwd\n", &enter_handled);
-        /* The root path is printed once per executed line. */
+        /* The command echo also contains '/', so count the pwd result line. */
         std::size_t hits = 0;
-        for (std::size_t at = h.output.find('/'); at != std::string::npos;
-             at = h.output.find('/', at + 1)) ++hits;
+        for (std::size_t at = h.output.find("/\n"); at != std::string::npos;
+             at = h.output.find("/\n", at + 1)) ++hits;
         check(hits == 2, "each pasted line executed exactly once");
         check(enter_handled, "a paste ending in a newline claims the enter");
         check(s.line().empty(), "every pasted line was consumed");

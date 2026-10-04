@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 
 /*
  * Modelo PURO da linha de edicao + sessao SSH (bug aprovado A: duplicacao de
@@ -50,8 +51,8 @@
  *     em `echo` os bytes EXATOS que o caller deve anexar ao terminal LOCAL
  *     apos executar a acao. `echo` vazio = SEM eco local (somente o lado
  *     remoto ecoa):
- *       - MENU (linha nao-branca): eco local "$ <linha>\n" — paridade com o
- *         TUI que anexa "$ ", a linha e "\n" ao output;
+ *       - MENU (linha nao-branca): eco local "<cwd>$ <linha>\n", usando o
+ *         cwd fornecido pelo caller antes da execucao;
  *       - CONNECTED (qualquer caso: comando, linha vazia ou
  *         line_already_sent): SEM eco local — o comando aparece no terminal
  *         apenas pelo echo do lado remoto (paridade com a correcao aprovada
@@ -75,7 +76,7 @@ enum class cyberdeck_session_state : unsigned char {
  * nao for vazio). */
 enum class cyberdeck_enter_action : unsigned char {
     NONE = 0,           /* nada a enviar/executar (linha em branco no menu) */
-    LOCAL_COMMAND,      /* linha e comando local (caller ecoa "$ line\n" e executa) */
+    LOCAL_COMMAND,      /* linha e comando local (caller ecoa o prompt e executa) */
     SEND_PASSWORD,      /* enviar a linha como senha (sem '\n') */
     ACCEPT_HOST_KEY,    /* aceitar a host key (TOFU); sem dados */
     SEND_LINE_NEWLINE,  /* CONNECTED: payload = linha + '\n' (enviar uma vez) */
@@ -87,7 +88,7 @@ struct cyberdeck_enter_result {
     std::string payload; /* bytes EXATOS a transmitir ("" salvo se definido) */
     /* Bytes EXATOS a ecoar no terminal LOCAL ("" = SEM eco local; somente o
      * remoto ecoa). O caller anexa `echo` ao output DEPOIS de executar a
-     * acao. Politica: "$ <linha>\n" no MENU; "" em CONNECTED/PASSWORD/
+     * acao. Politica: "<cwd>$ <linha>\n" no MENU; "" em CONNECTED/PASSWORD/
      * HOST_KEY (ver regras de enter() abaixo). */
     std::string echo;
 };
@@ -146,10 +147,11 @@ public:
     /*   branca      -> NONE  [antes de PASSWORD/MENU, paridade do blank   */
     /*                  guard `find_first_not_of(" \t") == npos`]; eco ""; */
     /*   PASSWORD    -> SEND_PASSWORD (payload = linha, sem '\n'); eco ""; */
-    /*   MENU        -> LOCAL_COMMAND (payload = linha; echo "$ "+linha+   */
-    /*                  "\n").                                              */
+    /*   MENU        -> LOCAL_COMMAND (payload = linha; echo = cwd + "$ "+linha+ */
+    /*                  "\n", com cwd capturado antes da execucao).          */
     /* ------------------------------------------------------------------ */
-    cyberdeck_enter_result enter(bool line_already_sent = false);
+    cyberdeck_enter_result enter(bool line_already_sent = false,
+                                 std::string_view cwd = {});
 
     /* Limpa a linha e o cursor (sem semantica de zeroing de memoria:
      * higiene de senha do buffer e responsabilidade do chamador). */

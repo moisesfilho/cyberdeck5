@@ -194,8 +194,13 @@ void session::execute_line(bool line_already_sent)
         host_.render();
         return;
     }
+    /* Capture the prompt context before executing the command: `cd` changes
+     * the shell cwd, but its echo must describe the directory it came from. */
+    const std::string command_cwd = state == cyberdeck_session_state::MENU
+                                      ? host_.local_shell().cwd()
+                                      : std::string();
     sync_editor();
-    cyberdeck_enter_result entered = editor_.enter(line_already_sent);
+    cyberdeck_enter_result entered = editor_.enter(line_already_sent, command_cwd);
     string_wiper entered_wiper{entered.payload};
     std::string line = entered.payload;
     string_wiper line_wiper{line};

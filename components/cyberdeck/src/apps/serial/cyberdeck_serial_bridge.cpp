@@ -1464,8 +1464,8 @@ bool capture_screen(capture &out)
         return false;
     }
     out.snap = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
-    bsp_display_unlock();
     if (out.snap == nullptr) {
+        bsp_display_unlock();
         return false;
     }
     out.width = out.snap->header.w;
@@ -1474,6 +1474,7 @@ bool capture_screen(capture &out)
         out.snap->header.stride < static_cast<std::uint32_t>(out.width) * sizeof(std::uint16_t)) {
         lv_draw_buf_destroy(out.snap);
         out.snap = nullptr;
+        bsp_display_unlock();
         return false;
     }
     /* screen_dump_init espera RGB565 compacto (y*w+x); repack se o stride
@@ -1487,6 +1488,7 @@ bool capture_screen(capture &out)
     }
     lv_draw_buf_destroy(out.snap);
     out.snap = nullptr;
+    bsp_display_unlock();
     return true;
 }
 

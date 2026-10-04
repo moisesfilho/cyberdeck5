@@ -21,8 +21,12 @@ const char *TAG = "cyberdeck_imu";
 lv_display_t *s_display = nullptr;
 std::atomic<int> s_target_rotation{LV_DISPLAY_ROTATION_0};
 SemaphoreHandle_t s_first_sample_sem = nullptr;
+StaticSemaphore_t s_first_sample_storage;
 axis3_t s_first_sample_data = {};
 std::atomic<bool> s_first_sample_captured{false};
+sensor_handle_t s_sensor = nullptr;
+sensor_event_handler_instance_t s_sensor_handler = nullptr;
+lv_timer_t *s_rotation_timer = nullptr;
 
 void sensor_event_handler(void *, esp_event_base_t, int32_t event_id, void *event_data)
 {
@@ -58,10 +62,15 @@ extern "C" esp_err_t imu_reader_start(lv_display_t *display)
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (s_sensor != nullptr || s_rotation_timer != nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     s_display = display;
     orientation_reset();
     s_first_sample_captured.store(false, std::memory_order_release);
-    s_first_sample_sem = xSemaphoreCreateBinary();
+    s_first_sample_sem = xSemaphoreCreateBinaryStatic(&s_first_sample_storage);
+    while (xSemaphoreTake(s_first_sample_sem, 0) == pdTRUE) {}
 
     const bsp_sensor_config_t config = {
         .type = IMU_ID,
@@ -71,33 +80,26 @@ extern "C" esp_err_t imu_reader_start(lv_display_t *display)
     sensor_handle_t sensor = nullptr;
     esp_err_t err = bsp_sensor_init(&config, &sensor);
     if (err != ESP_OK) {
-        if (s_first_sample_sem != nullptr) {
-            vSemaphoreDelete(s_first_sample_sem);
-            s_first_sample_sem = nullptr;
-        }
         ESP_LOGE(TAG, "bsp_sensor_init failed: %s", esp_err_to_name(err));
         return err;
     }
 
-    err = iot_sensor_handler_register(sensor, sensor_event_handler, nullptr);
+    err = iot_sensor_handler_register(sensor, sensor_event_handler, &s_sensor_handler);
     if (err != ESP_OK) {
-        if (s_first_sample_sem != nullptr) {
-            vSemaphoreDelete(s_first_sample_sem);
-            s_first_sample_sem = nullptr;
-        }
+        iot_sensor_delete(sensor);
         ESP_LOGE(TAG, "sensor handler registration failed: %s", esp_err_to_name(err));
         return err;
     }
 
     err = iot_sensor_start(sensor);
     if (err != ESP_OK) {
-        if (s_first_sample_sem != nullptr) {
-            vSemaphoreDelete(s_first_sample_sem);
-            s_first_sample_sem = nullptr;
-        }
+        iot_sensor_handler_unregister(sensor, s_sensor_handler);
+        s_sensor_handler = nullptr;
+        iot_sensor_delete(sensor);
         ESP_LOGE(TAG, "sensor start failed: %s", esp_err_to_name(err));
         return err;
     }
+    s_sensor = sensor;
 
     // Deteccao e aplicacao imediata da orientacao inicial do display antes da inicializacao da UI
     lv_display_rotation_t initial_rotation = LV_DISPLAY_ROTATION_0;
@@ -106,9 +108,9 @@ extern "C" esp_err_t imu_reader_start(lv_display_t *display)
         if (xSemaphoreTake(s_first_sample_sem, INITIAL_SAMPLE_TIMEOUT_TICKS) == pdTRUE) {
             sample_ok = s_first_sample_captured.load(std::memory_order_acquire);
         }
-        SemaphoreHandle_t sem_to_delete = s_first_sample_sem;
-        s_first_sample_sem = nullptr;
-        vSemaphoreDelete(sem_to_delete);
+        /* The callback runs on the sensor event task.  This semaphore is
+         * static for the lifetime of the reader, so a late callback can never
+         * give memory that the boot task has already freed. */
     }
 
     if (sample_ok) {
@@ -123,7 +125,29 @@ extern "C" esp_err_t imu_reader_start(lv_display_t *display)
     lv_display_set_rotation(display, initial_rotation);
     ESP_LOGI(TAG, "Orientacao inicial do display: %d", static_cast<int>(initial_rotation));
 
-    lv_timer_create(rotation_timer_callback, ROTATION_TIMER_MS, s_display);
+    s_rotation_timer = lv_timer_create(rotation_timer_callback, ROTATION_TIMER_MS, s_display);
+    if (s_rotation_timer == nullptr) {
+        imu_reader_stop();
+        return ESP_ERR_NO_MEM;
+    }
     ESP_LOGI(TAG, "IMU iniciado, rotacao automatica habilitada");
     return ESP_OK;
+}
+
+extern "C" void imu_reader_stop(void)
+{
+    if (s_rotation_timer != nullptr) {
+        lv_timer_del(s_rotation_timer);
+        s_rotation_timer = nullptr;
+    }
+    if (s_sensor != nullptr) {
+        (void)iot_sensor_stop(s_sensor);
+        if (s_sensor_handler != nullptr) {
+            (void)iot_sensor_handler_unregister(s_sensor, s_sensor_handler);
+            s_sensor_handler = nullptr;
+        }
+        (void)iot_sensor_delete(s_sensor);
+        s_sensor = nullptr;
+    }
+    s_display = nullptr;
 }

@@ -771,7 +771,8 @@ void foreground_manifest_contract() {
     shell.attach_console(host);
     check(shell.start(), "start with a composition host succeeds");
     check(shell.running() && shell.console_ready(), "a started shell owns a console");
-    check(host.renders > 0, "start repaints so the first frame belongs to a running shell");
+    check(host.renders == 0,
+          "start defers the first frame to the authorized LVGL timer context");
     check(shell.start(), "start is idempotent");
 
     /* O modo do console acompanha o cliente SSH: SSH e um modo, nao um
@@ -906,6 +907,31 @@ void console_isolation_contract() {
     second.stop();
 }
 
+/* TEST-HOST-01/02: the lifecycle hook owns only application state.  Rendering
+ * is an LVGL-context concern and must not be reached from start(), including
+ * on a restart after stop().  A fresh console also proves that state from the
+ * previous generation is not reused. */
+void lifecycle_does_not_render_or_reuse_console_contract() {
+    fake_host host;
+    cyberdeck_shell_app::application shell;
+    shell.attach_console(host);
+
+    check(shell.start(), "TEST-HOST-01: start succeeds with an attached host");
+    check(host.renders == 0,
+          "TEST-HOST-01: start does not render from the supervisor context");
+    check(shell.insert_physical_text("stale", 5),
+          "TEST-HOST-02: the first generation accepts input");
+    const std::size_t renders_before_restart = host.renders;
+    check(shell.stop(), "TEST-HOST-02: stop succeeds");
+    check(!shell.console_ready(), "TEST-HOST-02: stop releases the old generation");
+    check(shell.start(), "TEST-HOST-02: restart creates a new generation");
+    check(shell.compose_line({}).fitted_line.empty(),
+          "TEST-HOST-02: restart does not reuse the previous line");
+    check(host.renders == renders_before_restart,
+          "TEST-HOST-02: restart still does not render from start()");
+    shell.detach_console();
+}
+
 class stub_event_log final : public cyberdeck_apps::application {
 public:
     const cyberdeck_apps::manifest &get_manifest() const override { return manifest_; }
@@ -1007,6 +1033,7 @@ int main()
     dispatcher_failure_closed_contract();
     foreground_manifest_contract();
     console_isolation_contract();
+    lifecycle_does_not_render_or_reuse_console_contract();
     supervisor_ownership_contract();
 
     if (failures == 0) {

@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 esp_err_t imu_reader_start(lv_display_t *display);
+void imu_reader_stop(void);
 
 #ifdef __cplusplus
 }

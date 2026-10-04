@@ -176,6 +176,7 @@ test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9
 
 .PHONY: test_recovery_policy test_phase10_contract
 .PHONY: test_terminal_scrollback test_lat03_contract test_lat04_contract
+.PHONY: test_display_lock_contract
 
 all: test
 
@@ -453,6 +454,12 @@ test_shell_app_contract: test_shell_app_contract.py $(SHELL_APP_SRC) $(SHELL_APP
 		$(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h
 	$(PYTHON) test_shell_app_contract.py
 
+.PHONY: test_lvgl_shell_lifecycle_contract
+test_lvgl_shell_lifecycle_contract: test_lvgl_shell_lifecycle_contract.py $(SHELL_APP_SRC) \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp \
+		../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp
+	$(PYTHON) test_lvgl_shell_lifecycle_contract.py
+
 # Fase 8 (REQ/AC-8.1..8.7 / TEST-WM-01..07): politica pura de superficies, foco,
 # notificacoes e teardown, mais o adaptador LVGL dono da raiz composta.  O
 # alvo liga os TUs reais de producao contra o shim LVGL completo, sem stub.
@@ -628,6 +635,9 @@ test_battery_protection_contract: $(BATTERY_PROTECTION_CONTRACT) $(BATTERY_PROTE
 # the later rotation path.
 test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_HDR)
 	$(PYTHON) test_boot_sequence.py
+
+test_display_lock_contract: test_display_lock_contract.py ../../../main/app_main.cpp $(SERIAL_BRIDGE_SRC) Makefile
+	$(PYTHON) test_display_lock_contract.py
 
 imu_sensor_contract: imu_sensor_contract.py ../../../components/cyberdeck/src/platform/sensors/imu_reader.cpp
 	$(PYTHON) imu_sensor_contract.py
@@ -906,9 +916,13 @@ test: $(BINS)
 	@echo "==> Executando aplicacao shell de primeiro plano e seu contrato"
 	@./test_shell_app
 	@$(MAKE) --no-print-directory test_shell_app_contract
+	@echo "==> Executando contrato do handoff LVGL do shell"
+	@$(MAKE) --no-print-directory test_lvgl_shell_lifecycle_contract
 	@echo "==> Executando o window manager da Fase 8 e seu contrato"
 	@./test_window_manager
 	@$(MAKE) --no-print-directory test_window_manager_contract
+	@echo "==> Executando contrato de lock do display"
+	@$(MAKE) --no-print-directory test_display_lock_contract
 	@echo "==> Executando contrato dos system apps"
 	@$(MAKE) --no-print-directory test_system_apps_contract
 	@$(MAKE) --no-print-directory test_screenshot_lifecycle_contract

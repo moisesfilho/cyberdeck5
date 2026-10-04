@@ -741,7 +741,13 @@ def check_ui_uses_composed_root(ui: str) -> None:
     create = init.index("window_manager.policy().create(1, s_shell_view_context)")
     screen = init.index("s_screen = window_manager.screen();")
     content = init.index("s_menu = window_manager.content();")
-    header = init.index("s_header_view.create(window_manager.system_bar());")
+    header_match = re.search(
+        r"s_header_view\.create\(\s*window_manager\.system_bar\(\)\s*\)",
+        init,
+    )
+    require(header_match is not None,
+            "the UI must attach the header view to the persistent system bar")
+    header = header_match.start()
     require(adapter_init < create < screen < content < header,
             "init must compose the root, register the shell surface, then bind "
             "screen, content and the persistent system bar in that order")

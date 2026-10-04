@@ -69,6 +69,12 @@ lv_obj_t *s_screen = nullptr;
 lv_obj_t *s_menu = nullptr;
 lv_obj_t *s_terminal = nullptr;
 lv_obj_t *s_keyboard = nullptr;
+lv_timer_t *s_clock_timer = nullptr;
+lv_timer_t *s_wifi_state_timer = nullptr;
+lv_timer_t *s_wifi_scan_timer = nullptr;
+lv_timer_t *s_ble_timer = nullptr;
+lv_timer_t *s_ssh_timer = nullptr;
+lv_timer_t *s_wifi_audit_timer = nullptr;
 lv_timer_t *s_battery_timer = nullptr;
 lv_timer_t *s_terminal_output_timer = nullptr;
 cyberdeck_terminal_scrollback::model s_scrollback;
@@ -84,6 +90,7 @@ cyberdeck_header_view::view s_header_view;
 cyberdeck_terminal_view::view s_terminal_view;
 cyberdeck_window_manager::view_context s_shell_view_context;
 bool s_cat_worker_ready = false;
+bool s_ui_ready = false;
 cyberdeck_shell_session::wifi_ui_state_t s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
 cyberdeck_wifi_search_menu s_wifi_search_menu;
 cyberdeck_wifi_saved_menu s_wifi_saved_menu;
@@ -449,6 +456,21 @@ void process_ble_events(lv_timer_t *)
 
 void destroy_ui_resource_handles()
 {
+    /* Quiesce producers before deleting their LVGL callback targets. */
+    s_keyboard_dispatch.stop();
+    cyberdeck_cat_worker_teardown();
+    cyberdeck_apps::service_ports::wifi_set_state_callback(nullptr, nullptr);
+    if (s_clock_timer != nullptr) { lv_timer_del(s_clock_timer); s_clock_timer = nullptr; }
+    if (s_wifi_state_timer != nullptr) { lv_timer_del(s_wifi_state_timer); s_wifi_state_timer = nullptr; }
+    if (s_wifi_scan_timer != nullptr) { lv_timer_del(s_wifi_scan_timer); s_wifi_scan_timer = nullptr; }
+    if (s_ble_timer != nullptr) { lv_timer_del(s_ble_timer); s_ble_timer = nullptr; }
+    if (s_ssh_timer != nullptr) { lv_timer_del(s_ssh_timer); s_ssh_timer = nullptr; }
+    if (s_wifi_audit_timer != nullptr) { lv_timer_del(s_wifi_audit_timer); s_wifi_audit_timer = nullptr; }
+    if (s_battery_timer != nullptr) { lv_timer_del(s_battery_timer); s_battery_timer = nullptr; }
+    if (s_terminal_output_timer != nullptr) {
+        lv_timer_del(s_terminal_output_timer);
+        s_terminal_output_timer = nullptr;
+    }
     /* A deinit during BLE authentication must not leave the passkey resident.
      * Detaching also drops the console the shell application owns. */
     s_shell_app.detach_console();
@@ -459,12 +481,10 @@ void destroy_ui_resource_handles()
         s_shell_view_context = {};
     }
     window_manager.deinit();
+    s_header_view = {};
+    s_terminal_view = {};
     s_terminal = nullptr;
     s_keyboard = nullptr;
-    if (s_terminal_output_timer != nullptr) {
-        lv_timer_del(s_terminal_output_timer);
-        s_terminal_output_timer = nullptr;
-    }
     s_wifi_audit.teardown();
     if (s_ble_observer != nullptr) {
         cyberdeck_apps::service_ports::ble_unregister_observer(s_ble_observer);
@@ -496,7 +516,7 @@ void destroy_ui_resource_handles()
         vQueueDelete(s_wifi_state_queue);
         s_wifi_state_queue = nullptr;
     }
-    s_keyboard_dispatch.stop();
+    s_ui_ready = false;
 }
 
 void hidden(lv_obj_t *obj, bool value);
@@ -1420,6 +1440,7 @@ extern "C" esp_err_t cyberdeck_ui_term_dump(char *buffer, size_t capacity, size_
 }
 
 extern "C" esp_err_t cyberdeck_ui_init(void) {
+       if (s_ui_ready) return ESP_OK;
        /* Lend the session host to the shell application before anything can
         * compose a prompt or dispatch a key.  The console itself is created by
         * the supervisor's start hook, so the shell owns its own lifecycle. */
@@ -1462,43 +1483,56 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
       s_screen = window_manager.screen();
       s_menu = window_manager.content();
       style_base(s_menu, BLACK, WHITE); lv_obj_set_style_pad_all(s_menu, 0, 0); disable_scrolling(s_menu);
-      (void)s_header_view.create(window_manager.system_bar());
-     cyberdeck_apps::service_ports::wifi_set_state_callback(on_wifi_state, nullptr);
+      if (!s_header_view.create(window_manager.system_bar())) {
+          destroy_ui_resource_handles();
+          return ESP_ERR_NO_MEM;
+      }
+      cyberdeck_apps::service_ports::wifi_set_state_callback(on_wifi_state, nullptr);
 s_last_clock_text.clear();
     update_clock(nullptr);
-      lv_timer_create(update_clock, 1000, nullptr);
-      lv_timer_create(process_wifi_state, 100, nullptr);
-      lv_timer_create(process_wifi_scan, 100, nullptr);
-       lv_timer_create(process_ble_events, 100, nullptr);
-       lv_timer_create(process_ssh_events, 100, nullptr);
-      lv_timer_create(process_wifi_audit, 100, nullptr);
-      s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
-      s_terminal_output_timer = lv_timer_create(process_terminal_output, 100, nullptr);
-      if (s_terminal_output_timer == nullptr) {
+       s_clock_timer = lv_timer_create(update_clock, 1000, nullptr);
+       s_wifi_state_timer = lv_timer_create(process_wifi_state, 100, nullptr);
+       s_wifi_scan_timer = lv_timer_create(process_wifi_scan, 100, nullptr);
+        s_ble_timer = lv_timer_create(process_ble_events, 100, nullptr);
+        s_ssh_timer = lv_timer_create(process_ssh_events, 100, nullptr);
+       s_wifi_audit_timer = lv_timer_create(process_wifi_audit, 100, nullptr);
+       s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
+       s_terminal_output_timer = lv_timer_create(process_terminal_output, 100, nullptr);
+       if (s_clock_timer == nullptr || s_wifi_state_timer == nullptr ||
+           s_wifi_scan_timer == nullptr || s_ble_timer == nullptr ||
+           s_ssh_timer == nullptr || s_wifi_audit_timer == nullptr ||
+           s_battery_timer == nullptr || s_terminal_output_timer == nullptr) {
           destroy_ui_resource_handles();
           return ESP_ERR_NO_MEM;
       }
        const cyberdeck_terminal_view::callbacks terminal_callbacks{
           focused, terminal_insert, terminal_changed, terminal_key,
           virtual_keyboard_changed, terminal_geometry_changed};
-       (void)s_terminal_view.create(s_screen, s_menu, TERMINAL_LIMIT, terminal_callbacks);
+       if (!s_terminal_view.create(s_screen, s_menu, TERMINAL_LIMIT, terminal_callbacks)) {
+           destroy_ui_resource_handles();
+           return ESP_ERR_NO_MEM;
+       }
        s_terminal = s_terminal_view.textarea();
       reset_ssh_output_filter();
      discard_ssh_line_composer();
      s_ble_transient_active = false;
      s_ble_transient_committed = false;
-      s_scrollback.clear();
-      s_scrollback.append("CYBERDECK5 READY\n", sizeof("CYBERDECK5 READY\n") - 1);
-      render_terminal();
+       s_scrollback.clear();
+       s_scrollback.append("CYBERDECK5 READY\n", sizeof("CYBERDECK5 READY\n") - 1);
+       render_terminal();
+       /* The shell supervisor starts after this function returns and may run
+        * on the boot task.  Let the existing LVGL timer perform the first
+        * prompt render in the authorized context. */
+       s_terminal_output_dirty = true;
 
-      s_keyboard = s_terminal_view.keyboard();
-    return ESP_OK;
+       s_keyboard = s_terminal_view.keyboard();
+     s_ui_ready = true;
+     return ESP_OK;
 }
 
 extern "C" void cyberdeck_ui_deinit(void)
 {
-    cyberdeck_cat_worker_teardown();
-    s_cat_worker_ready = false;
+     s_cat_worker_ready = false;
     destroy_ui_resource_handles();
 }
 

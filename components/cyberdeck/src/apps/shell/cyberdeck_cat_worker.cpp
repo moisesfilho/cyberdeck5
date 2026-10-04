@@ -10,6 +10,7 @@ cyberdeck_local_shell_result cyberdeck_cat_worker_process_request(const char *ho
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "esp_lvgl_port.h"
 #include "lvgl.h"
 #include <cstring>
 #include <cstdint>
@@ -81,7 +82,13 @@ void cat_worker_task(void *)
         const bool closing = s_closing;
         const lv_result_t scheduled = closing ? LV_RESULT_INVALID : lv_async_call(deliver_cat_result, result);
         xSemaphoreGive(s_lifecycle_mutex);
-        if (scheduled != LV_RESULT_OK) delete result;
+        if (scheduled != LV_RESULT_OK) {
+            delete result;
+        } else {
+            /* Async callbacks are queued for the LVGL task; wake it rather
+             * than relying on the port polling period for terminal output. */
+            (void)lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr);
+        }
     }
     if (s_stopped != nullptr) xSemaphoreGive(s_stopped);
 }

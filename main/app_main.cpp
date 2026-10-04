@@ -48,9 +48,23 @@ extern "C" void app_main(void)
         return;
     }
 
-    bsp_display_lock(0);
-    ESP_ERROR_CHECK(imu_reader_start(display));
-    ESP_ERROR_CHECK(cyberdeck_ui_init());
+    /* A zero-timeout probe is not an ownership guarantee.  Do not let IMU
+     * startup mutate LVGL concurrently with lvgl_port_task. */
+    if (!bsp_display_lock(pdMS_TO_TICKS(1000))) {
+        ESP_LOGE(TAG, "Falha ao adquirir o lock do display durante o boot");
+        return;
+    }
+    err = imu_reader_start(display);
+    if (err != ESP_OK) {
+        bsp_display_unlock();
+        ESP_ERROR_CHECK(err);
+    }
+    err = cyberdeck_ui_init();
+    if (err != ESP_OK) {
+        imu_reader_stop();
+        bsp_display_unlock();
+        ESP_ERROR_CHECK(err);
+    }
     ESP_ERROR_CHECK(screenshot_server_set_display_port(cyberdeck_display_capture,
                                                        cyberdeck_display_release, nullptr));
     ESP_ERROR_CHECK(screen_off_init(display, 20));

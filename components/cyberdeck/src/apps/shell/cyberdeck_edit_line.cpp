@@ -90,7 +90,8 @@ std::string cyberdeck_edit_line::visible_line() const
     return m_line;
 }
 
-cyberdeck_enter_result cyberdeck_edit_line::enter(bool line_already_sent)
+cyberdeck_enter_result cyberdeck_edit_line::enter(bool line_already_sent,
+                                                  std::string_view cwd)
 {
     cyberdeck_enter_result result;
     const bool blank = m_line.find_first_not_of(" \t") == std::string::npos;
@@ -118,7 +119,7 @@ cyberdeck_enter_result cyberdeck_edit_line::enter(bool line_already_sent)
         if (!blank) {
             result.action = cyberdeck_enter_action::LOCAL_COMMAND;
             result.payload = m_line;
-            result.echo = "$ " + m_line + "\n";
+            result.echo = std::string(cwd) + "$ " + m_line + "\n";
         }
         break;
     }

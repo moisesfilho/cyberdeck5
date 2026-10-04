@@ -16,7 +16,7 @@
  *   - CONNECTED (comando nao vazio) -> payload exatamente "cmd\n", SEM eco;
  *   - CONNECTED (linha vazia)       -> somente "\n", sem eco;
  *   - line_already_sent             -> somente "\n", sem duplicacao, sem eco;
- *   - MENU                          -> eco local "$ cmd\n" PRESERVADO;
+ *   - MENU                          -> eco local "<cwd>$ cmd\n" PRESERVADO;
  *   - PASSWORD                      -> sem eco (a senha nunca e ecoada);
  *   - HOST_KEY                      -> fluxo TOFU preservado, sem eco.
  *
@@ -708,6 +708,25 @@ void test_echo_menu_local_echo()
     expect_line(blank, "", 0, 0);
 }
 
+/* TEST-ECHO-01/02: o prompt usa o cwd capturado pelo caller, incluindo raiz,
+ * diretório aninhado e UTF-8, sem alterar o payload do comando. */
+void test_echo_menu_cwd_context_and_utf8()
+{
+    cyberdeck_edit_line root;
+    root.set_session(cyberdeck_session_state::MENU);
+    CHECK(root.insert("pwd", 3) == true);
+    const cyberdeck_enter_result rr = root.enter(false, "/");
+    CHECK_EQ(rr.payload, "pwd");
+    CHECK_EQ(rr.echo, "/$ pwd\n");
+
+    cyberdeck_edit_line nested;
+    nested.set_session(cyberdeck_session_state::MENU);
+    CHECK(nested.insert("echo ol\xC3\xA1", 9) == true);
+    const cyberdeck_enter_result rn = nested.enter(false, "/child/nested");
+    CHECK_EQ(rn.payload, "echo ol\xC3\xA1");
+    CHECK_EQ(rn.echo, "/child/nested$ echo ol\xC3\xA1\n");
+}
+
 /* REGRESSAO (E5): PASSWORD envia a linha sem '\n' e SEM eco local — a
  * senha nunca e ecoada no terminal (a linha ja aparece mascarada durante a
  * digitacao). */
@@ -975,6 +994,7 @@ int main()
     test_echo_connected_empty_newline_only();
     test_echo_line_already_sent_no_duplication();
     test_echo_menu_local_echo();
+    test_echo_menu_cwd_context_and_utf8();
     test_echo_password_no_echo();
     test_echo_host_key_preserved();
     test_echo_policy_oracle_sweep();

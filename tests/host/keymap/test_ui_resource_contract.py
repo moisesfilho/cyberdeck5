@@ -28,6 +28,11 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def require_before(source: str, first: str, second: str, message: str) -> None:
+    require(first in source and second in source and source.index(first) < source.index(second),
+            message)
+
+
 def if_branch(source: str, *fragments: str) -> tuple[int, str] | None:
     """Return (offset, balanced body) of the first `if` whose condition holds
     every fragment, so both braced and single-statement branches are covered."""
@@ -85,14 +90,20 @@ FAIL_CLOSED_PHASES = (
      (r"!\s*window_manager\s*\.\s*init\s*\(\s*\)",), True),
     ("shell surface registration",
      (r"window_manager\s*\.\s*policy\s*\(\s*\)\s*\.\s*create\s*\(",
-      r"view_status\s*::\s*ok"), True),
-    ("terminal output timer",
-     (r"s_terminal_output_timer\s*==\s*nullptr",), True),
+       r"view_status\s*::\s*ok"), True),
+    ("header view",
+     (r"!\s*s_header_view\.create\s*\(",), True),
+    ("LVGL timers",
+     (r"s_clock_timer\s*==\s*nullptr",
+      r"s_terminal_output_timer\s*==\s*nullptr"), True),
+    ("terminal view",
+     (r"!\s*s_terminal_view\.create\s*\(",), True),
 )
 
 
 def main() -> int:
     source = UI.read_text(encoding="utf-8")
+    init = function_body(source, "extern \"C\" esp_err_t cyberdeck_ui_init(")
     cleanup = function_body(source, "void destroy_ui_resource_handles(")
     require("ssh_stopped = cyberdeck_apps::service_ports::ssh_disconnect_and_wait(k_ssh_disconnect_timeout_ms)" in cleanup,
             "cleanup must join SSH before deleting its event queue")
@@ -116,7 +127,44 @@ def main() -> int:
     require("s_keyboard_dispatch.stop();" in cleanup,
             "cleanup must stop the keyboard dispatcher")
 
-    init = function_body(source, "extern \"C\" esp_err_t cyberdeck_ui_init(")
+    # TEST-HOST-BOOT-01: repeated init/deinit must be a no-op after the first
+    # successful cycle, and cleanup must remain safe when called twice.
+    require(re.search(r"if\s*\(\s*s_ui_ready\s*\)\s*return\s+ESP_OK\s*;", init)
+            is not None,
+            "a repeated UI init must return success without acquiring resources")
+    require("s_ui_ready = true;" in init,
+            "UI readiness must be published only by the successful init path")
+    require("s_ui_ready = false;" in cleanup,
+            "UI cleanup must clear readiness for a later init cycle")
+    require(cleanup.count("window_manager.deinit();") == 1,
+            "duplicate teardown must have one centralized, idempotent root release")
+    for timer in ("s_clock_timer", "s_wifi_state_timer", "s_wifi_scan_timer",
+                  "s_ble_timer", "s_ssh_timer", "s_wifi_audit_timer",
+                  "s_battery_timer", "s_terminal_output_timer"):
+        require(re.search(rf"if\s*\(\s*{timer}\s*!=\s*nullptr\s*\)", cleanup)
+                is not None and re.search(rf"{timer}\s*=\s*nullptr\s*;", cleanup)
+                is not None,
+                f"teardown must delete and clear {timer} exactly through a guarded path")
+
+    # TEST-HOST-LVGL-02: quiesce producers and unregister callbacks before
+    # deleting LVGL timers/queues, so late work cannot target freed objects.
+    require_before(cleanup, "s_keyboard_dispatch.stop();",
+                   "cyberdeck_apps::service_ports::wifi_set_state_callback(nullptr, nullptr);",
+                   "keyboard input must quiesce before Wi-Fi callback removal")
+    require_before(cleanup,
+                   "cyberdeck_apps::service_ports::wifi_set_state_callback(nullptr, nullptr);",
+                   "lv_timer_del(s_clock_timer)",
+                   "Wi-Fi callbacks must be unregistered before timer deletion")
+    require_before(cleanup, "s_ble_observer = nullptr;",
+                   "vQueueDelete(s_ble_event_queue)",
+                   "BLE observer must be unregistered before its event queue is deleted")
+    require("cyberdeck_cat_worker_teardown();" in cleanup,
+            "late cat results must be quiesced during UI teardown")
+    require(cleanup.count("wifi_set_state_callback(nullptr, nullptr)") == 1,
+            "Wi-Fi state callback must be unregistered exactly once per cleanup pass")
+    require(cleanup.count("lv_timer_del(") == 8,
+            "all eight LVGL timers must be explicitly canceled on teardown")
+
     require("s_keyboard_dispatch.start(on_keyboard_event, nullptr)" in init,
             "init must start the keyboard dispatcher")
 

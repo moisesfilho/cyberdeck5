@@ -37,9 +37,9 @@ bool application::start()
     if (!created) return false;
     console_ = std::move(created);
     running_ = true;
-    /* Paint the prompt through the composition so the first frame already
-     * belongs to a running shell application. */
-    host_->render();
+    /* The supervisor may run on the boot task after the display lock was
+     * released.  The host render is therefore deferred to the LVGL timer;
+     * never mutate the view directly from this lifecycle hook. */
     return true;
 }
 
