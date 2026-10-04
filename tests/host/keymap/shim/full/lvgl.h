@@ -31,6 +31,8 @@ inline constexpr int LV_DIR_NONE=0, LV_DIR_ALL=1, LV_SCROLLBAR_MODE_OFF=0,
 struct _lv_obj_t {
     _lv_obj_t *parent{}; std::vector<_lv_obj_t *> children; std::string text;
     int32_t width{}, height{}, x{}, y{}; bool hidden{};
+    const lv_font_t *text_font{}; int32_t text_align{-1};
+    int32_t flex_main{-1}, flex_cross{-1}, flex_track{-1};
     /* -1 means the shim never saw a background/arc color applied, so "the bar is
      * painted black" cannot pass on a default that already reads as black. */
     std::uint32_t color{static_cast<std::uint32_t>(-1)};
@@ -86,7 +88,7 @@ inline void lv_obj_set_hidden(lv_obj_t*o,bool v){if(o)o->hidden=v;} inline bool 
  * the overlay exclusion production is allowed to use. */
 inline void lv_obj_set_ignore_layout(lv_obj_t*o,bool v){if(o)o->ignore_layout=v;}
 inline bool lv_obj_is_ignore_layout(const lv_obj_t*o){return o&&o->ignore_layout;}
-inline void lv_obj_set_layout(lv_obj_t*o,int v){if(o)o->layout=v;} inline void lv_obj_set_flex_flow(lv_obj_t*o,int v){if(o)o->flex_flow=v;} inline void lv_obj_set_flex_align(lv_obj_t*,int,int,int){} inline void lv_obj_set_flex_grow(lv_obj_t*o,int v){if(o)o->flex_grow=v;}
+inline void lv_obj_set_layout(lv_obj_t*o,int v){if(o)o->layout=v;} inline void lv_obj_set_flex_flow(lv_obj_t*o,int v){if(o)o->flex_flow=v;} inline void lv_obj_set_flex_align(lv_obj_t*o,int main,int cross,int track){if(o){o->flex_main=main;o->flex_cross=cross;o->flex_track=track;}} inline void lv_obj_set_flex_grow(lv_obj_t*o,int v){if(o)o->flex_grow=v;}
 inline void lv_obj_set_scroll_dir(lv_obj_t*o,int v){if(o)o->scroll_dir=v;} inline void lv_obj_set_scroll_chain(lv_obj_t*o,bool v){if(o)o->scroll_chain=v;} inline void lv_obj_set_scrollbar_mode(lv_obj_t*o,int v){if(o)o->scrollbar_mode=v;} inline void lv_obj_set_scrollable(lv_obj_t*,bool){} inline void lv_obj_set_overflow_visible(lv_obj_t*,bool){}
 /* Public LVGL 9 read-backs for the scroll state, so the host suite asserts the
  * device-visible result instead of the spelling that produced it. */
@@ -103,8 +105,8 @@ inline void lv_obj_set_style_bg_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color
  * (it delegates to the per-side setters and leaves pad_row/pad_column alone). */
 inline void lv_obj_set_style_pad_all(lv_obj_t*o,int v,int){if(o){o->pad_left=o->pad_right=o->pad_top=o->pad_bottom=v;}}
 inline void lv_obj_set_style_pad_column(lv_obj_t*o,int v,int){if(o)o->pad_column=v;} inline void lv_obj_set_style_pad_row(lv_obj_t*o,int v,int){if(o)o->pad_row=v;} inline void lv_obj_set_style_pad_left(lv_obj_t*o,int v,int){if(o)o->pad_left=v;} inline void lv_obj_set_style_pad_right(lv_obj_t*o,int v,int){if(o)o->pad_right=v;} inline void lv_obj_set_style_pad_top(lv_obj_t*o,int v,int){if(o)o->pad_top=v;} inline void lv_obj_set_style_pad_bottom(lv_obj_t*o,int v,int){if(o)o->pad_bottom=v;} inline void lv_obj_set_style_bg_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_radius(lv_obj_t*,int,int){}
-inline void lv_obj_set_style_text_align(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_arc_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_opa(lv_obj_t*,int,int){}
-inline void lv_obj_set_style_text_font(lv_obj_t*,const lv_font_t*,int){}
+inline void lv_obj_set_style_text_align(lv_obj_t*o,int v,int){if(o)o->text_align=v;} inline void lv_obj_set_style_arc_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_arc_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_opa(lv_obj_t*,int,int){}
+inline void lv_obj_set_style_text_font(lv_obj_t*o,const lv_font_t*f,int){if(o)o->text_font=f;}
 inline void lv_obj_update_layout(lv_obj_t*){} inline void lv_obj_align(lv_obj_t*,int,int,int){} inline void lv_obj_add_state(lv_obj_t*,int){}
 inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline void lv_label_set_long_mode(lv_obj_t*,int){}
 inline void lv_textarea_set_one_line(lv_obj_t*,bool){} inline void lv_textarea_set_max_length(lv_obj_t*,std::uint32_t){} inline void lv_keyboard_set_textarea(lv_obj_t*,lv_obj_t*){}

@@ -33,6 +33,11 @@
 
 #include "lvgl.h"
 
+/* The real header view references the production font object.  Keep this
+ * host-only ABI fixture local to this executable; test_display_views has its
+ * own definition because it is a separate test binary. */
+extern const lv_font_t cyberdeck_font{18};
+
 #include "apps/runtime/cyberdeck_window_manager.h"
 #include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_window_manager_adapter.h"

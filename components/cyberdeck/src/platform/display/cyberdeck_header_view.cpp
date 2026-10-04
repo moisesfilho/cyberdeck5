@@ -4,6 +4,8 @@
 
 #include <cstdio>
 
+extern const lv_font_t cyberdeck_font;
+
 namespace cyberdeck_header_view {
 namespace {
 
@@ -69,6 +71,7 @@ bool view::create(lv_obj_t *parent)
     lv_label_set_text(s_clock_status, "");
     lv_obj_set_width(s_clock_status, LV_PCT(40));
     lv_obj_set_style_text_align(s_clock_status, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(s_clock_status, &cyberdeck_font, 0);
     lv_label_set_long_mode(s_clock_status, LV_LABEL_LONG_CLIP);
     style_base(s_clock_status, kBlack, kMuted);
 

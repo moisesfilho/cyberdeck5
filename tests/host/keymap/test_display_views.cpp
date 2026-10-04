@@ -1,10 +1,13 @@
 #include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_terminal_view.h"
 
+#include <array>
 #include <cassert>
 #include <iostream>
 
-extern const lv_font_t cyberdeck_font{16};
+/* Previous header typography was 16 px; the production cyberdeck_font used by
+ * the clock is intentionally larger and remains a single shared font object. */
+extern const lv_font_t cyberdeck_font{18};
 
 static void noop(lv_event_t *) {}
 
@@ -14,17 +17,50 @@ int main()
     cyberdeck_header_view::view header;
     assert(!header.create(nullptr));
     assert(header.create(&screen));
+    assert(screen.children.size() == 1);
+    const auto *header_bar = screen.children[0];
+    assert(header_bar->height == 42);
+    assert(header_bar->children.size() == 3);
+    const auto *title = header_bar->children[0];
+    const auto *clock = header_bar->children[1];
+    const auto *right = header_bar->children[2];
+    assert(title->width == LV_PCT(30));
+    assert(clock->width == LV_PCT(40));
+    assert(right->width == LV_PCT(30) && right->height == 42);
+    assert(header_bar->flex_main == LV_FLEX_ALIGN_START);
+    assert(header_bar->flex_cross == LV_FLEX_ALIGN_CENTER);
+    assert(header_bar->flex_track == LV_FLEX_ALIGN_CENTER);
+    assert(clock->text_align == LV_TEXT_ALIGN_CENTER);
+    assert(clock->text_font == &cyberdeck_font);
+    assert(lv_font_get_line_height(clock->text_font) > 16);
+    const auto geometry_before_long_text = std::array<int32_t, 6>{
+        title->width, clock->width, right->width, right->height,
+        clock->x, clock->y};
     header.update_clock(nullptr);
     header.update_clock("12:34");
+    header.update_clock("2026-10-04 23:59:59 UTC+00:00 / LONG STATUS TEXT");
+    const auto geometry_after_long_text = std::array<int32_t, 6>{
+        title->width, clock->width, right->width, right->height,
+        clock->x, clock->y};
+    assert(geometry_after_long_text == geometry_before_long_text);
     header.update_ble(false); header.update_ble(true); header.update_ble(false);
     header.update_wifi(false); header.update_wifi(true);
     cyberdeck_battery_view::presentation presentation{};
     header.update_battery(presentation);
+    assert(right->children.size() == 3);
+    assert(right->children[0]->hidden);
+    assert(right->children[1]->children.size() == 4);
+    assert(right->children[2]->hidden);
     presentation.visible = true; presentation.show_percentage = true;
     presentation.percentage = 87; presentation.glyph = cyberdeck_battery_view::power_glyph::battery;
     header.update_battery(presentation);
+    assert(!right->children[2]->hidden);
+    assert(right->children[2]->children[0]->text == "BAT");
+    assert(right->children[2]->children[1]->text == "87%");
     presentation.show_percentage = false; presentation.glyph = cyberdeck_battery_view::power_glyph::external;
     header.update_battery(presentation);
+    assert(right->children[2]->children[0]->text == "-");
+    assert(right->children[2]->children[1]->text.empty());
 
     cyberdeck_terminal_view::view terminal;
     /* TEST-REG-8-BAR: the composed root is a flex column, so the terminal
