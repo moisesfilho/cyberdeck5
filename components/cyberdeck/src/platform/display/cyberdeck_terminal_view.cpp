@@ -66,6 +66,7 @@ bool view::create(lv_obj_t *screen, lv_obj_t *parent, std::size_t max_length,
     lv_obj_set_flex_grow(s_surface, 1);
     lv_obj_set_layout(s_surface, LV_LAYOUT_NONE);
     style_terminal(s_surface);
+    lv_obj_set_style_border_width(s_surface, 0, 0);
 
     const int32_t line_height = std::max<int32_t>(1, lv_font_get_line_height(&cyberdeck_font));
     s_line_count = visible_line_count(s_surface, s_parent, line_height);

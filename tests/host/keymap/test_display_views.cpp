@@ -38,7 +38,16 @@ int main()
     cyberdeck_terminal_view::callbacks callbacks{noop, noop, noop, noop, noop};
     assert(terminal.create(&screen, &content, 256, callbacks));
     assert(terminal.textarea() != nullptr && terminal.keyboard() != nullptr);
+    /* REQ-LAYOUT-01 / AC-LAYOUT-01: the visible terminal surface has no
+     * border, while its hidden LVGL input target keeps the textarea style. */
+    assert(terminal.scrollback()->border_width == 0);
     assert(terminal.textarea()->parent == &content);
+    assert(terminal.textarea()->hidden);
+    assert(terminal.textarea()->border_width == 1);
+    assert(terminal.textarea()->pad_top == 12);
+    assert(terminal.textarea()->pad_bottom == 12);
+    assert(terminal.textarea()->pad_left == 12);
+    assert(terminal.textarea()->pad_right == 12);
     assert(terminal.keyboard()->parent == &screen);
     assert(lv_obj_is_ignore_layout(terminal.keyboard()));
     assert(terminal.keyboard()->hidden);
