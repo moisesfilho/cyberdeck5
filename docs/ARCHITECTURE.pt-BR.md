@@ -1,8 +1,10 @@
 # Arquitetura
 
-O `cyberdeck5` é um firmware monolítico. A aplicação é inicializada diretamente
-por `app_main`, monta uma única tela LVGL e mantém os módulos de infraestrutura
-necessários para a primeira ferramenta.
+O `cyberdeck5` é um firmware para um único alvo, o M5Stack Tab5, que está sendo
+organizado como um OS embarcado simplificado: `platform/hardware`,
+`kernel/runtime`, `SDK` e `apps`. O runtime e as apps são compilados no
+firmware. Consulte o [plano de transformação](OS-TRANSFORMATION-PLAN.pt-BR.md)
+para fases, backlog e limites de escopo.
 
 ## Princípios
 
@@ -10,6 +12,10 @@ necessários para a primeira ferramenta.
 - Manter operações bloqueantes fora da thread da UI.
 - Não criar extensibilidade antes de existir uma segunda ferramenta real.
 - Preferir buffers limitados e descarte explícito de dados antigos.
+- Compilar apps contra um SDK predefinido, começando por `storage` com leitura
+  bounded e `logger`; não expor VFS, LVGL ou handles de hardware diretamente.
+- Preservar output/reply compatível com apps atuais, sobretudo SSH, antes de
+  fixar um contrato universal de command apps.
 
 ## Organização semântica
 
@@ -63,19 +69,34 @@ terminal. A UI mantém apenas o pump de eventos (`on_ble_event`,
 `process_ble_events`, `ble_submit_actions`) e roteia eventos e preempção
 para o scheduler.
 
-`managed_components/`, incluindo `m5stack_tab5` e `sock_utils`, permanece fora
-desta reorganização e continua sendo gerenciado pelo ESP-IDF.
+`components/m5stack_tab5/` é o BSP vendored do único alvo Tab5. Componentes
+gerenciados pelo ESP-IDF permanecem fora desta reorganização. Não há
+portabilidade dos Drivers do Tactility nesta fase.
 
-## Fluxo de boot
+## Fluxo de boot atual
 
-1. Inicializar NVS.
-2. Inicializar display e LVGL pelo BSP do Tab5.
-3. Criar a tela TUI monocromática.
-4. Sob lock do display: criar a UI e inicializar a protecao de tela (`screen_off_init` com timeout padrao de 2 minutos e brilho 20%); restaurar o timeout persistido do NVS antes de iniciar o timer.
-5. Iniciar o reader INA226; falha de inicializacao registra log e nao aborta o restante do boot; ausencia no probe publica `absent`, enquanto falha de leitura apos o startup publica `unavailable`.
-6. Inicializar Wi-Fi e reconexao a partir do SD; o header recebe estados de Wi-Fi por callback e atualiza somente o icone: claro quando Wi-Fi esta habilitado, conectado e possui IP, e escuro nos demais estados. O SSID nao e renderizado no header.
-7. Aguardar conexao SSH iniciada pelo usuario.
-8. Iniciar a ponte manual USB Serial-JTAG (`bridge_start`): task propria, iniciada por ultimo; falha aqui registra aviso e nao derruba o boot.
+O estado confirmado ainda concentra em `app_main` a montagem do SD, a
+inicialização de NVS e recovery, o registro e o logging dos system apps, o
+display, IMU/UI, screenshot, `screen_off`, bateria, teclado, brilho e o
+startup normal ou safe mode dos serviços, seguido do checkpoint de recovery.
+
+1. Montar o SD e validar o handle do BSP.
+2. Inicializar NVS e recovery, registrar os system apps e iniciar o event log
+   quando possível; falhas de NVS/recovery/logging preservam o diagnóstico.
+3. Inicializar display/LVGL pelo BSP do Tab5.
+4. Sob lock do display, iniciar IMU, UI, screenshot e proteção de tela
+   (`screen_off_init`); falha nessas etapas interrompe o boot.
+5. Inicializar bateria, teclado e brilho; falhas de bateria são não fatais.
+6. Iniciar os serviços pelo supervisor no caminho normal ou a superfície de
+   safe mode; falhas preservam o latch e adiam o checkpoint.
+7. Registrar o checkpoint de recovery somente quando o startup estiver pronto.
+
+### Alvo/backlog de composição
+
+O alvo arquitetural é reduzir `app_main` a apenas mount do SD, NVS,
+register/start dos system apps e checkpoint de recovery. Essa redução ainda é
+backlog: não descreve o estado atual nem autoriza remover a composição
+existente sem migrar cada responsabilidade e preservar seus contratos.
 
 ## Bateria
 
@@ -299,6 +320,15 @@ autocontida: fora de `ESP_PLATFORM` ela não referencia funções de
 `screenshot_bmp_*` — stride/size/header/conversão são espelhados localmente
 com fórmulas idênticas — porque três dos quatro testes host linkam apenas a
 ponte.
+
+## SDK e aplicações
+
+Apps compiladas implementam o contrato bounded de manifesto/lifecycle do
+runtime e declaram seus recursos. A primeira superfície de SDK planejada é
+`storage.bounded_read` e `logger`; a fachada de storage existente ainda é
+somente uma autorização de recurso, portanto a leitura não deve ser inferida
+como implementada. O contrato de saída deve continuar compatível com o shell e
+com SSH antes de padronizar replies para command apps.
 
 ## SSH
 

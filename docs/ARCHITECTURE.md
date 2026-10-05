@@ -1,8 +1,9 @@
 # Arquitetura
 
-O `cyberdeck5` é um firmware monolítico. A aplicação é inicializada diretamente
-por `app_main`, monta uma única tela LVGL e mantém os módulos de infraestrutura
-necessários para a primeira ferramenta.
+`cyberdeck5` targets only the M5Stack Tab5 and is evolving into a simplified
+embedded OS with `platform/hardware`, `kernel/runtime`, `SDK`, and `apps`
+layers. Runtime and applications are compiled into the firmware. See the
+[transformation plan](OS-TRANSFORMATION-PLAN.pt-BR.md).
 
 ## Princípios
 
@@ -10,6 +11,10 @@ necessários para a primeira ferramenta.
 - Manter operações bloqueantes fora da thread da UI.
 - Não criar extensibilidade antes de existir uma segunda ferramenta real.
 - Preferir buffers limitados e descarte explícito de dados antigos.
+- Compile command apps against a predefined SDK; the first planned SDK APIs are
+  bounded-read storage and bounded logger output.
+- Do not freeze a universal reply/output format until it is compatible with the
+  existing shell and interactive SSH flows.
 - Tratar aplicações como módulos compilados e registrados explicitamente antes
   de introduzir execução dinâmica a partir do SD.
 - O `cat` local valida o caminho e o tamanho antes da saída, abre cada componente
@@ -90,26 +95,41 @@ permissões, limites de memória, filas e lifecycle próprios.
 
 Os system apps fixos do Tab5 são `cyberdeck.shell`, `cyberdeck.wifi`,
 `cyberdeck.serial`, `cyberdeck.ssh`, `cyberdeck.screenshot` e
-`cyberdeck.bluetooth`. `app_main` apenas registra e inicia o supervisor; os
-serviços não são mais inicializados diretamente nesse ponto. A ordem preserva
-as dependências existentes: shell, screenshot, Wi-Fi, Serial-JTAG, Bluetooth e
-SSH. O teardown completo ficará para a evolução das APIs de serviço; nesta
-fase, SSH e Bluetooth possuem stop real, enquanto Wi-Fi, Serial-JTAG e
-Screenshot permanecem ativos até reboot.
+`cyberdeck.bluetooth`. The supervisor is used by the current composition, but
+`app_main` still performs the concrete boot sequence described below; it does
+not yet consist only of registration and startup calls. O teardown completo
+ficará para a evolução das APIs de serviço; nesta fase, SSH e Bluetooth possuem
+stop real, enquanto Wi-Fi, Serial-JTAG e Screenshot permanecem ativos até
+reboot.
 
-`managed_components/`, incluindo `m5stack_tab5` e `sock_utils`, permanece fora
-dessa reorganização e continua sendo gerenciado pelo ESP-IDF.
+`components/m5stack_tab5/` is the vendored BSP for the only supported target,
+Tab5. ESP-IDF-managed components remain outside this reorganization. Tactility
+drivers are not being ported and GPL code is not copied.
 
-## Fluxo de boot
+## Fluxo de boot atual
 
-1. Inicializar NVS.
-2. Inicializar display e LVGL pelo BSP do Tab5.
-3. Criar a tela TUI monocromática.
-4. Sob lock do display: criar a UI e inicializar a protecao de tela (`screen_off_init` com timeout padrao de 2 minutos e brilho 20%); restaurar o timeout persistido do NVS antes de iniciar o timer.
-5. Iniciar o reader INA226; falha de inicializacao registra log e nao aborta o restante do boot; ausencia no probe publica `absent`, enquanto falha de leitura apos o startup publica `unavailable`.
-6. Iniciar os system apps em ordem: shell, screenshot, Wi-Fi, Serial-JTAG, Bluetooth e SSH; falhas de serviço continuam não fatais.
-7. O app Wi-Fi publica estados para o header, que atualiza somente o ícone; o SSID não é renderizado no header.
-8. Aguardar conexão SSH iniciada pelo usuário através do app SSH.
+O estado confirmado ainda concentra em `app_main` a montagem do SD, a
+inicialização de NVS e recovery, o registro e o logging dos system apps, o
+display, IMU/UI, screenshot, `screen_off`, bateria, teclado, brilho e o
+startup normal ou safe mode dos serviços, seguido do checkpoint de recovery.
+
+1. Montar o SD e validar o handle do BSP.
+2. Inicializar NVS e recovery, registrar os system apps e iniciar o event log
+   quando possível; falhas de NVS/recovery/logging preservam o diagnóstico.
+3. Inicializar display/LVGL pelo BSP do Tab5.
+4. Sob lock do display, iniciar IMU, UI, screenshot e proteção de tela
+   (`screen_off_init`); falha nessas etapas interrompe o boot.
+5. Inicializar bateria, teclado e brilho; falhas de bateria são não fatais.
+6. Iniciar os serviços pelo supervisor no caminho normal ou a superfície de
+   safe mode; falhas preservam o latch e adiam o checkpoint.
+7. Registrar o checkpoint de recovery somente quando o startup estiver pronto.
+
+### Alvo/backlog de composição
+
+O alvo arquitetural é reduzir `app_main` a apenas mount do SD, NVS,
+register/start dos system apps e checkpoint de recovery. Essa redução ainda é
+backlog: não descreve o estado atual nem autoriza remover a composição
+existente sem migrar cada responsabilidade e preservar seus contratos.
 
 ## Bateria
 
@@ -333,6 +353,15 @@ autocontida: fora de `ESP_PLATFORM` ela não referencia funções de
 `screenshot_bmp_*` — stride/size/header/conversão são espelhados localmente
 com fórmulas idênticas — porque três dos quatro testes host linkam apenas a
 ponte.
+
+## SDK and applications
+
+Compiled applications implement the bounded manifest/lifecycle contract and
+declare their resources. The first planned SDK surface is
+`storage.bounded_read` plus `logger`; the current storage facade is only a
+resource authorization and does not imply that bounded reads are implemented.
+Reply/output compatibility with the shell and SSH must be established before
+standardizing command-app replies.
 
 ## SSH
 

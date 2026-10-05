@@ -2,9 +2,10 @@
 
 **Languages:** [English](README.md) | [Português](README.pt-BR.md)
 
-Firmware monolítico e leve para o M5Stack Tab5, com uma única tela TUI touch
-orientada a ferramentas de computação. A primeira ferramenta é um cliente SSH
-interativo no terminal.
+Simplified embedded OS for the only supported target, M5Stack Tab5, with one
+touch TUI for compiled command apps. The first tool is an interactive SSH
+client in the terminal. The architecture separates `platform/hardware`,
+`kernel/runtime`, `SDK`, and `apps`; the Tab5 BSP is vendored.
 
 ## Características
 
@@ -21,6 +22,8 @@ interativo no terminal.
 - Ponte manual USB Serial-JTAG NDJSON com CLI host (`tools/cyberdeck_cli.py`)
 - Runtime inicial de aplicações compiladas, com `app list`, `app info`,
   `app start` e `app stop`
+- Compiled apps use a bounded manifest/runtime contract; dynamic loaders and
+  ELF execution are out of scope
 
 ## Requisitos
 
@@ -78,13 +81,13 @@ O shell visual do menu também oferece `help`, `wifi`, `clear`, `screen` e `ssh`
 
 ### Local file shell
 
-The local file shell starts in the virtual root `/sdcard`; its prompt is
-`/sdcard$ `. After a valid `cd`, the prompt shows the new current directory.
+The local file shell starts in the virtual root `/`; its prompt is
+`/$ `. After a valid `cd`, the prompt shows the new current directory.
 An invalid `cd` leaves both the directory and prompt unchanged. Use `pwd` to print the
 current directory and `cd <path>` to change it. Paths may be relative to the
-current directory or absolute under `/sdcard`. Only `cd` accepts `..`: it
+current directory or absolute under `/`. Only `cd` accepts `..`: it
 normalizes `.` and `..` in relative, absolute, and mixed paths, clamping at
-the `/sdcard` virtual root. All other commands reject path components `..`.
+the `/` virtual root. All other commands reject path components `..`.
 
 Supported commands are:
 
@@ -103,7 +106,7 @@ Run `help` (or `help -h` / `help --help`) for the general command list. The
 local file commands also accept `-h` and `--help` (for example, `ls --help`) to
 show their usage.
 
-The file shell is sandboxed: `/sdcard` is the only exposed root, `cd ..` cannot
+The file shell is sandboxed: `/` is the only exposed root, `cd ..` cannot
 escape it, and symbolic links are not allowed. Other commands reject `..` path
 components. `rm -r` cannot remove
 the virtual root and refuses trees containing symbolic links. It is a small
@@ -111,7 +114,7 @@ local file interface, not a full POSIX shell: command parsing is whitespace-
 based, and unsupported commands are passed through to the active terminal
 context.
 
-`cat` accepts only regular files under `/sdcard`. The size is checked before any
+`cat` accepts only regular files under `/`. The size is checked before any
 output, reads use bounded chunks, and file I/O runs in a worker before the
 result is handed back to LVGL through a bounded asynchronous queue.
 
@@ -131,6 +134,11 @@ app stop cyberdeck.demo
 This first runtime does not load ELF files or scripts from the SD card. The SD
 card remains data storage; dynamic application installation will require a
 separate bounded application host and supervisor.
+
+Apps are compiled against a predefined SDK. The first planned SDK surface is a
+bounded storage read (`storage.bounded_read`) and bounded logger output. No
+universal reply/output format is fixed until it is proven compatible with the
+existing terminal and interactive SSH flows.
 
 The Tab5 system services are also registered applications: `cyberdeck.shell`,
 `cyberdeck.wifi`, `cyberdeck.serial`, `cyberdeck.ssh`, `cyberdeck.screenshot`
@@ -287,8 +295,8 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
 
 ```text
 main/                       # Boot e inicialização da interface
-components/cyberdeck/       # TUI, SSH, Wi-Fi e persistência
-components/m5stack_tab5/    # BSP local do Tab5
+components/cyberdeck/       # apps, runtime, SDK and platform integration
+components/m5stack_tab5/    # vendored BSP for the only Tab5 target
 ```
 
 ## Licença

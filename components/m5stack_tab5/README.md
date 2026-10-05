@@ -1,6 +1,11 @@
 # BSP: M5Stack Tab5
 
-| [HW Reference](https://docs.m5stack.com/en/core/Tab5) | [HOW TO USE API](#api-reference) | [EXAMPLES](#compatible-bsp-examples) | [![Component Registry](https://components.espressif.com/components/espressif/m5stack_core_s3/badge.svg)](https://components.espressif.com/components/espressif/m5stack_core_s3) | ![maintenance-status](https://img.shields.io/badge/maintenance-actively--developed-brightgreen.svg) |
+This directory is the vendored BSP used by `cyberdeck5` for its only supported
+hardware target, M5Stack Tab5. The generic upstream capability and example
+tables below describe the BSP package; they do not imply project portability
+to another board or adoption of Tactility drivers.
+
+| [HW Reference](https://docs.m5stack.com/en/core/Tab5) | [HOW TO USE API](API.md) | [EXAMPLES](#compatible-bsp-examples) | [![Component Registry](https://components.espressif.com/components/espressif/m5stack_core_s3/badge.svg)](https://components.espressif.com/components/espressif/m5stack_core_s3) | ![maintenance-status](https://img.shields.io/badge/maintenance-actively--developed-brightgreen.svg) |
 | --- | --- | --- | --- | -- |
 
 ## Overview

@@ -1,7 +1,7 @@
 # cyberdeck5 Code Map
 
-Mapa de navegacao do firmware monolitico ESP-IDF para o M5Stack Tab5
-(ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
+Mapa de navegacao do OS embarcado simplificado ESP-IDF para o unico alvo
+M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
 
 ## Visao geral
 
@@ -15,9 +15,11 @@ Mapa de navegacao do firmware monolitico ESP-IDF para o M5Stack Tab5
   snapshots a partir de task dedicada e a UI apenas os consome.
 - Artefatos de cobertura gcov comprimidos (`*.gcov.json.gz`) sao ignorados pelo
   Git para manter o repositorio livre de relatorios gerados.
-- O plano de transformacao em sistema operacional embarcado fica em
-  `docs/OS-TRANSFORMATION-PLAN.pt-BR.md`, com o status das fases concluidas e
-  pendentes, a estrutura-alvo e os gates de validacao.
+- A arquitetura e o plano de transformacao ficam em `docs/ARCHITECTURE*.md` e
+  `docs/OS-TRANSFORMATION-PLAN.pt-BR.md`, com as camadas platform/hardware,
+  kernel/runtime, SDK e apps, status das Fases 1-10 e backlog aprovado.
+- `components/m5stack_tab5/` é o BSP vendored do único alvo; sua API é
+  documentação upstream/gerada e não o SDK de aplicações.
 
 `AGENTS.md` documenta o procedimento operacional para agentes validarem o
 firmware no dispositivo pela ponte USB Serial-JTAG, usando a CLI, comandos de

@@ -1,9 +1,58 @@
 # Plano de Transformacao em Sistema Operacional Embarcado
 
-Este documento registra a evolucao do cyberdeck5 para um modelo mais proximo de
-um sistema operacional embarcado leve, inspirado em conceitos do Tactility,
-sem tentar reproduzir Linux e sem introduzir execucao dinamica antes de haver
-limites de seguranca e lifecycle bem definidos.
+Este documento registra a evolucao do cyberdeck5 para um modelo de **OS
+embarcado simplificado**, inspirado em conceitos de Linux sem tentar
+reproduzi-lo. A arquitetura-alvo tem quatro camadas: `platform/hardware`,
+`kernel/runtime`, `SDK` e `apps`. O BSP `m5stack_tab5` permanece vendored e o
+alvo desta fase continua sendo exclusivamente o M5Stack Tab5.
+
+A inspiração em Linux e Tactility é conceitual; nenhum código GPL do Tactility
+é copiado. Não há loader ELF, instalação dinâmica, scripts ou execução de
+aplicações do SD nesta fase, nem portabilidade dos Drivers do Tactility.
+
+## Decisões aprovadas e contrato de evolução
+
+- **platform/hardware:** BSP, ESP-IDF, LVGL, drivers e integrações físicas do
+  Tab5; `m5stack_tab5` é a implementação vendored do único alvo.
+- **kernel/runtime:** supervisor, lifecycle, grants, filas bounded, recovery e
+  composição de boot. O boot é declarativo pelo supervisor; enquanto a
+  migração não estiver completa, `app_main` ainda pode conter a sequência de
+  composição necessária. A próxima implementação deve reduzir essa sequência,
+  não duplicá-la.
+- **SDK:** contrato predefinido para apps compiladas. A primeira API de
+  plataforma é `storage` com leitura bounded (`bounded-read`) e `logger` com
+  eventos/linhas bounded. O código atual já expõe grants/fachadas e a porta
+  `cyberdeck_apps::logger`; a operação de leitura bounded permanece item de
+  implementação do SDK, não uma promessa de acesso direto ao VFS.
+- **apps:** command apps compiladas contra o SDK. O runtime deve preservar as
+  respostas e o output observáveis das apps existentes, especialmente o fluxo
+  interativo SSH; não se fixa um formato universal de reply/output sem provar
+  compatibilidade com esses consumidores.
+
+Itens abertos continuam deliberadamente abertos: contrato final de command
+apps, operação de storage bounded-read, quotas do SDK, catálogo de recursos,
+empacotamento de assets e eventual host seguro para distribuição. Loader
+dinâmico/ELF permanece fora de escopo até existirem sandbox, permissões,
+limites de memória e validação de assinatura.
+
+## Rastreabilidade da decisão aprovada
+
+| Identificador | Decisão/critério | Evidência e arquivo correspondente |
+| --- | --- | --- |
+| REQ-1 | Separar platform/hardware, kernel/runtime, SDK e apps compiladas. | Seções **Decisões aprovadas** e **Estrutura-Alvo** deste plano; `code-map.md` (visão geral e runtime de aplicações compiladas). |
+| REQ-2 | Usar manifestos, lifecycle, dependências e grants bounded sob um supervisor. | `components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h`; `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp`; seções 1, 2 e 9 deste plano. |
+| REQ-3 | Isolar serviços por portas/eventos e preservar limites, teardown cooperativo e ownership. | `components/cyberdeck/include/apps/system/cyberdeck_service_ports.h`; `components/cyberdeck/src/apps/ssh/ssh_client.cpp`; `components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp`; seções 3–5 deste plano. |
+| REQ-4 | Preservar a compatibilidade da saída observável, especialmente o fluxo interativo SSH. | `components/cyberdeck/src/apps/ssh/ssh_client.cpp`; `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp`; `components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp`; seção **apps** deste plano. |
+| REQ-5 | Definir storage `bounded-read` e logger com eventos/linhas bounded, sem prometer acesso direto ao VFS. | Seção **SDK** e **Backlog do SDK e das command apps** deste plano; `components/cyberdeck/include/apps/runtime/cyberdeck_app_logger.h`; `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp`; `components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp`. |
+| REQ-6 | Tornar o boot declarativo pelo supervisor, reduzindo gradualmente a composição manual. | `main/app_main.cpp`; `components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp`; seções 1, 2 e **Backlog do SDK e das command apps** deste plano. |
+| REQ-7 | Manter auditoria documental alinhada ao código atual e marcar documentação upstream/gerada. | Esta seção; `code-map.md`; `docs/ARCHITECTURE.pt-BR.md`; `tests/host/keymap/phase10_traceability.md`; item **Manter a auditoria documental** deste plano. |
+
+| Critério | Evidência de aceite e arquivo correspondente |
+| --- | --- |
+| AC-1 | As quatro camadas, limites de escopo e itens abertos estão explícitos em **Decisões aprovadas e contrato de evolução** e **Não Objetivos** deste plano. |
+| AC-2 | O runtime declara manifestos, dependências, lifecycle, recursos e grants bounded em `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp`, com contratos host referenciados em `code-map.md`. |
+| AC-3 | Saída SSH, storage bounded-read e logger têm evidência documental e pontos de código identificados em `components/cyberdeck/src/apps/ssh/ssh_client.cpp`, `components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp` e `components/cyberdeck/include/apps/runtime/cyberdeck_app_logger.h`. |
+| AC-4 | A auditoria REQ/AC permanece navegável por este plano, `code-map.md`, `docs/ARCHITECTURE.pt-BR.md` e `tests/host/keymap/phase10_traceability.md`, sem alterar código, testes ou `API.md`. |
 
 ## Status Atual
 
@@ -408,6 +457,21 @@ Os hooks do supervisor continuam gerando lifecycle logs pelo event log.
 - [ ] Manter loader dinamico ou ELF fora do escopo ate haver sandbox.
 - [ ] Exigir permissoes, limites de memoria e validacao de assinatura antes de
       qualquer execucao dinamica.
+
+### Backlog do SDK e das command apps
+
+- [ ] Especificar a API `storage.bounded_read` com limites, erros, ownership e
+      comportamento de EOF; implementar somente após o contrato ser revisado.
+- [ ] Documentar a API `logger` do SDK e seu orçamento de eventos sem expor
+      segredos ou payloads irrestritos.
+- [ ] Catalogar apps command compiladas e seus comandos declarados no manifesto.
+- [ ] Comparar qualquer contrato de reply/output com shell local e SSH antes de
+      fixar texto, framing ou semântica de sucesso/erro.
+- [ ] Reduzir gradualmente a sequência manual de `app_main` conforme cada
+      serviço passar a ser iniciado pelo supervisor declarativo.
+- [ ] Manter a auditoria documental: alinhar referências ao código atual e
+      marcar documentação upstream/gerada, sem remover arquivos sem prova de
+      obsolescência.
 
 ## Estrutura-Alvo
 

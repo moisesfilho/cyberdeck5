@@ -2,9 +2,10 @@
 
 **Idiomas:** [English](README.md) | [Português](README.pt-BR.md)
 
-Firmware monolítico e leve para o M5Stack Tab5, com uma única tela TUI touch
-orientada a ferramentas de computação. A primeira ferramenta é um cliente SSH
-interativo no terminal.
+OS embarcado simplificado para o único alvo M5Stack Tab5, com uma única tela
+TUI touch orientada a command apps compiladas. A primeira ferramenta é um
+cliente SSH interativo no terminal. A arquitetura separa
+`platform/hardware`, `kernel/runtime`, `SDK` e `apps`; o BSP Tab5 é vendored.
 
 ## Características
 
@@ -20,6 +21,8 @@ interativo no terminal.
 - Rotação automática da tela pelo sensor BMI270
 - Ponte manual USB Serial-JTAG NDJSON com CLI host (`tools/cyberdeck_cli.py`)
 - Sem sistema de plugins, apps instaláveis, WASM ou desktop
+- Apps compiladas contra manifesto/runtime bounded; loader dinâmico e ELF estão
+  fora do escopo
 
 ## Requisitos
 
@@ -111,6 +114,14 @@ comandos rejeitam componentes `..` nos caminhos.
 simbólicos. Essa é uma interface local de arquivos, não um shell POSIX completo:
 o parsing dos comandos é baseado em espaços, e comandos não suportados são
 encaminhados ao contexto de terminal ativo.
+
+### Aplicações compiladas e SDK
+
+Apps são registradas no supervisor, iniciadas em ordem declarativa e compiladas
+contra o SDK predefinido. A primeira API planejada do SDK é leitura bounded de
+storage (`storage.bounded_read`) acompanhada do logger bounded. O contrato de
+reply/output ainda não é universal: qualquer fixação deve preservar o fluxo
+existente de terminal e SSH.
 
 ### Proteção de Tela
 
@@ -256,8 +267,8 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
 
 ```text
 main/                       # Boot e inicialização da interface
-components/cyberdeck/       # TUI, SSH, Wi-Fi e persistência
-components/m5stack_tab5/    # BSP local do Tab5
+components/cyberdeck/       # apps, runtime, SDK e integração de plataforma
+components/m5stack_tab5/    # BSP vendored do único alvo Tab5
 ```
 
 ## Licença
