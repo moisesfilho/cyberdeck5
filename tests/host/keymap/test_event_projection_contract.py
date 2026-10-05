@@ -41,7 +41,7 @@ def test_boot_and_append_contract():
                  'extern "C" void event_log_write')
     check("text_log_task" in boot and "log_task" in boot,
           "boot must initialize both binary and projection workers")
-    writer = block(source, "bool write_record", "void log_task")
+    writer = block(source, "bool write_record", "void complete_durable_request")
     check("xQueueSend(s_text_queue" not in writer,
           "binary write path must not perform projection I/O")
     log_task = block(source, "void log_task", "int log_vprintf")
@@ -51,7 +51,35 @@ def test_boot_and_append_contract():
     check('"%Y-%m-%d %H:%M:%S"' in append and '"up:%" PRId64 "ms"' in append,
           "projection must preserve deterministic timestamp fallback")
     check("fflush(file) == 0 && fsync(fileno(file)) == 0" in append,
-          "append must be durable before publishing success")
+           "append must be durable before publishing success")
+
+
+def test_durable_append_is_not_projection_io():
+    source = EVENT_LOG.read_text(encoding="utf-8")
+    completion = block(source, "void complete_durable_request", "void log_task")
+    check("request->persisted = write_record" in completion and
+          "xQueueSend(s_text_queue, &request->record, 0)" in completion,
+          "durable append must persist binary data before optional projection")
+    check("text projection queue full; durable event retained" in completion,
+          "projection backpressure must not discard the durable event")
+    write = block(source, "bool write_record", "void complete_durable_request")
+    check("xQueueSend(s_text_queue" not in write and "fwrite" in write,
+          "durable/binary write must not perform projection I/O")
+
+
+def test_log_task_receives_normal_queue_before_notify_fallback():
+    """The binary queue must remain a real consumer path, not notify-only."""
+    source = EVENT_LOG.read_text(encoding="utf-8")
+    task = block(source, "void log_task", "int log_vprintf")
+    durable_receive = task.index("xQueueReceive(s_durable_queue")
+    normal_receive = task.index("xQueueReceive(s_queue, &record, 0)")
+    notify_fallback = task.index("ulTaskNotifyTake")
+    check("xQueueReceive(s_queue, &record, 0)" in task,
+          "log_task must receive normal events from s_queue")
+    check(durable_receive < normal_receive < notify_fallback,
+          "durable work, normal queue work, then notify fallback must be ordered")
+    check("write_record(file, &record" in task and "remember_record(record)" in task,
+          "normal queue receive must persist and update recent state")
 
 
 def test_rotation_is_bounded_and_model_preserves_order():
@@ -200,6 +228,8 @@ def test_existing_contracts_remain_present():
 
 def main():
     tests = [test_boot_and_append_contract,
+             test_durable_append_is_not_projection_io,
+             test_log_task_receives_normal_queue_before_notify_fallback,
              test_rotation_is_bounded_and_model_preserves_order,
              test_read_is_bounded_readonly_and_eof_safe,
              test_mutex_io_timeout_and_snapshot_lifecycle_contract,
@@ -210,7 +240,7 @@ def main():
              test_existing_contracts_remain_present]
     for test in tests:
         test()
-    print(f"PASS: event projection contract ({len(tests)} scenarios; TEST-EVENT-BOOT/APPEND/ROTATE/READ/SECURITY/REGRESSION)")
+    print(f"PASS: event projection contract ({len(tests)} scenarios; TEST-EVENT-BOOT/APPEND/QUEUE/ROTATE/READ/SECURITY/REGRESSION)")
 
 
 if __name__ == "__main__":

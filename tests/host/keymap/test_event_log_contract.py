@@ -125,7 +125,51 @@ def test_recovery_and_durability_contract(source):
     check(durability_tail.index("fsync") < durability_tail.index("*record = candidate"),
           "published record/state must follow fsync")
     check(durability_tail.index("fsync") < durability_tail.index("*next_sequence"),
-          "next sequence must advance only after fsync")
+           "next sequence must advance only after fsync")
+
+
+def test_durable_queue_is_bounded_and_projection_is_best_effort(source):
+    check("constexpr size_t DURABLE_QUEUE_LENGTH = 4;" in source,
+          "durable requests must use a bounded queue")
+    durable = between(source, 'extern "C" esp_err_t event_log_write_durable',
+                      'extern "C" size_t event_log_latest')
+    check("for (int attempt = 0; attempt < 3; ++attempt)" in durable,
+          "durable publication must stop after three queue attempts")
+    check("xQueueSend(s_durable_queue, &request_pointer, 0)" in durable,
+          "a full durable queue must be probed without blocking")
+    check("vTaskDelay(pdMS_TO_TICKS(20))" in durable,
+          "bounded queue retry must yield between attempts")
+
+    completion = between(source, "void complete_durable_request", "void log_task")
+    check("request->persisted = write_record" in completion,
+          "durable completion must be based on the binary write result")
+    check("text projection queue full; durable event retained" in completion,
+          "a full projection queue must retain the durable binary event")
+    check("xQueueSend(s_text_queue, &request->record, 0)" in completion,
+          "durable publication may enqueue only a best-effort projection")
+    check("event_log_write_durable" not in completion,
+          "durable completion must not be mistaken for projection I/O")
+
+
+def test_durable_ack_timeout_has_single_token_ownership(source):
+    durable = between(source, 'extern "C" esp_err_t event_log_write_durable',
+                      'extern "C" size_t event_log_latest')
+    completion = between(source, "void complete_durable_request", "void log_task")
+    check(re.search(r"request->\w+\.store\(2", durable) is not None,
+          "accepted durable work must retain a writer reference before enqueue")
+    check(re.search(r"request->\w+\.store\(1", durable) is not None,
+          "failed enqueue attempts must release the temporary writer reference")
+    check("xSemaphoreTake(request->complete, pdMS_TO_TICKS(250))" in durable,
+          "durable callers must wait for a bounded acknowledgement")
+    accepted = durable[durable.index("if (xQueueSend(s_durable_queue"):]
+    check("return ESP_ERR_TIMEOUT" in accepted and
+          accepted.index("release_durable_request(request)") < accepted.index("return ESP_ERR_TIMEOUT"),
+          "an accepted request timeout must release caller ownership and return timeout")
+    check(durable.count("xQueueSend(s_durable_queue, &request_pointer, 0)") == 1,
+          "one token must not be enqueued again after its accepted send times out")
+    check("(void)xSemaphoreGive(request->complete);" in completion and
+          "release_durable_request(durable);" in source,
+          "writer ACK and queue ownership release must be explicit")
 
 
 def test_fixed_gmt_and_invalid_clock_fallback(source):
@@ -145,13 +189,18 @@ def main():
     source = SOURCE.read_text(encoding="utf-8")
     tests = [test_record_contract, test_checksum_and_slot_model,
              test_recent_reconstruction_wrap_and_order,
-             test_recovery_and_durability_contract, test_fixed_gmt_and_invalid_clock_fallback]
+             test_recovery_and_durability_contract,
+             test_durable_queue_is_bounded_and_projection_is_best_effort,
+             test_durable_ack_timeout_has_single_token_ownership,
+             test_fixed_gmt_and_invalid_clock_fallback]
     failures = []
     for test in tests:
         try:
             test(source) if test in (test_record_contract,
                                      test_recent_reconstruction_wrap_and_order,
                                      test_recovery_and_durability_contract,
+                                     test_durable_queue_is_bounded_and_projection_is_best_effort,
+                                     test_durable_ack_timeout_has_single_token_ownership,
                                      test_fixed_gmt_and_invalid_clock_fallback) else test()
         except (ContractFailure, ValueError, IndexError) as exc:
             failures.append(f"{test.__name__}: {exc}")
@@ -159,7 +208,7 @@ def main():
         for failure in failures:
             print(f"FAIL {failure}")
         return 1
-    print(f"PASS: event_log contract ({len(tests)} scenarios)")
+    print(f"PASS: event_log contract ({len(tests)} scenarios; durable ACK/timeout token ownership)")
     return 0
 
 

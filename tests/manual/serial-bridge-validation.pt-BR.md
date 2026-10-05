@@ -200,6 +200,22 @@ ip: <valor>
 | B4 | Toque fisico durante `ui.type` longo | Entrada fisica nao perde eventos da injeccao (fila bounded + delay) |  |  |
 | B5 | Desconectar/reconectar USB em uso | Nova sessao CLI conecta limpa (`_discard_input`); rid `cli-N` recomeca por sessao |  |  |
 
+### 8.1 Logging da sincronização UTC (TEST-TIMELOG-SERIAL-01..04)
+
+Com o monitor ativo, registrar `sys.info` e `wifi.status` antes/depois. Após
+associação com IP, conferir no log serial exatamente um `time_sync: success`
+somente depois da confirmação de persistência; repetir após desconectar/reconectar
+Wi-Fi. Indisponibilidade do endpoint, perda de IP ou falha de SD não pode gerar
+esse evento nem reboot. Registrar logs de backpressure/retry e o hash do firmware;
+o host não substitui a evidência de append/fsync real em `events.log`.
+
+| ID | Ação | Resultado esperado |
+|---|---|---|
+| TEST-TIMELOG-SERIAL-01 | `sys.info`, `wifi.status`, aguardar sync e observar monitor | Adaptador registra `time_sync/success` uma vez. |
+| TEST-TIMELOG-SERIAL-02 | Repetir sync e inspecionar `events.log`/log de confirmação | Evento aparece somente após append+fsync. |
+| TEST-TIMELOG-SERIAL-03 | Retirar IP ou simular endpoint indisponível | Sem evento de sucesso, sem alteração indevida e sem reboot. |
+| TEST-TIMELOG-SERIAL-04 | Induzir fila ocupada/reconectar Wi-Fi | Retry bounded preserva um evento crítico; boot/UI continuam responsivos. |
+
 ## 9. Criterios de aceite do plano
 
 - P10-P20, L1-L4, U1-U12, W1-W5, A1-A4, D1-D6, B1-B5: **todos Pass** em pelo menos

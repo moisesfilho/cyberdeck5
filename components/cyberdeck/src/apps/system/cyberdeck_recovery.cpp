@@ -7,7 +7,9 @@
 
 namespace cyberdeck_recovery {
 namespace {
-constexpr char k_namespace[] = "cyberdeck_recovery";
+// NVS namespace names are limited to 15 characters. Keep this separate from
+// the C++ namespace so the recovery state can be opened without truncation.
+constexpr char k_namespace[] = "cyberdeck_rec";
 constexpr char k_key[] = "state";
 state s_state;
 bool s_available = false;

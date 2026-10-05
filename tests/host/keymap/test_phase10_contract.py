@@ -16,6 +16,7 @@ SERIAL = ROOT / "components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cp
 APPS = ROOT / "components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp"
 RUNTIME = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp"
 MAIN = ROOT / "main/app_main.cpp"
+RECOVERY_NAMESPACE = "cyberdeck_rec"
 
 def require(condition, message):
     if not condition:
@@ -28,6 +29,11 @@ def body(source, start, end):
 def test_recovery_blob_schema_checksum_limits_and_fail_closed():
     source = RECOVERY.read_text()
     header = POLICY_H.read_text()
+    namespace = re.search(r'constexpr\s+char\s+k_namespace\[\]\s*=\s*"([^"]+)"', source)
+    require(namespace is not None and namespace.group(1) == RECOVERY_NAMESPACE,
+            "recovery must use the approved NVS namespace cyberdeck_rec")
+    require(len(RECOVERY_NAMESPACE) <= 15,
+            "the recovery NVS namespace must fit ESP-IDF's 15-character limit")
     require("k_state_version" in header and "k_max_app_errors" in header,
             "recovery state must have explicit schema version and bounded error count")
     require("nvs_get_blob" in source and "size != sizeof(s_state)" in source,
@@ -36,6 +42,10 @@ def test_recovery_blob_schema_checksum_limits_and_fail_closed():
             "recovery must reject an incompatible schema")
     require("nvs_flash_erase" not in source and "nvs_flash_erase" not in MAIN.read_text(),
             "NVS corruption/unavailability must never trigger automatic erase")
+    require("nvs_open(k_namespace, NVS_READWRITE" in source and
+            "nvs_set_blob(handle, k_key, &s_state, sizeof(s_state))" in source and
+            "nvs_commit(handle)" in source,
+            "recovery must preserve NVS persistence through the approved namespace")
     require("nvs_close(handle);\n        return ESP_ERR_INVALID_SIZE" in source,
             "corrupt recovery data must fail closed before becoming available")
     require("k_app_id_size" in header and "k_error_size" in header,
@@ -82,6 +92,19 @@ def test_sys_info_and_app_info_expose_recovery_diagnostics():
             "app info must expose the last app failure")
     require("record_error" in POLICY.read_text() and "error_for" in POLICY.read_text(),
             "last error must be addressable per application")
+    require("record_app_error" in RECOVERY.read_text() and "save()" in RECOVERY.read_text(),
+            "recovery diagnostics must remain persisted, not only held in RAM")
+
+def test_boot_ready_is_the_only_path_to_recovery_commit():
+    main = MAIN.read_text()
+    ready = main.index("bool boot_ready = true")
+    commit = main.index("cyberdeck_system_apps_commit_ready()")
+    require(ready < commit and "if (boot_ready)" in main[ready:commit],
+            "recovery commit must be reached only after boot_ready")
+    require("boot_ready = false" in main[ready:commit],
+            "startup failures must prevent the recovery commit")
+    require("recovery checkpoint deferred after startup failure" in main,
+            "failed startup must preserve the pending recovery attempt")
 
 def test_lifecycle_logs_are_bounded_and_emitted():
     runtime = RUNTIME.read_text()
@@ -98,6 +121,7 @@ def main():
              test_boot_attempt_checkpoint_and_three_interruptions,
              test_safe_mode_latch_and_explicit_reset_services,
              test_sys_info_and_app_info_expose_recovery_diagnostics,
+             test_boot_ready_is_the_only_path_to_recovery_commit,
              test_lifecycle_logs_are_bounded_and_emitted]
     failures = []
     for test in tests:

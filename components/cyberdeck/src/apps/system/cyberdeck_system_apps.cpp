@@ -231,12 +231,11 @@ service_application s_bluetooth{make_manifest("cyberdeck.bluetooth", "Bluetooth 
                                               cyberdeck_apps::app_type::background, {"ble"},
                                               k_ble_host_task_stack_bytes, k_ble_command_queue_depth),
                                 start_bluetooth, stop_bluetooth, true};
-service_application s_time_sync{make_manifest("cyberdeck.time_sync", "UTC time synchronization",
-                                              "Bounded HTTPS UTC clock synchronization",
-                                               {"cyberdeck.event_log", "cyberdeck.wifi"}, {"network", "clock"},
-                                               k_time_sync_lifecycle_timeout_ms,
-                                              cyberdeck_apps::app_type::background, {"network", "clock"}, 6144, 1),
-                                start_time_sync, stop_time_sync, true};
+service_application s_time_sync{
+    make_manifest("cyberdeck.time_sync", "UTC time synchronization", "Bounded HTTPS UTC clock synchronization",
+                  {"cyberdeck.event_log", "cyberdeck.wifi"}, {"network", "clock"}, k_time_sync_lifecycle_timeout_ms,
+                  cyberdeck_apps::app_type::background, {"network", "clock"}, 16384, 1),
+    start_time_sync, stop_time_sync, true};
 
 cyberdeck_apps::application *const k_apps[] = {
     &s_event_log, &cyberdeck_shell_app::global_application(),

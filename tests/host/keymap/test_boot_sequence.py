@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 APP_MAIN = ROOT / "main" / "app_main.cpp"
 UI_SOURCE = ROOT / "components" / "cyberdeck" / "src" / "platform" / "display" / "cyberdeck_ui.cpp"
 SYSTEM_APPS_SOURCE = ROOT / "components" / "cyberdeck" / "src" / "apps" / "system" / "cyberdeck_system_apps.cpp"
+RECOVERY_SOURCE = ROOT / "components" / "cyberdeck" / "src" / "apps" / "system" / "cyberdeck_recovery.cpp"
 LOCAL_SHELL_HEADER = ROOT / "components" / "cyberdeck" / "include" / "apps" / "shell" / "cyberdeck_local_shell.h"
 
 
@@ -26,6 +27,7 @@ def main() -> int:
     app = APP_MAIN.read_text(encoding="utf-8")
     ui = UI_SOURCE.read_text(encoding="utf-8")
     system_apps = SYSTEM_APPS_SOURCE.read_text(encoding="utf-8")
+    recovery = RECOVERY_SOURCE.read_text(encoding="utf-8")
     local_shell_header = LOCAL_SHELL_HEADER.read_text(encoding="utf-8")
     failures: list[str] = []
 
@@ -49,7 +51,13 @@ def main() -> int:
     check(logging_start is not None, "app_main must start logging through the supervisor", failures)
     if handle_check and logging_start:
         check(handle_check.end() < logging_start.start(),
-              "the BSP SD-card handle must be checked before supervisor logging starts", failures)
+               "the BSP SD-card handle must be checked before supervisor logging starts", failures)
+
+    namespace = re.search(r'constexpr\s+char\s+k_namespace\[\]\s*=\s*"([^"]+)"', recovery)
+    check(namespace is not None and namespace.group(1) == "cyberdeck_rec",
+          "recovery must open the valid cyberdeck_rec NVS namespace", failures)
+    check("nvs_flash_erase" not in app and "nvs_flash_erase" not in recovery,
+          "boot recovery must not erase NVS", failures)
 
     ui_init = list(re.finditer(r"\bcyberdeck_ui_init\s*\(\s*\)", app))
     check(len(ui_init) == 1, "app_main must contain exactly one cyberdeck_ui_init() call", failures)
@@ -65,6 +73,14 @@ def main() -> int:
     check(re.search(r'virtual_root\s*=\s*"/"', local_shell_header) is not None,
           "the public shell contract must default the virtual root to /",
           failures)
+
+    boot_ready = app.index("bool boot_ready = true")
+    commit_ready = app.index("cyberdeck_system_apps_commit_ready()")
+    check(boot_ready < commit_ready and "if (boot_ready)" in app[boot_ready:commit_ready],
+          "commit_ready must follow the boot_ready gate", failures)
+    check("boot_ready = false" in app[boot_ready:commit_ready] and
+          "recovery checkpoint deferred after startup failure" in app,
+          "startup failure must preserve diagnostics and defer the checkpoint", failures)
 
     if failures:
         for failure in failures:

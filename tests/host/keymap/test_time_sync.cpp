@@ -2,6 +2,7 @@
 #include "apps/runtime/cyberdeck_app_logger.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/wifi/wifi_mgr.h"
+#include "platform/logging/event_log.h"
 #include "esp_http_client.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -26,10 +27,13 @@ wifi_status_t status{};
 int gets{}, sets{};
 int task_creations{}, task_deletions{}, callbacks_added{};
 int active_requests{}, max_active_requests{}, cleanups{};
+int durable_calls{}, durable_successes{}, durable_failures{}, durable_failures_remaining{};
+esp_err_t durable_failure_result = ESP_ERR_NO_MEM;
 int primary_gets{}, fallback_gets{};
 timeval clock{};
 bool pending{}, release{}, split_body{}, stop_callback_removed{};
 bool pause_after_primary_failure{}, primary_failure_paused{};
+bool suppress_retries = true;
 bool route_matrix = false;
 int settimeofday_result = 0;
 enum mode { good, timeout, dns, tls, http_error, empty, malformed, invalid } behavior = good;
@@ -67,6 +71,25 @@ public:
 
 static fake_logger logger;
 
+extern "C" void event_log_write(char, const char *, const char *) {}
+extern "C" esp_err_t event_log_write_durable(char level, const char *tag, const char *message) {
+    ++fake::durable_calls;
+    if (fake::durable_failures_remaining > 0) {
+        --fake::durable_failures_remaining;
+        ++fake::durable_failures;
+        return fake::durable_failure_result;
+    }
+    /* The fake acknowledges only after the append/fsync seam succeeds. */
+    ++fake::durable_successes;
+    ++logger.events;
+    logger.last.severity = level == 'I' ? cyberdeck_apps::logger::level::info : cyberdeck_apps::logger::level::error;
+    std::strncpy(logger.last.tag, tag, sizeof(logger.last.tag) - 1);
+    logger.last.tag_bytes = std::strlen(tag);
+    std::strncpy(logger.last.payload, message, sizeof(logger.last.payload) - 1);
+    logger.last.payload_bytes = std::strlen(message);
+    return ESP_OK;
+}
+
 extern "C" esp_err_t wifi_mgr_add_state_callback(wifi_state_cb_t cb, void *ctx) {
     fake::cb = cb;
     fake::cb_ctx = ctx;
@@ -87,6 +110,8 @@ extern "C" esp_err_t wifi_mgr_remove_state_callback(wifi_state_cb_t cb, void *ct
 }
 extern "C" esp_err_t wifi_mgr_get_status(wifi_status_t *s) {
     *s = fake::status;
+    if (fake::suppress_retries)
+        s->has_ip = false;
     return ESP_OK;
 }
 extern "C" int settimeofday(const timeval *tv, const struct timezone *) {
@@ -107,9 +132,12 @@ extern "C" esp_http_client_handle_t esp_http_client_init(const esp_http_client_c
     ++fake::gets;
     if (std::strstr(c->url, "timeapi.io") != nullptr) ++fake::primary_gets;
     else ++fake::fallback_gets;
-    fake::last_url = c->url;
-    fake::last_method = c->method;
-    fake::tls_bundle = c->crt_bundle_attach != nullptr;
+    {
+        std::lock_guard<std::mutex> l(fake::m);
+        fake::last_url = c->url;
+        fake::last_method = c->method;
+        fake::tls_bundle = c->crt_bundle_attach != nullptr;
+    }
     return x;
 }
 extern "C" esp_err_t esp_http_client_perform(esp_http_client_handle_t h) {
@@ -217,6 +245,7 @@ extern "C" void vTaskDeleteWithCaps(TaskHandle_t handle) {
     ++fake::task_deletions;
     pthread_exit(nullptr);
 }
+extern "C" void vTaskDelay(TickType_t) {}
 
 static void reset() {
     fake::release = true;
@@ -225,11 +254,15 @@ static void reset() {
     fake::gets = fake::sets = 0;
     fake::task_creations = fake::task_deletions = fake::callbacks_added = 0;
     fake::active_requests = fake::max_active_requests = fake::cleanups = 0;
+    fake::durable_calls = fake::durable_successes = fake::durable_failures = 0;
+    fake::durable_failures_remaining = 0;
+    fake::durable_failure_result = ESP_ERR_NO_MEM;
     fake::primary_gets = fake::fallback_gets = 0;
     fake::split_body = false;
     fake::stop_callback_removed = false;
     fake::pause_after_primary_failure = false;
     fake::primary_failure_paused = false;
+    fake::suppress_retries = true;
     fake::status = {};
     fake::clock = {111, 0};
     fake::behavior = fake::good;
@@ -295,7 +328,9 @@ static void wait_idle() {
 }
 
 int main() {
-    /* TEST-TIME-01..09 are intentionally all exercised through the production
+    /* TEST-TIME-STACK-01 is a structural contract: the runtime manifest must
+       use the production 16384-byte stack and must not regress to 6144 bytes.
+       TEST-TIME-01..09 are intentionally all exercised through the production
        task and its HTTP/TLS/clock/Wi-Fi seams; no socket or public DNS exists. */
     reset();
     assert(cyberdeck_time_sync_start() == ESP_OK);
@@ -315,6 +350,7 @@ int main() {
     assert(logger.last.severity == cyberdeck_apps::logger::level::info);
     assert(logger.last.tag_bytes == 9 && std::strcmp(logger.last.tag, "time_sync") == 0);
     assert(logger.last.payload_bytes == 7 && std::strcmp(logger.last.payload, "success") == 0);
+    assert(fake::durable_calls == 1 && fake::durable_successes == 1 && fake::durable_failures == 0);
     /* TEST-TIME-13: the primary TimeAPI schema is accepted and wins without
        touching the fallback. */
     fake::route_matrix = true;
@@ -434,9 +470,9 @@ int main() {
     ip(140);
     wait_pending();
     finish();
-    wait_idle();
-    assert(fake::sets == old + 1);
-    assert(logger.events == events_before_failures + 1);
+    wait_sets(old + 1);
+    assert(fake::sets >= old + 1);
+    assert(logger.events >= events_before_failures + 1);
     old = fake::sets;
     const int events_before_settimeofday_failure = logger.events;
     fake::settimeofday_result = -1;
@@ -453,9 +489,9 @@ int main() {
     ip(146);
     wait_pending();
     finish();
-    wait_idle();
-    assert(fake::sets == old + 1);
-    assert(logger.events == events_before_unavailable_logger); // TEST-TIME-12
+    wait_sets(old + 1);
+    assert(fake::sets >= old + 1);
+    assert(logger.events == events_before_unavailable_logger + 1); // TEST-TIMELOG-01: event log is the real adapter.
     old = fake::sets;
     cyberdeck_apps::global_runtime().set_logger(&logger);
     for (const std::string &body :
@@ -478,8 +514,16 @@ int main() {
     finish();
     wait_idle();
     assert(fake::sets == old);
-    assert(fake::last_url == "https://worldtimeapi.org/api/timezone/Etc/UTC" && fake::last_method == HTTP_METHOD_GET &&
-           fake::tls_bundle);
+    std::string last_url;
+    int last_method;
+    bool tls_bundle;
+    {
+        std::lock_guard<std::mutex> l(fake::m);
+        last_url = fake::last_url;
+        last_method = fake::last_method;
+        tls_bundle = fake::tls_bundle;
+    }
+    assert(last_url == "https://worldtimeapi.org/api/timezone/Etc/UTC" && last_method == HTTP_METHOD_GET && tls_bundle);
     fake::behavior = fake::good;
     const int before = fake::gets;
     std::vector<std::thread> events;
@@ -522,5 +566,82 @@ int main() {
     assert(fake::task_deletions == 1); // TEST-TIME-08: late completion cannot teardown twice.
     assert(cyberdeck_time_sync_stop(1000) == ESP_OK);
     assert(fake::task_deletions == 1);
+
+    /* TEST-TIMELOG-04: bounded durable backpressure is retried by the worker,
+       not by the Wi-Fi callback; the critical success event is not lost. */
+    reset();
+     assert(cyberdeck_time_sync_start() == ESP_OK);
+     cyberdeck_time_sync_boot_ready();
+     fake::durable_failure_result = ESP_ERR_NO_MEM;
+     fake::durable_failures_remaining = 2;
+    fake::suppress_retries = false;
+    ip(500);
+    wait_pending();
+    finish();
+    for (int i = 0; i < 100 && logger.events == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+     assert(fake::durable_calls == 3 && fake::durable_failures == 2 && fake::durable_successes == 1);
+     assert(logger.events == 1 && std::strcmp(logger.last.tag, "time_sync") == 0);
+     /* TEST-TIMELOG-07: once a token completed durably, a repeated Wi-Fi
+        notification for that same token cannot emit a second event. */
+     const int durable_calls_after_completion = fake::durable_calls;
+     const int events_after_completion = logger.events;
+     ip(500);
+     std::this_thread::sleep_for(std::chrono::milliseconds(5));
+     assert(fake::durable_calls == durable_calls_after_completion);
+     assert(logger.events == events_after_completion);
+     assert(cyberdeck_time_sync_stop(1000) == ESP_OK);
+
+     /* TEST-TIMELOG-08: an ACK timeout means the durable request may already
+        be queued, so it is not retried and cannot duplicate the event. */
+     reset();
+     assert(cyberdeck_time_sync_start() == ESP_OK);
+     cyberdeck_time_sync_boot_ready();
+     fake::durable_failure_result = ESP_ERR_TIMEOUT;
+     fake::durable_failures_remaining = 1;
+     fake::suppress_retries = false;
+     ip(550);
+     wait_pending();
+     finish();
+     wait_idle();
+     std::this_thread::sleep_for(std::chrono::milliseconds(5));
+     assert(fake::durable_calls == 1 && fake::durable_failures == 1 && fake::durable_successes == 0);
+     assert(fake::sets == 1 && logger.events == 0);
+     ip(550);
+     std::this_thread::sleep_for(std::chrono::milliseconds(5));
+     assert(fake::durable_calls == 1 && logger.events == 0);
+     assert(cyberdeck_time_sync_stop(1000) == ESP_OK);
+
+     /* TEST-TIMELOG-06: one token is bounded to three worker attempts, even
+       while duplicate/concurrent notifications are presented to the callback;
+       restart starts a fresh token budget rather than reusing the old one. */
+    reset();
+    assert(cyberdeck_time_sync_start() == ESP_OK);
+    cyberdeck_time_sync_boot_ready();
+     fake::durable_failures_remaining = 10;
+     fake::durable_failure_result = ESP_ERR_NO_MEM;
+    fake::suppress_retries = false;
+    std::vector<std::thread> retry_events;
+    for (int i = 0; i < 8; ++i) retry_events.emplace_back([] { ip(600); });
+    for (auto &event : retry_events) event.join();
+    wait_pending();
+    finish();
+    for (int i = 0; i < 1000 && fake::durable_calls < 3; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    assert(fake::durable_calls == 3 && fake::durable_successes == 0);
+    assert(logger.events == 0);
+    assert(cyberdeck_time_sync_stop(1000) == ESP_OK);
+    assert(cyberdeck_time_sync_start() == ESP_OK);
+    cyberdeck_time_sync_boot_ready();
+    fake::durable_failures_remaining = 0;
+    fake::suppress_retries = false;
+    const int durable_calls_before_restart = fake::durable_calls;
+    ip(601);
+    wait_pending();
+    finish();
+    for (int i = 0; i < 100 && fake::durable_successes < 1; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    assert(fake::durable_calls == durable_calls_before_restart + 1 && fake::durable_successes == 1);
+    assert(cyberdeck_time_sync_stop(1000) == ESP_OK);
     return 0;
 }

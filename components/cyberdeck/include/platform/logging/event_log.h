@@ -14,6 +14,12 @@ esp_err_t event_log_init(void);
 /* Adds a structured event without going through ESP_LOG. */
 void event_log_write(char level, const char *tag, const char *message);
 
+/* Persists one event to events.log, including fsync, before returning. The
+ * textual projection remains asynchronous and best-effort. ESP_ERR_TIMEOUT
+ * means the bounded durable queue accepted the request but its ACK deadline
+ * elapsed; ESP_ERR_NO_MEM means no queue slot accepted it and retry is safe. */
+esp_err_t event_log_write_durable(char level, const char *tag, const char *message);
+
 typedef void (*event_log_line_callback_t)(const char *line, void *context);
 
 /* Returns the most recent records already processed by the logger task. */

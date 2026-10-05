@@ -177,10 +177,10 @@ BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_e
 TIME_SYNC_SRC := ../../../components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
 TIME_SYNC_SHIM := time_sync_shim
 
-test_time_sync_contract: test_time_sync_contract.py time_sync_traceability.md ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp $(TIME_SYNC_SRC) Makefile
+test_time_sync_contract: test_time_sync_contract.py time_sync_traceability.md ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp $(TIME_SYNC_SRC) ../../../components/cyberdeck/src/platform/logging/event_log.cpp ../../../components/cyberdeck/include/platform/logging/event_log.h Makefile
 	$(PYTHON) test_time_sync_contract.py
 
-test_time_sync: test_time_sync.cpp $(TIME_SYNC_SRC) $(TIME_SYNC_SHIM)/cJSON.cpp $(TIME_SYNC_SHIM)/cJSON.h $(TIME_SYNC_SHIM)/esp_http_client.h Makefile
+test_time_sync: test_time_sync.cpp $(TIME_SYNC_SRC) $(TIME_SYNC_SHIM)/cJSON.cpp $(TIME_SYNC_SHIM)/cJSON.h $(TIME_SYNC_SHIM)/esp_http_client.h $(TIME_SYNC_SHIM)/freertos/task.h ../../../components/cyberdeck/include/platform/logging/event_log.h Makefile
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I$(TIME_SYNC_SHIM) -Ishim -I../../../components/cyberdeck/include test_time_sync.cpp $(TIME_SYNC_SRC) $(TIME_SYNC_SHIM)/cJSON.cpp -o $@
 
 .PHONY: test_phase9_capabilities test_phase9_capabilities_contract
@@ -914,7 +914,7 @@ test_ble_bond_reconnect: test_ble_state_machine test_ble_event_dispatch test_ble
 test: $(BINS)
 	@echo "==> Executando teste comportamental de sincronizacao UTC (TEST-TIME-01..08)"
 	@./test_time_sync
-	@echo "==> Executando contrato de runtime da sincronizacao UTC (TEST-TIME-09)"
+	@echo "==> Executando contrato de runtime da sincronizacao UTC (TEST-TIME-09 + TEST-TIME-STACK-01)"
 	@$(MAKE) --no-print-directory test_time_sync_contract
 	@echo "==> Executando testes do keymap do shell de entrada"
 	@./test_keymap

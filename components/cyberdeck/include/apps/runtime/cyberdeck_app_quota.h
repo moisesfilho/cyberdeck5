@@ -11,7 +11,7 @@ struct quota_limits {
     static constexpr std::size_t k_max_grants = 8;
     std::uint32_t resources = k_max_resources;
     std::uint32_t grants = k_max_grants;
-    std::uint32_t stack_bytes = 8192;
+    std::uint32_t stack_bytes = 16384;
     std::uint32_t queue_depth = 8;
     std::uint32_t bounded_read_bytes = 12288;
     std::uint32_t logger_events = 64;

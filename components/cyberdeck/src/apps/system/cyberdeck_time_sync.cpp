@@ -1,6 +1,5 @@
 #include "apps/system/cyberdeck_time_sync.h"
 
-#include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/wifi/wifi_mgr.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
@@ -9,6 +8,7 @@
 #include "freertos/idf_additions.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "platform/logging/event_log.h"
 
 #include <atomic>
 #include <cmath>
@@ -23,8 +23,9 @@ constexpr char kWorldTimeApiUrl[] = "https://worldtimeapi.org/api/timezone/Etc/U
 constexpr size_t kBodyLimit = 2048;
 constexpr uint32_t kHttpTimeoutMs = 4000;
 constexpr uint32_t kLifecycleTimeoutMs = 9000;
-constexpr uint32_t kTaskStackBytes = 6144;
+constexpr uint32_t kTaskStackBytes = 16384;
 constexpr uint64_t kNoConnectionToken = UINT64_MAX;
+constexpr uint8_t kMaxAttemptsPerToken = 3;
 
 struct response_buffer {
     char data[kBodyLimit + 1]{};
@@ -226,33 +227,32 @@ bool fetch_and_parse(const char *url, bool (*parser)(const char *, time_t &), ti
     return parser(body.data, out);
 }
 
-bool set_clock(time_t timestamp) {
+esp_err_t set_clock(time_t timestamp) {
     struct timeval tv {
         timestamp, 0
     };
     if (settimeofday(&tv, nullptr) != 0)
-        return false;
-    if (cyberdeck_apps::logger *logger = cyberdeck_apps::global_runtime().app_logger(); logger != nullptr)
-        (void)logger->write(cyberdeck_apps::logger::level::info, "time_sync", "success");
-    return true;
+        return ESP_FAIL;
+    /* Do not expose success until events.log has acknowledged the fsync. */
+    return event_log_write_durable('I', "time_sync", "success");
 }
 
-bool fetch_and_set_clock(const context &ctx) {
+esp_err_t fetch_and_set_clock(const context &ctx) {
     time_t timestamp = 0;
     if (fetch_and_parse(kTimeApiUrl, parse_timeapi_response, timestamp)) {
         if (ctx.stop.load(std::memory_order_acquire))
-            return false;
+            return ESP_ERR_INVALID_STATE;
         return set_clock(timestamp);
     }
     // The fallback is a second bounded network operation.  Do not start it
     // after teardown has been requested; this keeps stop quiescent without
     // adding an unbounded wait to the boot path.
     if (ctx.stop.load(std::memory_order_acquire))
-        return false;
+        return ESP_ERR_INVALID_STATE;
     if (!fetch_and_parse(kWorldTimeApiUrl, parse_worldtime_response, timestamp))
-        return false;
+        return ESP_FAIL;
     if (ctx.stop.load(std::memory_order_acquire))
-        return false;
+        return ESP_ERR_INVALID_STATE;
     return set_clock(timestamp);
 }
 
@@ -277,6 +277,8 @@ void wifi_callback(const wifi_status_t *status, bool, void *) {
 
 void sync_task(void *) {
     context &ctx = state();
+    uint64_t attempt_token = kNoConnectionToken;
+    uint8_t attempts = 0;
     for (;;) {
         (void)xSemaphoreTake(ctx.wake, pdMS_TO_TICKS(250));
         if (ctx.stop.load(std::memory_order_acquire))
@@ -284,8 +286,25 @@ void sync_task(void *) {
         if (!ctx.requested.exchange(false, std::memory_order_acq_rel))
             continue;
         const uint64_t token = ctx.requested_token.load(std::memory_order_acquire);
-        if (fetch_and_set_clock(ctx))
+        if (attempt_token != token) {
+            attempt_token = token;
+            attempts = 0;
+        }
+        ++attempts;
+        const esp_err_t result = fetch_and_set_clock(ctx);
+        if (result == ESP_OK) {
             ctx.completed_token.store(token, std::memory_order_release);
+        } else if (result != ESP_ERR_TIMEOUT && !ctx.stop.load(std::memory_order_acquire) &&
+                   attempts < kMaxAttemptsPerToken) {
+            /* Retry boundedly from the worker, never from the Wi-Fi callback.
+             * A durable-log failure remains a failed attempt until fsync is
+             * confirmed, but one token cannot keep the worker alive forever. */
+            ctx.requested_token.store(kNoConnectionToken, std::memory_order_release);
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            wifi_status_t status{};
+            if (wifi_mgr_get_status(&status) == ESP_OK)
+                request_for_status(status);
+        }
     }
     (void)xSemaphoreGive(ctx.quiesced);
     vTaskDeleteWithCaps(nullptr);

@@ -41,6 +41,11 @@ HTTP local).
   `fflush`, `fsync` antes de publicar sucesso) e libera o lock.
 - Consequência: a projeção pode perder registros (fila cheia, SD lento/cheio)
   sem afetar o binário; o binário nunca é regenerado a partir do texto.
+- Distinção de contrato: `event_log_write_durable` usa a fila durável e confirma
+  somente após `write_record`/`fsync` em `events.log`; o eventual `xQueueSend`
+  para `s_text_queue` é apenas uma cópia best-effort. Os cenários
+  `TEST-TIMELOG-03/04/06` e `test_durable_append_is_not_projection_io` não
+  classificam essa persistência binária como I/O da projeção.
 - Coordenação separada: `s_text_mutex` (projeção) e `s_recent_mutex` (estado
   recente) são mutex distintos, com `TEXT_MUTEX_TIMEOUT = pdMS_TO_TICKS(100)`
   tipado (timeout → `ESP_ERR_TIMEOUT`).
@@ -118,6 +123,8 @@ HTTP local).
 | Requisito/AC | Cenário | Teste | Evidência |
 |---|---|---|---|
 | REQ-EVENT-05/AC boot e append durável best-effort | init sobe task binária e de projeção; `write_record` não faz I/O de projeção; `log_task` enfileira; timestamp determinístico; `fflush`+`fsync` antes de publicar | `test_event_projection_contract.py::test_boot_and_append_contract` | host (PASS) |
+| REQ-EVENT-05/AC consumo da fila normal | `log_task` recebe `s_queue` depois da fila durável e antes do fallback de notify, persistindo e atualizando recentes | `test_event_projection_contract.py::test_log_task_receives_normal_queue_before_notify_fallback` | host (PASS) |
+| REQ-EVENT-11/AC ACK/timeout sem duplicação por token | enqueue aceito espera ACK bounded; timeout retorna `ESP_ERR_TIMEOUT`, libera a posse do chamador e não reenfileira o mesmo token; ACK libera a posse do writer | `test_event_log_contract.py::test_durable_ack_timeout_has_single_token_ownership` | host (PASS) |
 | REQ-EVENT-06/AC rotação bounded 1 MiB x 8 | limites explícitos de tamanho e geração; desloca só as gerações bounded; `rename` do ativo; modelo retém no máximo 7 arquivados | `test_event_projection_contract.py::test_rotation_is_bounded_and_model_preserves_order` | host (PASS) |
 | REQ-EVENT-07/AC leitura bounded somente leitura e EOF seguro | rejeita capacidade `>1024`/inválida; sem `fwrite`/`rename`; EOF é zero-byte bem-sucedido; offset inclui rotacionados; Base64 bounded | `test_event_projection_contract.py::test_read_is_bounded_readonly_and_eof_safe` | host (PASS) |
 | REQ-EVENT-01/AC mutex-I/O e timeout tipado | locks separados, timeout bounded e leitura fora do lock | `test_event_projection_contract.py::test_mutex_io_timeout_and_snapshot_lifecycle_contract` | host (PASS) |
@@ -131,11 +138,11 @@ HTTP local).
 ## Gate e evidência executada
 
 - Host: `make -C tests/host/keymap test_event_projection_contract` →
-  `PASS: event projection contract (9 scenarios;
-  TEST-EVENT-BOOT/APPEND/ROTATE/READ/SECURITY/REGRESSION)`. O alvo também entra
+  `PASS: event projection contract (10 scenarios;
+  TEST-EVENT-BOOT/APPEND/QUEUE/ROTATE/READ/SECURITY/REGRESSION)`. O alvo também entra
   no agregado `make test`.
 - Regressão do binário: `make -C tests/host/keymap test_event_log_contract` →
-  PASS.
+  PASS (7 cenários, incluindo ACK/timeout e ownership de token).
 - Nenhum outro alvo host foi executado como parte deste documento; não há
   alegação de cobertura além dos alvos citados.
 
