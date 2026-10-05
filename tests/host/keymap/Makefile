@@ -190,7 +190,7 @@ test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9
 
 .PHONY: all test verify clean test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
 
-.PHONY: test_recovery_policy test_phase10_contract
+.PHONY: test_recovery_policy test_phase10_contract test_event_projection_contract
 .PHONY: test_terminal_scrollback test_lat03_contract test_lat04_contract
 .PHONY: test_display_lock_contract
 
@@ -251,6 +251,9 @@ test_event_log_recent: test_event_log_recent.cpp $(EVENT_LOG_RECENT_SRC) ../../.
 
 test_event_log_contract: test_event_log_contract.py ../../../components/cyberdeck/src/platform/logging/event_log.cpp Makefile
 	$(PYTHON) test_event_log_contract.py
+
+test_event_projection_contract: test_event_projection_contract.py event_projection_traceability.md ../../../components/cyberdeck/src/platform/logging/event_log.cpp ../../../components/cyberdeck/include/platform/logging/event_log.h ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp Makefile
+	$(PYTHON) test_event_projection_contract.py
 
 # Fase 10: policy pura de recovery, incluindo boot pendente, checkpoint,
 # contador de três interrupções, latch e último erro bounded por app.
@@ -925,6 +928,8 @@ test: $(BINS)
 	@./test_event_log_recent
 	@echo "==> Executando contrato estrutural do event log"
 	@$(MAKE) --no-print-directory test_event_log_contract
+	@echo "==> Executando contrato estrutural da projecao textual de eventos"
+	@$(MAKE) --no-print-directory test_event_projection_contract
 	@echo "==> Executando contrato de configuracao do event log"
 	@$(MAKE) --no-print-directory test_event_log_config_contract
 	@echo "==> Executando testes do indicador de estado do Wi-Fi"

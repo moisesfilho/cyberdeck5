@@ -3,6 +3,7 @@
 #define CYBERDECK_CONFIG_DIR "/sdcard/.cyberdeck5"
 #define CYBERDECK_LOG_DIR "/sdcard/.cyberdeck5/logs"
 #define CYBERDECK_LOG_PATH "/sdcard/.cyberdeck5/logs/events.log"
+#define CYBERDECK_TEXT_LOG_PATH "/sdcard/.cyberdeck5/logs/events.txt"
 #define CYBERDECK_SSH_DIR "/sdcard/.cyberdeck5/ssh"
 #define CYBERDECK_KNOWN_HOSTS_PATH "/sdcard/.cyberdeck5/ssh/known_hosts"
 

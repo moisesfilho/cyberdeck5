@@ -1,5 +1,31 @@
 # cyberdeck5 Code Map
 
+## Atualizacao de recuperacao de eventos
+
+- `components/cyberdeck/src/platform/logging/event_log.cpp` mantem
+  `events.log` como fonte binaria e projeta best-effort em `events.txt`, com
+  rotacao `.1`..`.7` limitada a 1 MiB por arquivo; estado recente e coordenacao
+  da projecao usam locks separados, e a leitura textual abre um snapshot
+  bounded de descritores antes de liberar a coordenacao para I/O SD. O task de
+  projecao tem rollback explicito no init; `event_log_text_size` e
+  `event_log_text_read` fornecem leitura somente leitura bounded a 1024 bytes,
+  com linhas normalizadas e timeout de mutex preservado.
+- `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp` adiciona
+  `events.read`, stream NDJSON em chunks Base64 de no maximo 1024 bytes.
+- `components/cyberdeck/src/apps/screenshot/screenshot_server.cpp` expoe o
+  endpoint local fixo `GET /events.txt`, sem aceitar caminho arbitrario, junto
+  do servidor HTTP existente.
+- `tests/host/keymap/test_event_projection_contract.py` cobre
+  TEST-EVENT-BOOT/APPEND/ROTATE/READ/SECURITY/REGRESSION: inicializacao e
+  append best-effort, mutex/I-O desacoplado, timeout tipado, rollback de
+  init/task, snapshot paginado estável sob rotação, normalização CR/LF,
+  rotacao bounded, leitura somente leitura/EOF, stream Serial-JTAG
+  `events.read`, endpoint HTTP fixo e preservacao dos contratos Serial-JTAG
+  existentes. `event_projection_traceability.md` mantém a matriz REQ/AC ->
+  TEST; o alvo isolado `make test_event_projection_contract` também entra no
+  agregado host `make test`. Como a implementação depende de ESP-IDF/SD, os
+  cenários de I/O são contratos estruturais e modelos bounded determinísticos.
+
 Mapa de navegacao do OS embarcado simplificado ESP-IDF para o unico alvo
 M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
 

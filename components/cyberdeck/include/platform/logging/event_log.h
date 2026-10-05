@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +18,10 @@ typedef void (*event_log_line_callback_t)(const char *line, void *context);
 
 /* Returns the most recent records already processed by the logger task. */
 size_t event_log_latest(size_t max_events, event_log_line_callback_t callback, void *context);
+
+/* Read-only projection, exposed in bounded chunks for recovery transports. */
+size_t event_log_text_size(void);
+esp_err_t event_log_text_read(size_t offset, uint8_t *buffer, size_t capacity, size_t *out_read);
 
 #ifdef __cplusplus
 }

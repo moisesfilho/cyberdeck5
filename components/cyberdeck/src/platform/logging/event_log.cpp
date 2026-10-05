@@ -37,6 +37,9 @@ constexpr size_t TAG_SIZE = 32;
 constexpr size_t QUEUE_LENGTH = 32;
 constexpr size_t RECENT_CAPACITY = EVENT_LOG_RECENT_MAX_CAPACITY;
 constexpr TickType_t RETRY_INTERVAL = pdMS_TO_TICKS(5000);
+constexpr size_t TEXT_FILE_LIMIT = 1024U * 1024U;
+constexpr size_t TEXT_ROTATION_COUNT = 7;
+constexpr TickType_t TEXT_MUTEX_TIMEOUT = pdMS_TO_TICKS(100);
 
 struct __attribute__((packed)) LogRecord {
     uint32_t magic;
@@ -55,15 +58,68 @@ static_assert(sizeof(LogRecord) == RECORD_SIZE, "unexpected log record size");
 QueueHandle_t s_queue = nullptr;
 StaticQueue_t s_queue_struct;
 uint8_t s_queue_storage[QUEUE_LENGTH * sizeof(LogRecord)];
+QueueHandle_t s_text_queue = nullptr;
+StaticQueue_t s_text_queue_struct;
+uint8_t s_text_queue_storage[QUEUE_LENGTH * sizeof(LogRecord)];
 StaticSemaphore_t s_recent_mutex_storage;
 SemaphoreHandle_t s_recent_mutex = nullptr;
+StaticSemaphore_t s_text_mutex_storage;
+SemaphoreHandle_t s_text_mutex = nullptr;
 LogRecord s_recent[RECENT_CAPACITY];
 LogRecord s_rebuild_recent[RECENT_CAPACITY];
 size_t s_recent_count = 0;
 size_t s_recent_next = 0;
 TaskHandle_t s_task = nullptr;
+TaskHandle_t s_text_task = nullptr;
 vprintf_like_t s_serial_vprintf = nullptr;
 bool s_initialized = false;
+
+void text_path(size_t generation, char *path, size_t capacity)
+{
+    if (generation == 0) snprintf(path, capacity, "%s", CYBERDECK_TEXT_LOG_PATH);
+    else snprintf(path, capacity, "%s.%u", CYBERDECK_TEXT_LOG_PATH, static_cast<unsigned>(generation));
+}
+
+struct TextSnapshot {
+    FILE *files[TEXT_ROTATION_COUNT + 1] = {};
+    size_t sizes[TEXT_ROTATION_COUNT + 1] = {};
+    size_t count = 0;
+    size_t total = 0;
+};
+
+void close_text_snapshot(TextSnapshot *snapshot)
+{
+    for (size_t index = 0; index < snapshot->count; ++index) {
+        if (snapshot->files[index] != nullptr) fclose(snapshot->files[index]);
+        snapshot->files[index] = nullptr;
+    }
+    snapshot->count = 0;
+}
+
+bool open_text_snapshot(TextSnapshot *snapshot)
+{
+    for (size_t generation = TEXT_ROTATION_COUNT + 1; generation-- > 0;) {
+        char path[96];
+        text_path(generation, path, sizeof(path));
+        FILE *file = fopen(path, "rb");
+        if (file == nullptr) {
+            if (errno == ENOENT) continue;
+            close_text_snapshot(snapshot);
+            return false;
+        }
+        struct stat info = {};
+        if (fstat(fileno(file), &info) != 0 || info.st_size < 0) {
+            fclose(file);
+            close_text_snapshot(snapshot);
+            return false;
+        }
+        snapshot->files[snapshot->count] = file;
+        snapshot->sizes[snapshot->count] = static_cast<size_t>(info.st_size);
+        snapshot->total += snapshot->sizes[snapshot->count];
+        ++snapshot->count;
+    }
+    return true;
+}
 
 uint32_t crc32(const uint8_t *data, size_t length)
 {
@@ -248,12 +304,86 @@ bool open_log_file(FILE **file, uint32_t *next_slot, uint32_t *next_sequence)
         return false;
     }
 
+    char text_file[96];
+    text_path(0, text_file, sizeof(text_file));
+    FILE *projection = fopen(text_file, "ab");
+    if (projection != nullptr) fclose(projection);
+
     if (!rebuild_state(opened, next_slot, next_sequence)) {
         fclose(opened);
         return false;
     }
     *file = opened;
     return true;
+}
+
+bool rotate_text_if_needed(size_t incoming)
+{
+    char current[96];
+    text_path(0, current, sizeof(current));
+    struct stat info = {};
+    if (stat(current, &info) != 0) return errno == ENOENT;
+    if (info.st_size < 0 || static_cast<size_t>(info.st_size) + incoming <= TEXT_FILE_LIMIT) return true;
+    char from[96], to[96];
+    for (size_t generation = TEXT_ROTATION_COUNT; generation > 1; --generation) {
+        text_path(generation - 1, from, sizeof(from));
+        text_path(generation, to, sizeof(to));
+        (void)unlink(to);
+        if (rename(from, to) != 0 && errno != ENOENT) return false;
+    }
+    text_path(1, to, sizeof(to));
+    (void)unlink(to);
+    return rename(current, to) == 0;
+}
+
+bool append_text_projection(const LogRecord &record)
+{
+    char line[RECORD_SIZE];
+    char timestamp[24];
+    char tag[TAG_SIZE];
+    char message[MESSAGE_SIZE];
+    const time_t seconds = static_cast<time_t>(record.unix_us / 1000000LL);
+    struct tm utc = {};
+    if (seconds >= 1577836800 && gmtime_r(&seconds, &utc) != nullptr &&
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &utc) != 0) {
+    } else {
+        snprintf(timestamp, sizeof(timestamp), "up:%" PRId64 "ms", record.uptime_us / 1000LL);
+    }
+    copy_text(tag, sizeof(tag), record.tag);
+    copy_text(message, sizeof(message), record.message);
+    for (char *p = tag; *p != '\0'; ++p) {
+        if (*p == '\r' || *p == '\n') *p = ' ';
+    }
+    for (char *p = message; *p != '\0'; ++p) {
+        if (*p == '\r' || *p == '\n') *p = ' ';
+    }
+    const int written = snprintf(line, sizeof(line), "%s %c %s: %s\n", timestamp, record.level,
+                                 tag, message);
+    if (written < 0) return false;
+    const size_t length = written >= static_cast<int>(sizeof(line) - 1) ? sizeof(line) - 1 :
+                                                                         static_cast<size_t>(written);
+    /* A projection record is always one complete physical line. */
+    line[length - 1] = '\n';
+    if (length > TEXT_FILE_LIMIT || !rotate_text_if_needed(length)) return false;
+    char path[96];
+    text_path(0, path, sizeof(path));
+    FILE *file = fopen(path, "ab");
+    if (file == nullptr) return false;
+    const bool ok = fwrite(line, 1, length, file) == length && fflush(file) == 0 && fsync(fileno(file)) == 0;
+    fclose(file);
+    return ok;
+}
+
+void text_log_task(void *)
+{
+    LogRecord record;
+    while (true) {
+        if (xQueueReceive(s_text_queue, &record, portMAX_DELAY) == pdTRUE &&
+            s_text_mutex != nullptr && xSemaphoreTake(s_text_mutex, portMAX_DELAY) == pdTRUE) {
+            (void)append_text_projection(record);
+            xSemaphoreGive(s_text_mutex);
+        }
+    }
 }
 
 bool write_record(FILE *file, LogRecord *record, uint32_t *next_slot, uint32_t *next_sequence)
@@ -308,6 +438,9 @@ void log_task(void *)
             remember_record(record);
             continue;
         }
+        /* Never perform projection I/O in the binary writer. A full or slow
+         * text path can only drop its best-effort projection queue entry. */
+        if (s_text_queue != nullptr) (void)xQueueSend(s_text_queue, &record, 0);
         remember_record(record);
     }
 }
@@ -347,10 +480,36 @@ extern "C" esp_err_t event_log_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    s_text_mutex = xSemaphoreCreateMutexStatic(&s_text_mutex_storage);
+    if (s_text_mutex == nullptr) {
+        s_recent_mutex = nullptr;
+        s_queue = nullptr;
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_text_queue = xQueueCreateStatic(QUEUE_LENGTH, sizeof(LogRecord), s_text_queue_storage,
+                                      &s_text_queue_struct);
+    if (s_text_queue == nullptr ||
+        xTaskCreate(text_log_task, "event_text", 4096, nullptr, 1, &s_text_task) != pdPASS) {
+        s_text_task = nullptr;
+        s_text_queue = nullptr;
+        s_text_mutex = nullptr;
+        s_recent_mutex = nullptr;
+        s_queue = nullptr;
+        return ESP_ERR_NO_MEM;
+    }
+
     s_serial_vprintf = esp_log_set_vprintf(log_vprintf);
     if (xTaskCreate(log_task, "event_log", 6144, nullptr, 2, &s_task) != pdPASS) {
         esp_log_set_vprintf(s_serial_vprintf);
         s_serial_vprintf = nullptr;
+        if (s_text_task != nullptr) {
+            vTaskDelete(s_text_task);
+            s_text_task = nullptr;
+        }
+        s_text_queue = nullptr;
+        s_text_mutex = nullptr;
+        s_recent_mutex = nullptr;
         s_queue = nullptr;
         return ESP_ERR_NO_MEM;
     }
@@ -425,4 +584,57 @@ extern "C" size_t event_log_latest(size_t max_events, event_log_line_callback_t 
         callback(line, context);
     }
     return count;
+}
+
+extern "C" size_t event_log_text_size(void)
+{
+    if (s_text_mutex == nullptr || xSemaphoreTake(s_text_mutex, TEXT_MUTEX_TIMEOUT) != pdTRUE) return 0;
+    size_t total = 0;
+    char path[96];
+    for (size_t generation = TEXT_ROTATION_COUNT; ; --generation) {
+        text_path(generation, path, sizeof(path));
+        struct stat info = {};
+        if (stat(path, &info) == 0 && info.st_size > 0) total += static_cast<size_t>(info.st_size);
+        if (generation == 0) break;
+    }
+    xSemaphoreGive(s_text_mutex);
+    return total;
+}
+
+extern "C" esp_err_t event_log_text_read(size_t offset, uint8_t *buffer, size_t capacity, size_t *out_read)
+{
+    if (out_read == nullptr || buffer == nullptr || capacity == 0 || capacity > 1024 ||
+        s_text_mutex == nullptr) return ESP_ERR_INVALID_ARG;
+    *out_read = 0;
+    if (xSemaphoreTake(s_text_mutex, TEXT_MUTEX_TIMEOUT) != pdTRUE) return ESP_ERR_TIMEOUT;
+
+    /* Keep descriptors open after releasing the coordination mutex. Renames can
+     * then proceed without changing this bounded, generation-consistent view. */
+    TextSnapshot snapshot;
+    const bool snapshot_ok = open_text_snapshot(&snapshot);
+    xSemaphoreGive(s_text_mutex);
+    if (!snapshot_ok) return ESP_FAIL;
+    if (offset >= snapshot.total) {
+        close_text_snapshot(&snapshot);
+        return ESP_OK;
+    }
+
+    size_t relative = offset;
+    for (size_t index = 0; index < snapshot.count; ++index) {
+        if (relative >= snapshot.sizes[index]) {
+            relative -= snapshot.sizes[index];
+            continue;
+        }
+        if (fseek(snapshot.files[index], static_cast<long>(relative), SEEK_SET) != 0) {
+            close_text_snapshot(&snapshot);
+            return ESP_FAIL;
+        }
+        *out_read = fread(buffer, 1, capacity, snapshot.files[index]);
+        const bool read_ok = *out_read != 0;
+        close_text_snapshot(&snapshot);
+        /* A non-empty snapshot position must never look like a successful EOF. */
+        return read_ok ? ESP_OK : ESP_FAIL;
+    }
+    close_text_snapshot(&snapshot);
+    return ESP_FAIL;
 }

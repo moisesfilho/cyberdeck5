@@ -1,5 +1,6 @@
 #include "apps/screenshot/screenshot_server.h"
 #include "apps/screenshot/screenshot_bmp.h"
+#include "platform/logging/event_log.h"
 
 #include <errno.h>
 #include <netinet/in.h>
@@ -162,12 +163,45 @@ static esp_err_t screenshot_handler(httpd_req_t *req)
     return result;
 }
 
+static esp_err_t events_handler(httpd_req_t *req)
+{
+    if (req->method != HTTP_GET) {
+        send_error(req, HTTPD_405_METHOD_NOT_ALLOWED, "GET required");
+        return ESP_OK;
+    }
+    if (!is_local_peer(req)) {
+        send_error(req, HTTPD_403_FORBIDDEN, "local network only");
+        return ESP_OK;
+    }
+    if (s_request_mutex == NULL || xSemaphoreTake(s_request_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        send_service_unavailable(req, "another recovery is in progress");
+        return ESP_OK;
+    }
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    const size_t total = event_log_text_size();
+    uint8_t chunk[1024];
+    size_t offset = 0;
+    esp_err_t result = ESP_OK;
+    while (offset < total) {
+        size_t count = 0;
+        if (event_log_text_read(offset, chunk, sizeof(chunk), &count) != ESP_OK || count == 0 ||
+            httpd_resp_send_chunk(req, reinterpret_cast<const char *>(chunk), count) != ESP_OK) {
+            result = ESP_FAIL;
+            break;
+        }
+        offset += count;
+    }
+    if (result == ESP_OK) result = httpd_resp_send_chunk(req, NULL, 0);
+    xSemaphoreGive(s_request_mutex);
+    return result;
+}
+
 static esp_err_t start_server(void)
 {
     if (s_server != NULL) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 1;
+    config.max_uri_handlers = 2;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
     if (httpd_start(&s_server, &config) != ESP_OK) {
@@ -176,7 +210,14 @@ static esp_err_t start_server(void)
     }
     httpd_uri_t uri = {.uri = "/screenshot", .method = HTTP_GET, .handler = screenshot_handler, .user_ctx = NULL};
     const esp_err_t result = httpd_register_uri_handler(s_server, &uri);
-    if (result != ESP_OK) {
+    if (result == ESP_OK) {
+        httpd_uri_t events_uri = {.uri = "/events.txt", .method = HTTP_GET, .handler = events_handler, .user_ctx = NULL};
+        if (httpd_register_uri_handler(s_server, &events_uri) != ESP_OK) {
+            httpd_stop(s_server);
+            s_server = NULL;
+            return ESP_FAIL;
+        }
+    } else {
         httpd_stop(s_server);
         s_server = NULL;
     }

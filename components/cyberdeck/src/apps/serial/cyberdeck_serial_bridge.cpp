@@ -20,6 +20,7 @@
 #endif
 
 #ifdef ESP_PLATFORM
+#include "platform/logging/event_log.h"
 #include "bsp/esp-bsp.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -697,7 +698,7 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
 
     static const char *const k_known[] = {"ping",       "ui.echo",     "ui.clear",  "ui.click",  "ui.tap",
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
-                                           "wifi.status", "wifi.scan",  "fs.write", "sys.safe_mode.clear"};
+                                           "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -1762,6 +1763,43 @@ device_result exec_term_dump(const request &req)
     }
 }
 
+device_result exec_events_read(const request &req)
+{
+    device_result d;
+    d.handled = true;
+    constexpr std::size_t k_chunk = 1024;
+    const size_t total = event_log_text_size();
+    std::string start = "{\"rid\":";
+    append_json_string(start, req.rid);
+    start += ",\"ok\":true,\"event\":\"start\",\"size\":";
+    start += std::to_string(total);
+    start.push_back('}');
+    send_frame(start);
+
+    std::uint8_t bytes[k_chunk];
+    size_t offset = 0;
+    while (offset < total && !stop_requested()) {
+        size_t count = 0;
+        if (event_log_text_read(offset, bytes, sizeof(bytes), &count) != ESP_OK || count == 0) {
+            send_frame(build_error_envelope(req.rid, dispatch_error::internal, "events.txt indisponivel"));
+            break;
+        }
+        std::string frame = "{\"rid\":";
+        append_json_string(frame, req.rid);
+        frame += ",\"ok\":true,\"event\":\"chunk\",\"offset\":";
+        frame += std::to_string(offset);
+        frame += ",\"size\":";
+        frame += std::to_string(count);
+        frame += ",\"b64\":";
+        append_json_string(frame, base64_encode(bytes, count));
+        frame.push_back('}');
+        send_frame(frame);
+        offset += count;
+    }
+    send_frame(frame_event(req, "end"));
+    return d;
+}
+
 device_result device_exec(const request &req, const std::vector<json_field> &fields)
 {
     device_result d;
@@ -1781,6 +1819,9 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
     }
     if (req.type == "term.dump") {
         return exec_term_dump(req);
+    }
+    if (req.type == "events.read") {
+        return exec_events_read(req);
     }
     if (req.type == "ui.clear") {
         d.handled = true;
