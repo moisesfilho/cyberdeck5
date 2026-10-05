@@ -636,6 +636,21 @@ test_battery_protection_contract: $(BATTERY_PROTECTION_CONTRACT) $(BATTERY_PROTE
 test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_HDR)
 	$(PYTHON) test_boot_sequence.py
 
+# Host-only contracts for the approved remaining OS transformation backlog.
+# The missing SDK/catalog modules intentionally make this target RED until the
+# coder implements the reviewed contracts; no production shim is supplied.
+.PHONY: test_os_transformation_backlog_contract
+test_os_transformation_backlog_contract: test_os_transformation_backlog_contract.py os_transformation_traceability.md \
+		../../../docs/OS-TRANSFORMATION-PLAN.pt-BR.md ../../../main/app_main.cpp \
+		../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h \
+		../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_logger.h \
+		../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp \
+		../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp \
+		../../../components/cyberdeck/src/apps/ssh/ssh_client.cpp \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp \
+		../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp
+	$(PYTHON) test_os_transformation_backlog_contract.py
+
 test_display_lock_contract: test_display_lock_contract.py ../../../main/app_main.cpp $(SERIAL_BRIDGE_SRC) Makefile
 	$(PYTHON) test_display_lock_contract.py
 
@@ -949,6 +964,8 @@ test: $(BINS)
 	@./test_orientation
 	@echo "==> Executando contrato estrutural da sequencia de boot SD"
 	@$(MAKE) --no-print-directory test_boot_sequence
+	@echo "==> Executando contrato do backlog de transformacao do OS"
+	@$(MAKE) --no-print-directory test_os_transformation_backlog_contract
 	@echo "==> Executando contrato TDD do despacho assincrono do teclado fisico"
 	@$(MAKE) --no-print-directory test_keyboard_input_contract
 	@echo "==> Executando contrato de cleanup parcial da inicializacao da UI"

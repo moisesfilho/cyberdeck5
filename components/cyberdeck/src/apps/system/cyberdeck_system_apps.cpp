@@ -111,9 +111,12 @@ private:
 
 class event_log_logger final : public cyberdeck_apps::logger {
 public:
-    void write(char level, const char *tag, const char *message) override
+    void write_event(const event &value) override
     {
-        event_log_write(level, tag, message);
+        const char level = value.severity == logger::level::error ? 'E' :
+                           value.severity == logger::level::warning ? 'W' :
+                           value.severity == logger::level::debug ? 'D' : 'I';
+        event_log_write(level, value.tag, value.payload);
     }
 
     std::size_t latest(std::size_t max_events, line_callback callback, void *context) override

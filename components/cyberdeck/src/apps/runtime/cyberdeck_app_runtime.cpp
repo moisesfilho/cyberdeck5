@@ -29,6 +29,14 @@ bool manifest_resources_valid(const manifest &item, std::uint16_t &mask)
     return true;
 }
 
+bool manifest_commands_valid(const manifest &item)
+{
+    if (item.command_count > item.commands.size()) return false;
+    for (std::size_t index = 0; index < item.command_count; ++index)
+        if (item.commands[index].empty()) return false;
+    return true;
+}
+
 bool split_words(std::string_view line, std::array<std::string_view, k_max_tokens> &words,
                  std::size_t &count)
 {
@@ -130,6 +138,7 @@ bool runtime::register_application(application &app)
     if (count_ == applications_.size() || find(app.get_manifest().id) != nullptr) return false;
     std::uint16_t mask = 0;
     if (!manifest_resources_valid(app.get_manifest(), mask) ||
+        !manifest_commands_valid(app.get_manifest()) ||
         app.get_manifest().capability_count > app.get_manifest().capabilities.size()) return false;
     app.set_logger(logger_);
     applications_[count_] = &app;
@@ -421,7 +430,7 @@ void runtime::log_lifecycle(std::size_t index, const char *event, const char *ou
     const std::string_view id = applications_[index]->get_manifest().id;
     std::snprintf(message, sizeof(message), "app=%.*s event=%s outcome=%s",
                   static_cast<int>(id.size()), id.data(), event, outcome);
-    logger_->write('I', "app.lifecycle", message);
+    (void)logger_->write(logger::level::info, "app.lifecycle", message);
 }
 
 result runtime::execute_line(std::string_view line)

@@ -451,7 +451,7 @@ Os hooks do supervisor continuam gerando lifecycle logs pelo event log.
 
 ### 11. Distribuicao Futura
 
-- [ ] Criar catalogo de aplicacoes compiladas.
+- [x] Criar catalogo bounded de aplicacoes command compiladas a partir dos manifestos; distribuicao dinamica continua fora do escopo.
 - [ ] Definir recursos empacotados no firmware.
 - [ ] Avaliar pacotes no SD somente para dados e assets.
 - [ ] Manter loader dinamico ou ELF fora do escopo ate haver sandbox.
@@ -460,18 +460,19 @@ Os hooks do supervisor continuam gerando lifecycle logs pelo event log.
 
 ### Backlog do SDK e das command apps
 
-- [ ] Especificar a API `storage.bounded_read` com limites, erros, ownership e
-      comportamento de EOF; implementar somente após o contrato ser revisado.
-- [ ] Documentar a API `logger` do SDK e seu orçamento de eventos sem expor
-      segredos ou payloads irrestritos.
-- [ ] Catalogar apps command compiladas e seus comandos declarados no manifesto.
-- [ ] Comparar qualquer contrato de reply/output com shell local e SSH antes de
-      fixar texto, framing ou semântica de sucesso/erro.
-- [ ] Reduzir gradualmente a sequência manual de `app_main` conforme cada
-      serviço passar a ser iniciado pelo supervisor declarativo.
-- [ ] Manter a auditoria documental: alinhar referências ao código atual e
-      marcar documentação upstream/gerada, sem remover arquivos sem prova de
-      obsolescência.
+- [x] Especificar e implementar `storage.bounded_read` com limite de 12288 bytes,
+      erros, EOF, ownership do buffer do chamador e backend interno confinado.
+- [x] Documentar e implementar a porta `logger` do SDK com níveis tipados,
+      eventos/payload bounded e rejeição explícita de campos sensíveis.
+- [x] Catalogar apps command compiladas e comandos declarados no manifesto, com
+      dispatch que preserva a precedência dos comandos legados.
+- [x] Comparar o contrato de reply/output com shell local e SSH: este recorte
+      preserva saída atual e não cria framing universal.
+- [x] Reduzir a composição manual somente no ponto já seguro: system apps usam
+      `runtime::start_all`; hardware, recovery, safe mode e a ordem necessária
+      permanecem explícitos em `app_main`.
+- [x] Manter a auditoria documental alinhada a estas evidências; loader ELF,
+      distribuição no SD, quotas finais e event bus geral permanecem abertos.
 
 ## Estrutura-Alvo
 
