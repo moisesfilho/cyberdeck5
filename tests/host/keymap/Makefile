@@ -141,6 +141,11 @@ SESSION_SRC     := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_
 SESSION_HDR     := ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h
 APP_RUNTIME_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp
 APP_RUNTIME_HDR := ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h
+RESOURCE_CATALOG_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp
+SD_PACKAGE_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp
+APP_QUOTA_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp
+APP_STORAGE_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp
+APP_LOGGER_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_logger.cpp
 RECOVERY_POLICY_SRC := ../../../components/cyberdeck/src/apps/system/cyberdeck_recovery_policy.cpp
 RECOVERY_POLICY_HDR := ../../../components/cyberdeck/include/apps/system/cyberdeck_recovery_policy.h
 PHASE10_CONTRACT := test_phase10_contract.py
@@ -387,7 +392,7 @@ test_terminal_output_contract: $(TERMINAL_OUTPUT_CONTRACT) ../../../components/c
 # TUs reais do filtro ANSI, do compositor de linha, do console e do runtime. So a
 # fila bounded e os efeitos de LVGL sao duplos do harness. O limite de payload e
 # derivado do buffer de leitura de ssh_client.cpp e entra como `static_assert`.
-test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SSH_CLIENT_SRC) $(TERMINAL_FILTER_SRC) $(LINE_COMPOSER_SRC) $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) Makefile
+test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SSH_CLIENT_SRC) $(TERMINAL_FILTER_SRC) $(LINE_COMPOSER_SRC) $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) Makefile
 	$(PYTHON) $(SSH_OUTPUT_GAP_TEST)
 
 # Logica pura (sem LVGL): modelo da linha de edicao + sessao SSH (contrato em
@@ -408,6 +413,7 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
 		$(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
 		$(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
 		$(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) $(BATTERY_PROTECTION_SRC) \
 		$(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) $(WIFI_STATE_MACHINE_SRC) \
 		$(BLE_TYPES_SRC) $(BLE_STATE_SRC) \
@@ -416,21 +422,28 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 		$(SESSION_SRC) $(SHELL_CONSOLE_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
 		$(LOCAL_SHELL_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
 		$(APP_RUNTIME_SRC) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
 		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
 		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) \
 		$(BLE_STATE_SRC) -o test_shell_session
 
-test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR)
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_app_runtime.cpp $(APP_RUNTIME_SRC) -o test_app_runtime
+test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_app_runtime.cpp \
+		$(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) -o test_app_runtime
 
 test_phase9_capabilities: $(PHASE9_CAPABILITIES_TEST) $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
-		$(APP_FACADES_SRC) $(APP_FACADES_HDR) $(WINDOW_MANAGER_SRC) $(WINDOW_MANAGER_HDR)
+		$(APP_FACADES_SRC) $(APP_FACADES_HDR) $(WINDOW_MANAGER_SRC) $(WINDOW_MANAGER_HDR) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include \
 		$(PHASE9_CAPABILITIES_TEST) $(APP_RUNTIME_SRC) $(APP_FACADES_SRC) \
-		$(WINDOW_MANAGER_SRC) -o test_phase9_capabilities
+		$(WINDOW_MANAGER_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
+		-o test_phase9_capabilities
 
-test_demo_app: test_demo_app.cpp $(DEMO_APP_SRC) $(DEMO_APP_HDR) $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR)
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_demo_app.cpp $(DEMO_APP_SRC) $(APP_RUNTIME_SRC) -o test_demo_app
+test_demo_app: test_demo_app.cpp $(DEMO_APP_SRC) $(DEMO_APP_HDR) $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_demo_app.cpp \
+		$(DEMO_APP_SRC) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) -o test_demo_app
 
 # Aplicacao shell de primeiro plano (Fase 7): ownership do console, modos de
 # sessao (SSH como modo), politica de despacho e composicao do prompt.  Liga o
@@ -440,12 +453,14 @@ test_shell_app: test_shell_app.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
 		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
 		$(APP_RUNTIME_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
 		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
-		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) $(BLE_STATE_SRC)
+		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) $(BLE_STATE_SRC) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
 	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_app.cpp \
 		$(SHELL_CONSOLE_SRC) $(SHELL_APP_SRC) \
 		$(SESSION_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
 		$(LOCAL_SHELL_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
 		$(APP_RUNTIME_SRC) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
 		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
 		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) \
 		$(BLE_STATE_SRC) -o test_shell_app
@@ -651,6 +666,17 @@ test_os_transformation_backlog_contract: test_os_transformation_backlog_contract
 		../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp
 	$(PYTHON) test_os_transformation_backlog_contract.py
 
+.PHONY: test_resource_sd_quota_contract
+test_resource_sd_quota_contract: test_resource_sd_quota_contract.py os_transformation_traceability.md Makefile \
+		../../../docs/OS-TRANSFORMATION-PLAN.pt-BR.md \
+		../../../components/cyberdeck/include/apps/runtime/cyberdeck_resource_catalog.h \
+		../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp \
+		../../../components/cyberdeck/include/apps/runtime/cyberdeck_sd_package.h \
+		../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp \
+		../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_quota.h \
+		../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp
+	$(PYTHON) test_resource_sd_quota_contract.py
+
 test_display_lock_contract: test_display_lock_contract.py ../../../main/app_main.cpp $(SERIAL_BRIDGE_SRC) Makefile
 	$(PYTHON) test_display_lock_contract.py
 
@@ -698,7 +724,7 @@ local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../compo
 local_shell_namespace_contract: $(LOCAL_SHELL_NAMESPACE_CONTRACT) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_SRC) $(VFS_NAMESPACE_HDR) ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md
 	$(PYTHON) $(LOCAL_SHELL_NAMESPACE_CONTRACT)
 
-test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(TERMINAL_FILTER_SRC) $(TERMINAL_FILTER_HDR) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR)
+test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(TERMINAL_FILTER_SRC) $(TERMINAL_FILTER_HDR) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR)
 	$(PYTHON) test_prompt_behavior.py
 
 test_wifi_dispatch_contract: test_wifi_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
@@ -966,6 +992,8 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_boot_sequence
 	@echo "==> Executando contrato do backlog de transformacao do OS"
 	@$(MAKE) --no-print-directory test_os_transformation_backlog_contract
+	@echo "==> Executando contrato de recursos, pacote SD e quotas"
+	@$(MAKE) --no-print-directory test_resource_sd_quota_contract
 	@echo "==> Executando contrato TDD do despacho assincrono do teclado fisico"
 	@$(MAKE) --no-print-directory test_keyboard_input_contract
 	@echo "==> Executando contrato de cleanup parcial da inicializacao da UI"

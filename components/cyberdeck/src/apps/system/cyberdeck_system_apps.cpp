@@ -1,6 +1,8 @@
 #include "apps/system/cyberdeck_system_apps.h"
 
 #include "apps/runtime/cyberdeck_app_runtime.h"
+#include "apps/runtime/cyberdeck_resource_catalog.h"
+#include "apps/runtime/cyberdeck_sd_package.h"
 #include "apps/demo/cyberdeck_demo_app.h"
 #include "apps/bluetooth/ble_mgr.h"
 #include "apps/screenshot/screenshot_server.h"
@@ -227,6 +229,19 @@ bool s_registered = false;
 extern "C" esp_err_t cyberdeck_system_apps_register(void)
 {
     if (s_registered) return ESP_OK;
+    const auto &catalog = cyberdeck_apps::compiled_resources();
+    std::size_t invalid_assets = 0;
+    for (std::size_t index = 0; index < catalog.size(); ++index) {
+        const auto *asset = catalog.at(index);
+        if (asset == nullptr || !cyberdeck_apps::verify_asset(*asset)) ++invalid_assets;
+    }
+    // SD input is optional metadata/data only: absence is diagnostic, never a
+    // boot failure, and this boundary does not install or execute contents.
+    const cyberdeck_apps::sd_package_view absent_package{};
+    const bool valid_optional_package = cyberdeck_apps::global_runtime().inspect_sd_package(absent_package);
+    ESP_LOGI(TAG, "distribution assets=%u invalid=%u sd_package=%s",
+             static_cast<unsigned>(catalog.size()), static_cast<unsigned>(invalid_assets),
+             valid_optional_package ? "valid" : "absent");
     cyberdeck_apps::global_runtime().set_logger(&s_event_logger);
     for (cyberdeck_apps::application *app : k_apps) {
         if (!cyberdeck_apps::global_runtime().register_application(*app)) {

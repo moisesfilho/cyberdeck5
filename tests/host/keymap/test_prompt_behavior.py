@@ -16,9 +16,18 @@ ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 CONSOLE_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp"
 RUNTIME_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp"
+RESOURCE_CATALOG_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp"
+SD_PACKAGE_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp"
+APP_QUOTA_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp"
 FILTER_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_terminal_filter.cpp"
 SCROLLBACK_SRC = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_terminal_scrollback.cpp"
-PRODUCTION_SOURCES = [str(CONSOLE_SRC), str(RUNTIME_SRC)]
+PRODUCTION_SOURCES = [
+    str(CONSOLE_SRC),
+    str(RUNTIME_SRC),
+    str(RESOURCE_CATALOG_SRC),
+    str(SD_PACKAGE_SRC),
+    str(APP_QUOTA_SRC),
+]
 LOCAL_SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
 VFS_NAMESPACE = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp"
 LIMIT = 12288

@@ -37,6 +37,24 @@ bool manifest_commands_valid(const manifest &item)
     return true;
 }
 
+bool valid_compiled_assets()
+{
+    const resource_catalog &catalog = compiled_resources();
+    for (std::size_t index = 0; index < catalog.size(); ++index) {
+        const asset_metadata *asset = catalog.at(index);
+        if (asset == nullptr || !verify_asset(*asset)) return false;
+    }
+    return true;
+}
+
+quota_usage quota_for(const manifest &item)
+{
+    quota_usage requested{};
+    requested.resources = static_cast<std::uint32_t>(item.resource_count);
+    requested.grants = static_cast<std::uint32_t>(item.capability_count);
+    return requested;
+}
+
 bool split_words(std::string_view line, std::array<std::string_view, k_max_tokens> &words,
                  std::size_t &count)
 {
@@ -139,7 +157,9 @@ bool runtime::register_application(application &app)
     std::uint16_t mask = 0;
     if (!manifest_resources_valid(app.get_manifest(), mask) ||
         !manifest_commands_valid(app.get_manifest()) ||
-        app.get_manifest().capability_count > app.get_manifest().capabilities.size()) return false;
+        app.get_manifest().capability_count > app.get_manifest().capabilities.size() ||
+        !valid_compiled_assets()) return false;
+    if (!quotas_.reserve(count_, quota_for(app.get_manifest()))) return false;
     app.set_logger(logger_);
     applications_[count_] = &app;
     states_[count_] = app_state::registered;
@@ -148,6 +168,11 @@ bool runtime::register_application(application &app)
     grant_masks_[count_] = mask;
     ++count_;
     return true;
+}
+
+bool runtime::inspect_sd_package(const sd_package_view &package) const
+{
+    return sd_package::validate(package);
 }
 
 void runtime::set_logger(logger *value)
@@ -256,6 +281,12 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     }
     visiting[index] = false;
     states_[index] = app_state::starting;
+    if (!quotas_.reserve(index, quota_for(item))) {
+        states_[index] = app_state::failed;
+        failures_[index] = "quota reservation failed";
+        log_lifecycle(index, "failure", "quota_reserve_failed");
+        return false;
+    }
     ++grant_generations_[index];
     if (grant_generations_[index] == 0) ++grant_generations_[index];
     grant application_grant{};
@@ -273,6 +304,7 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
         std::chrono::steady_clock::now() - started).count();
     if (!initialized) {
         applications_[index]->grant_ = {};
+        quotas_.revoke(index);
         ++grant_generations_[index];
         states_[index] = app_state::failed;
         failures_[index] = "init hook failed";
@@ -281,6 +313,7 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     }
     if (!started_ok) {
         applications_[index]->grant_ = {};
+        quotas_.revoke(index);
         ++grant_generations_[index];
         states_[index] = app_state::failed;
         failures_[index] = "start hook failed";
@@ -344,10 +377,14 @@ bool runtime::stop_index(std::size_t index)
     /* Revoke before teardown so callbacks that outlive the hook cannot use a
      * resource.  The generation check also invalidates copied facades. */
     applications_[index]->grant_ = {};
+    quotas_.revoke(index);
     ++grant_generations_[index];
     log_lifecycle(index, "stop", "begin");
     const auto started = std::chrono::steady_clock::now();
     const bool stopped = applications_[index]->teardown();
+    /* Keep revocation idempotent after the hook as well: a teardown may have
+     * retained a callback or returned through an error path. */
+    quotas_.revoke(index);
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - started).count();
     if (!stopped) {

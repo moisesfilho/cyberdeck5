@@ -7,6 +7,9 @@
 #include <string_view>
 
 #include "apps/runtime/cyberdeck_app_logger.h"
+#include "apps/runtime/cyberdeck_app_quota.h"
+#include "apps/runtime/cyberdeck_resource_catalog.h"
+#include "apps/runtime/cyberdeck_sd_package.h"
 
 namespace cyberdeck_apps {
 
@@ -152,6 +155,8 @@ public:
                    std::size_t &count) const;
     grant app_grant(std::string_view id) const;
     std::size_t size() const { return count_; }
+    bool inspect_sd_package(const sd_package_view &package) const;
+    std::size_t compiled_asset_count() const { return compiled_resources().size(); }
 
 private:
     friend class grant;
@@ -162,6 +167,7 @@ private:
     logger *logger_ = nullptr;
     std::array<std::uint64_t, k_max_applications> grant_generations_{};
     std::array<std::uint16_t, k_max_applications> grant_masks_{};
+    quota quotas_{};
 
     bool start_index(std::size_t index, std::array<bool, k_max_applications> &visiting);
     bool stop_index(std::size_t index);

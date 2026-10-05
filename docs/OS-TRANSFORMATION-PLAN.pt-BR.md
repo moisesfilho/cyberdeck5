@@ -452,11 +452,15 @@ Os hooks do supervisor continuam gerando lifecycle logs pelo event log.
 ### 11. Distribuicao Futura
 
 - [x] Criar catalogo bounded de aplicacoes command compiladas a partir dos manifestos; distribuicao dinamica continua fora do escopo.
-- [ ] Definir recursos empacotados no firmware.
-- [ ] Avaliar pacotes no SD somente para dados e assets.
-- [ ] Manter loader dinamico ou ELF fora do escopo ate haver sandbox.
-- [ ] Exigir permissoes, limites de memoria e validacao de assinatura antes de
-      qualquer execucao dinamica.
+- [x] Definir catálogo readonly de recursos/assets compilados no firmware, com
+      metadados estáticos, lookup seguro e limite de 16 entradas.
+- [x] Validar pacotes no SD somente para dados e assets, com versão, limite de
+      12288 bytes e checksum; ausência/corrupção/formato incompatível falham
+      fechado.
+- [x] Manter loader dinâmico ou ELF fora do escopo; sandbox, assinatura e
+      permissões permanecem guardrails para qualquer fase posterior.
+- [ ] Avaliar event bus global, reply universal e distribuição multi-device;
+      continuam fora de escopo e não são simulados neste recorte.
 
 ### Backlog do SDK e das command apps
 
@@ -471,8 +475,9 @@ Os hooks do supervisor continuam gerando lifecycle logs pelo event log.
 - [x] Reduzir a composição manual somente no ponto já seguro: system apps usam
       `runtime::start_all`; hardware, recovery, safe mode e a ordem necessária
       permanecem explícitos em `app_main`.
-- [x] Manter a auditoria documental alinhada a estas evidências; loader ELF,
-      distribuição no SD, quotas finais e event bus geral permanecem abertos.
+- [x] Manter a auditoria documental alinhada a estas evidências; quotas
+      bounded/revogáveis, catálogo de recursos e pacote SD de dados/assets estão
+      implementados sem alterar a compatibilidade do shell.
 
 ## Estrutura-Alvo
 

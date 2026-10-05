@@ -68,11 +68,22 @@ FILTER_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_terminal_filt
 COMPOSER_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp"
 CONSOLE_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp"
 SCROLLBACK_SRC = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_terminal_scrollback.cpp"
+LOCAL_SHELL_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
+VFS_NAMESPACE_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp"
 RUNTIME_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp"
+RESOURCE_CATALOG_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp"
+SD_PACKAGE_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp"
+APP_QUOTA_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp"
+APP_STORAGE_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp"
+APP_LOGGER_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_logger.cpp"
 SSH_CLIENT_SRC = ROOT / "components/cyberdeck/src/apps/ssh/ssh_client.cpp"
 
 PRODUCTION_SOURCES = [str(FILTER_SRC), str(COMPOSER_SRC), str(CONSOLE_SRC),
-                       str(RUNTIME_SRC), str(SCROLLBACK_SRC)]
+                       str(RUNTIME_SRC), str(RESOURCE_CATALOG_SRC),
+                       str(SD_PACKAGE_SRC), str(APP_QUOTA_SRC),
+                       str(APP_STORAGE_SRC), str(APP_LOGGER_SRC),
+                       str(LOCAL_SHELL_SRC), str(VFS_NAMESPACE_SRC),
+                       str(SCROLLBACK_SRC)]
 
 
 def transport_chunk_limit() -> int:
