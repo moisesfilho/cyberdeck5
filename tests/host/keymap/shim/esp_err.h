@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 /* Host shim for the ESP-IDF error type used by the shell session ports. */
 
 typedef int esp_err_t;

@@ -23,16 +23,18 @@ jobs:
           clang-format --version
           # The adapter predates this gate and intentionally retains its
           # existing layout; check every changed production range.
-           clang-format --dry-run --Werror \
-             --lines=589:600 \
-             --lines=684:690 \
-             components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp
+          clang-format --dry-run --Werror \
+            --lines=589:600 \
+            --lines=684:690 \
+            components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp
           clang-format --dry-run --Werror \
             --lines=9:15 \
             components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h
           clang-format --dry-run --Werror \
             --lines=3:8 \
             components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp
+          clang-format --dry-run --Werror \
+            components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.
@@ -41,7 +43,8 @@ jobs:
         run: |
           cppcheck --enable=warning,performance,portability \
             --error-exitcode=1 --suppress=missingIncludeSystem \
-            components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_*.cpp
+            components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_*.cpp \
+            components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
           bandit -r tools -ll
       - name: Host aggregate and coverage
         id: host-coverage

@@ -42,7 +42,8 @@ idf_component_register(
         "src/apps/runtime/cyberdeck_app_facades.cpp"
         "src/apps/runtime/cyberdeck_window_manager.cpp"
         "src/apps/demo/cyberdeck_demo_app.cpp"
-         "src/apps/system/cyberdeck_system_apps.cpp"
+          "src/apps/system/cyberdeck_system_apps.cpp"
+          "src/apps/system/cyberdeck_time_sync.cpp"
          "src/apps/system/cyberdeck_recovery_policy.cpp"
          "src/apps/system/cyberdeck_recovery.cpp"
         "src/apps/system/cyberdeck_service_ports.cpp"
@@ -106,7 +107,10 @@ idf_component_register(
         fatfs
         sdmmc
         libssh
-        esp_http_server
+         esp_http_server
+         esp_http_client
+         esp-tls
+         json
         bt
         esp_hosted
 )

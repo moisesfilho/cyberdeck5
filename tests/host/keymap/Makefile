@@ -146,6 +146,7 @@ SD_PACKAGE_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_pa
 APP_QUOTA_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp
 APP_STORAGE_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp
 APP_LOGGER_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_logger.cpp
+COMMAND_CATALOG_SRC := ../../../components/cyberdeck/src/apps/runtime/cyberdeck_command_catalog.cpp
 RECOVERY_POLICY_SRC := ../../../components/cyberdeck/src/apps/system/cyberdeck_recovery_policy.cpp
 RECOVERY_POLICY_HDR := ../../../components/cyberdeck/include/apps/system/cyberdeck_recovery_policy.h
 PHASE10_CONTRACT := test_phase10_contract.py
@@ -171,9 +172,19 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+
+TIME_SYNC_SRC := ../../../components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
+TIME_SYNC_SHIM := time_sync_shim
+
+test_time_sync_contract: test_time_sync_contract.py time_sync_traceability.md ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp $(TIME_SYNC_SRC) Makefile
+	$(PYTHON) test_time_sync_contract.py
+
+test_time_sync: test_time_sync.cpp $(TIME_SYNC_SRC) $(TIME_SYNC_SHIM)/cJSON.cpp $(TIME_SYNC_SHIM)/cJSON.h $(TIME_SYNC_SHIM)/esp_http_client.h Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I$(TIME_SYNC_SHIM) -Ishim -I../../../components/cyberdeck/include test_time_sync.cpp $(TIME_SYNC_SRC) $(TIME_SYNC_SHIM)/cJSON.cpp -o $@
 
 .PHONY: test_phase9_capabilities test_phase9_capabilities_contract
+.PHONY: test_time_sync test_time_sync_contract
 test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9_CAPABILITIES_TEST) Makefile
 	$(PYTHON) test_phase9_capabilities_contract.py
 
@@ -431,6 +442,15 @@ test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_app_runtime.cpp \
 		$(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) -o test_app_runtime
+
+test_runtime_sdk: test_runtime_sdk.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
+		$(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(COMMAND_CATALOG_SRC) \
+		$(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -I../../../components/cyberdeck/include \
+		test_runtime_sdk.cpp $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) \
+		$(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(COMMAND_CATALOG_SRC) \
+		$(LOCAL_SHELL_SRC) -o test_runtime_sdk
 
 test_phase9_capabilities: $(PHASE9_CAPABILITIES_TEST) $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(APP_FACADES_SRC) $(APP_FACADES_HDR) $(WINDOW_MANAGER_SRC) $(WINDOW_MANAGER_HDR) \
@@ -889,6 +909,10 @@ test_ble_bond_reconnect: test_ble_state_machine test_ble_event_dispatch test_ble
 
 
 test: $(BINS)
+	@echo "==> Executando teste comportamental de sincronizacao UTC (TEST-TIME-01..08)"
+	@./test_time_sync
+	@echo "==> Executando contrato de runtime da sincronizacao UTC (TEST-TIME-09)"
+	@$(MAKE) --no-print-directory test_time_sync_contract
 	@echo "==> Executando testes do keymap do shell de entrada"
 	@./test_keymap
 	@echo "==> Executando testes dos utilitarios de shell e SSH"
@@ -945,6 +969,7 @@ test: $(BINS)
 	@./test_shell_session
 	@echo "==> Executando testes do runtime de aplicacoes compiladas"
 	@./test_app_runtime
+	@./test_runtime_sdk
 	@echo "==> Executando policy pura e contrato estrutural da Fase 10"
 	@$(MAKE) --no-print-directory test_recovery_policy
 	@./test_recovery_policy
