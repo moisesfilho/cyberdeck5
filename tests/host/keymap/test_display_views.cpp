@@ -7,8 +7,8 @@
 #include <string>
 #include <vector>
 
-/* Previous header typography was 16 px; the production cyberdeck_font used by
- * the clock is intentionally larger and remains a single shared font object. */
+/* The host fixture only supplies the font symbol.  Its metrics are not a
+ * contract: the test compares the clock and percentage labels directly. */
 extern const lv_font_t cyberdeck_font{18};
 
 static void noop(lv_event_t *) {}
@@ -73,7 +73,17 @@ int main()
     assert(header_bar->flex_track == LV_FLEX_ALIGN_CENTER);
     assert(clock->text_align == LV_TEXT_ALIGN_CENTER);
     assert(clock->text_font == &cyberdeck_font);
-    assert(lv_font_get_line_height(clock->text_font) > 16);
+    assert(clock->long_mode == LV_LABEL_LONG_CLIP);
+    /* REQ-HEADER-FONT-01 / AC-HEADER-FONT-01: every header text label uses
+     * the exact shared cyberdeck_font object. */
+    assert(title->text_font == &cyberdeck_font);
+    assert(header_bar->children[2]->children[0]->children[0]->text_font ==
+           &cyberdeck_font);
+    assert(lv_font_get_line_height(title->text_font) ==
+           lv_font_get_line_height(clock->text_font));
+    assert(lv_font_get_line_height(
+               header_bar->children[2]->children[0]->children[0]->text_font) ==
+           lv_font_get_line_height(clock->text_font));
     const auto geometry_before_long_text = std::array<int32_t, 6>{
         title->width, clock->width, right->width, right->height,
         clock->x, clock->y};
@@ -98,10 +108,36 @@ int main()
     assert(!right->children[2]->hidden);
     assert(right->children[2]->children[0]->text == "BAT");
     assert(right->children[2]->children[1]->text == "87%");
+    const auto *battery_percentage = right->children[2]->children[1];
+    const auto *battery_symbol = right->children[2]->children[0];
+    /* REQ-HEADER-FONT-02 / AC-HEADER-FONT-01: battery symbol and percentage
+     * share the exact font object and line-height with the clock. */
+    assert(battery_symbol->text_font == &cyberdeck_font);
+    assert(battery_percentage->text_font == &cyberdeck_font);
+    assert(battery_symbol->text_font == clock->text_font);
+    assert(battery_percentage->text_font == clock->text_font);
+    assert(lv_font_get_line_height(battery_symbol->text_font) ==
+           lv_font_get_line_height(clock->text_font));
+    assert(lv_font_get_line_height(battery_percentage->text_font) ==
+           lv_font_get_line_height(clock->text_font));
+    /* REQ-HEADER-FONT-03 / AC-HEADER-FONT-01: bitmap A4 fonts use the real
+     * supported overlay emulation. The full shim exposes no outline API, so
+     * an outline-based implementation cannot compile this contract. */
+    assert(right->children[2]->children.size() == 3);
+    const auto *battery_percentage_bold = right->children[2]->children[2];
+    assert(battery_percentage_bold->text == "87%");
+    assert(battery_percentage_bold->text_font == battery_percentage->text_font);
+    assert(battery_percentage_bold->ignore_layout);
+    assert(battery_percentage_bold->x == battery_percentage->x + 1);
+    assert(battery_percentage_bold->y == battery_percentage->y);
+    assert(!battery_percentage_bold->hidden);
+    /* AC-HEADER-FONT-01: preserve text, visibility and header layout. */
     presentation.show_percentage = false; presentation.glyph = cyberdeck_battery_view::power_glyph::external;
     header.update_battery(presentation);
     assert(right->children[2]->children[0]->text == "-");
     assert(right->children[2]->children[1]->text.empty());
+    assert(right->children[2]->children[2]->text.empty());
+    assert(right->children[2]->children[2]->hidden);
 
     cyberdeck_terminal_view::view terminal;
     /* TEST-REG-8-BAR: the composed root is a flex column, so the terminal

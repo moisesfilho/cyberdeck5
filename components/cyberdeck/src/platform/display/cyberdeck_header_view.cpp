@@ -10,6 +10,7 @@ namespace cyberdeck_header_view {
 namespace {
 
 constexpr int32_t CYBERDECK_BLE_HEADER_Y_OFFSET = 10;
+constexpr int32_t CYBERDECK_PERCENTAGE_BOLD_OFFSET = 1;
 const lv_color_t kBlack = lv_color_hex(0x000000);
 const lv_color_t kWhite = lv_color_hex(0xF2F2F2);
 const lv_color_t kMuted = lv_color_hex(0x8A8A8A);
@@ -26,6 +27,13 @@ void style_base(lv_obj_t *object, lv_color_t background, lv_color_t text)
     lv_obj_set_style_bg_color(object, background, 0);
     lv_obj_set_style_text_color(object, text, 0);
     lv_obj_set_style_border_width(object, 0, 0);
+}
+
+void apply_header_font(lv_obj_t *object)
+{
+    // REQ-HEADER-FONT-01/02 / AC-HEADER-FONT-01: every header text label,
+    // including the battery labels, uses the shared bitmap font.
+    lv_obj_set_style_text_font(object, &cyberdeck_font, 0);
 }
 
 const char *battery_indicator_symbol(cyberdeck_battery_view::power_glyph glyph)
@@ -66,6 +74,7 @@ bool view::create(lv_obj_t *parent)
     lv_label_set_text(title, "CYBERDECK5");
     lv_obj_set_width(title, LV_PCT(30));
     style_base(title, kBlack, kWhite);
+    apply_header_font(title);
 
     s_clock_status = lv_label_create(header);
     lv_label_set_text(s_clock_status, "");
@@ -101,6 +110,7 @@ bool view::create(lv_obj_t *parent)
     lv_label_set_text(s_ble_status, LV_SYMBOL_BLUETOOTH);
     lv_obj_set_size(s_ble_status, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     style_base(s_ble_status, kBlack, kWhite);
+    apply_header_font(s_ble_status);
     lv_obj_set_style_bg_opa(s_ble_status, LV_OPA_TRANSP, 0);
     lv_obj_set_y(s_ble_status, CYBERDECK_BLE_HEADER_Y_OFFSET);
     lv_obj_set_hidden(s_ble_status, true);
@@ -127,10 +137,23 @@ bool view::create(lv_obj_t *parent)
     s_battery_symbol = lv_label_create(s_battery_status);
     lv_label_set_text(s_battery_symbol, "");
     style_base(s_battery_symbol, kBlack, kMuted);
+    apply_header_font(s_battery_symbol);
     s_battery_percentage = lv_label_create(s_battery_status);
     lv_label_set_text(s_battery_percentage, "");
     lv_obj_set_style_pad_column(s_battery_status, 3, 0);
     style_base(s_battery_percentage, kBlack, kWhite);
+    apply_header_font(s_battery_percentage);
+
+    /* REQ-HEADER-FONT-03 / AC-HEADER-FONT-01: keep the real percentage label
+     * unchanged and paint the same bitmap label once more one pixel to the
+     * right. The overlay is ignored by flex layout, so this adds weight
+     * without changing the font metrics or header geometry. */
+    s_battery_percentage_bold = lv_label_create(s_battery_status);
+    lv_label_set_text(s_battery_percentage_bold, "");
+    style_base(s_battery_percentage_bold, kBlack, kWhite);
+    apply_header_font(s_battery_percentage_bold);
+    lv_obj_set_ignore_layout(s_battery_percentage_bold, true);
+    lv_obj_set_hidden(s_battery_percentage_bold, true);
     lv_obj_set_hidden(s_battery_status, true);
 
     lv_obj_update_layout(header);
@@ -166,7 +189,8 @@ void view::update_wifi(bool lit)
 
 void view::update_battery(const cyberdeck_battery_view::presentation &presentation)
 {
-    if (s_battery_status == nullptr || s_battery_symbol == nullptr || s_battery_percentage == nullptr)
+    if (s_battery_status == nullptr || s_battery_symbol == nullptr ||
+        s_battery_percentage == nullptr || s_battery_percentage_bold == nullptr)
         return;
     if (!presentation.visible) {
         lv_obj_set_hidden(s_battery_status, true);
@@ -178,6 +202,13 @@ void view::update_battery(const cyberdeck_battery_view::presentation &presentati
     lv_label_set_text(s_battery_symbol, battery_indicator_symbol(presentation.glyph));
     lv_label_set_text(s_battery_percentage,
                       presentation.show_percentage ? percentage : "");
+    lv_label_set_text(s_battery_percentage_bold,
+                      presentation.show_percentage ? percentage : "");
+    lv_obj_update_layout(s_battery_status);
+    lv_obj_set_pos(s_battery_percentage_bold,
+                   lv_obj_get_x(s_battery_percentage) + CYBERDECK_PERCENTAGE_BOLD_OFFSET,
+                   lv_obj_get_y(s_battery_percentage));
+    lv_obj_set_hidden(s_battery_percentage_bold, !presentation.show_percentage);
     lv_obj_set_hidden(s_battery_status, false);
 }
 

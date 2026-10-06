@@ -42,6 +42,14 @@ recebem dados já resolvidos e callbacks de interação, mas não incluem
 `wifi_mgr`, `ssh_client`, `ble_mgr`, shell, NVS, I2C ou persistência. Serviços e
 modelos de produto permanecem em `src/apps/`, sem dependência de LVGL.
 
+O header mantém uma única `cyberdeck_font` em todos os labels de texto e uma
+métrica de line-height compartilhada. A célula da bateria possui três labels:
+ícone semântico, percentual base e uma cópia sobreposta do percentual para o
+peso visual. O terceiro label usa a mesma fonte, fica deslocado 1 px e é
+ignorado pelo layout; acompanha texto e visibilidade sem alterar a geometria.
+Essa é a implementação de `REQ-HEADER-FONT-01..03`, coberta por
+`AC-HEADER-FONT-01` em `tests/host/keymap/test_display_views.cpp`.
+
 O handoff do teclado físico fica isolado em `cyberdeck_keyboard_dispatch.cpp`.
 Ele possui a fila bounded de snapshots, o mutex de enqueue/rollback e o
 agendamento por `lv_async_call`. O dispatcher não conhece sessões de shell,
@@ -232,7 +240,8 @@ fixa a histerese 90/85 e fail-safe, e REQ-BAT-010 fixa NVS, timer UI, shell e
 - **REQ-BAT-UI-003 / AC-BAT-UI-004** — camada pura
   (`cyberdeck_battery_view`) com mapeamento total para visível, percentual e
   glyph semântico, sem ESP-IDF, FreeRTOS ou LVGL.
-- **REQ-BAT-UI-004 / AC-BAT-UI-005** — UI mantém dois labels e a grade 30/40/30
+- **REQ-BAT-UI-004 / AC-BAT-UI-005** — UI mantém três labels (ícone, percentual
+  base e overlay) e a grade 30/40/30
   e apenas aplica a view, sem regra de negócio no LVGL e sem acesso direto a
   I2C/NVS/reader.
 - **REQ-BAT-UI-005 / AC-BAT-UI-006** — `absent` mostra só o glyph externo e o
@@ -380,8 +389,9 @@ errors are rendered in the terminal and written to the event log. Network
 diagnostics remain available through the `wifi` shell command, outside the
 header.
 
-The battery group keeps exactly two labels: one semantic glyph and the numeric
-clamped percentage. The choice is not made in the LVGL layer.
+The battery group keeps exactly three labels: one semantic glyph, the numeric
+clamped percentage and an overlaid copy of that percentage. The choice is not
+made in the LVGL layer; the overlay is a presentation detail.
 `refresh_battery_status` copies the pure policy snapshot from the protection
 adapter, hands it to `cyberdeck_battery_view::resolve`, and applies the result:
 `charging` renders the charge glyph plus the percentage, a present pack

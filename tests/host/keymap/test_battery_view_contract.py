@@ -55,7 +55,7 @@ TRACEABILITY = (
     "AC-BAT-UI-002 -> test_battery_protection.cpp (invalid INA fabricates nothing)",
     "AC-BAT-UI-003 -> test_battery_view.cpp (stuck-low CHG_STAT after votes)",
     "AC-BAT-UI-004 -> test_battery_view.cpp (total state/signal matrix)",
-    "AC-BAT-UI-005 -> test_battery_view_contract.py (two labels, 30/40/30 grid)",
+    "AC-BAT-UI-005 -> test_battery_view_contract.py (icon, percentage, bold overlay labels; 30/40/30 grid)",
     "AC-BAT-UI-006 -> test_battery_view.cpp (absent has no percentage/level glyph)",
 )
 

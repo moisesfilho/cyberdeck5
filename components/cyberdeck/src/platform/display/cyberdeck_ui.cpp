@@ -652,7 +652,7 @@ void refresh_battery_status()
     }
 
     /* The pure view owns the state -> visibility/percentage/glyph mapping; the
-     * LVGL layer only applies the result to the two labels. */
+     * LVGL layer only applies the result to the three labels. */
     const cyberdeck_battery_view::presentation shown =
         cyberdeck_battery_view::resolve(cyberdeck_battery_view::from_snapshot(value));
     s_header_view.update_battery(shown);

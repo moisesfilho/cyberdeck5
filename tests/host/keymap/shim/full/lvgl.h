@@ -44,7 +44,7 @@ struct shim_event_cb { lv_event_cb_t callback{}; int filter{}; void *user_data{}
 struct _lv_obj_t {
     _lv_obj_t *parent{}; std::vector<_lv_obj_t *> children; std::string text;
     int32_t width{}, height{}, x{}, y{}; bool hidden{};
-    const lv_font_t *text_font{}; int32_t text_align{-1};
+    const lv_font_t *text_font{}; int32_t text_align{-1}; int32_t long_mode{-1};
     int32_t flex_main{-1}, flex_cross{-1}, flex_track{-1};
     /* -1 means the shim never saw a background/arc color applied, so "the bar is
      * painted black" cannot pass on a default that already reads as black. */
@@ -88,7 +88,7 @@ inline lv_obj_t *&lv_shim_active_screen() { static lv_obj_t *screen = nullptr; r
 inline lv_obj_t *lv_scr_act() { return lv_shim_active_screen(); }
 inline void lv_obj_set_size(lv_obj_t *o,int32_t w,int32_t h){if(o){o->width=w;o->height=h;}}
 inline void lv_obj_set_width(lv_obj_t *o,int32_t w){if(o)o->width=w;} inline void lv_obj_set_height(lv_obj_t *o,int32_t h){if(o)o->height=h;}
-inline int32_t lv_obj_get_width(lv_obj_t *o){return o?o->width:0;} inline int32_t lv_obj_get_height(lv_obj_t *o){return o?o->height:0;} inline lv_obj_t *lv_obj_get_child(lv_obj_t *o,int i){return o&&i>=0&&i<(int)o->children.size()?o->children[i]:nullptr;}
+inline int32_t lv_obj_get_width(lv_obj_t *o){return o?o->width:0;} inline int32_t lv_obj_get_height(lv_obj_t *o){return o?o->height:0;} inline int32_t lv_obj_get_x(const lv_obj_t *o){return o?o->x:0;} inline int32_t lv_obj_get_y(const lv_obj_t *o){return o?o->y:0;} inline lv_obj_t *lv_obj_get_child(lv_obj_t *o,int i){return o&&i>=0&&i<(int)o->children.size()?o->children[i]:nullptr;}
 inline void lv_obj_set_x(lv_obj_t*o,int32_t v){if(o)o->x=v;} inline void lv_obj_set_y(lv_obj_t*o,int32_t v){if(o)o->y=v;}
 inline void lv_obj_set_pos(lv_obj_t*o,int32_t x,int32_t y){if(o){o->x=x;o->y=y;}}
 inline int32_t lv_font_get_line_height(const lv_font_t*f){return f?f->line_height:0;}
@@ -98,7 +98,9 @@ inline void lv_obj_clear_flag(lv_obj_t*, int) {}
 /* LVGL 9 keeps ignore_layout as a property behind a dedicated setter, because
  * `lv_obj_add_flag(obj, LV_OBJ_FLAG_IGNORE_LAYOUT)` is LV_DEPRECATED there.
  * Mirror the 9.x setter/getter only: the host must not decide which spelling of
- * the overlay exclusion production is allowed to use. */
+ * the overlay exclusion production is allowed to use. No outline API is
+ * modeled; the header contract is intentionally exercised only by the bitmap
+ * overlay path. */
 inline void lv_obj_set_ignore_layout(lv_obj_t*o,bool v){if(o)o->ignore_layout=v;}
 inline bool lv_obj_is_ignore_layout(const lv_obj_t*o){return o&&o->ignore_layout;}
 inline void lv_obj_set_layout(lv_obj_t*o,int v){if(o)o->layout=v;} inline void lv_obj_set_flex_flow(lv_obj_t*o,int v){if(o)o->flex_flow=v;} inline void lv_obj_set_flex_align(lv_obj_t*o,int main,int cross,int track){if(o){o->flex_main=main;o->flex_cross=cross;o->flex_track=track;}} inline void lv_obj_set_flex_grow(lv_obj_t*o,int v){if(o)o->flex_grow=v;}
@@ -121,7 +123,7 @@ inline void lv_obj_set_style_pad_column(lv_obj_t*o,int v,int){if(o)o->pad_column
 inline void lv_obj_set_style_text_align(lv_obj_t*o,int v,int){if(o)o->text_align=v;} inline void lv_obj_set_style_arc_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_arc_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_opa(lv_obj_t*,int,int){}
 inline void lv_obj_set_style_text_font(lv_obj_t*o,const lv_font_t*f,int){if(o)o->text_font=f;}
 inline void lv_obj_update_layout(lv_obj_t*){} inline void lv_obj_align(lv_obj_t*,int,int,int){} inline void lv_obj_add_state(lv_obj_t*,int){}
-inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline void lv_label_set_long_mode(lv_obj_t*,int){}
+inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline void lv_label_set_long_mode(lv_obj_t*o,int v){if(o)o->long_mode=v;}
 inline void lv_textarea_set_one_line(lv_obj_t*,bool){} inline void lv_textarea_set_max_length(lv_obj_t*,std::uint32_t){} inline void lv_keyboard_set_textarea(lv_obj_t*,lv_obj_t*){}
 inline void lv_arc_set_bg_angles(lv_obj_t*,int,int){} inline void lv_arc_set_angles(lv_obj_t*,int,int){}
 inline void lv_obj_add_event_cb(lv_obj_t*o,lv_event_cb_t cb,int filter,void *user_data)

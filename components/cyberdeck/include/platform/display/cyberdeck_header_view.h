@@ -23,6 +23,7 @@ private:
     lv_obj_t *s_battery_status = nullptr;
     lv_obj_t *s_battery_symbol = nullptr;
     lv_obj_t *s_battery_percentage = nullptr;
+    lv_obj_t *s_battery_percentage_bold = nullptr;
 };
 
 } // namespace cyberdeck_header_view

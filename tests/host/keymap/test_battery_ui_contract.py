@@ -397,8 +397,21 @@ def main() -> int:
             "header must retain the LVGL Wi-Fi indicator")
     battery_label_creates = re.findall(
         r"lv_label_create\s*\(\s*s_battery_status\s*\)", init)
-    require(len(battery_label_creates) == 2,
-            "battery group must contain only one icon label and one percentage label")
+    require(len(battery_label_creates) == 3,
+            "battery group must contain one icon, one percentage, and one bold overlay label")
+    require("s_battery_percentage_bold" in init,
+            "percentage bold overlay must be a dedicated label")
+    require(re.search(r"lv_obj_set_ignore_layout\s*\(\s*s_battery_percentage_bold\s*,\s*true\s*\)", init),
+            "percentage bold overlay must be ignored by layout")
+    require(re.search(r"lv_obj_set_hidden\s*\(\s*s_battery_percentage_bold\s*,\s*true\s*\)", init),
+            "percentage bold overlay must start hidden")
+    require(re.search(r"lv_label_set_text\s*\(\s*s_battery_percentage_bold\s*,\s*"
+                      r"presentation\.show_percentage\s*\?\s*percentage\s*:\s*\"\"",
+                      battery_view),
+            "percentage bold overlay must track the percentage text")
+    require(re.search(r"lv_obj_set_hidden\s*\(\s*s_battery_percentage_bold\s*,\s*!presentation\.show_percentage\s*\)",
+                      battery_view),
+            "percentage bold overlay visibility must track presentation")
 
     # A percentage label is required, with a real numeric render/update path;
     # no state word is rendered as a third textual element.

@@ -629,7 +629,7 @@ test_battery_reader_contract: test_battery_reader_contract.py $(BATTERY_READER_S
 # compacta, flex grow zero, alinhamento final e gaps pequenos). A UI deve
 # mostrar percentual numerico e um unico icone semantico nos estados ativos,
 # sem qualquer icone de nivel.
-test_battery_ui_contract: test_battery_ui_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_ICON_SRC) $(WIFI_ICON_HDR) ../../../components/cyberdeck/include/platform/sensors/battery_status.h $(BATTERY_CONTRACT_HDR) ../../../main/app_main.cpp ../../../code-map.md ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md Makefile
+test_battery_ui_contract: test_battery_ui_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(HEADER_VIEW_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_header_view.h $(WIFI_ICON_SRC) $(WIFI_ICON_HDR) ../../../components/cyberdeck/include/platform/sensors/battery_status.h $(BATTERY_CONTRACT_HDR) ../../../main/app_main.cpp ../../../code-map.md ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md Makefile
 	$(PYTHON) test_battery_ui_contract.py
 
 # Pure host contract for battery state/protection policy.  It links the real
