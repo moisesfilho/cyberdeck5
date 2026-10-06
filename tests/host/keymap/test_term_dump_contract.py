@@ -7,7 +7,11 @@ os requisitos que a superficie host NAO alcanca: `exec_term_dump` e
 `truncate_left_utf8_local` tem linkage interno.
 
 Cobertura:
-  TEST-TERM-005 (AC-TERM-003): `term.dump` e type conhecido e tem ramo
+   TEST-BOOT-MSG-01/02 (REQ-BOOT-MSG-01 / AC-BOOT-MSG-01): a fonte real da
+                               UI nao pode conter o banner legado no boot;
+                               a verificacao incide sobre cyberdeck_ui.cpp,
+                               nao sobre um fixture que ja nasceu sem banner.
+   TEST-TERM-005 (AC-TERM-003): `term.dump` e type conhecido e tem ramo
                               Proprio em device_exec; resultado bounded com
                                text/truncated/bytes/limit e limite de envelope.
   TEST-TERM-006 (AC-TERM-004): lock bounded (tick timeout) em
@@ -87,6 +91,18 @@ def main():
     ui_header = UI_H.read_text(encoding="utf-8", errors="ignore")
     cli = CLI.read_text(encoding="utf-8", errors="ignore")
     mk = MAKEFILE.read_text(encoding="utf-8", errors="ignore")
+
+    # =================================================================
+    # TEST-BOOT-MSG-01/02 (REQ-BOOT-MSG-01 / AC-BOOT-MSG-01): a regressao
+    # deve ser detectada na implementacao real, e nao em texto fornecido
+    # pelo proprio teste.
+    # =================================================================
+    legacy_banner = "CYBERDECK5 READY"
+    require(legacy_banner not in ui,
+            "cyberdeck_ui.cpp nao pode inserir o banner legado no boot")
+    ui_init_body = function_body(ui, "cyberdeck_ui_init(void)")
+    require(legacy_banner not in ui_init_body,
+            "cyberdeck_ui_init nao pode conter o banner legado")
 
     # =================================================================
     # TEST-TERM-005 (AC-TERM-003): ramo device_exec e resultado bounded

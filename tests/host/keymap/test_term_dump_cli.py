@@ -11,6 +11,7 @@ Cobre o lado CLI de `term.dump` sem hardware e sem pyserial:
   - ausencia de resposta levanta RuntimeError e retorna 2 em stderr
   - payload com \\n, aspas e UTF-8 sobrevive ao round-trip e continua uma linha
   - a correlacao por `rid` ignora frames de log e de outras requisicoes
+  - o round-trip do texto fornecido pelo transporte e preservado
 
 O transporte serial e substituido por um dublê em memoria; nenhum byte real
 sai do host.
@@ -182,8 +183,8 @@ def test_request_ignores_foreign_frames():
 # saida normal / erro / ausencia de resposta
 # ---------------------------------------------------------------------
 def test_normal_output():
-    result = {"text": "CYBERDECK5 READY\nroot@cyberdeck:~$ ", "truncated": False,
-              "bytes": 29, "limit": 3000}
+    result = {"text": "root@cyberdeck:~$ ", "truncated": False,
+              "bytes": 18, "limit": 3000}
     transport = FakeTransport()
     transport.replies = [lambda req: envelope(req["rid"], result)]
     rc, out, err = run_main(["term.dump"], transport)

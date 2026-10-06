@@ -11,6 +11,9 @@
  *   TEST-TERM-004 (AC-TERM-002): truncamento/escape UTF-8-SAFE do payload do
  *                               dump: bytes multi-byte preservados e controles
  *                               escapados, garantindo envelope de uma linha.
+ *   A ausencia do banner de boot e verificada contra a fonte real em
+ *   test_term_dump_contract.py; este harness cobre somente o round-trip do
+ *   payload fornecido ao dispatch.
  *
  * Superficie NAO coberta aqui (existe apenas sob ESP_PLATFORM ou tem linkage
  * interno) e verificada estruturalmente em test_term_dump_contract.py:
@@ -412,7 +415,7 @@ void test_utf8_safe_payload_escaping()
     const std::string mixed = std::string("root@deck:~$ ") + multibyte + " " + euro + " " + emoji + "\n";
     const std::string ctrl = std::string("a\tb") + char(0x1B) + "[0m" + char(0x07) + char(0x7F) + "\r\n";
     const Case cases[] = {
-        {"ascii", "CYBERDECK5 READY\nroot@deck:~$ "},
+        {"ascii", "root@deck:~$ "},
         {"multibyte-2-3-4", mixed},
         {"controles-ansi", ctrl},
         {"quotes-backslash", "path \"C:\\tmp\"\\n"},
@@ -509,6 +512,25 @@ void test_utf8_safe_payload_escaping()
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Round-trip do payload de term.dump fornecido ao dispatch.              */
+/* ------------------------------------------------------------------ */
+void test_term_dump_payload_roundtrip()
+{
+    using namespace cyberdeck_serial;
+    const std::string initial_text = "root@deck:~$ ";
+
+    const std::string line =
+        "{\"rid\":\"boot\",\"type\":\"ui.echo\",\"text\":\"root@deck:~$ \"}";
+    const dispatch_result res = dispatch_one(line.data(), line.size());
+    CHECK(res.ok);
+    std::string raw_value;
+    CHECK(extract_json_string(res.envelope_json, "text", raw_value));
+    std::string recovered;
+    CHECK(json_unescape(raw_value, recovered));
+    CHECK(recovered == initial_text);
+}
+
 } // namespace
 
 int main()
@@ -517,6 +539,7 @@ int main()
     test_envelope_and_rid_correlation();
     test_bounded_result();
     test_utf8_safe_payload_escaping();
+    test_term_dump_payload_roundtrip();
     if (s_failures == 0) {
         std::printf("PASS: serial_term_dump (%d checks)\n", s_checks);
         return 0;

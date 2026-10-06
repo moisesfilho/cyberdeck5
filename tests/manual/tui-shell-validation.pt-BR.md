@@ -42,7 +42,7 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
-| T1 | Boot sem teclado | Header no plano aprovado: `CYBERDECK5` a esquerda, relogio `DD/MM/YYYY HH:MM` no centro e um unico icone Wi-Fi a direita; o icone fica claro somente quando o Wi-Fi esta habilitado, conectado e possui IP, e escuro nos demais estados; nenhum SSID nem status/indicador SSH no header; terminal direto mostra `CYBERDECK5 READY` e o prompt `$ `, sem botoes de conexao |  |  |
+| T1 | Boot sem teclado | Header no plano aprovado: `CYBERDECK5` a esquerda, relogio `DD/MM/YYYY HH:MM` no centro e um unico icone Wi-Fi a direita; o icone fica claro somente quando o Wi-Fi esta habilitado, conectado e possui IP, e escuro nos demais estados; nenhum SSID nem status/indicador SSH no header; terminal direto nao exibe banner de boot e mostra o prompt `$ `, sem botoes de conexao |  |  |
 | T1a | Relogio do header | Centro do header mostra `DD/MM/YYYY HH:MM` exato (GMT-3 fixo); avanca de minuto na virada do minuto; se o RTC ainda nao sincronizou (epoch < 2020), o campo fica vazio sem quebrar o layout; NENHUM rotulo SSH aparece ao lado do relogio |  |  |
 | T2 | Terminal direto | Terminal unificado ocupa a area abaixo do header (sem fileira de botoes), com a linha de comando pronta para entrada |  |  |
 | T3 | Tema monocromatico | Fundo preto (#000), superficies #0A0A0A/#121212, bordas #2A2A2A, texto #F2F2F2, texto fraco #8A8A8A; sem cor de destaque |  |  |

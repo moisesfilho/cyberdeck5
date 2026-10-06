@@ -1521,7 +1521,6 @@ s_last_clock_text.clear();
      s_ble_transient_active = false;
      s_ble_transient_committed = false;
        s_scrollback.clear();
-       s_scrollback.append("CYBERDECK5 READY\n", sizeof("CYBERDECK5 READY\n") - 1);
        render_terminal();
        /* The shell supervisor starts after this function returns and may run
         * on the boot task.  Let the existing LVGL timer perform the first

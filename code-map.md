@@ -65,9 +65,15 @@ a API preferencial para recuperar e validar texto/retorno após ações como
 para estrutura/estado de widgets e `screen.dump`/screenshot para validação
 visual. O roteiro executavel detalhado fica em
 `tests/manual/serial-bridge-validation.pt-BR.md`.
+
+## Boot do terminal
+
+`components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` limpa o scrollback
+durante a inicialização sem acrescentar banner; o prompt e as demais saídas
+continuam sendo renderizados pelos fluxos existentes.
 Para tarefas que envolvam `idf.py` ou outros recursos do ESP-IDF, o arquivo
-tambem orienta usar `IDF_PATH` para localizar o diretorio padrao do IDF na
-maquina e carregar o ambiente quando necessario.
+`AGENTS.md` tambem orienta usar `IDF_PATH` para localizar o diretorio padrao
+do IDF na maquina e carregar o ambiente quando necessario.
 
 ## Pontos de entrada e fluxo de boot
 
