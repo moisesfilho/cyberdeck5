@@ -172,7 +172,13 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+
+test_editor_model: test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp ../../../components/cyberdeck/include/apps/editor/cyberdeck_editor_model.h
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp -o $@
+
+test_editor_runtime_contract: test_editor_runtime_contract.py
+	$(PYTHON) test_editor_runtime_contract.py
 
 TIME_SYNC_SRC := ../../../components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
 TIME_SYNC_SHIM := time_sync_shim
@@ -970,6 +976,10 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_lat04_contract
 	@echo "==> Executando testes do modelo da linha de edicao/sessao SSH"
 	@./test_edit_line
+	@echo "==> Executando testes do modelo do editor"
+	@./test_editor_model
+	@echo "==> Executando contrato de runtime do editor"
+	@$(MAKE) --no-print-directory test_editor_runtime_contract
 	@echo "==> Executando testes comportamentais da sessao de shell"
 	@./test_shell_session
 	@echo "==> Executando testes do runtime de aplicacoes compiladas"

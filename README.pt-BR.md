@@ -123,6 +123,13 @@ storage (`storage.bounded_read`) acompanhada do logger bounded. O contrato de
 reply/output ainda não é universal: qualquer fixação deve preservar o fluxo
 existente de terminal e SSH.
 
+O editor compilado pode ser aberto com `edit <arquivo>`. Ele usa o storage
+confinado do SDK, limita documentos a 12000 bytes, rejeita binários e bytes
+inválidos, suporta UTF-8/UTF-16 LE/BE/Windows-1252 e preserva encoding e EOL de
+arquivos existentes. Novos arquivos usam UTF-8 sem BOM e LF. Edição, busca,
+desfazer/refazer, setas e gesto são bounded; salvar usa temporário, flush/fsync e rename
+atômico, e salvar como pede confirmação.
+
 ### Proteção de Tela
 
 O firmware desliga o display após um tempo configurável de inatividade

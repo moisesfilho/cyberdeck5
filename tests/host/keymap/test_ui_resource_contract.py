@@ -91,6 +91,9 @@ FAIL_CLOSED_PHASES = (
     ("shell surface registration",
      (r"window_manager\s*\.\s*policy\s*\(\s*\)\s*\.\s*create\s*\(",
        r"view_status\s*::\s*ok"), True),
+    ("editor surface registration",
+     (r"window_manager\s*\.\s*policy\s*\(\s*\)\s*\.\s*create\s*\(\s*2\s*,\s*s_editor_view_context",
+      r"view_status\s*::\s*ok"), True),
     ("header view",
      (r"!\s*s_header_view\.create\s*\(",), True),
     ("LVGL timers",
@@ -126,6 +129,15 @@ def main() -> int:
                     f"cleanup must zero {handle}")
     require("s_keyboard_dispatch.stop();" in cleanup,
             "cleanup must stop the keyboard dispatcher")
+    require("cyberdeck_editor::global_application().unbind_input();" in cleanup,
+            "cleanup must unbind the editor input facade")
+    require(cleanup.index("s_shell_view_context = {}") <
+            cleanup.index("cyberdeck_editor::global_application().unbind_input()"),
+            "shell surface must be quiesced before editor teardown")
+    require(cleanup.count("begin_teardown(s_editor_view_context)") == 1 and
+            cleanup.count("remove(s_editor_view_context)") == 1 and
+            cleanup.count("s_editor_view_context = {}") == 1,
+            "editor surface must be torn down and cleared exactly once")
 
     # TEST-HOST-BOOT-01: repeated init/deinit must be a no-op after the first
     # successful cycle, and cleanup must remain safe when called twice.
@@ -167,6 +179,11 @@ def main() -> int:
 
     require("s_keyboard_dispatch.start(on_keyboard_event, nullptr)" in init,
             "init must start the keyboard dispatcher")
+    require(init.count("window_manager.policy().create(") == 2,
+            "init must account for exactly shell and editor surfaces")
+    require_before(init, "window_manager.policy().create(2, s_editor_view_context)",
+                    "cyberdeck_editor::global_application().bind_input(",
+                    "editor input must bind only after its surface is created")
 
     offsets = []
     for phase, fragments, must_unwind in FAIL_CLOSED_PHASES:

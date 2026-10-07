@@ -372,6 +372,14 @@ resource authorization and does not imply that bounded reads are implemented.
 Reply/output compatibility with the shell and SSH must be established before
 standardizing command-app replies.
 
+The `cyberdeck.editor` foreground command app keeps its model independent of
+LVGL, VFS, and descriptors. It consumes only the SDK storage facade for
+confined reads, temporary files, flush/fsync, and atomic rename. Documents are
+bounded to 12000 bytes, reject binary and invalid input, support UTF-8,
+UTF-16 LE/BE, and Windows-1252, and preserve codec/BOM/EOL for existing files;
+new files use UTF-8 without a BOM and LF. The model owns bounded editing,
+search, undo/redo, directional input, and gesture scrolling.
+
 ## SSH
 
 `ssh_client` usa uma task FreeRTOS dedicada, filas de entrada e senha e

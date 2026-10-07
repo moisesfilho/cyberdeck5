@@ -339,6 +339,15 @@ somente uma autorização de recurso, portanto a leitura não deve ser inferida
 como implementada. O contrato de saída deve continuar compatível com o shell e
 com SSH antes de padronizar replies para command apps.
 
+O `cyberdeck.editor` é uma command app foreground compilada. Seu modelo não
+inclui LVGL, VFS ou descritores: recebe somente a fachada SDK de storage, com
+leitura, temporário, `flush_or_fsync` e `rename_atomic`, todos confinados ao
+namespace virtual. Documentos são limitados a 12000 bytes, rejeitam binário e
+bytes inválidos e suportam UTF-8, UTF-16 LE/BE e Windows-1252. Arquivos
+existentes preservam codec/BOM/EOL; novos usam UTF-8 sem BOM e LF. A escrita
+segue temporário -> flush/fsync -> rename atômico, e o modelo concentra edição,
+busca, undo/redo bounded e entrada direcional/gestual.
+
 ## SSH
 
 `ssh_client` usa uma task FreeRTOS dedicada, filas de entrada e senha e

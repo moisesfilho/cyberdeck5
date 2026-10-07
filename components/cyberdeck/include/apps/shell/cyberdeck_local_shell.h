@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
+#include <string_view>
 
 enum class cyberdeck_local_shell_status { handled, passthrough, rejected };
 
@@ -11,18 +13,25 @@ struct cyberdeck_local_shell_result {
 
 // Bounded, cat-only operation used by the asynchronous worker.  The returned
 // std::string owns the file contents on the heap; no shell state is created.
-cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root,
-                                                       const char *cwd,
-                                                       const char *command);
+cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root, const char *cwd, const char *command);
+cyberdeck_local_shell_result cyberdeck_local_shell_cat_bounded(const char *host_root, const char *cwd,
+                                                               const char *command, std::size_t max_bytes);
+
+// Internal SDK backend. Applications never receive these functions or a VFS
+// handle; storage_facade owns the confined transaction.
+bool cyberdeck_local_shell_storage_write_temp(const char *host_root, const char *cwd, std::string_view path,
+                                              const char *bytes, std::size_t size);
+bool cyberdeck_local_shell_storage_flush(const char *host_root, const char *cwd, std::string_view path);
+bool cyberdeck_local_shell_storage_rename(const char *host_root, const char *cwd, std::string_view temp_path,
+                                          std::string_view path);
 
 class cyberdeck_local_shell {
-public:
-    cyberdeck_local_shell(const std::string &host_root,
-                          const std::string &virtual_root = "/");
+  public:
+    cyberdeck_local_shell(const std::string &host_root, const std::string &virtual_root = "/");
     cyberdeck_local_shell_result execute(const std::string &line);
     std::string cwd() const;
 
-private:
+  private:
     std::string host_root_;
     std::string virtual_root_;
     std::string cwd_;

@@ -32,6 +32,9 @@ ALLOWLIST = {
     "components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp":
         "NVS/ESP-IDF recovery adapter; exercised by the Phase 10 structural "
         "contract and intentionally not host-linkable",
+    "components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp":
+        "SDK/LVGL application composition; exercised by the editor runtime "
+        "structural contract and not host-linkable",
     "components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp":
         "BSP/LVGL capture adapter (bsp_display_lock, lv_snapshot_take); no host build",
     "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp":

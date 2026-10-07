@@ -476,8 +476,12 @@ Os hooks do supervisor continuam gerando lifecycle logs pelo event log.
       `runtime::start_all`; hardware, recovery, safe mode e a ordem necessária
       permanecem explícitos em `app_main`.
 - [x] Manter a auditoria documental alinhada a estas evidências; quotas
-      bounded/revogáveis, catálogo de recursos e pacote SD de dados/assets estão
-      implementados sem alterar a compatibilidade do shell.
+  bounded/revogáveis, catálogo de recursos e pacote SD de dados/assets estão
+  implementados sem alterar a compatibilidade do shell.
+- [x] Entregar o editor foreground compilado `edit <arquivo>` sobre o SDK:
+  storage confinado com temporário/flush-or-fsync/rename atômico, limite de
+  12000 bytes, codecs/EOL preservados, edição/busca/undo host-testáveis,
+  confirmação de save-as e lifecycle seguro, sem acesso direto do app ao VFS.
 
 ## Estrutura-Alvo
 

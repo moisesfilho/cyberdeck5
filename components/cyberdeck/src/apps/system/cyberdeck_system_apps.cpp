@@ -2,6 +2,7 @@
 
 #include "apps/bluetooth/ble_mgr.h"
 #include "apps/demo/cyberdeck_demo_app.h"
+#include "apps/editor/cyberdeck_editor_app.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/runtime/cyberdeck_resource_catalog.h"
 #include "apps/runtime/cyberdeck_sd_package.h"
@@ -242,7 +243,7 @@ cyberdeck_apps::application *const k_apps[] = {
     &s_wifi,      &s_serial,
     &s_ssh,       &s_screenshot,
     &s_bluetooth, &s_time_sync,
-    &s_demo,
+    &s_demo,      &cyberdeck_editor::global_application(),
 };
 
 bool s_registered = false;
@@ -290,8 +291,9 @@ extern "C" esp_err_t cyberdeck_system_apps_start(void) {
     cyberdeck_apps::runtime &runtime = cyberdeck_apps::global_runtime();
     const bool started = runtime.start_all();
     if (!started) {
-        for (const char *id : {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial",
-                               "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth", "cyberdeck.time_sync"}) {
+        for (const char *id :
+             {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial", "cyberdeck.ssh",
+              "cyberdeck.screenshot", "cyberdeck.bluetooth", "cyberdeck.time_sync", "cyberdeck.editor"}) {
             if (runtime.state(id) == cyberdeck_apps::app_state::failed) {
                 cyberdeck_recovery::record_app_error(id, runtime.failure_reason(id).data());
                 ESP_LOGW(TAG, "system app failed: %s (%.*s)", id, static_cast<int>(runtime.failure_reason(id).size()),

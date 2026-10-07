@@ -140,6 +140,13 @@ bounded storage read (`storage.bounded_read`) and bounded logger output. No
 universal reply/output format is fixed until it is proven compatible with the
 existing terminal and interactive SSH flows.
 
+The compiled editor is opened with `edit <file>`. It uses the confined storage
+facade, limits documents to 12000 bytes, rejects binary and invalid bytes, and
+supports UTF-8, UTF-16 LE/BE, and Windows-1252. Existing files preserve codec,
+BOM, and EOL; new files use UTF-8 without a BOM and LF. Editing, search,
+undo/redo, directional input, and gesture scrolling are bounded. Saving uses a
+temporary file, flush/fsync, and atomic rename; Save As requires confirmation.
+
 The Tab5 system services are also registered applications: `cyberdeck.shell`,
 `cyberdeck.wifi`, `cyberdeck.serial`, `cyberdeck.ssh`, `cyberdeck.screenshot`
 and `cyberdeck.bluetooth`. They are started by the application supervisor in

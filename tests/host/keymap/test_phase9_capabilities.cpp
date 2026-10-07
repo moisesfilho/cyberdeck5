@@ -1,4 +1,5 @@
 #include "apps/runtime/cyberdeck_app_facades.h"
+#include "apps/runtime/cyberdeck_app_storage.h"
 
 #include <chrono>
 #include <cstdio>

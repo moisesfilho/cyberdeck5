@@ -12,46 +12,53 @@ namespace cyberdeck_apps {
 /* Small typed facades keep resource checks at the operation boundary.  They
  * intentionally expose no service singleton or platform handle. */
 class display_facade final {
-public:
+  public:
     display_facade() = default;
-    display_facade(grant access, cyberdeck_window_manager::manager &manager)
-        : access_(access), manager_(&manager) {}
-    bool available() const { return access_.allows(resource::display) && manager_ != nullptr; }
+    display_facade(grant access, cyberdeck_window_manager::manager &manager) : access_(access), manager_(&manager) {}
+    bool available() const {
+        return access_.allows(resource::display) && manager_ != nullptr;
+    }
     bool create(std::uint16_t app, cyberdeck_window_manager::view_context &out) const;
     bool activate(cyberdeck_window_manager::view_context context) const;
     bool hide(cyberdeck_window_manager::view_context context) const;
     bool notify(cyberdeck_window_manager::view_context context, std::string_view text) const;
 
-private:
+  private:
     grant access_{};
     cyberdeck_window_manager::manager *manager_ = nullptr;
 };
 
 class input_facade final {
-public:
+  public:
     input_facade() = default;
-    input_facade(grant access, cyberdeck_window_manager::manager &manager)
-        : access_(access), manager_(&manager) {}
-    bool available() const { return access_.allows(resource::input) && manager_ != nullptr; }
+    input_facade(grant access, cyberdeck_window_manager::manager &manager) : access_(access), manager_(&manager) {}
+    bool available() const {
+        return access_.allows(resource::input) && manager_ != nullptr;
+    }
+    void refresh_grant(grant access) {
+        access_ = access;
+    }
     bool focus(cyberdeck_window_manager::view_context context) const;
     bool validate(cyberdeck_window_manager::view_context context) const;
 
-private:
+  private:
     grant access_{};
     cyberdeck_window_manager::manager *manager_ = nullptr;
 };
 
-#define CYBERDECK_DECLARE_RESOURCE_FACADE(name, kind) \
-class name##_facade final { \
-public: \
-    name##_facade() = default; \
-    explicit name##_facade(grant access) : access_(access) {} \
-    bool available() const { return access_.allows(resource::kind); } \
-private: \
-    grant access_{}; \
-};
+#define CYBERDECK_DECLARE_RESOURCE_FACADE(name, kind)                                                                  \
+    class name##_facade final {                                                                                        \
+      public:                                                                                                          \
+        name##_facade() = default;                                                                                     \
+        explicit name##_facade(grant access) : access_(access) {}                                                      \
+        bool available() const {                                                                                       \
+            return access_.allows(resource::kind);                                                                     \
+        }                                                                                                              \
+                                                                                                                       \
+      private:                                                                                                         \
+        grant access_{};                                                                                               \
+    };
 
-CYBERDECK_DECLARE_RESOURCE_FACADE(storage, storage)
 CYBERDECK_DECLARE_RESOURCE_FACADE(network, network)
 CYBERDECK_DECLARE_RESOURCE_FACADE(ble, ble)
 CYBERDECK_DECLARE_RESOURCE_FACADE(serial, serial)
