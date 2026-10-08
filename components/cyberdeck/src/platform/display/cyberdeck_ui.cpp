@@ -239,16 +239,13 @@ void editor_view_action(std::string_view action, void *context);
 void zero_string(std::string &s);
 void refresh_ble_status();
 
-bool ble_list_is_visible()
-{
+bool ble_list_is_visible() {
     const cyberdeck_ble::screen current = s_ble_model.current_screen();
     return s_ble_model.owns_input() &&
-           (current == cyberdeck_ble::screen::results ||
-            current == cyberdeck_ble::screen::paired);
+           (current == cyberdeck_ble::screen::results || current == cyberdeck_ble::screen::paired);
 }
 
-void sync_ble_transient_block()
-{
+void sync_ble_transient_block() {
     if (ble_list_is_visible()) {
         s_ble_transient_active = true;
         return;
@@ -262,7 +259,8 @@ void sync_ble_transient_block()
     if (s_ble_transient_committed) return;
     s_ble_transient_committed = true;
     const std::string rendered = s_ble_model.devices().render();
-    if (!rendered.empty()) append_output(rendered.data(), rendered.size());
+    if (!rendered.empty())
+        append_output(rendered.data(), rendered.size());
 }
 
 bool ble_address_bytes(const std::string &address, uint8_t out[6]) {
@@ -587,8 +585,7 @@ void destroy_ui_resource_handles() {
 void hidden(lv_obj_t *obj, bool value);
 void local_key(uint32_t key);
 
-void on_cat_result(const char *output, size_t output_length, bool accepted, void *)
-{
+void on_cat_result(const char *output, size_t output_length, bool accepted, void *) {
     auto sanitize_for_lvgl = [](const char *input, size_t input_length) {
         std::string clean;
         if (input == nullptr)
@@ -622,8 +619,13 @@ void on_cat_result(const char *output, size_t output_length, bool accepted, void
                           (length == 4 && (codepoint < 0x10000 || codepoint > 0x10FFFF)) ||
                           (codepoint >= 0xD800 && codepoint <= 0xDFFF)))
                 valid = false;
-            if (!valid) { replacement(); ++i; continue; }
-            if (clean.size() + length > limit) break;
+            if (!valid) {
+                replacement();
+                ++i;
+                continue;
+            }
+            if (clean.size() + length > limit)
+                break;
             clean.append(reinterpret_cast<const char *>(bytes + i), length);
             i += length;
         }
@@ -657,13 +659,17 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
                 return;
             }
             if (shortcut == 's' || shortcut == 'q' || shortcut == 'z' || shortcut == 'y') {
-                (void)editor.handle_shortcut(shortcut);
+                const bool succeeded = editor.handle_shortcut(shortcut);
+                if (!succeeded && !editor.save_diagnostic().empty()) {
+                    append_line(std::string(editor.save_diagnostic()) + "\n");
+                }
                 render_terminal();
                 return;
             }
             /* Clipboard shortcuts are unsupported; reject them instead of
              * silently inserting C/V/X into the document. */
-            if (shortcut == 'c' || shortcut == 'v' || shortcut == 'x') return;
+            if (shortcut == 'c' || shortcut == 'v' || shortcut == 'x')
+                return;
         }
         if (s_editor_search_mode) {
             if (special_key == LV_KEY_ESC) {
@@ -679,10 +685,15 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
             return;
         }
         if (editor_app.close_requested()) {
-            if (special_key == LV_KEY_ESC) editor.cancel_close();
+            if (special_key == LV_KEY_ESC)
+                editor.cancel_close();
             else if (special_key == LV_KEY_ENTER) {
+                // clang-format off
                 if (editor.save_current()) editor.discard_and_close();
-                else editor.cancel_close();
+                // clang-format on
+                else if (!editor.save_diagnostic().empty()) {
+                    append_line(std::string(editor.save_diagnostic()) + "\n");
+                }
             } else if (text != nullptr && length == 1 && (text[0] == 'd' || text[0] == 'D')) {
                 editor.discard_and_close();
             }
@@ -702,8 +713,11 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
             return false;
         };
         if (special_key == LV_KEY_ESC) {
+            // clang-format off
             if (editor.document().dirty()) editor.request_close();
-            else editor.discard_and_close();
+            // clang-format on
+            else
+                editor.discard_and_close();
             render_terminal();
             return;
         }
@@ -799,8 +813,7 @@ void refresh_battery_status() {
     s_header_view.update_battery(shown);
 }
 
-void process_battery_protection(lv_timer_t *)
-{
+void process_battery_protection(lv_timer_t *) {
     refresh_battery_status();
 }
 
@@ -1044,17 +1057,13 @@ cyberdeck_shell_console::line_view compose_console_line() {
     return s_shell_app.compose_line(surface);
 }
 
-std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,
-                                bool complete = false) {
+std::string get_rendered_output(const cyberdeck_shell_console::line_view &view, bool complete = false) {
     const size_t used = view.reserved();
-    const size_t available = complete
-                                 ? (TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0)
-                                 : (std::min(viewport_bytes, TERMINAL_LIMIT) > used
-                                        ? std::min(viewport_bytes, TERMINAL_LIMIT) - used
-                                        : 0);
-    const size_t viewport = complete
-                                ? TERMINAL_LIMIT
-                                : std::min(viewport_bytes, s_terminal_view.viewport_capacity());
+    const size_t available =
+        complete
+            ? (TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0)
+            : (std::min(viewport_bytes, TERMINAL_LIMIT) > used ? std::min(viewport_bytes, TERMINAL_LIMIT) - used : 0);
+    const size_t viewport = complete ? TERMINAL_LIMIT : std::min(viewport_bytes, s_terminal_view.viewport_capacity());
     std::string output = complete ? s_scrollback.text() : s_scrollback.viewport(viewport);
     if (s_wifi_ui_state == cyberdeck_shell_session::wifi_ui_state_t::SEARCH_SELECT) {
         output += s_wifi_search_menu.render();
@@ -1065,7 +1074,8 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,
             output += "Press ENTER again to forget, ESC to keep.\n";
         }
     }
-    if (ble_list_is_visible()) output += s_ble_model.devices().render();
+    if (ble_list_is_visible())
+        output += s_ble_model.devices().render();
     const cyberdeck_ble::screen ble_screen = s_ble_model.current_screen();
     if (ble_screen == cyberdeck_ble::screen::pairing || ble_screen == cyberdeck_ble::screen::auth ||
         ble_screen == cyberdeck_ble::screen::connecting || ble_screen == cyberdeck_ble::screen::connected) {
@@ -1104,8 +1114,8 @@ void render_terminal() {
             s_editor_view.set_bottom_inset(tab5_keyboard_is_connected() ? 0 : lv_obj_get_height(s_keyboard));
         }
         s_editor_view.set_visible(true);
-        std::string status = s_editor_search_mode ? "Buscar: " + s_editor_search
-                                                  : "Ctrl+F Buscar  Ctrl+S Salvar  Ctrl+Q Fechar";
+        std::string status =
+            s_editor_search_mode ? "Buscar: " + s_editor_search : "Ctrl+F Buscar  Ctrl+S Salvar  Ctrl+Q Fechar";
         if (editor_app.close_requested())
             status = "Salvar / Descartar / Cancelar (Enter / D / Esc)";
         switch (editor_app.document().info().codec) {
@@ -1123,6 +1133,8 @@ void render_terminal() {
             status += " | UTF-8";
             break;
         }
+        if (!editor_app.save_diagnostic().empty())
+            status = std::string(editor_app.save_diagnostic()) + " | " + status;
         s_editor_view.render(editor_app.document().text(), editor_app.document().cursor(),
                              editor_app.document().dirty(), status);
         s_terminal_output_dirty = false;
@@ -1165,7 +1177,8 @@ void render_terminal() {
 }
 
 void editor_view_action(std::string_view action, void *) {
-    if (action == "scroll") render_terminal();
+    if (action == "scroll")
+        render_terminal();
 }
 
 void append_output(const char *data, size_t len, bool repaint) {
@@ -1216,7 +1229,8 @@ void show_ssh(bool ssh) {
 }
 
 void process_ssh_data(const char *data, size_t length) {
-    if (!data || !length) return;
+    if (!data || !length)
+        return;
     std::string filtered(length + 1, '\0');
     const size_t written = s_ssh_output_filter.feed(data, length, &filtered[0], filtered.size());
     if (!written)
@@ -1446,8 +1460,12 @@ void shell_session_host::write_output(const char *data, std::size_t length) {
 void shell_session_host::append_output_text(const std::string &text) {
     s_scrollback.append(text.data(), text.size());
 }
-void shell_session_host::clear_output() { s_scrollback.clear(); }
-void shell_session_host::render() { render_terminal(); }
+void shell_session_host::clear_output() {
+    s_scrollback.clear();
+}
+void shell_session_host::render() {
+    render_terminal();
+}
 cyberdeck_ble::state_machine &shell_session_host::ble_model() {
     return s_ble_model;
 }
@@ -1691,7 +1709,8 @@ bool editor_input_active() {
 void editor_local_key(uint32_t key) {
     auto &editor_app = cyberdeck_editor::global_application();
     const auto route = [&](uint32_t value, cyberdeck_editor::key pressed) {
-        if (key != value) return false;
+        if (key != value)
+            return false;
         (void)editor_app.handle_key(pressed);
         render_terminal();
         return true;
@@ -1701,7 +1720,9 @@ void editor_local_key(uint32_t key) {
         route(LV_KEY_BACKSPACE, cyberdeck_editor::key::backspace) || route(LV_KEY_DEL, cyberdeck_editor::key::del) ||
         route(LV_KEY_ENTER, cyberdeck_editor::key::enter);
 }
-void local_key(uint32_t key) { s_shell_app.handle_key(translate_session_key(key)); }
+void local_key(uint32_t key) {
+    s_shell_app.handle_key(translate_session_key(key));
+}
 
 } // namespace
 

@@ -37,10 +37,16 @@ def main() -> int:
         r"if\s*\(\s*bsp_sdcard_get_handle\s*\(\s*\)\s*==\s*nullptr\s*\)\s*return\s*;",
         app,
     )
+    sidecar_calls = list(re.finditer(r"\brecover_save_sidecars\s*\(\s*['\"]\/sdcard['\"]\s*\)", app))
 
     check(len(mount_calls) == 1, "app_main must contain exactly one explicit bsp_sdcard_mount() call", failures)
     check(len(event_init) == 1, "system apps must contain exactly one event_log_init() call", failures)
     check(handle_check is not None, "app_main must retain the null BSP SD-card handle check", failures)
+    check(len(sidecar_calls) == 1, "app_main must invoke sidecar recovery exactly once", failures)
+    if mount_calls and sidecar_calls:
+        check(mount_calls[0].end() < sidecar_calls[0].start(), "sidecar recovery must run after SD mount", failures)
+    if sidecar_calls and handle_check:
+        check(handle_check.start() < sidecar_calls[0].start(), "sidecar recovery must follow successful SD handle validation", failures)
     if mount_calls and handle_check:
         check(
             mount_calls[0].end() < handle_check.start(),

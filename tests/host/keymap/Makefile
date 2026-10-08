@@ -173,13 +173,24 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
 test_editor_model: test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp ../../../components/cyberdeck/include/apps/editor/cyberdeck_editor_model.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp -o $@
 
 test_editor_runtime_contract: test_editor_runtime_contract.py
 	$(PYTHON) test_editor_runtime_contract.py
+
+test_editor_save_contract: test_editor_save_contract.py \
+		test_storage_facade.cpp \
+		../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp \
+		../../../components/cyberdeck/include/apps/editor/cyberdeck_editor_app.h \
+		../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp \
+		../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_storage.h \
+		../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp \
+		editor_traceability.md Makefile
+	$(PYTHON) test_editor_save_contract.py
 
 test_editor_surface_contract: test_editor_surface_contract.py \
 		../../../components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp \
@@ -206,9 +217,10 @@ test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9
 
 .PHONY: all test verify clean test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
 
-.PHONY: test_recovery_policy test_phase10_contract test_event_projection_contract
+.PHONY: test_recovery_policy test_phase10_contract test_event_projection_contract test_save_sidecar_recovery
 .PHONY: test_terminal_scrollback test_lat03_contract test_lat04_contract
 .PHONY: test_display_lock_contract
+.PHONY: test_editor_save_contract
 
 all: test
 
@@ -471,6 +483,20 @@ test_runtime_sdk: test_runtime_sdk.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(COMMAND_CATALOG_SRC) \
 		$(LOCAL_SHELL_SRC) -o test_runtime_sdk
 
+test_storage_facade: test_storage_facade.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(APP_STORAGE_SRC) \
+		$(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -I../../../components/cyberdeck/include \
+		test_storage_facade.cpp $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) \
+		$(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(LOCAL_SHELL_SRC) \
+		-Wl,--wrap=_Z40cyberdeck_local_shell_storage_write_tempPKcS0_St17basic_string_viewIcSt11char_traitsIcEES0_m \
+		-Wl,--wrap=_Z35cyberdeck_local_shell_storage_flushPKcS0_St17basic_string_viewIcSt11char_traitsIcEE \
+		-Wl,--wrap=_Z36cyberdeck_local_shell_storage_renamePKcS0_St17basic_string_viewIcSt11char_traitsIcEES4_ \
+		-Wl,--wrap=_Z45cyberdeck_local_shell_storage_fsync_directoryPKcS0_St17basic_string_viewIcSt11char_traitsIcEE \
+		-Wl,--wrap=_Z33cyberdeck_local_shell_cat_boundedPKcS0_S0_m -o $@
+
+.PHONY: test_storage_facade
+
 test_phase9_capabilities: $(PHASE9_CAPABILITIES_TEST) $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(APP_FACADES_SRC) $(APP_FACADES_HDR) $(WINDOW_MANAGER_SRC) $(WINDOW_MANAGER_HDR) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
@@ -605,6 +631,10 @@ test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../comp
 test_local_shell: test_local_shell.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_local_shell.cpp $(LOCAL_SHELL_SRC) -Wl,--wrap=opendir -o test_local_shell
 
+test_save_sidecar_recovery: test_save_sidecar_recovery.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_SRC) $(VFS_NAMESPACE_HDR) save_sidecar_traceability.md
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_save_sidecar_recovery.cpp $(LOCAL_SHELL_SRC) -o test_save_sidecar_recovery
+	./test_save_sidecar_recovery
+
 # Host regression for the dedicated cat API.  This deliberately bypasses the
 # generic shell object so a multiline result is checked at the worker's source
 # seam, including CRLF, tabs, UTF-8, exact 12288-byte output, embedded NUL,
@@ -687,7 +717,7 @@ test_battery_protection_contract: $(BATTERY_PROTECTION_CONTRACT) $(BATTERY_PROTE
 # sources are inspected directly rather than duplicated or linked against
 # ESP-IDF: this checks boot order, safe initial fallback, and the handoff to
 # the later rotation path.
-test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_HDR)
+test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(LOCAL_SHELL_HDR) save_sidecar_traceability.md
 	$(PYTHON) test_boot_sequence.py
 
 # Host-only contracts for the approved remaining OS transformation backlog.
@@ -990,6 +1020,8 @@ test: $(BINS)
 	@./test_editor_model
 	@echo "==> Executando contrato de runtime do editor"
 	@$(MAKE) --no-print-directory test_editor_runtime_contract
+	@echo "==> Executando contrato determinístico de storage/save do editor"
+	@$(MAKE) --no-print-directory test_editor_save_contract
 	@echo "==> Executando contrato da superfície e2e do editor"
 	@$(MAKE) --no-print-directory test_editor_surface_contract
 	@echo "==> Executando testes comportamentais da sessao de shell"
@@ -997,6 +1029,8 @@ test: $(BINS)
 	@echo "==> Executando testes do runtime de aplicacoes compiladas"
 	@./test_app_runtime
 	@./test_runtime_sdk
+	@echo "==> Executando teste host real da transacao storage confinada"
+	@./test_storage_facade
 	@echo "==> Executando policy pura e contrato estrutural da Fase 10"
 	@$(MAKE) --no-print-directory test_recovery_policy
 	@./test_recovery_policy

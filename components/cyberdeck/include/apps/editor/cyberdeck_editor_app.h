@@ -19,11 +19,22 @@ class application final : public cyberdeck_apps::application {
     void unbind_input();
     bool handle_key(key pressed, std::string_view character = {});
     bool handle_shortcut(char shortcut);
-    bool close_requested() const { return close_confirmation_; }
-    void request_close() { close_confirmation_ = true; }
-    void cancel_close() { close_confirmation_ = false; }
+    bool close_requested() const {
+        return close_confirmation_;
+    }
+    void request_close() {
+        close_confirmation_ = true;
+        save_diagnostic_.clear();
+    }
+    void cancel_close() {
+        close_confirmation_ = false;
+        save_diagnostic_.clear();
+    }
     bool discard_and_close();
     bool save_current();
+    std::string_view save_diagnostic() const {
+        return save_diagnostic_;
+    }
     bool search(std::string_view needle);
     const model &document() const {
         return document_;
@@ -39,6 +50,7 @@ class application final : public cyberdeck_apps::application {
     cyberdeck_apps::input_facade input_{};
     cyberdeck_window_manager::view_context view_context_{};
     bool close_confirmation_ = false;
+    std::string save_diagnostic_;
 };
 
 application &global_application();

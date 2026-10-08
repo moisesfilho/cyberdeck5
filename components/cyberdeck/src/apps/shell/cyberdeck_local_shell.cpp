@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <utility>
 #include <vector>
+#include <mutex>
 
 namespace fs = std::filesystem;
 
@@ -473,45 +474,196 @@ bool storage_path(const char *root, const char *cwd, std::string_view input, fs:
 }
 } // namespace
 
-bool cyberdeck_local_shell_storage_write_temp(const char *root, const char *cwd, std::string_view path,
-                                              const char *bytes, std::size_t size) {
+cyberdeck_storage_result cyberdeck_local_shell_storage_write_temp(const char *root, const char *cwd,
+                                                                  std::string_view path, const char *bytes,
+                                                                  std::size_t size) {
+    const auto fail = [](int error) {
+        return cyberdeck_storage_result{false, cyberdeck_storage_stage::write_temp, error};
+    };
     if (bytes == nullptr || size > 12000)
-        return false;
+        return fail(EINVAL);
     fs::path target;
     if (!storage_path(root, cwd, path, target))
-        return false;
+        return fail(errno ? errno : EINVAL);
     if (target.filename().string().find(".tmp") == std::string::npos)
-        return false;
-    std::error_code error;
-    std::ofstream file(target, std::ios::binary | std::ios::trunc);
-    if (!file)
-        return false;
-    file.write(bytes, static_cast<std::streamsize>(size));
-    file.flush();
-    return file.good() && !error;
+        return fail(EINVAL);
+    const int descriptor = ::open(target.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (descriptor < 0)
+        return fail(errno);
+    std::size_t written = 0;
+    while (written < size) {
+        const ssize_t count = ::write(descriptor, bytes + written, size - written);
+        if (count <= 0) {
+            const int saved = errno;
+            ::close(descriptor);
+            return fail(saved);
+        }
+        written += static_cast<std::size_t>(count);
+    }
+    if (::close(descriptor) != 0)
+        return fail(errno);
+    return {true, cyberdeck_storage_stage::write_temp, 0};
 }
 
-bool cyberdeck_local_shell_storage_flush(const char *root, const char *cwd, std::string_view path) {
+cyberdeck_storage_result cyberdeck_local_shell_storage_flush(const char *root, const char *cwd, std::string_view path) {
+    const auto fail = [](int error) {
+        return cyberdeck_storage_result{false, cyberdeck_storage_stage::flush_fsync_file, error};
+    };
     fs::path target;
     if (!storage_path(root, cwd, path, target))
-        return false;
+        return fail(errno ? errno : EINVAL);
     const int descriptor = ::open(target.c_str(), O_WRONLY);
     if (descriptor < 0)
-        return false;
-    const bool ok = ::fsync(descriptor) == 0;
+        return fail(errno);
+    const int result = ::fsync(descriptor);
+    const int saved = errno;
     ::close(descriptor);
-    return ok;
+    return result == 0 ? cyberdeck_storage_result{true, cyberdeck_storage_stage::flush_fsync_file, 0} : fail(saved);
 }
 
-bool cyberdeck_local_shell_storage_rename(const char *root, const char *cwd, std::string_view temporary,
-                                          std::string_view path) {
+cyberdeck_storage_result cyberdeck_local_shell_storage_rename(const char *root, const char *cwd,
+                                                              std::string_view temporary, std::string_view path) {
+    const auto fail = [](int error) { return cyberdeck_storage_result{false, cyberdeck_storage_stage::rename, error}; };
     fs::path source;
     fs::path destination;
     if (!storage_path(root, cwd, temporary, source) || !storage_path(root, cwd, path, destination))
-        return false;
-    std::error_code error;
-    fs::rename(source, destination, error);
-    return !error;
+        return fail(errno ? errno : EINVAL);
+    if (source.parent_path() != destination.parent_path())
+        return fail(EXDEV);
+    static std::mutex transaction_mutex;
+    const std::lock_guard<std::mutex> lock(transaction_mutex);
+    const bool destination_exists = ::access(destination.c_str(), F_OK) == 0;
+    int saved = errno;
+    fs::path backup;
+    bool backed_up = false;
+    if (destination_exists) {
+        backup = destination;
+        backup += ".rollback";
+        // link() reserves the unique same-directory sidecar without ever replacing it.
+        if (::link(destination.c_str(), backup.c_str()) != 0)
+            return fail(errno);
+        backed_up = true;
+        if (::unlink(destination.c_str()) != 0) {
+            saved = errno;
+            ::unlink(backup.c_str());
+            return fail(saved);
+        }
+    } else if (saved != ENOENT) {
+        return fail(saved);
+    }
+
+    // link+unlink gives rename semantics without replacing a destination created
+    // concurrently by another writer. Both names are constrained to this directory.
+    if (::link(source.c_str(), destination.c_str()) == 0) {
+        if (::unlink(source.c_str()) == 0) {
+            if (backed_up)
+                (void)::unlink(backup.c_str());
+            return {true, cyberdeck_storage_stage::rename, 0};
+        }
+        saved = errno;
+        (void)::unlink(destination.c_str());
+    } else {
+        saved = errno;
+    }
+    cyberdeck_storage_result result = fail(saved);
+    if (backed_up) {
+        result.rollback_attempted = true;
+        result.rollback_stage = cyberdeck_storage_stage::rename;
+        if (::link(backup.c_str(), destination.c_str()) == 0) {
+            if (::unlink(backup.c_str()) != 0) {
+                result.rollback_error = errno;
+            }
+        } else {
+            result.rollback_error = errno;
+        }
+    }
+    return result;
+}
+
+cyberdeck_storage_result cyberdeck_local_shell_storage_fsync_directory(const char *root, const char *cwd,
+                                                                       std::string_view path) {
+    const auto fail = [](int error) {
+        return cyberdeck_storage_result{false, cyberdeck_storage_stage::fsync_directory, error};
+    };
+    fs::path target;
+    if (!storage_path(root, cwd, path, target))
+        return fail(EINVAL);
+    const int descriptor = ::open(target.parent_path().c_str(), O_RDONLY
+#ifdef O_DIRECTORY
+                                                                    | O_DIRECTORY
+#endif
+    );
+    if (descriptor < 0)
+        return fail(errno);
+    const int result = ::fsync(descriptor);
+    const int saved = errno;
+    ::close(descriptor);
+    return result == 0 ? cyberdeck_storage_result{true, cyberdeck_storage_stage::fsync_directory, 0} : fail(saved);
+}
+
+cyberdeck_recovery_report recover_save_sidecars(const char *root) {
+    cyberdeck_recovery_report report;
+    if (root == nullptr || *root == '\0') {
+        report.entries.push_back({{}, cyberdeck_recovery_action::failed, cyberdeck_recovery_stage::validate, EINVAL});
+        return report;
+    }
+    const fs::path physical_root(root);
+    const fs::path mutable_root = physical_root / "data";
+    struct stat mutable_root_info = {};
+    if (!lstat_path(mutable_root, mutable_root_info) || !S_ISDIR(mutable_root_info.st_mode)) {
+        report.entries.push_back({"data", cyberdeck_recovery_action::failed, cyberdeck_recovery_stage::validate,
+                                  errno ? errno : ENOTDIR});
+        return report;
+    }
+    std::error_code iteration_error;
+    fs::directory_iterator iterator(mutable_root, iteration_error), end;
+    if (iteration_error) {
+        report.entries.push_back({{}, cyberdeck_recovery_action::failed, cyberdeck_recovery_stage::enumerate,
+                                  iteration_error.value()});
+        return report;
+    }
+    for (; iterator != end; iterator.increment(iteration_error)) {
+        if (iteration_error) {
+            report.entries.push_back({{}, cyberdeck_recovery_action::failed, cyberdeck_recovery_stage::enumerate,
+                                      iteration_error.value()});
+            break;
+        }
+        const std::string name = iterator->path().filename().string();
+        if (name.find('/') != std::string::npos || name.size() <= 9 ||
+            name.compare(name.size() - 9, 9, ".rollback") != 0)
+            continue;
+        const std::string target_name = name.substr(0, name.size() - 9);
+        const std::string virtual_path = "/data/" + target_name;
+        fs::path target;
+        // Enumerate only the mutable namespace; validate each destination using
+        // the same confined path resolver as storage writes.
+        if (!storage_path(root, "/", virtual_path, target) || target.parent_path() != mutable_root) {
+            report.entries.push_back({name, cyberdeck_recovery_action::preserved, cyberdeck_recovery_stage::validate,
+                                      errno ? errno : EINVAL});
+            continue;
+        }
+        struct stat sidecar_info = {};
+        if (!lstat_path(iterator->path(), sidecar_info) || !S_ISREG(sidecar_info.st_mode)) {
+            report.entries.push_back({name, cyberdeck_recovery_action::preserved, cyberdeck_recovery_stage::inspect,
+                                      errno ? errno : EINVAL});
+            continue;
+        }
+        struct stat destination_info = {};
+        if (!lstat_path(target, destination_info)) {
+            const int stat_error = errno;
+            if (stat_error == ENOENT && ::rename(iterator->path().c_str(), target.c_str()) == 0)
+                report.entries.push_back(
+                    {name, cyberdeck_recovery_action::restored, cyberdeck_recovery_stage::rename, 0});
+            else
+                report.entries.push_back({name, cyberdeck_recovery_action::failed, cyberdeck_recovery_stage::rename,
+                                          stat_error == ENOENT ? errno : stat_error});
+            continue;
+        }
+        // No durable publication marker exists in this transaction format, so
+        // metadata cannot prove which version is committed. Preserve both.
+        report.entries.push_back({name, cyberdeck_recovery_action::ambiguous, cyberdeck_recovery_stage::inspect, 0});
+    }
+    return report;
 }
 
 cyberdeck_local_shell::cyberdeck_local_shell(const std::string &host_root, const std::string &virtual_root)

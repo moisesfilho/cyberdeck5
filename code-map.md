@@ -55,8 +55,13 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
   parsing bounded de argumentos para `edit <arquivo>`, confirmacao de save-as sem mutacao antecipada,
   entrada validada pelo window manager e save atomico via SDK. O catalogo declara
   `edit` uma unica vez no campo de comandos.
-- `cyberdeck_app_storage.{h,cpp}` expoe somente leitura, temporario,
-  flush/fsync e rename atomico; o backend permanece confinado e nao entrega
+- `cyberdeck_app_storage.{h,cpp}` expoe leitura bounded e a transacao de escrita
+  temporario -> flush/fsync_file -> commit sem overwrite no mesmo diretorio; se o
+  destino existir, o backend serializa a reserva do sidecar exclusivo `.rollback`,
+  move o original para backup e tenta restaurar em falha. O resultado distingue
+  stage/errno primarios de rollback_stage/rollback_errno e rollback_attempted;
+  `fsync_directory` e best-effort. Cada chamada revalida grant e
+  lifecycle; o backend permanece confinado e nao entrega
   VFS/descritor ao app. A leitura do editor usa o `cat_bounded`, que preserva
   ENOENT somente para ausencia real, com rejeicao por tamanho antes da abertura
   e nunca trunca a resposta; EACCES/ELOOP/EMFILE e falha de secure-open
@@ -68,7 +73,13 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
   própria do editor: slots fixos para linhas, documento/cursor e uma única linha
    bounded de rodapé para os atalhos `Ctrl+F Buscar`, `Ctrl+S Salvar` e
    `Ctrl+Q Fechar`, além da sigla do encoding, com capacidade calculada pela
-   altura útil atual.
+    altura útil atual.
+   Falhas de Ctrl+S e Ctrl+Q+Enter mantêm `save_diagnostic` no status/footer
+   bounded visível do editor, além do event log/scrollback; atalhos diferentes
+   de Ctrl+S limpam o diagnóstico anterior antes de executar, enquanto Ctrl+S
+   limpa no início de `save_current` e preserva/repopula o diagnóstico em falha;
+   fechar sem salvar também limpa o estado. `render_terminal` alimenta
+   o footer sem ocultar a mensagem pelo estado de atalhos/diálogo/encoding.
   `set_bottom_inset` reduz a superfície quando o teclado virtual ocupa a base;
   eventos de resize recalculam footer, slots e limites de scroll/cursor para
   retrato/paisagem. O render permanece bounded e corta somente em fronteiras de
@@ -85,14 +96,25 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
    `test_editor_runtime_contract.py` verifica SDK/VFS, facade de storage unica,
    dispatch de `edit`, ENOENT de arquivo ausente, documentacao, limite e save
    atomico/fsync, trim/save-as, wiring de input, rejeicao oversized antes de
-    abrir e CR isolado. `test_editor_surface_contract.py` cobre a superfície
+      abrir e CR isolado. `test_editor_save_contract.py` executa um fake backend
+      host comportamental (lambdas de falha) e fixa resultados estruturados de
+       storage (status, stage, errno e campos de rollback), ordem write-temp -> flush/fsync -> rename,
+      fsync de diretorio best-effort, preservacao do original/dirty/dialog em
+      falhas, orphan `.tmp`, revalidacao de grant/lifecycle, Ctrl+S,
+      Ctrl+Q+Enter, D, ENOENT versus EACCES/ELOOP/EMFILE e orphan temporario.
+      `test_storage_facade.cpp` liga os TUs reais de storage facade e shell
+      local; um seam de linker redireciona `/sdcard` para um diretório
+      temporário confinado e cobre a transação real write-temp -> flush/fsync
+       -> rename -> fsync-directory, destino existente/ausente, colisão `.rollback`
+       sem overwrite, preservação do original e sidecars, leitura, falhas de I/O e grant revogado.
+      `test_editor_surface_contract.py` cobre a superfície
       e2e, slots bounded, footer de uma linha bounded com atalhos e UTF-8/UTF-16LE/
       UTF-16BE/Windows-1252, truncamento com sigla preservada, altura dinâmica,
       inset de teclado virtual, retrato/paisagem/resize, cursor/scroll clampados, cursor UTF-8,
      scroll/gesto, atalhos/diálogo, arquivo novo, falhas atômicas,
-     grants/teardown e integração no Makefile. `test_ui_resource_contract.py` contabiliza a superficie
+      grants/teardown e integração no Makefile. `test_ui_resource_contract.py` contabiliza a superficie
    do editor e seu teardown. O harness de capabilities inclui explicitamente a
-   storage facade para manter o agregado host compilavel. Ambos os alvos sao executados por `make test`; o app
+    storage facade para manter o agregado host compilavel. Os contratos de runtime, save e superfície são executados por `make test`; o app
   estruturalmente coberto permanece na allowlist explicita do scope guard.
   A matriz formal `tests/host/keymap/editor_traceability.md`
     rastreia `REQ-EDIT-01..19`/`AC-EDIT-01..19` para
@@ -243,10 +265,11 @@ pelo comando `wifi` e pela auditoria local.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp` | classe `cyberdeck_local_shell`; `cyberdeck_local_shell_cat` | Shell confinado ao root virtual `/`; `host_root` continua sendo o ponto fisico do SD (montado em `/sdcard`), e `/sdcard` e descendentes sao rejeitados no namespace virtual. Tokenizer manual byte-a-byte bounded para espacos/tabs; implementa `pwd`, `cd`, `ls`, `cat`, `touch`, `mkdir`, `rm`, `rmdir` e ajuda. A ajuda e as opcoes `-h`/`--help` consomem o catalogo compartilhado sem listas literais locais. A API cat-specific usa as mesmas regras de cwd/caminho, strings bounded e descritores confinados, sem `fs::path`, retorna output heap-backed, limita arquivos a 12288 bytes e chunks de 1024, e e usada pelo worker sem construir o shell geral. |
+| `components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp` | classe `cyberdeck_local_shell`; `cyberdeck_local_shell_cat`; `recover_save_sidecars` | Shell confinado ao root virtual `/`; `host_root` continua sendo o ponto fisico do SD (montado em `/sdcard`), e `/sdcard` e descendentes sao rejeitados no namespace virtual. Tokenizer manual byte-a-byte bounded para espacos/tabs; implementa `pwd`, `cd`, `ls`, `cat`, `touch`, `mkdir`, `rm`, `rmdir` e ajuda. A ajuda e as opcoes `-h`/`--help` consomem o catalogo compartilhado sem listas literais locais. A API cat-specific usa as mesmas regras de cwd/caminho, strings bounded e descritores confinados, sem `fs::path`, retorna output heap-backed, limita arquivos a 12288 bytes e chunks de 1024, e e usada pelo worker sem construir o shell geral. `recover_save_sidecars` enumera somente `<root>/data`, valida destinos confinados em `/data`, restaura `.rollback` somente quando o destino esta ausente, preserva como ambiguous qualquer rollback com destino existente, nunca publica `.tmp` e mantem diagnostico/idempotencia. |
 | `components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp`, `components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h` + `tests/host/keymap/test_cat_worker.cpp` | `cyberdeck_cat_worker_process_request`, `cyberdeck_cat_worker_start`, `cyberdeck_cat_worker_enqueue`, `cyberdeck_cat_worker_teardown` | Worker FreeRTOS com fila bounded para I/O de `cat`, stack explícita de 6144 bytes; `cyberdeck_cat_worker_process_request` é o seam host que chama a implementação cat-specific real, coberto pelo binário host sem usar o stub inativo. O worker deve chamar uma API cat-specific heap/bounded, sem construir/usar o shell genérico, `fs::path` ou `vector` no caminho específico. O contrato estrutural permite os identificadores `cyberdeck_local_shell_*` da API dedicada e rejeita apenas a construção/uso genérico. Cada start drena a sinalização de parada e cria uma geração nova, e teardown sinaliza/aguarda o retorno do worker antes de liberar fila, root e callback, invalidando callbacks LVGL tardios; resultados aceitos acordam explicitamente a task do port após o enfileiramento. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_local_shell.h` | API do shell local | Contrato usado pela UI e testes. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h` | `cyberdeck_shell_help::kCatalog`, `cyberdeck_shell_help::text`, `cyberdeck_shell_help::command_text` | Modulo header-only puro STL com a unica tabela ordenada de 16 entradas e formatadores deterministicos; nao depende de LVGL, UI ou ESP-IDF. |
+| `tests/host/keymap/test_save_sidecar_recovery.cpp`, `save_sidecar_traceability.md`, `test_boot_sequence.py` | `TEST-SIDECAR-API` (B01-B05), `TEST-BOOT-SEQUENCE` | Teste comportamental host da API real de recuperação com layout real `<root>/data`: rollback restaurado/idempotente, fixture de regressão para scan apenas da raiz e confinamento (sidecar fora de `/data` intocado), destino ambíguo preservado, `.tmp` intocado, rejeição de symlink/traversal e diagnóstico action/stage/errno/falha de validação/enumeração. Contrato estrutural confirma a chamada após montagem e validação do SD em `app_main`. `save_sidecar_traceability.md` mapeia REQ/AC e casos B01-B05. O alvo declara dependências da VFS e da matriz de rastreabilidade. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_vfs_namespace.h`, `components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp` | `cyberdeck_vfs_namespace::at`, `resolve`, `backend_for`, `backend_kind`, `is_filesystem_backend`, `is_mutable_backend`, `is_null_device`, `path_kind` | Catalogo compilado fixo e resolver puro bounded dos cinco namespaces (`/apps`, `/data`, `/dev`, `/tmp`, `/system`). `backend_for` centraliza a classificação em `metadata`, `filesystem`, `null_device` ou `invalid`; o shell usa essa política única para separar metadados, backends físicos e a interface `/dev/null`. `/data` mapeia para `<host_root>/data` e permite apenas mutacoes confinadas do shell; `/system` permanece readonly em `<host_root>/system`; `/dev/null` e uma interface virtual vazia e bounded, sem abrir o `/dev` fisico; `/apps` e `/tmp` continuam metadata-only. A raiz `/data` nao pode ser removida. |
 | `components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp`, `components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h` | `cyberdeck_help_text`, `cyberdeck_command_help_text`, `parse_ssh_target`, `cyberdeck_parse_command`, `CYBERDECK_CMD_WIFI_AUDIT_SAVE`, `CYBERDECK_CMD_SCREEN_ON/OFF/TIMEOUT` | Adapters publicos para o catalogo compartilhado, parser de `ssh [user@]host[:port]`, comandos `wifi` (incluindo auditoria local e `wifi audit save` explicito; a grafia de exportacao legada e rejeitada), roteamento de `screen on`, `screen off` e `screen timeout <0-1440>` para a politica pura e preservacao dos argumentos de `log` para o override volatil da sessao. |
 | `tests/host/keymap/contracts/cyberdeck_help.h` | `kUnifiedHelpText` | Fixture de teste com o catalogo unificado esperado, incluindo `log [lines <1-64>]`; nao e uma implementacao de producao. |
@@ -435,7 +458,7 @@ Rastreabilidade do seam de gap (host, sem hardware):
 | REQ-04/AC-04 sync do epoch no connect | `test_ssh_output_gap.py` (`req04_connect_adopts_the_current_discard_epoch`) | `ESP_FAIL` nao adota nada (geracao e `applied_discard_epoch` intactos); `ESP_OK` adota o epoch corrente e a nova geracao; o primeiro evento da sessao nova roda sem reset herdado (o CSI continua pendente, logo `34m` continua engolido) |
 | REQ-04/AC-04 payload e eco invariantes | `test_ssh_output_gap.py` (`req04_gap_reset_preserves_the_payload_and_echo_invariants`, `req04_only_the_explicit_flush_disarms_the_composer`), `test_terminal_output_contract.py` (T-GAP-03) | Com o compositor armado e o eco partido (`pw`), um gap sinalizado no meio **nao** desarma o casamento: o eco completo nao devolve LF fabricado, o comando aparece uma vez na banda, e a divergencia pos-gap libera prefixo + byte divergente + resto uma vez cada (`ls -laX\n`); um segundo `begin()` enquanto ha pendencia e recusado; so `discard_ssh_line_composer()` (flush explicito) desarma; `process_ssh_events` referencia `reset_ssh_output_filter()` uma unica vez e nao menciona o compositor |
 | REQ-01/03 e REQ-04/AC-04 scrollback sob chunks de transporte | `test_ssh_output_gap.py` (`req04_full_chunks_respect_the_scrollback_budget`/TEST-SSH-04) | Doze chunks de 1023 bytes (12276) cabem no scrollback de 12288 e o decimo terceiro e aparado em vez de crescer o buffer; com o excesso de 4 bytes caindo no byte de continuacao de um codepoint, a poda remove os 5 bytes do codepoint inteiro e so sobra ASCII valido; `drop_data`, `drop_state` e `epoch` permanecem em zero durante a sonda, que e de orcamento e nao de overflow |
-| Fronteira nao linkavel do gap | `test_terminal_output_contract.py` (T-GAP-01/02/03/04) | `discard_epoch` no elemento, `s_ssh_discard_epoch`/`s_ssh_applied_discard_epoch` com CAS saturante, 3 + 2 sítios de `mark_ssh_event_discarded` com contadores exatos, ausencia de `compare_exchange_weak` nos dois callbacks, ordem `continue` de geracao antes da guarda, e `s_ssh_applied_discard_epoch = current_ssh_discard_epoch();` uma unica vez, dentro de `if (result == ESP_OK)`; T-GAP-04 fixa `s_ssh_output_filter.resync_after_gap()` uma unica vez e depois da guarda de epoch, alem do contrato do header (`void resync_after_gap();` e `k_gap_parameter_limit = 16`) |
+| Fronteira nao linkavel do gap | `test_terminal_output_contract.py` (T-GAP-01/02/03/04) | `discard_epoch` no elemento, `s_ssh_discard_epoch`/`s_ssh_applied_discard_epoch` com CAS saturante, 3 + 2 sítios de `mark_ssh_event_discarded` com contadores exatos, ausencia de `compare_exchange_weak` nos dois callbacks, one-liner `if (s_ssh_event_slot.generation != s_ssh_expected_generation) continue;` antes da guarda de `discard_epoch`, e `s_ssh_applied_discard_epoch = current_ssh_discard_epoch();` uma unica vez, dentro de `if (result == ESP_OK)`; T-GAP-04 fixa `s_ssh_output_filter.resync_after_gap()` uma unica vez e depois da guarda de epoch, alem do contrato do header (`void resync_after_gap();` e `k_gap_parameter_limit = 16`) |
 
 Riscos residuais deste seam (nao fixados como invariante, apenas documentados):
 um overflow de fila so de estados tambem remove o estado mais antigo que a

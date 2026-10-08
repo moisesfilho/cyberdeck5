@@ -2,6 +2,7 @@
 """Structural regression contract for the multiline cat handoff."""
 
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
@@ -100,7 +101,8 @@ def main() -> int:
     sanitizer = ui[sanitizer_start:sanitizer_end]
     require("i + j >= input_length" in sanitizer,
             "UTF-8 validation must reject a sequence cut at input_length")
-    require("if (!valid) { replacement(); ++i; continue; }" in sanitizer,
+    require(re.search(r"if \(!valid\)\s*\{\s*replacement\(\);\s*\+\+i;\s*continue;\s*\}", sanitizer,
+                      re.DOTALL) is not None,
             "invalid UTF-8 must consume and replace a byte deterministically")
     require("input_length" in sanitizer and "bytes[i]" in sanitizer,
             "sanitizer must use the bounded byte buffer, not a C string")

@@ -303,8 +303,10 @@ def check_ui_shell_and_serial(failures: list[str]) -> None:
     session = strip_comments(read(SESSION, failures))
     require_all(failures, "s_shell_app.handle_key(" in ui,
                 "UI must route keys through the shell application")
-    require_all(failures, "local_key(uint32_t key) { s_shell_app.handle_key(" in ui,
-                "the local key facade must delegate to the shell application")
+    require_all(failures,
+                re.search(r"local_key\(uint32_t key\)\s*\{\s*s_shell_app\.handle_key\(", ui)
+                is not None,
+                 "the local key facade must delegate to the shell application")
     execute = function_body(session, "void session::execute_line(")
     require_all(failures, execute is not None,
                 "session command dispatch seam is missing")

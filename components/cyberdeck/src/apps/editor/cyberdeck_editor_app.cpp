@@ -35,6 +35,19 @@ std::string_view trim(std::string_view value) {
         value.remove_suffix(1);
     return value;
 }
+const char *stage_name(cyberdeck_apps::write_stage stage) {
+    switch (stage) {
+    case cyberdeck_apps::write_stage::write_temp:
+        return "write_temp";
+    case cyberdeck_apps::write_stage::flush_fsync_file:
+        return "flush/fsync_file";
+    case cyberdeck_apps::write_stage::rename:
+        return "rename";
+    case cyberdeck_apps::write_stage::fsync_directory:
+        return "fsync_directory";
+    }
+    return "storage";
+}
 } // namespace
 
 const cyberdeck_apps::manifest &application::get_manifest() const {
@@ -54,6 +67,7 @@ bool application::stop() {
     document_ = {};
     pending_save_as_.clear();
     close_confirmation_ = false;
+    save_diagnostic_.clear();
     return true;
 }
 
@@ -84,20 +98,43 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
         return {cyberdeck_apps::result_status::handled, "edit: confirm save as\n"};
     }
     if (args == "save as confirm" && document_.save_as_confirmation_required() && !pending_save_as_.empty()) {
+        save_diagnostic_.clear();
         const std::string target = pending_save_as_;
         std::string bytes;
-        if (!document_.save(bytes))
+        if (!document_.save(bytes)) {
+            save_diagnostic_ = "save failed: encode";
             return {cyberdeck_apps::result_status::rejected, "edit: cannot encode\n"};
+        }
         cyberdeck_apps::storage_facade storage(app_grant());
         const std::string temporary = target + ".tmp";
-        if (storage.write_temp(temporary, bytes.data(), bytes.size()).status != cyberdeck_apps::write_status::ok ||
-            storage.flush_or_fsync(temporary).status != cyberdeck_apps::write_status::ok ||
-            storage.rename_atomic(temporary, target).status != cyberdeck_apps::write_status::ok)
+        const auto write = storage.write_temp(temporary, bytes.data(), bytes.size());
+        const auto flush = write.status == cyberdeck_apps::write_status::ok ? storage.flush_or_fsync(temporary) : write;
+        const auto rename =
+            flush.status == cyberdeck_apps::write_status::ok ? storage.rename_atomic(temporary, target) : flush;
+        if (write.status != cyberdeck_apps::write_status::ok || flush.status != cyberdeck_apps::write_status::ok ||
+            rename.status != cyberdeck_apps::write_status::ok) {
+            const auto &failure = write.status != cyberdeck_apps::write_status::ok   ? write
+                                  : flush.status != cyberdeck_apps::write_status::ok ? flush
+                                                                                     : rename;
+            save_diagnostic_ = "save failed: ";
+            save_diagnostic_ += stage_name(failure.stage);
+            save_diagnostic_ += " errno=" + std::to_string(failure.error);
+            if (failure.rollback_attempted) {
+                save_diagnostic_ += " rollback=";
+                save_diagnostic_ += stage_name(failure.rollback_stage);
+                save_diagnostic_ += " errno=" + std::to_string(failure.rollback_error);
+            }
+            if (app_logger())
+                app_logger()->write(cyberdeck_apps::logger::level::error, "editor.save",
+                                    std::string_view(save_diagnostic_));
             return {cyberdeck_apps::result_status::rejected, "edit: save failed\n"};
+        }
+        (void)storage.fsync_directory(target);
         document_.confirm_save_as(true);
         document_.set_path(target);
         pending_save_as_.clear();
         document_.clear_dirty();
+        save_diagnostic_.clear();
         return {cyberdeck_apps::result_status::handled, "edit: saved\n"};
     }
     if (args.empty() || args.size() > 256)
@@ -118,22 +155,47 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
 bool application::save_current() {
     if (!running_ || document_.path().empty())
         return false;
+    save_diagnostic_.clear();
     const std::string target(document_.path());
     std::string bytes;
-    if (!document_.save(bytes))
+    if (!document_.save(bytes)) {
+        save_diagnostic_ = "save failed: encode";
         return false;
+    }
     cyberdeck_apps::storage_facade storage(app_grant());
     const std::string temporary = target + ".tmp";
-    if (storage.write_temp(temporary, bytes.data(), bytes.size()).status != cyberdeck_apps::write_status::ok ||
-        storage.flush_or_fsync(temporary).status != cyberdeck_apps::write_status::ok ||
-        storage.rename_atomic(temporary, target).status != cyberdeck_apps::write_status::ok)
+    const auto write = storage.write_temp(temporary, bytes.data(), bytes.size());
+    const auto flush = write.status == cyberdeck_apps::write_status::ok ? storage.flush_or_fsync(temporary) : write;
+    const auto rename =
+        flush.status == cyberdeck_apps::write_status::ok ? storage.rename_atomic(temporary, target) : flush;
+    if (write.status != cyberdeck_apps::write_status::ok || flush.status != cyberdeck_apps::write_status::ok ||
+        rename.status != cyberdeck_apps::write_status::ok) {
+        const auto &failure = write.status != cyberdeck_apps::write_status::ok   ? write
+                              : flush.status != cyberdeck_apps::write_status::ok ? flush
+                                                                                 : rename;
+        save_diagnostic_ = "save failed: ";
+        save_diagnostic_ += stage_name(failure.stage);
+        save_diagnostic_ += " errno=" + std::to_string(failure.error);
+        if (failure.rollback_attempted) {
+            save_diagnostic_ += " rollback=";
+            save_diagnostic_ += stage_name(failure.rollback_stage);
+            save_diagnostic_ += " errno=" + std::to_string(failure.rollback_error);
+        }
+        if (app_logger())
+            app_logger()->write(cyberdeck_apps::logger::level::error, "editor.save",
+                                std::string_view(save_diagnostic_));
         return false;
+    }
+    (void)storage.fsync_directory(target);
     document_.clear_dirty();
     close_confirmation_ = false;
+    save_diagnostic_.clear();
     return true;
 }
 
 bool application::handle_shortcut(char shortcut) {
+    if (shortcut != 's')
+        save_diagnostic_.clear();
     switch (shortcut) {
     case 's':
         return save_current();
@@ -160,6 +222,7 @@ bool application::discard_and_close() {
     close_confirmation_ = false;
     document_ = {};
     pending_save_as_.clear();
+    save_diagnostic_.clear();
     return true;
 }
 
@@ -178,6 +241,7 @@ void application::unbind_input() {
 }
 
 bool application::handle_key(key pressed, std::string_view character) {
+    save_diagnostic_.clear();
     input_.refresh_grant(app_grant());
     return running_ && input_.validate(view_context_) && document_.handle(pressed, character);
 }

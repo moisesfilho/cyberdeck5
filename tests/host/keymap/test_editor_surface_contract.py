@@ -88,7 +88,7 @@ def main() -> int:
     before(APP, "storage.flush_or_fsync", "storage.rename_atomic", "flush must precede rename")
     require(APP.count("document_.clear_dirty()") >= 2,
             "dirty must be cleared only on successful save publication")
-    save_failure = APP[APP.index("if (storage.write_temp"):APP.index("document_.confirm_save_as")]
+    save_failure = APP[APP.index("const auto write = storage.write_temp") : APP.index("document_.confirm_save_as")]
     require("result_status::rejected, \"edit: save failed\\n\"" in save_failure,
             "failed atomic stages must reject without publishing")
 

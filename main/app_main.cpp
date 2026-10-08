@@ -9,6 +9,7 @@
 #include "platform/input/tab5_keyboard.h"
 #include "apps/system/cyberdeck_system_apps.h"
 #include "apps/system/cyberdeck_recovery.h"
+#include "apps/shell/cyberdeck_local_shell.h"
 #include "apps/screenshot/screenshot_server.h"
 #include "platform/display/cyberdeck_display_port.h"
 #include "bsp/m5stack_tab5.h"
@@ -21,6 +22,12 @@ extern "C" void app_main(void)
      * mount has completed and its BSP handle has been verified. */
     ESP_ERROR_CHECK(bsp_sdcard_mount());
     if (bsp_sdcard_get_handle() == nullptr) return;
+    const cyberdeck_recovery_report storage_recovery = recover_save_sidecars("/sdcard");
+    for (const auto &entry : storage_recovery.entries) {
+        ESP_LOGW(TAG, "storage recovery sidecar=%s action=%u stage=%u errno=%d",
+                 entry.sidecar.c_str(), static_cast<unsigned>(entry.action),
+                 static_cast<unsigned>(entry.stage), entry.error);
+    }
 
     esp_err_t err = nvs_flash_init();
     if (err != ESP_OK) {

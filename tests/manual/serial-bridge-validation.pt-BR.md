@@ -112,7 +112,9 @@ com LF. Valide setas, teclado virtual, toque e gesto vertical; `Ctrl+S` salva,
 `Ctrl+Q`/Esc fecha e, com dirty, a confirmação oferece **Salvar / Descartar /
 Cancelar** (Enter / D / Esc). `Ctrl+F`, texto, Enter e Esc validam busca;
 Ctrl+Z/Ctrl+Y validam undo/redo. Salvar só limpa dirty após sucesso; uma falha
-de escrita preserva o documento e a indicação dirty.
+de escrita preserva o documento, dirty e o diálogo aberto. O diagnóstico mostra estágio
+e errno no rodapé/terminal e no log; falhas de write_temp, flush/fsync_file ou rename
+bloqueiam o fechamento. fsync_directory é opcional e não bloqueia.
 
 ```bash
 python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.type "edit /tmp/novo.txt"

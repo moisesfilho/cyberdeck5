@@ -16,8 +16,8 @@ read_result invalid_result(int error) {
     return {read_status::error, 0, error};
 }
 
-write_result invalid_write(int error) {
-    return {write_status::error, error};
+write_result invalid_write(write_stage stage, int error) {
+    return {write_status::error, stage, error};
 }
 
 } // namespace
@@ -53,24 +53,31 @@ read_result storage_facade::bounded_read(std::string_view path, char *buffer, st
 
 write_result storage_facade::write_temp(std::string_view path, const char *bytes, std::size_t size) const {
     if (!available() || path.empty() || path.size() > 256 || bytes == nullptr || size > k_max_read_bytes)
-        return invalid_write(k_invalid_argument);
-    return cyberdeck_local_shell_storage_write_temp("/sdcard", "/", path, bytes, size)
-               ? write_result{write_status::ok, 0}
-               : invalid_write(EIO);
+        return invalid_write(write_stage::write_temp, k_invalid_argument);
+    const auto result = cyberdeck_local_shell_storage_write_temp("/sdcard", "/", path, bytes, size);
+    return {result.ok ? write_status::ok : write_status::error, write_stage::write_temp, result.error};
 }
 
 write_result storage_facade::flush_or_fsync(std::string_view temp_path) const {
     if (!available() || temp_path.empty() || temp_path.size() > 256)
-        return invalid_write(k_invalid_argument);
-    return cyberdeck_local_shell_storage_flush("/sdcard", "/", temp_path) ? write_result{write_status::ok, 0}
-                                                                          : invalid_write(EIO);
+        return invalid_write(write_stage::flush_fsync_file, k_invalid_argument);
+    const auto result = cyberdeck_local_shell_storage_flush("/sdcard", "/", temp_path);
+    return {result.ok ? write_status::ok : write_status::error, write_stage::flush_fsync_file, result.error};
 }
 
 write_result storage_facade::rename_atomic(std::string_view temp_path, std::string_view path) const {
     if (!available() || temp_path.empty() || path.empty() || temp_path.size() > 256 || path.size() > 256)
-        return invalid_write(k_invalid_argument);
-    return cyberdeck_local_shell_storage_rename("/sdcard", "/", temp_path, path) ? write_result{write_status::ok, 0}
-                                                                                 : invalid_write(EIO);
+        return invalid_write(write_stage::rename, k_invalid_argument);
+    const auto result = cyberdeck_local_shell_storage_rename("/sdcard", "/", temp_path, path);
+    return {result.ok ? write_status::ok : write_status::error, write_stage::rename, result.error,
+            static_cast<write_stage>(result.rollback_stage), result.rollback_error, result.rollback_attempted};
+}
+
+write_result storage_facade::fsync_directory(std::string_view path) const {
+    if (!available() || path.empty() || path.size() > 256)
+        return invalid_write(write_stage::fsync_directory, k_invalid_argument);
+    const auto result = cyberdeck_local_shell_storage_fsync_directory("/sdcard", "/", path);
+    return {result.ok ? write_status::ok : write_status::error, write_stage::fsync_directory, result.error};
 }
 
 } // namespace cyberdeck_apps

@@ -345,7 +345,14 @@ leitura, temporário, `flush_or_fsync` e `rename_atomic`, todos confinados ao
 namespace virtual. Documentos são limitados a 12000 bytes, rejeitam binário e
 bytes inválidos e suportam UTF-8, UTF-16 LE/BE e Windows-1252. Arquivos
 existentes preservam codec/BOM/EOL; novos usam UTF-8 sem BOM e LF. A escrita
-segue temporário -> flush/fsync -> rename atômico, e o modelo concentra edição,
+segue temporário -> flush/fsync do arquivo -> commit no mesmo diretório; fsync
+do diretório é best-effort. O backend serializa rename, recusa overwrite e, se o
+destino existir, move-o primeiro para o sidecar exclusivo `<destino>.rollback`;
+após falha no commit tenta restaurá-lo. O resultado preserva diagnóstico primário
+(`stage`/`errno`) e separado de rollback (`rollback_stage`/`rollback_errno`,
+`rollback_attempted`). Sidecar já existente nunca é substituído. Cada etapa
+revalida grant/lifecycle. Falhas preservam dirty e o diálogo; o diagnóstico bounded aparece no
+rodapé/terminal e no event log. O modelo concentra edição,
 busca, undo/redo bounded e entrada direcional/gestual.
 `cyberdeck_editor_view` é a única superfície LVGL do editor: usa slots fixos
 para linhas, documento/cursor/status e uma janela de scroll bounded. Ela não

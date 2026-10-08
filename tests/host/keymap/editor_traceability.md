@@ -40,16 +40,16 @@ modelo é executado com dados determinísticos.
 | REQ-EDIT-05 / AC-EDIT-05 | TEST-EDIT-CODEC, TEST-EDIT-VFS | negativo/falha: NUL, UTF-16 ímpar, encoding inválido, binary/oversized e erro de leitura; nenhum estado parcial. |
 | REQ-EDIT-06 / AC-EDIT-06 | TEST-EDIT-MODEL, TEST-EDIT-INPUT | positivo: busca, replace, edição, undo; limite: codepoint, cursor, vertical/gesto e undo bounded; negativo: operação não aplicável. |
 | REQ-EDIT-07 / AC-EDIT-07 | TEST-EDIT-SAVE, TEST-EDIT-INPUT | positivo: pedido + confirmação; trim de destino; destino só muda após rename; negativo: sem confirmação, destino vazio e confirmação sem pending save-as. |
-| REQ-EDIT-08 / AC-EDIT-08 | TEST-EDIT-SAVE, TEST-EDIT-VFS | positivo: write-temp → flush/fsync → rename; falha em cada etapa rejeita e não limpa dirty. |
+| REQ-EDIT-08 / AC-EDIT-08 | TEST-EDIT-SAVE, TEST-EDIT-STORAGE, TEST-EDIT-STORAGE-REAL, TEST-EDIT-VFS | host comportamental com fake backend e backend real temporário/confinado: write-temp → flush/fsync-file → rename; fsync do diretório após rename; resultado estruturado preserva stage/errno; falha em cada etapa rejeita e não limpa dirty. |
 | REQ-EDIT-09 / AC-EDIT-09 | TEST-EDIT-RUNTIME, TEST-EDIT-SAVE | limite/regressão: stop após edição e restart; falha: save sem path/encode/commit não publica sucesso. |
 | REQ-EDIT-10 / AC-EDIT-10 | TEST-EDIT-INPUT | positivo: bind/validação do input e tecla chega ao modelo; negativo: app parada; limite: entrada inválida/sem mutação. |
 | REQ-EDIT-11 / AC-EDIT-11 | TEST-EDIT-DOC | positivo: referências e caminhos existentes em README, arquitetura, plano, code-map e esta matriz; negativo: cobertura manual/hardware não é alegada. |
 | REQ-EDIT-12 / AC-EDIT-12 | TEST-EDIT-UI | positivo: 64 slots bounded e linhas clipadas; limite: largura 256; negativo: view sem VFS/storage. |
 | REQ-EDIT-13 / AC-EDIT-13 | TEST-EDIT-INPUT | positivo: next/previous codepoint e cursor clampado; limite: marcador em UTF-8. |
 | REQ-EDIT-14 / AC-EDIT-14 | TEST-EDIT-UI | positivo: gesto produz scroll e repintura bounded. |
-| REQ-EDIT-15 / AC-EDIT-15 | TEST-EDIT-INPUT, TEST-EDIT-COMMANDS | positivo: teclas/atalhos; limite: busca; falha: diálogo dirty. |
+| REQ-EDIT-15 / AC-EDIT-15 | TEST-EDIT-INPUT, TEST-EDIT-COMMANDS, TEST-EDIT-SAVE-FAILURE | positivo: Ctrl+S; Ctrl+Q+Enter fecha somente após sucesso; D descarta; limite: busca; falha: diálogo dirty permanece e diagnóstico é exibido. |
 | REQ-EDIT-16 / AC-EDIT-16 | TEST-EDIT-NEW, TEST-EDIT-CODEC | positivo: ENOENT e UTF-8/LF sem BOM; limite: vazio. |
-| REQ-EDIT-17 / AC-EDIT-17 | TEST-EDIT-SAVE-FAILURE | falha: write, flush/fsync ou rename rejeita; regressão: dirty só limpa após publicação. |
+| REQ-EDIT-17 / AC-EDIT-17 | TEST-EDIT-SAVE-FAILURE, TEST-EDIT-STORAGE, TEST-EDIT-STORAGE-REAL | host comportamental: lambdas falham em write, flush/fsync ou rename com stage/errno; backend real temporário cobre destino ausente/existente, backup `.rollback` sem overwrite, resultado primary/rollback stage/errno/attempted, sucesso, original e sidecars; publicação inválida e grant revogado; original, dirty e diálogo permanecem; regressão: dirty só limpa após publicação e orphan `.tmp` não é publicado. |
 | REQ-EDIT-18 / AC-EDIT-18 | TEST-EDIT-LIFECYCLE, TEST-EDIT-SERIAL | positivo: bind/refresh/validate; falha: unbind/invalidação/destroy; integração: Makefile. |
 | REQ-EDIT-19 / AC-EDIT-19 | TEST-EDIT-FOOTER-HOST, TEST-EDIT-FOOTER-CONTRACT, TEST-EDIT-FOOTER-SERIAL | positivo: uma linha bounded com `Ctrl+F Buscar`, `Ctrl+S Salvar`, `Ctrl+Q Fechar` e as quatro siglas; limite: truncamento preserva a sigla, teclado virtual/inset, retrato/paisagem e resize; regressão: cursor/scroll, toque/gesto, teardown e ausência de overlap. |
 | TEST-EDIT-FOOTER-HOST/CONTRACT/SERIAL | `test_display_views.cpp`, `test_editor_surface_contract.py` | uma linha bounded com encoding e atalhos; altura dinâmica; inset de teclado virtual; retrato/paisagem/resize; `k_max_lines` bounded; cursor/scroll clampados; toque/gesto e teardown preservados. |
@@ -70,6 +70,8 @@ modelo é executado com dados determinísticos.
 | TEST-EDIT-DIRTY | `test_editor_surface_contract.py`: dirty, confirmação e publicação tardia | host (contrato estrutural) |
 | TEST-EDIT-NEW | `test_editor_surface_contract.py` + `test_editor_model.cpp`: ENOENT e UTF-8/LF | host (PASS confirmado pelo tester) |
 | TEST-EDIT-SAVE-FAILURE | `test_editor_surface_contract.py`: falhas das três etapas atômicas | host (contrato estrutural) |
+| TEST-EDIT-STORAGE | `test_editor_save_contract.py`: fake backend comportamental, sucesso, falha injetada por lambda nos três estágios, errno/stage, original/dirty/dialog, orphan `.tmp` e fsync_directory best-effort; estrutura exige campos e estados de rollback e reserva exclusiva `.rollback` | host (comportamental + contrato estrutural) |
+| TEST-EDIT-STORAGE-REAL | `test_storage_facade.cpp`: linka `cyberdeck_app_storage.cpp` e `cyberdeck_local_shell.cpp`; seam de root temporário, transação real, destino ausente/existente, sucesso e colisão `.rollback` preservando backup/original/temp, leitura e grant revogado | host (backend temporário confinado, gcov) |
 | TEST-EDIT-LIFECYCLE | `test_editor_surface_contract.py` + `test_ui_resource_contract.py`: grants, teardown e contextos | host (contrato estrutural) |
 | TEST-EDIT-SERIAL | `test_editor_surface_contract.py`: integração do contrato no Makefile host | host (contrato estrutural) |
 | TEST-EDIT-FOOTER-HOST | `test_display_views.cpp`: uma linha com Ctrl+F/S/Q, quatro siglas, truncamento bounded, geometria, inset, resize, limites, cursor, scroll, toque e teardown | host (LVGL shim) |

@@ -172,8 +172,10 @@ def main() -> int:
     assert "s_ssh_output_filter.flush(pending, sizeof(pending))" in ssh_state
     assert "s_ssh_line_composer.flush(&retained[0], retained.size())" in ssh_state
     assert ssh_state.rfind("render_terminal();") > ssh_state.find("s_ssh_line_composer.flush")
-    assert "void shell_session_host::clear_output() { s_scrollback.clear(); }" in source
-    assert "void shell_session_host::render() { render_terminal(); }" in source
+    assert body(source, "void shell_session_host::clear_output()") == \
+        "\n    s_scrollback.clear();\n"
+    assert body(source, "void shell_session_host::render()") == \
+        "\n    render_terminal();\n"
 
     # T-FILTER-01, REQ-5/AC-5.
     assert "s_ssh_output_filter.feed(data, length" in ssh_data
@@ -228,7 +230,7 @@ def main() -> int:
     # quebra que nao existe.
     rendered = body(source, "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,")
     assert "const size_t used = view.reserved();" in rendered
-    assert "const size_t available = complete" in rendered
+    assert re.search(r"const size_t available\s*=\s*complete", rendered)
     assert "TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0" in rendered
     assert "truncate_left_utf8(output, available)" in rendered
 

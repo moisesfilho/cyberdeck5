@@ -158,7 +158,7 @@ def visual_separator_contract(source: str) -> None:
     rendered = function_body(source,
                              "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,")
     require("const size_t used = view.reserved();" in rendered and
-            "const size_t available = complete" in rendered and
+            re.search(r"const size_t available\s*=\s*complete", rendered) and
             "TERMINAL_LIMIT > used ? TERMINAL_LIMIT - used : 0" in rendered and
             "s_terminal_view.viewport_capacity()" in rendered,
             "REQ-SSH-01/AC-SSH-01: the scrollback budget must come from the composed tail "
