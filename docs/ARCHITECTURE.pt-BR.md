@@ -347,6 +347,13 @@ bytes inválidos e suportam UTF-8, UTF-16 LE/BE e Windows-1252. Arquivos
 existentes preservam codec/BOM/EOL; novos usam UTF-8 sem BOM e LF. A escrita
 segue temporário -> flush/fsync -> rename atômico, e o modelo concentra edição,
 busca, undo/redo bounded e entrada direcional/gestual.
+`cyberdeck_editor_view` é a única superfície LVGL do editor: usa slots fixos
+para linhas, documento/cursor/status e uma janela de scroll bounded. Ela não
+acessa VFS nem serviços. O window manager fornece o contexto opaco e a fachada
+de input é revalidada a cada evento; teclado físico/virtual, setas, toque e
+gesto chegam ao modelo. `Ctrl+S`, `Ctrl+Q`, `Esc` e `Ctrl+F`/Enter/Esc cobrem
+salvar, fechar, confirmação Salvar/Descartar/Cancelar e busca. O teardown
+remove a superfície antes da raiz LVGL para impedir callbacks tardios.
 
 ## SSH
 

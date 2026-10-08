@@ -18,6 +18,13 @@ class application final : public cyberdeck_apps::application {
     void bind_input(cyberdeck_apps::input_facade input, cyberdeck_window_manager::view_context context);
     void unbind_input();
     bool handle_key(key pressed, std::string_view character = {});
+    bool handle_shortcut(char shortcut);
+    bool close_requested() const { return close_confirmation_; }
+    void request_close() { close_confirmation_ = true; }
+    void cancel_close() { close_confirmation_ = false; }
+    bool discard_and_close();
+    bool save_current();
+    bool search(std::string_view needle);
     const model &document() const {
         return document_;
     }
@@ -31,6 +38,7 @@ class application final : public cyberdeck_apps::application {
     std::string pending_save_as_;
     cyberdeck_apps::input_facade input_{};
     cyberdeck_window_manager::view_context view_context_{};
+    bool close_confirmation_ = false;
 };
 
 application &global_application();

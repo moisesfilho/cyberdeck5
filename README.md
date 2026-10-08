@@ -146,6 +146,10 @@ supports UTF-8, UTF-16 LE/BE, and Windows-1252. Existing files preserve codec,
 BOM, and EOL; new files use UTF-8 without a BOM and LF. Editing, search,
 undo/redo, directional input, and gesture scrolling are bounded. Saving uses a
 temporary file, flush/fsync, and atomic rename; Save As requires confirmation.
+The bounded LVGL editor surface owns the document, cursor, status and scroll
+window. Arrow keys, physical/virtual keyboard, touch gestures, `Ctrl+S`,
+`Ctrl+Q`, `Esc`, `Ctrl+F`/Enter/Esc search, and bounded undo/redo are routed
+through the app; dirty close offers Save/Discard/Cancel.
 
 The Tab5 system services are also registered applications: `cyberdeck.shell`,
 `cyberdeck.wifi`, `cyberdeck.serial`, `cyberdeck.ssh`, `cyberdeck.screenshot`

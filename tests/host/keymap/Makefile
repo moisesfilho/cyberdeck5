@@ -168,6 +168,7 @@ BLE_BACKGROUND_SRC := ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck
 KEYBOARD_DISPATCH_SRC := ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
 HEADER_VIEW_SRC  := ../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp
 TERMINAL_VIEW_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp
+EDITOR_VIEW_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp
 SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
@@ -179,6 +180,15 @@ test_editor_model: test_editor_model.cpp ../../../components/cyberdeck/src/apps/
 
 test_editor_runtime_contract: test_editor_runtime_contract.py
 	$(PYTHON) test_editor_runtime_contract.py
+
+test_editor_surface_contract: test_editor_surface_contract.py \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp \
+		../../../components/cyberdeck/include/platform/display/cyberdeck_editor_view.h \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp \
+		../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp \
+		../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp \
+		editor_traceability.md Makefile
+	$(PYTHON) test_editor_surface_contract.py
 
 TIME_SYNC_SRC := ../../../components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
 TIME_SYNC_SHIM := time_sync_shim
@@ -807,8 +817,8 @@ test_ble_background: test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_S
 test_keyboard_dispatch: test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) shim/full/lvgl.h shim/full/esp_lvgl_port.h shim/full/freertos/FreeRTOS.h shim/full/freertos/queue.h shim/full/freertos/semphr.h
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -Ishim/full -I../../../components/cyberdeck/include test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) -o test_keyboard_dispatch
 
-test_display_views: test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) shim/full/lvgl.h
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) -o test_display_views
+test_display_views: test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(EDITOR_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) shim/full/lvgl.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(EDITOR_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) -o test_display_views
 
 test_coverage_scope_guard: $(SCOPE_GUARD_TEST) ../../../tools/coverage_scope_guard.py
 	$(PYTHON) $(SCOPE_GUARD_TEST)
@@ -980,6 +990,8 @@ test: $(BINS)
 	@./test_editor_model
 	@echo "==> Executando contrato de runtime do editor"
 	@$(MAKE) --no-print-directory test_editor_runtime_contract
+	@echo "==> Executando contrato da superfície e2e do editor"
+	@$(MAKE) --no-print-directory test_editor_surface_contract
 	@echo "==> Executando testes comportamentais da sessao de shell"
 	@./test_shell_session
 	@echo "==> Executando testes do runtime de aplicacoes compiladas"

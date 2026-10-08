@@ -610,6 +610,13 @@ result runtime::execute_line(std::string_view line) {
             }
         }
         if (command_match) {
+            /* Command applications are demand-started at their dispatch
+             * boundary.  Use the normal lifecycle path so dependencies,
+             * grants and lifecycle diagnostics are identical to an explicit
+             * app start; service applications remain boot/lifecycle-owned. */
+            if (item.type == app_type::foreground && states_[i] != app_state::running &&
+                !start_application(item.id))
+                return rejected("app: command application failed to start");
             const std::size_t args_begin = line.find(words[0]) + words[0].size();
             const std::string_view args = args_begin < line.size() ? line.substr(args_begin) : std::string_view{};
             return app.execute(matched_command, args);

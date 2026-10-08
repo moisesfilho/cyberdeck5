@@ -379,6 +379,13 @@ bounded to 12000 bytes, reject binary and invalid input, support UTF-8,
 UTF-16 LE/BE, and Windows-1252, and preserve codec/BOM/EOL for existing files;
 new files use UTF-8 without a BOM and LF. The model owns bounded editing,
 search, undo/redo, directional input, and gesture scrolling.
+`cyberdeck_editor_view` is the editor's sole LVGL surface. It has fixed line
+slots plus bounded document/cursor/status rendering and gesture scrolling; it
+does not access VFS or services. The window-manager context and input facade
+are revalidated for every event. Physical/virtual keyboard, arrows, touch,
+`Ctrl+S`, `Ctrl+Q`, `Esc`, and `Ctrl+F`/Enter/Esc are routed to the app. Dirty
+close presents Save/Discard/Cancel, and teardown removes the view before the
+LVGL root so re-entry cannot consume late callbacks.
 
 ## SSH
 

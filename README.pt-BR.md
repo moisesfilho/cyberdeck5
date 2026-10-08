@@ -129,6 +129,11 @@ inválidos, suporta UTF-8/UTF-16 LE/BE/Windows-1252 e preserva encoding e EOL de
 arquivos existentes. Novos arquivos usam UTF-8 sem BOM e LF. Edição, busca,
 desfazer/refazer, setas e gesto são bounded; salvar usa temporário, flush/fsync e rename
 atômico, e salvar como pede confirmação.
+Na superfície do editor, setas/teclado movem o cursor, Enter insere LF, toque
+vertical rola uma janela bounded e `Ctrl+S` salva. `Ctrl+Q`/Esc fecha; quando há
+alterações, Enter escolhe Salvar, `D` escolhe Descartar e Esc escolhe Cancelar.
+`Ctrl+F`, texto, Enter e Esc executam a busca. Undo/redo são mantidos pelo
+modelo (`Ctrl+Z`/`Ctrl+Y` no teclado que fornece esses modificadores).
 
 ### Proteção de Tela
 

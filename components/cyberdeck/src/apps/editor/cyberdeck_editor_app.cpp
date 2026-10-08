@@ -53,6 +53,7 @@ bool application::stop() {
     running_ = false;
     document_ = {};
     pending_save_as_.clear();
+    close_confirmation_ = false;
     return true;
 }
 
@@ -68,17 +69,8 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
     if (args == "save") {
         if (document_.path().empty())
             return {cyberdeck_apps::result_status::rejected, "edit: no file\n"};
-        const std::string target(document_.path());
-        std::string bytes;
-        if (!document_.save(bytes))
-            return {cyberdeck_apps::result_status::rejected, "edit: cannot encode\n"};
-        cyberdeck_apps::storage_facade storage(app_grant());
-        const std::string temporary = target + ".tmp";
-        if (storage.write_temp(temporary, bytes.data(), bytes.size()).status != cyberdeck_apps::write_status::ok ||
-            storage.flush_or_fsync(temporary).status != cyberdeck_apps::write_status::ok ||
-            storage.rename_atomic(temporary, target).status != cyberdeck_apps::write_status::ok)
+        if (!save_current())
             return {cyberdeck_apps::result_status::rejected, "edit: save failed\n"};
-        document_.clear_dirty();
         return {cyberdeck_apps::result_status::handled, "edit: saved\n"};
     }
     const bool save_as_command = args.rfind("save as ", 0) == 0 || (args.size() > 7 && args.rfind("save as", 0) == 0 &&
@@ -121,6 +113,58 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
         return {cyberdeck_apps::result_status::rejected, "edit: binary, invalid, or oversized file\n"};
     document_.set_path(std::string(args));
     return {cyberdeck_apps::result_status::handled, "edit: opened\n"};
+}
+
+bool application::save_current() {
+    if (!running_ || document_.path().empty())
+        return false;
+    const std::string target(document_.path());
+    std::string bytes;
+    if (!document_.save(bytes))
+        return false;
+    cyberdeck_apps::storage_facade storage(app_grant());
+    const std::string temporary = target + ".tmp";
+    if (storage.write_temp(temporary, bytes.data(), bytes.size()).status != cyberdeck_apps::write_status::ok ||
+        storage.flush_or_fsync(temporary).status != cyberdeck_apps::write_status::ok ||
+        storage.rename_atomic(temporary, target).status != cyberdeck_apps::write_status::ok)
+        return false;
+    document_.clear_dirty();
+    close_confirmation_ = false;
+    return true;
+}
+
+bool application::handle_shortcut(char shortcut) {
+    switch (shortcut) {
+    case 's':
+        return save_current();
+    case 'q':
+        if (document_.dirty()) {
+            request_close();
+            return false;
+        }
+        return discard_and_close();
+    case 'f':
+        return true;
+    case 'z':
+        return document_.undo();
+    case 'y':
+        return document_.redo();
+    default:
+        return false;
+    }
+}
+
+bool application::discard_and_close() {
+    if (!running_)
+        return false;
+    close_confirmation_ = false;
+    document_ = {};
+    pending_save_as_.clear();
+    return true;
+}
+
+bool application::search(std::string_view needle) {
+    return running_ && document_.find_next(needle);
 }
 
 void application::bind_input(cyberdeck_apps::input_facade input, cyberdeck_window_manager::view_context context) {

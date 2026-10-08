@@ -63,9 +63,10 @@ REQUIRED_FORBIDDEN = frozenset({
     "components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp",
 })
 
-# Host-linkable translation unit covered by the host suite: it must always be
-# reported by gcovr, never allowlisted.
+# Host-linkable translation units covered by the host suite: they must always
+# be reported by gcovr, never allowlisted.
 DEMO_APP = "components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp"
+EDITOR_VIEW = "components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp"
 ELIGIBLE = "components/cyberdeck/src/apps/pure.cpp"
 
 
@@ -197,6 +198,16 @@ def test_demo_app_is_not_allowlisted() -> None:
         f"{DEMO_APP} must be discovered by the production source scan"
 
 
+def test_editor_view_is_host_covered_and_not_allowlisted() -> None:
+    """TEST-COV-011: the editor view uses the real host display harness."""
+    assert (ROOT / EDITOR_VIEW).is_file(), f"{EDITOR_VIEW} must exist"
+    assert EDITOR_VIEW not in ALLOWLIST
+    assert EDITOR_VIEW not in FORBIDDEN_ALLOWLIST
+    assert EDITOR_VIEW in production_sources(ROOT, SOURCE_ROOT)
+    makefile = (ROOT / "tests/host/keymap/Makefile").read_text()
+    assert "$(EDITOR_VIEW_SRC)" in makefile
+
+
 # --- TEST-COV-006..010: fail-closed counterfactuals over temporary fixtures ----
 
 def test_allowlisted_and_covered_is_rejected() -> None:
@@ -273,6 +284,7 @@ def allowlist_membership_scenarios() -> None:
     test_allowlist_never_intersects_forbidden()
     test_forbidden_allowlist_keeps_its_members()
     test_demo_app_is_not_allowlisted()
+    test_editor_view_is_host_covered_and_not_allowlisted()
 
 
 def allowlist_counterfactual_scenarios() -> None:

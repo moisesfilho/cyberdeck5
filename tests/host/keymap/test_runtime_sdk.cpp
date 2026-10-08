@@ -72,6 +72,50 @@ class sdk_app final : public cyberdeck_apps::application {
     bool running_ = false;
 };
 
+class command_app final : public cyberdeck_apps::application {
+  public:
+    command_app(const char *id, const char *command, cyberdeck_apps::app_type type,
+                bool start_succeeds = true)
+        : start_succeeds_(start_succeeds) {
+        manifest_.id = id;
+        manifest_.name = id;
+        manifest_.command = command;
+        manifest_.type = type;
+        manifest_.resources[0] = "input";
+        manifest_.resource_count = 1;
+    }
+    const cyberdeck_apps::manifest &get_manifest() const override { return manifest_; }
+    bool start() override {
+        ++start_calls;
+        started_with_input_grant = app_grant().valid() && app_grant().allows("input");
+        running_ = start_succeeds_;
+        return start_succeeds_;
+    }
+    bool stop() override { running_ = false; return true; }
+    bool running() const override { return running_; }
+    cyberdeck_apps::result execute(std::string_view command, std::string_view args) override {
+        ++execute_calls;
+        execute_had_input_grant = app_grant().valid() && app_grant().allows("input");
+        last_command = command;
+        last_args = args;
+        return running_ && execute_had_input_grant
+                   ? cyberdeck_apps::result{cyberdeck_apps::result_status::handled, "executed\n"}
+                   : cyberdeck_apps::result{cyberdeck_apps::result_status::rejected, "not ready\n"};
+    }
+
+    int start_calls = 0;
+    int execute_calls = 0;
+    bool started_with_input_grant = false;
+    bool execute_had_input_grant = false;
+    std::string_view last_command;
+    std::string_view last_args;
+
+  private:
+    cyberdeck_apps::manifest manifest_{};
+    bool start_succeeds_;
+    bool running_ = false;
+};
+
 void test_logger() {
     recording_logger sink;
     check(sink.write(cyberdeck_apps::logger::level::warning, "ui", "ready"), "logger accepts bounded fields");
@@ -117,12 +161,47 @@ void test_catalog() {
     check(catalog.dispatch("missing", false) == nullptr, "unknown command fails closed");
     check(catalog.at(4) == nullptr, "catalog bounds-checks enumeration");
 }
+
+void test_command_lifecycle_regression() {
+    cyberdeck_apps::runtime runtime;
+    command_app editor("cyberdeck.editor", "edit", cyberdeck_apps::app_type::foreground);
+    command_app service("test.service", "service-command", cyberdeck_apps::app_type::service);
+    command_app failing("failing.editor", "edit-fails", cyberdeck_apps::app_type::foreground, false);
+    check(runtime.register_application(editor), "editor command app registers");
+    check(runtime.register_application(service), "service command app registers");
+    check(runtime.register_application(failing), "failing command app registers");
+
+    auto first = runtime.execute_line("edit notes.txt");
+    check(first.status == cyberdeck_apps::result_status::handled, "edit starts and executes foreground app");
+    check(editor.start_calls == 1, "edit starts foreground app lazily");
+    check(editor.started_with_input_grant, "foreground start has input grant before execute");
+    check(editor.execute_had_input_grant, "edit execute has input grant");
+    check(editor.last_command == "edit" && editor.last_args == " notes.txt",
+          "edit preserves command and filename arguments");
+
+    auto second = runtime.execute_line("edit other.txt");
+    check(second.status == cyberdeck_apps::result_status::handled, "repeated edit executes successfully");
+    check(editor.start_calls == 1, "repeated edit is idempotent");
+    check(editor.execute_calls == 2, "repeated edit executes without restarting");
+
+    auto service_result = runtime.execute_line("service-command");
+    check(service_result.status == cyberdeck_apps::result_status::rejected,
+          "service command remains unavailable while stopped");
+    check(service.start_calls == 0, "service command is never auto-started");
+
+    auto failed = runtime.execute_line("edit-fails file.txt");
+    check(failed.status == cyberdeck_apps::result_status::rejected,
+          "foreground command rejects when lazy start fails");
+    check(failing.start_calls == 1 && failing.execute_calls == 0,
+          "failed start prevents execute");
+}
 } // namespace
 
 int main() {
     test_logger();
     test_storage();
     test_catalog();
+    test_command_lifecycle_regression();
     std::printf("%s: runtime SDK (%d checks)\n", failures == 0 ? "PASS" : "FAIL", checks);
     return failures == 0 ? 0 : 1;
 }

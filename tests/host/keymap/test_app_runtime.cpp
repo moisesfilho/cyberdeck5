@@ -47,6 +47,35 @@ private:
     bool running_ = false;
 };
 
+class non_foreground_command_app final : public cyberdeck_apps::application {
+public:
+    non_foreground_command_app(std::string_view id, std::string_view command,
+                               cyberdeck_apps::app_type type)
+    {
+        manifest_.id = id;
+        manifest_.name = id;
+        manifest_.command = command;
+        manifest_.type = type;
+    }
+
+    const cyberdeck_apps::manifest &get_manifest() const override { return manifest_; }
+    bool start() override { ++start_calls; running_ = true; return true; }
+    bool stop() override { running_ = false; return true; }
+    bool running() const override { return running_; }
+    cyberdeck_apps::result execute(std::string_view, std::string_view) override
+    {
+        return running_ ? cyberdeck_apps::result{cyberdeck_apps::result_status::handled, "ran\n"}
+                        : cyberdeck_apps::result{cyberdeck_apps::result_status::rejected,
+                                                 "not running\n"};
+    }
+
+    int start_calls = 0;
+
+private:
+    cyberdeck_apps::manifest manifest_{};
+    bool running_ = false;
+};
+
 class dependent_app final : public cyberdeck_apps::application {
 public:
     const cyberdeck_apps::manifest &get_manifest() const override { return manifest_; }
@@ -191,7 +220,14 @@ int main()
           "app info exposes commands");
 
     auto before = runtime.execute_line("testapp");
-    check(before.status == cyberdeck_apps::result_status::rejected, "stopped app rejects command");
+    check(before.status == cyberdeck_apps::result_status::handled,
+          "stopped foreground app starts lazily for command");
+    check(before.output == "ran\n", "lazy-started foreground command returns output");
+    check(app.running(), "lazy-started foreground app becomes running");
+    check(runtime.state("test.app") == cyberdeck_apps::app_state::running,
+          "lazy-started foreground app exposes running state");
+    check(runtime.execute_line("testapp again").status == cyberdeck_apps::result_status::handled,
+          "running foreground command remains dispatchable");
 
     auto start = runtime.execute_line("app start test.app");
     check(start.status == cyberdeck_apps::result_status::handled, "app start is handled");
@@ -225,7 +261,25 @@ int main()
     check(runtime.execute_line("wifi").status == cyberdeck_apps::result_status::not_handled,
           "service command names remain available to the shell parser");
     check(runtime.failure_reason("missing") == "application not found",
-          "missing app has a diagnostic");
+           "missing app has a diagnostic");
+
+    cyberdeck_apps::runtime type_policy_runtime;
+    non_foreground_command_app service("test.service", "service-command",
+                                       cyberdeck_apps::app_type::service);
+    non_foreground_command_app background("test.background", "background-command",
+                                          cyberdeck_apps::app_type::background);
+    check(type_policy_runtime.register_application(service), "service app registers");
+    check(type_policy_runtime.register_application(background), "background app registers");
+    check(type_policy_runtime.execute_line("service-command").status ==
+              cyberdeck_apps::result_status::rejected,
+          "stopped service command is rejected without auto-start");
+    check(service.start_calls == 0 && !service.running(),
+          "service command never lazy-starts");
+    check(type_policy_runtime.execute_line("background-command").status ==
+              cyberdeck_apps::result_status::rejected,
+          "stopped background command is rejected without auto-start");
+    check(background.start_calls == 0 && !background.running(),
+          "background command never lazy-starts");
 
     cyberdeck_apps::runtime hook_runtime;
     hooked_app hooked;

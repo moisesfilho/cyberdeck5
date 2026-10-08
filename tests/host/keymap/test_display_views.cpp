@@ -1,5 +1,6 @@
 #include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_terminal_view.h"
+#include "platform/display/cyberdeck_editor_view.h"
 
 #include <array>
 #include <cassert>
@@ -15,6 +16,8 @@ static void noop(lv_event_t *) {}
 
 static int geometry_events = 0;
 static void geometry_changed(lv_event_t *) { ++geometry_events; }
+static std::string editor_action;
+static void editor_changed(std::string_view action, void *) { editor_action = std::string(action); }
 
 static void assert_visible_lines_fit(const cyberdeck_terminal_view::view &terminal,
                                      int32_t width)
@@ -297,5 +300,23 @@ int main()
     assert(terminal.textarea()->text.empty());
     cyberdeck_terminal_view::view no_callbacks;
     assert(no_callbacks.create(&screen, &content, 0, {}));
+    /* TEST-EDIT-HOST-01: compile and exercise the real editor view TU. */
+    cyberdeck_editor_view::view editor;
+    assert(!editor.create(nullptr, editor_changed, nullptr));
+    assert(editor.create(&screen, editor_changed, nullptr));
+    assert(editor.surface()->children.size() == 66);
+    editor.set_visible(true);
+    assert(editor.visible() && !editor.surface()->hidden);
+    editor.render("alpha\n\xC3\xA9", 5, true, "saved");
+    assert(editor.surface()->children[0]->text == "alpha|");
+    assert(editor.surface()->children[1]->text == "\xC3\xA9");
+    lv_indev_t editor_touch{};
+    lv_shim_set_pointer(&editor_touch, 120);
+    lv_shim_emit_event(editor.surface(), LV_EVENT_PRESSED);
+    lv_shim_set_pointer(&editor_touch, 0);
+    lv_shim_emit_event(editor.surface(), LV_EVENT_RELEASED);
+    assert(editor_action == "scroll");
+    editor.destroy();
+    assert(!editor.visible() && editor.surface() == nullptr);
     std::cout << "display view tests passed\n";
 }

@@ -104,6 +104,26 @@ widgets (por exemplo, confirmar que uma tela foi aberta). Reserve
 aspectos visuais que o texto não representa; não use OCR como primeira opção
 para conferir uma resposta textual.
 
+### 4.2. Editor (`TEST-EDIT-UI/INPUT/COMMANDS/DIRTY/NEW/SAVE-FAILURE/LIFECYCLE/SERIAL`)
+
+Com o shell no menu, use `ui.type "edit /tmp/novo.txt"` e confirme a superfície
+com `ui.dump`/`screen.dump`. Arquivo ausente abre buffer vazio UTF-8, sem BOM e
+com LF. Valide setas, teclado virtual, toque e gesto vertical; `Ctrl+S` salva,
+`Ctrl+Q`/Esc fecha e, com dirty, a confirmação oferece **Salvar / Descartar /
+Cancelar** (Enter / D / Esc). `Ctrl+F`, texto, Enter e Esc validam busca;
+Ctrl+Z/Ctrl+Y validam undo/redo. Salvar só limpa dirty após sucesso; uma falha
+de escrita preserva o documento e a indicação dirty.
+
+```bash
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.type "edit /tmp/novo.txt"
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.dump
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump
+```
+
+Atalhos/gestos exigem teclado ou toque físico; repita abrir/fechar/reabrir e
+desconectar/reconectar Serial-JTAG para confirmar estado limpo e ausência de
+callbacks tardios.
+
 ## 5. `term.dump`: snapshot textual do terminal
 
 `term.dump` nao recebe argumentos de comando. A requisicao NDJSON e

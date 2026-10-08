@@ -17,7 +17,8 @@ struct lv_font_t { int32_t line_height{16}; };
 struct lv_font_glyph_dsc_t { int32_t adv_w{}; };
 struct _lv_obj_t;
 using lv_obj_t = _lv_obj_t;
-struct lv_event_t { lv_obj_t *target{}; void *user_data{}; };
+struct _lv_event_t { lv_obj_t *target{}; void *user_data{}; };
+using lv_event_t = _lv_event_t;
 using lv_event_cb_t = void (*)(lv_event_t *);
 struct lv_point_t { int32_t x{}; int32_t y{}; };
 struct lv_indev_t { int type{}; lv_point_t point{}; };
@@ -146,6 +147,7 @@ inline lv_indev_t *&lv_shim_active_indev()
     return indev;
 }
 inline lv_indev_t *lv_indev_active() { return lv_shim_active_indev(); }
+inline lv_indev_t *lv_indev_get_act() { return lv_shim_active_indev(); }
 inline int lv_indev_get_type(const lv_indev_t *indev) { return indev ? indev->type : 0; }
 inline void lv_indev_get_point(const lv_indev_t *indev, lv_point_t *point)
 {

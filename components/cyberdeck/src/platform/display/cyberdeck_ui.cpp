@@ -21,6 +21,7 @@
 #include "lvgl.h"
 #include "platform/display/cyberdeck_battery_view.h"
 #include "platform/display/cyberdeck_clock.h"
+#include "platform/display/cyberdeck_editor_view.h"
 #include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_screen_protection.h"
 #include "platform/display/cyberdeck_terminal_scrollback.h"
@@ -37,6 +38,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include <atomic>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -88,10 +90,13 @@ std::string s_last_clock_text;
 cyberdeck_local_shell s_local_shell("/sdcard", "/");
 cyberdeck_header_view::view s_header_view;
 cyberdeck_terminal_view::view s_terminal_view;
+cyberdeck_editor_view::view s_editor_view;
 cyberdeck_window_manager::view_context s_shell_view_context;
 cyberdeck_window_manager::view_context s_editor_view_context;
 bool s_cat_worker_ready = false;
 bool s_ui_ready = false;
+bool s_editor_search_mode = false;
+std::string s_editor_search;
 cyberdeck_shell_session::wifi_ui_state_t s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
 cyberdeck_wifi_search_menu s_wifi_search_menu;
 cyberdeck_wifi_saved_menu s_wifi_saved_menu;
@@ -224,10 +229,13 @@ cyberdeck_shell_app::application &s_shell_app = cyberdeck_shell_app::global_appl
 void append_line(const std::string &line);
 void append_output(const char *data, size_t len, bool repaint = true);
 void render_terminal();
+bool editor_input_active();
+void editor_local_key(uint32_t key);
 void terminal_geometry_changed(lv_event_t *) {
     render_terminal();
 }
 void process_terminal_output(lv_timer_t *timer);
+void editor_view_action(std::string_view action, void *context);
 void zero_string(std::string &s);
 void refresh_ble_status();
 
@@ -530,6 +538,7 @@ void destroy_ui_resource_handles() {
         s_shell_view_context = {};
     }
     cyberdeck_editor::global_application().unbind_input();
+    (void)cyberdeck_editor::global_application().stop();
     if (!s_editor_view_context.empty()) {
         (void)window_manager.policy().begin_teardown(s_editor_view_context);
         (void)window_manager.policy().remove(s_editor_view_context);
@@ -538,6 +547,7 @@ void destroy_ui_resource_handles() {
     window_manager.deinit();
     s_header_view = {};
     s_terminal_view = {};
+    s_editor_view.destroy();
     s_terminal = nullptr;
     s_keyboard = nullptr;
     s_wifi_audit.teardown();
@@ -634,10 +644,54 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
     lv_display_trigger_activity(lv_disp_get_default());
     if (s_keyboard)
         hidden(s_keyboard, true);
-    auto &editor = cyberdeck_editor::global_application();
-    if (!s_editor_view_context.empty() && !editor.document().path().empty()) {
+    auto &editor_app = cyberdeck_editor::global_application();
+    auto &editor = editor_app;
+    if (!s_editor_view_context.empty() && !editor_app.document().path().empty()) {
+        const bool ctrl = (modifier & 0x01U) != 0;
+        if (ctrl && text != nullptr && length == 1) {
+            const char shortcut = static_cast<char>(std::tolower(static_cast<unsigned char>(text[0])));
+            if (shortcut == 'f') {
+                s_editor_search_mode = true;
+                s_editor_search.clear();
+                render_terminal();
+                return;
+            }
+            if (shortcut == 's' || shortcut == 'q' || shortcut == 'z' || shortcut == 'y') {
+                (void)editor.handle_shortcut(shortcut);
+                render_terminal();
+                return;
+            }
+            /* Clipboard shortcuts are unsupported; reject them instead of
+             * silently inserting C/V/X into the document. */
+            if (shortcut == 'c' || shortcut == 'v' || shortcut == 'x') return;
+        }
+        if (s_editor_search_mode) {
+            if (special_key == LV_KEY_ESC) {
+                s_editor_search_mode = false;
+                s_editor_search.clear();
+            } else if (special_key == LV_KEY_ENTER) {
+                (void)editor.search(s_editor_search);
+                s_editor_search_mode = false;
+            } else if (text != nullptr && length != 0 && s_editor_search.size() + length <= 128) {
+                s_editor_search.append(text, length);
+            }
+            render_terminal();
+            return;
+        }
+        if (editor_app.close_requested()) {
+            if (special_key == LV_KEY_ESC) editor.cancel_close();
+            else if (special_key == LV_KEY_ENTER) {
+                if (editor.save_current()) editor.discard_and_close();
+                else editor.cancel_close();
+            } else if (text != nullptr && length == 1 && (text[0] == 'd' || text[0] == 'D')) {
+                editor.discard_and_close();
+            }
+            render_terminal();
+            return;
+        }
         if (text != nullptr && length != 0) {
             (void)editor.handle_key(cyberdeck_editor::key::character, std::string_view(text, length));
+            render_terminal();
             return;
         }
         const auto route = [&](std::uint32_t value, cyberdeck_editor::key pressed) {
@@ -647,11 +701,19 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
             }
             return false;
         };
+        if (special_key == LV_KEY_ESC) {
+            if (editor.document().dirty()) editor.request_close();
+            else editor.discard_and_close();
+            render_terminal();
+            return;
+        }
         if (route(LV_KEY_LEFT, cyberdeck_editor::key::left) || route(LV_KEY_RIGHT, cyberdeck_editor::key::right) ||
             route(LV_KEY_UP, cyberdeck_editor::key::up) || route(LV_KEY_DOWN, cyberdeck_editor::key::down) ||
             route(LV_KEY_BACKSPACE, cyberdeck_editor::key::backspace) ||
-            route(LV_KEY_DEL, cyberdeck_editor::key::del) || route(LV_KEY_ENTER, cyberdeck_editor::key::enter))
+            route(LV_KEY_DEL, cyberdeck_editor::key::del) || route(LV_KEY_ENTER, cyberdeck_editor::key::enter)) {
+            render_terminal();
             return;
+        }
     }
     if (text != nullptr && text[0] != '\0' && length != 0) {
         /* A modified key is an SSH escape sequence, not text.  The session
@@ -1024,6 +1086,35 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,
 void render_terminal() {
     if (!s_terminal)
         return;
+    auto &editor_app = cyberdeck_editor::global_application();
+    if (!editor_app.document().path().empty()) {
+        if (editor_app.close_requested()) {
+            s_editor_search_mode = false;
+            s_editor_search.clear();
+        }
+        lv_obj_set_hidden(s_terminal_view.scrollback(), true);
+        lv_obj_set_hidden(s_terminal, true);
+        if (s_keyboard != nullptr) {
+            lv_keyboard_set_textarea(s_keyboard, s_terminal);
+            hidden(s_keyboard, tab5_keyboard_is_connected());
+            if (!tab5_keyboard_is_connected()) {
+                lv_obj_set_size(s_keyboard, LV_PCT(100), 300);
+                lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+            }
+        }
+        s_editor_view.set_visible(true);
+        std::string status = s_editor_search_mode ? "Buscar: " + s_editor_search : "Ctrl+S Salvar  Ctrl+Q Fechar";
+        if (editor_app.close_requested())
+            status = "Salvar / Descartar / Cancelar (Enter / D / Esc)";
+        s_editor_view.render(editor_app.document().text(), editor_app.document().cursor(),
+                             editor_app.document().dirty(), status);
+        s_terminal_output_dirty = false;
+        return;
+    }
+    s_editor_search_mode = false;
+    s_editor_search.clear();
+    s_editor_view.set_visible(false);
+    lv_obj_set_hidden(s_terminal_view.scrollback(), false);
     const cyberdeck_shell_console::line_view view = compose_console_line();
     /* The view owns the bounded visual window and its touch offset.  Feed it
      * the complete bounded scrollback so a swipe can expose older lines; the
@@ -1054,6 +1145,10 @@ void render_terminal() {
     uint32_t char_pos = static_cast<uint32_t>(view.cursor_chars());
     lv_textarea_set_cursor_pos(s_terminal, char_pos);
     s_terminal_output_dirty = false;
+}
+
+void editor_view_action(std::string_view action, void *) {
+    if (action == "scroll") render_terminal();
 }
 
 void append_output(const char *data, size_t len, bool repaint) {
@@ -1243,9 +1338,9 @@ void virtual_keyboard_changed(lv_event_t *event) {
     // LV_EVENT_KEY reaches terminal_key.  Mirror the movement in the model
     // and render once more to keep the widget and s_cursor in lockstep.
     if (strcmp(text, LV_SYMBOL_LEFT) == 0)
-        local_key(LV_KEY_LEFT);
+        editor_input_active() ? editor_local_key(LV_KEY_LEFT) : local_key(LV_KEY_LEFT);
     else if (strcmp(text, LV_SYMBOL_RIGHT) == 0)
-        local_key(LV_KEY_RIGHT);
+        editor_input_active() ? editor_local_key(LV_KEY_RIGHT) : local_key(LV_KEY_RIGHT);
 }
 
 void terminal_insert(lv_event_t *event) {
@@ -1254,6 +1349,15 @@ void terminal_insert(lv_event_t *event) {
     const char *inserted = static_cast<const char *>(lv_event_get_param(event));
     if (!inserted || !*inserted)
         return;
+
+    if (editor_input_active()) {
+        if (inserted[1] == '\0' && static_cast<unsigned char>(inserted[0]) == 0x7F)
+            (void)cyberdeck_editor::global_application().handle_key(cyberdeck_editor::key::backspace);
+        else
+            (void)cyberdeck_editor::global_application().handle_key(cyberdeck_editor::key::character, inserted);
+        render_terminal();
+        return;
+    }
 
     /* Editing keys, passkey digits and multi-newline pastes are all session
      * decisions.  LVGL edits the textarea as part of this event, so the
@@ -1275,6 +1379,11 @@ void terminal_changed(lv_event_t *) {
     // the session line/cursor are the single source of truth for editing.
     const size_t length = strlen(text);
     if (length > 0 && text[length - 1] == '\n') {
+        if (editor_input_active()) {
+            (void)cyberdeck_editor::global_application().handle_key(cyberdeck_editor::key::enter);
+            render_terminal();
+            return;
+        }
         if (s_virtual_enter_handled)
             s_virtual_enter_handled = false;
         else
@@ -1287,6 +1396,12 @@ void terminal_key(lv_event_t *event) {
     if (!event || s_rendering)
         return;
     uint32_t key = lv_event_get_key(event);
+    if (editor_input_active()) {
+        editor_local_key(key);
+        lv_event_stop_processing(event);
+        lv_event_stop_bubbling(event);
+        return;
+    }
     if (key == LV_KEY_BACKSPACE || key == LV_KEY_DEL || key == LV_KEY_LEFT || key == LV_KEY_RIGHT || key == LV_KEY_UP ||
         key == LV_KEY_DOWN || key == LV_KEY_HOME || key == LV_KEY_END || key == LV_KEY_NEXT || key == LV_KEY_ESC) {
         local_key(key);
@@ -1550,6 +1665,22 @@ cyberdeck_shell_session::key translate_session_key(uint32_t key) {
     }
 }
 
+bool editor_input_active() {
+    return !s_editor_view_context.empty() && !cyberdeck_editor::global_application().document().path().empty();
+}
+void editor_local_key(uint32_t key) {
+    auto &editor_app = cyberdeck_editor::global_application();
+    const auto route = [&](uint32_t value, cyberdeck_editor::key pressed) {
+        if (key != value) return false;
+        (void)editor_app.handle_key(pressed);
+        render_terminal();
+        return true;
+    };
+    route(LV_KEY_LEFT, cyberdeck_editor::key::left) || route(LV_KEY_RIGHT, cyberdeck_editor::key::right) ||
+        route(LV_KEY_UP, cyberdeck_editor::key::up) || route(LV_KEY_DOWN, cyberdeck_editor::key::down) ||
+        route(LV_KEY_BACKSPACE, cyberdeck_editor::key::backspace) || route(LV_KEY_DEL, cyberdeck_editor::key::del) ||
+        route(LV_KEY_ENTER, cyberdeck_editor::key::enter);
+}
 void local_key(uint32_t key) { s_shell_app.handle_key(translate_session_key(key)); }
 
 } // namespace
@@ -1658,7 +1789,8 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     }
     const cyberdeck_terminal_view::callbacks terminal_callbacks{
         focused, terminal_insert, terminal_changed, terminal_key, virtual_keyboard_changed, terminal_geometry_changed};
-    if (!s_terminal_view.create(s_screen, s_menu, TERMINAL_LIMIT, terminal_callbacks)) {
+    if (!s_terminal_view.create(s_screen, s_menu, TERMINAL_LIMIT, terminal_callbacks) ||
+        !s_editor_view.create(s_menu, editor_view_action, nullptr)) {
         destroy_ui_resource_handles();
         return ESP_ERR_NO_MEM;
     }
