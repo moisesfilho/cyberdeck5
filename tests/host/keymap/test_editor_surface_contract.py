@@ -24,10 +24,32 @@ def main() -> int:
     # TEST-EDIT-UI: fixed, bounded surface; no filesystem/platform ownership.
     require("k_max_lines = 64" in VIEW_H and "kLineLimit = 256" in VIEW,
             "surface must have explicit fixed line and line-width bounds")
-    require("while (rendered < k_max_lines)" in VIEW and
+    require("while (rendered < visible_lines)" in VIEW and
             "for (std::size_t slot = rendered; slot < k_max_lines; ++slot)" in VIEW and
             "LV_LABEL_LONG_CLIP" in VIEW,
             "render must reuse bounded clipped line slots")
+    # TEST-EDIT-FOOTER-CONTRACT: one footer line is reserved and bounded.
+    require("kFooterLines = 1" in VIEW and
+            "content_height - static_cast<int32_t>(kFooterLines * line_height)" in VIEW and
+            "lv_obj_set_pos(status_, 0, footer_y)" in VIEW and
+            "bounded_footer" in VIEW and "kLineLimit = 256" in VIEW,
+            "editor must reserve one bounded footer line below the document")
+    require('"Ctrl+F Buscar  Ctrl+S Salvar  Ctrl+Q Fechar"' in UI,
+            "footer must expose search, save and close shortcuts together")
+    require("set_bottom_inset" in VIEW_H and "bottom_inset_" in VIEW and
+            "parent_height - bottom_inset_" in VIEW and
+            "LV_EVENT_SIZE_CHANGED" in VIEW,
+            "footer must respond to keyboard inset and resize")
+    require("std::clamp<std::size_t>" in VIEW and
+            "first_line_ = std::min(first_line_, maximum_first_line)" in VIEW and
+            "std::min(column, value.size())" in VIEW,
+            "capacity, scroll and cursor must be clamped")
+    for encoding in ("UTF-8", "UTF-16LE", "UTF-16BE", "Windows-1252"):
+        require(f'" | {encoding}"' in UI,
+                f"footer must expose the {encoding} encoding")
+    require('status += " | UTF-8"' in UI and 'status += " | UTF-16LE"' in UI and
+            'status += " | UTF-16BE"' in UI and 'status += " | Windows-1252"' in UI,
+            "footer encoding labels must be selected from the document codec")
     require("VFS" not in VIEW and "storage_facade" not in VIEW,
             "editor view must not own storage or VFS access")
 
@@ -43,6 +65,8 @@ def main() -> int:
             "dirty close dialog must expose save/discard/cancel paths")
     require('action == "scroll"' in UI and "gesture_scroll" in VIEW,
             "scroll gesture must return through the UI render path")
+    require("LV_EVENT_PRESSED" in VIEW and "LV_EVENT_RELEASED" in VIEW,
+            "touch gesture lifecycle must remain wired")
 
     # TEST-EDIT-INPUT: model owns cursor semantics and the view clamps its
     # marker; this protects multibyte codepoint boundaries without LVGL.

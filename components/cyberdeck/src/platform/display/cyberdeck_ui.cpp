@@ -1101,11 +1101,28 @@ void render_terminal() {
                 lv_obj_set_size(s_keyboard, LV_PCT(100), 300);
                 lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
             }
+            s_editor_view.set_bottom_inset(tab5_keyboard_is_connected() ? 0 : lv_obj_get_height(s_keyboard));
         }
         s_editor_view.set_visible(true);
-        std::string status = s_editor_search_mode ? "Buscar: " + s_editor_search : "Ctrl+S Salvar  Ctrl+Q Fechar";
+        std::string status = s_editor_search_mode ? "Buscar: " + s_editor_search
+                                                  : "Ctrl+F Buscar  Ctrl+S Salvar  Ctrl+Q Fechar";
         if (editor_app.close_requested())
             status = "Salvar / Descartar / Cancelar (Enter / D / Esc)";
+        switch (editor_app.document().info().codec) {
+        case cyberdeck_editor::encoding::utf16_le:
+            status += " | UTF-16LE";
+            break;
+        case cyberdeck_editor::encoding::utf16_be:
+            status += " | UTF-16BE";
+            break;
+        case cyberdeck_editor::encoding::windows_1252:
+            status += " | Windows-1252";
+            break;
+        case cyberdeck_editor::encoding::utf8:
+        default:
+            status += " | UTF-8";
+            break;
+        }
         s_editor_view.render(editor_app.document().text(), editor_app.document().cursor(),
                              editor_app.document().dirty(), status);
         s_terminal_output_dirty = false;
@@ -1323,6 +1340,9 @@ void focused(lv_event_t *event) {
         hidden(s_keyboard, false);
         lv_obj_set_size(s_keyboard, LV_PCT(100), 300);
         lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+        s_editor_view.set_bottom_inset(lv_obj_get_height(s_keyboard));
+    } else {
+        s_editor_view.set_bottom_inset(0);
     }
 }
 

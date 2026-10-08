@@ -386,6 +386,13 @@ are revalidated for every event. Physical/virtual keyboard, arrows, touch,
 `Ctrl+S`, `Ctrl+Q`, `Esc`, and `Ctrl+F`/Enter/Esc are routed to the app. Dirty
 close presents Save/Discard/Cancel, and teardown removes the view before the
 LVGL root so re-entry cannot consume late callbacks.
+The footer is one bounded line anchored to the bottom of the usable editor
+surface. It contains the active shortcuts and only the document encoding
+abbreviation (`UTF-8`, `UTF-16LE`, `UTF-16BE`, or `Windows-1252`). A
+virtual-keyboard inset reduces that surface before document capacity and footer
+position are calculated, so the document does not overlap the footer. Size
+changes recompute the layout and clamp document scroll and cursor visibility
+for both portrait and landscape orientation.
 
 ## SSH
 

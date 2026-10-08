@@ -65,10 +65,15 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
    em `cyberdeck_system_apps.cpp`.
 - `include/platform/display/cyberdeck_editor_view.h` e
   `src/platform/display/cyberdeck_editor_view.cpp` formam a superfície LVGL
-  própria do editor: slots fixos para linhas, documento/cursor/status, scroll
-  por gesto e render bounded, com truncamento somente em fronteiras de
-  codepoint UTF-8. A UI a cria após o contexto do window manager e a
-  destrói no teardown; a view não acessa VFS nem serviços.
+  própria do editor: slots fixos para linhas, documento/cursor e uma única linha
+   bounded de rodapé para os atalhos `Ctrl+F Buscar`, `Ctrl+S Salvar` e
+   `Ctrl+Q Fechar`, além da sigla do encoding, com capacidade calculada pela
+   altura útil atual.
+  `set_bottom_inset` reduz a superfície quando o teclado virtual ocupa a base;
+  eventos de resize recalculam footer, slots e limites de scroll/cursor para
+  retrato/paisagem. O render permanece bounded e corta somente em fronteiras de
+  codepoint UTF-8, com toque/gesto preservado. A UI a cria após o contexto do
+  window manager e a destrói no teardown; a view não acessa VFS nem serviços.
 - A superfície e o roteamento cobrem `TEST-EDIT-UI/INPUT/COMMANDS/DIRTY/NEW`,
   `TEST-EDIT-SAVE-FAILURE/LIFECYCLE/SERIAL`: atalhos e confirmação permanecem
   na app, enquanto a view só renderiza e traduz scroll bounded. Ctrl+C/V/X são
@@ -81,13 +86,16 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
    dispatch de `edit`, ENOENT de arquivo ausente, documentacao, limite e save
    atomico/fsync, trim/save-as, wiring de input, rejeicao oversized antes de
     abrir e CR isolado. `test_editor_surface_contract.py` cobre a superfície
-    e2e, slots bounded, cursor UTF-8, scroll/gesto, atalhos/diálogo, arquivo
-    novo, falhas atômicas, grants/teardown e integração no Makefile. `test_ui_resource_contract.py` contabiliza a superficie
+      e2e, slots bounded, footer de uma linha bounded com atalhos e UTF-8/UTF-16LE/
+      UTF-16BE/Windows-1252, truncamento com sigla preservada, altura dinâmica,
+      inset de teclado virtual, retrato/paisagem/resize, cursor/scroll clampados, cursor UTF-8,
+     scroll/gesto, atalhos/diálogo, arquivo novo, falhas atômicas,
+     grants/teardown e integração no Makefile. `test_ui_resource_contract.py` contabiliza a superficie
    do editor e seu teardown. O harness de capabilities inclui explicitamente a
    storage facade para manter o agregado host compilavel. Ambos os alvos sao executados por `make test`; o app
   estruturalmente coberto permanece na allowlist explicita do scope guard.
   A matriz formal `tests/host/keymap/editor_traceability.md`
-   rastreia `REQ-EDIT-01..18`/`AC-EDIT-01..18` para
+    rastreia `REQ-EDIT-01..19`/`AC-EDIT-01..19` para
   `TEST-EDIT-RUNTIME`, `TEST-EDIT-VFS`, `TEST-EDIT-CODEC`, `TEST-EDIT-MODEL`,
   `TEST-EDIT-SAVE`, `TEST-EDIT-INPUT` e `TEST-EDIT-DOC`, incluindo cenarios
   positivos, negativos, de limite e de falha.

@@ -354,6 +354,12 @@ de input é revalidada a cada evento; teclado físico/virtual, setas, toque e
 gesto chegam ao modelo. `Ctrl+S`, `Ctrl+Q`, `Esc` e `Ctrl+F`/Enter/Esc cobrem
 salvar, fechar, confirmação Salvar/Descartar/Cancelar e busca. O teardown
 remove a superfície antes da raiz LVGL para impedir callbacks tardios.
+O rodapé é uma única linha bounded ancorada na base da superfície útil do
+editor. Ele contém os atalhos ativos e somente a sigla do encoding (`UTF-8`,
+`UTF-16LE`, `UTF-16BE` ou `Windows-1252`). O inset do teclado virtual reduz
+essa superfície antes do cálculo da capacidade do documento e da posição do
+rodapé, sem sobreposição. Mudanças de tamanho recalculam o layout e limitam
+scroll e visibilidade do cursor em retrato e paisagem.
 
 ## SSH
 

@@ -19,6 +19,7 @@ class view final {
     bool create(lv_obj_t *parent, action_callback callback, void *context);
     void destroy();
     void set_visible(bool visible);
+    void set_bottom_inset(int pixels);
     bool visible() const {
         return surface_ != nullptr && visible_;
     }
@@ -33,13 +34,15 @@ class view final {
     static void pressed(lv_event_t *event);
     static void released(lv_event_t *event);
     static void button_clicked(lv_event_t *event);
+    static void resized(lv_event_t *event);
     void begin_touch();
     void finish_touch();
     void notify(std::string_view action);
+    void layout();
 
     lv_obj_t *surface_ = nullptr;
+    lv_obj_t *parent_ = nullptr;
     lv_obj_t *status_ = nullptr;
-    lv_obj_t *prompt_ = nullptr;
     std::array<lv_obj_t *, k_max_lines> lines_{};
     action_callback callback_ = nullptr;
     void *context_ = nullptr;
@@ -47,6 +50,9 @@ class view final {
     bool touching_ = false;
     int touch_y_ = 0;
     std::size_t first_line_ = 0;
+    int bottom_inset_ = 0;
+    std::size_t visible_lines_ = 1;
+    std::size_t total_lines_ = 1;
 };
 
 } // namespace cyberdeck_editor_view

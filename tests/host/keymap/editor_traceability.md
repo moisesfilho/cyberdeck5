@@ -1,6 +1,6 @@
 # Editor de texto (`edit`) — contrato e rastreabilidade
 
-Escopo: `REQ-EDIT-01..18` / `AC-EDIT-01..18`. A matriz abaixo liga cada
+Escopo: `REQ-EDIT-01..19` / `AC-EDIT-01..19`. A matriz abaixo liga cada
 requisito ao cenário host que o verifica. Os testes host não acessam VFS, SD,
 LVGL, rede ou hardware; o contrato de runtime é inspeção estrutural e o
 modelo é executado com dados determinísticos.
@@ -23,10 +23,11 @@ modelo é executado com dados determinísticos.
 | REQ-EDIT-12 | Superfície LVGL bounded | A view usa slots fixos, linhas limitadas/clipadas e não acessa VFS; renderização não cresce sem limite. |
 | REQ-EDIT-13 | Cursor por codepoint | Edição e marcador respeitam fronteiras UTF-8; cursor fora do documento é clampado antes do render. |
 | REQ-EDIT-14 | Scroll e gesto | Gesto vertical altera somente a janela bounded e retorna uma ação para repintura. |
-| REQ-EDIT-15 | Entrada, atalhos e diálogos | Texto/setas/delete/enter, Ctrl+F/S/Q/Z/Y e Salvar/Descartar/Cancelar são roteados pela app. |
+| REQ-EDIT-15 | Entrada, atalhos e diálogos | Texto/setas/delete/enter, Ctrl+F Buscar, Ctrl+S Salvar, Ctrl+Q Fechar, Ctrl+Z/Y e Salvar/Descartar/Cancelar são roteados pela app. |
 | REQ-EDIT-16 | Arquivo novo | ENOENT abre documento vazio, novo save usa UTF-8 sem BOM e LF. |
 | REQ-EDIT-17 | Falha atômica | write-temp, flush/fsync e rename são ordenados; falha rejeita e preserva dirty/estado publicado. |
 | REQ-EDIT-18 | Lifecycle, grants e Serial | Contexto/grant/callbacks têm ownership simétrico, teardown invalida recursos e contratos entram no Makefile host. |
+| REQ-EDIT-19 | Rodapé bounded e encoding | O editor renderiza uma única linha de rodapé com `Ctrl+F Buscar`, `Ctrl+S Salvar` e `Ctrl+Q Fechar`, e somente `UTF-8`, `UTF-16LE`, `UTF-16BE` ou `Windows-1252`; texto acima de 256 bytes é truncado sem perder a sigla, e inset, orientação, cursor, scroll, gesto e lifecycle não produzem overlap. |
 
 ## Matriz REQ/AC → TEST
 
@@ -50,6 +51,8 @@ modelo é executado com dados determinísticos.
 | REQ-EDIT-16 / AC-EDIT-16 | TEST-EDIT-NEW, TEST-EDIT-CODEC | positivo: ENOENT e UTF-8/LF sem BOM; limite: vazio. |
 | REQ-EDIT-17 / AC-EDIT-17 | TEST-EDIT-SAVE-FAILURE | falha: write, flush/fsync ou rename rejeita; regressão: dirty só limpa após publicação. |
 | REQ-EDIT-18 / AC-EDIT-18 | TEST-EDIT-LIFECYCLE, TEST-EDIT-SERIAL | positivo: bind/refresh/validate; falha: unbind/invalidação/destroy; integração: Makefile. |
+| REQ-EDIT-19 / AC-EDIT-19 | TEST-EDIT-FOOTER-HOST, TEST-EDIT-FOOTER-CONTRACT, TEST-EDIT-FOOTER-SERIAL | positivo: uma linha bounded com `Ctrl+F Buscar`, `Ctrl+S Salvar`, `Ctrl+Q Fechar` e as quatro siglas; limite: truncamento preserva a sigla, teclado virtual/inset, retrato/paisagem e resize; regressão: cursor/scroll, toque/gesto, teardown e ausência de overlap. |
+| TEST-EDIT-FOOTER-HOST/CONTRACT/SERIAL | `test_display_views.cpp`, `test_editor_surface_contract.py` | uma linha bounded com encoding e atalhos; altura dinâmica; inset de teclado virtual; retrato/paisagem/resize; `k_max_lines` bounded; cursor/scroll clampados; toque/gesto e teardown preservados. |
 
 ## Catálogo dos testes e evidência
 
@@ -69,6 +72,9 @@ modelo é executado com dados determinísticos.
 | TEST-EDIT-SAVE-FAILURE | `test_editor_surface_contract.py`: falhas das três etapas atômicas | host (contrato estrutural) |
 | TEST-EDIT-LIFECYCLE | `test_editor_surface_contract.py` + `test_ui_resource_contract.py`: grants, teardown e contextos | host (contrato estrutural) |
 | TEST-EDIT-SERIAL | `test_editor_surface_contract.py`: integração do contrato no Makefile host | host (contrato estrutural) |
+| TEST-EDIT-FOOTER-HOST | `test_display_views.cpp`: uma linha com Ctrl+F/S/Q, quatro siglas, truncamento bounded, geometria, inset, resize, limites, cursor, scroll, toque e teardown | host (LVGL shim) |
+| TEST-EDIT-FOOTER-CONTRACT | `test_editor_surface_contract.py`: uma linha com Ctrl+F/S/Q, limite 256, quatro siglas, layout dinâmico, inset, resize e clamps | host (contrato estrutural) |
+| TEST-EDIT-FOOTER-SERIAL | `test_editor_surface_contract.py`: wiring de eventos e integração host; Serial real permanece manual | host (sem alegação de hardware) |
 
 Nenhum cenário manual de dispositivo é reivindicado por esta matriz. Os casos
 de falha de I/O e VFS são contratos estruturais; a execução real no firmware

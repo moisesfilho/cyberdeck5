@@ -302,11 +302,82 @@ int main()
     assert(no_callbacks.create(&screen, &content, 0, {}));
     /* TEST-EDIT-HOST-01: compile and exercise the real editor view TU. */
     cyberdeck_editor_view::view editor;
+    screen.width = 640;
+    screen.height = 300;
     assert(!editor.create(nullptr, editor_changed, nullptr));
     assert(editor.create(&screen, editor_changed, nullptr));
-    assert(editor.surface()->children.size() == 66);
+    assert(editor.surface()->children.size() == 65);
     editor.set_visible(true);
     assert(editor.visible() && !editor.surface()->hidden);
+
+    /* TEST-EDIT-FOOTER-HOST: one footer row stays below the document and the
+     * document capacity is derived from the current surface height. */
+    editor.surface()->width = 320;
+    editor.surface()->height = 100;
+    lv_shim_emit_event(editor.surface(), LV_EVENT_SIZE_CHANGED);
+    editor.render("one\ntwo\nthree", 0, false, "status");
+    const int footer_line_height = lv_font_get_line_height(&cyberdeck_font);
+    const auto *status_label = editor.surface()->children[64];
+    assert(lv_obj_get_y(status_label) ==
+           lv_obj_get_content_height(editor.surface()) - footer_line_height);
+    assert(lv_obj_get_y(editor.surface()->children[1]) + footer_line_height <=
+           lv_obj_get_y(status_label));
+    assert(editor.surface()->children[4]->hidden);
+    assert(std::string(status_label->text) == "  status");
+
+    /* TEST-EDIT-FOOTER-ENCODING: all supported codecs share the single line. */
+    for (const std::string encoding : {"UTF-8", "UTF-16LE", "UTF-16BE", "Windows-1252"}) {
+        editor.render("one", 0, false, "Ctrl+F Buscar  Ctrl+S Salvar  Ctrl+Q Fechar | " + encoding);
+        assert(editor.surface()->children.size() == 65);
+        assert(std::string(status_label->text).find("Ctrl+F Buscar") != std::string::npos);
+        assert(std::string(status_label->text).find("Ctrl+S Salvar") != std::string::npos);
+        assert(std::string(status_label->text).find("Ctrl+Q Fechar") != std::string::npos);
+        assert(std::string(status_label->text).find(" | " + encoding) != std::string::npos);
+        assert(std::string(status_label->text).find('\n') == std::string::npos);
+        assert(std::string(status_label->text).size() <= 256);
+    }
+    /* TEST-EDIT-FOOTER-BOUNDARY: truncation preserves the encoding suffix. */
+    editor.render("one", 0, true, std::string(400, 'x') + " | UTF-16BE");
+    assert(std::string(status_label->text).size() <= 256);
+    assert(std::string(status_label->text).find(" | UTF-16BE") != std::string::npos);
+    assert(std::string(status_label->text).find('\n') == std::string::npos);
+
+    /* TEST-EDIT-FOOTER-HOST/CONTRACT: keyboard inset and orientation resize
+     * recalculate the footer without overlap or stale document slots. */
+    editor.set_bottom_inset(40);
+    assert(lv_obj_get_height(editor.surface()) ==
+           lv_obj_get_content_height(&screen) - 40);
+    editor.render("one\ntwo\nthree\nfour", 0, false, "inset");
+    assert(lv_obj_get_y(status_label) + footer_line_height <=
+           lv_obj_get_content_height(editor.surface()));
+    editor.surface()->width = 640;
+    editor.surface()->height = 220;
+    lv_shim_emit_event(editor.surface(), LV_EVENT_SIZE_CHANGED);
+    editor.set_bottom_inset(0);
+    editor.surface()->height = 220;
+    lv_shim_emit_event(editor.surface(), LV_EVENT_SIZE_CHANGED);
+    editor.render("one\ntwo\nthree\nfour", 0, false, "landscape");
+    assert(!editor.surface()->children[3]->hidden);
+    assert(lv_obj_get_y(status_label) >=
+           lv_obj_get_y(editor.surface()->children[3]) + footer_line_height);
+
+    /* TEST-EDIT-FOOTER-HOST: fixed slots, cursor and scroll are bounded. */
+    std::string many_lines;
+    for (int line = 0; line < 100; ++line) {
+        if (line != 0) many_lines += '\n';
+        many_lines += "bounded";
+    }
+    editor.render(many_lines, many_lines.size() + 1000, true, "bounded");
+    assert(editor.surface()->children.size() == 65);
+    for (int i = 0; i < 200; ++i) editor.gesture_scroll(-1000);
+    editor.render(many_lines, 0, true, "oldest");
+    assert(editor.surface()->children[0]->text == "|bounded");
+    for (int i = 0; i < 200; ++i) editor.gesture_scroll(1000);
+    editor.render(many_lines, many_lines.size(), true, "newest");
+    assert(editor.surface()->children[0]->text == "bounded");
+
+    /* TEST-EDIT-FOOTER-SERIAL/REGRESSION: touch still emits scroll and
+     * teardown clears ownership without leaving a live view. */
     editor.render("alpha\n\xC3\xA9", 5, true, "saved");
     assert(editor.surface()->children[0]->text == "alpha|");
     assert(editor.surface()->children[1]->text == "\xC3\xA9");
