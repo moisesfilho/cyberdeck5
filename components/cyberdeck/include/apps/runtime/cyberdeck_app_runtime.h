@@ -10,6 +10,7 @@
 #include "apps/runtime/cyberdeck_app_quota.h"
 #include "apps/runtime/cyberdeck_resource_catalog.h"
 #include "apps/runtime/cyberdeck_sd_package.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
 namespace cyberdeck_apps {
 
@@ -118,11 +119,14 @@ public:
     virtual result execute(std::string_view command, std::string_view args) = 0;
     void set_logger(logger *value) { logger_ = value; }
     logger *app_logger() const { return logger_; }
+    void set_sd_io(cyberdeck_sd_io::coordinator *value) { sd_io_ = value; }
+    cyberdeck_sd_io::coordinator *app_sd_io() const { return sd_io_; }
     const grant &app_grant() const { return grant_; }
 
 private:
     friend class runtime;
     logger *logger_ = nullptr;
+    cyberdeck_sd_io::coordinator *sd_io_ = nullptr;
     grant grant_{};
 };
 
@@ -136,6 +140,7 @@ public:
     bool start_all();
     bool stop_all();
     void set_logger(logger *value);
+    void set_sd_io(cyberdeck_sd_io::coordinator *value);
     logger *app_logger() const { return logger_; }
     application *find(std::string_view id);
     const application *find(std::string_view id) const;
@@ -165,6 +170,7 @@ private:
     std::array<std::string, k_max_applications> failures_{};
     std::size_t count_ = 0;
     logger *logger_ = nullptr;
+    cyberdeck_sd_io::coordinator *sd_io_ = nullptr;
     std::array<std::uint64_t, k_max_applications> grant_generations_{};
     std::array<std::uint16_t, k_max_applications> grant_masks_{};
     quota quotas_{};

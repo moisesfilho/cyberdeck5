@@ -2,7 +2,15 @@
 
 cyberdeck_local_shell_result cyberdeck_cat_worker_process_request(const char *host_root, const char *cwd,
                                                                   const char *command) {
-    { return cyberdeck_local_shell_cat(host_root, cwd, command); }
+    return cyberdeck_local_shell_cat(host_root, cwd, command);
+}
+
+namespace {
+cyberdeck_sd_io::coordinator *s_sd_io_coordinator = nullptr;
+}
+
+void cyberdeck_cat_worker_bind_sd_io(cyberdeck_sd_io::coordinator &coordinator) {
+    s_sd_io_coordinator = &coordinator;
 }
 
 #if defined(ESP_PLATFORM)
@@ -69,8 +77,13 @@ void cat_worker_task(void *)
             xSemaphoreGive(s_lifecycle_mutex);
             if (closing) break;
         }
-        const cyberdeck_local_shell_result local =
-            cyberdeck_cat_worker_process_request(s_host_root, request.cwd, request.command);
+        cyberdeck_local_shell_result local{cyberdeck_local_shell_status::rejected, {}};
+        if (s_sd_io_coordinator != nullptr) {
+            auto cat_operation = [&local, &request]() {
+                local = cyberdeck_cat_worker_process_request(s_host_root, request.cwd, request.command);
+            };
+            (void)cyberdeck_cat_worker::with_read_lease(*s_sd_io_coordinator, cat_operation);
+        }
         cat_result *result = new (std::nothrow) cat_result{local.output,
             local.status == cyberdeck_local_shell_status::handled, s_generation};
         if (result == nullptr) continue;

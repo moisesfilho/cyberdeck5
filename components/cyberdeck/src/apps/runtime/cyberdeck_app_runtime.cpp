@@ -178,6 +178,7 @@ bool runtime::register_application(application &app) {
     if (!quotas_.reserve(count_, quota_for(app.get_manifest())))
         return false;
     app.set_logger(logger_);
+    app.set_sd_io(sd_io_);
     applications_[count_] = &app;
     states_[count_] = app_state::registered;
     failures_[count_].clear();
@@ -195,6 +196,12 @@ void runtime::set_logger(logger *value) {
     logger_ = value;
     for (std::size_t i = 0; i < count_; ++i)
         applications_[i]->set_logger(value);
+}
+
+void runtime::set_sd_io(cyberdeck_sd_io::coordinator *value) {
+    sd_io_ = value;
+    for (std::size_t i = 0; i < count_; ++i)
+        applications_[i]->set_sd_io(value);
 }
 
 application *runtime::find(std::string_view id) {

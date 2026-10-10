@@ -43,6 +43,7 @@ void check(bool condition, const char *message)
  * observaveis byte a byte. */
 class fake_host final : public cyberdeck_shell_session::host {
 public:
+    fake_host() { local_.bind_sd_io(sd_io_); }
     void append_output_line(const std::string &line) override { output += line; }
     void write_output(const char *data, std::size_t length) override
     {
@@ -130,6 +131,7 @@ public:
     int composer_discards = 0;
 
 private:
+    cyberdeck_sd_io::coordinator sd_io_;
     cyberdeck_local_shell local_{"/tmp", "/"};
     cyberdeck_ble::state_machine ble_;
     cyberdeck_ble::device_list devices_;

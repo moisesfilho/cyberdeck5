@@ -1,5 +1,13 @@
 # cyberdeck5 Code Map
 
+## Plano de poweroff
+
+- `poweroff-implementation-plan.md` registra aprovações, evidência documental
+  do sinal de fábrica, progresso parcial do coordenador SD Stage 0/1, matriz
+  REQ/evidência/estado e trabalho restante para o comando `poweroff`. É documento
+  de controle, não evidência de teste; o comando e a quiescência global estão
+  incompletos e persistem bloqueios de sync SD e validação física.
+
 ## Atualizacao de recuperacao de eventos
 
 - `components/cyberdeck/src/platform/logging/event_log.cpp` mantem
@@ -152,6 +160,34 @@ visual. O roteiro executavel detalhado fica em
 `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` limpa o scrollback
 durante a inicialização sem acrescentar banner; o prompt e as demais saídas
 continuam sendo renderizados pelos fluxos existentes.
+
+## Coordenacao de I/O SD (Stage 1)
+
+- `components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h`
+  e `src/platform/storage/cyberdeck_sd_io_coordinator.cpp` fornecem leases
+  move-only RAII READ/WRITE e gate OPEN/CLOSING/CLOSED. `begin_close` bloqueia
+  novas admissoes; `drain` espera pelo zero de leases ate deadline monotonico
+  fora da secao critica; timeout mantem o gate em CLOSING e as leases ativas.
+  O dono pode reabrir somente enquanto CLOSING.
+- `main/app_main.cpp` possui a unica instancia do coordinator durante a vida do
+  processo e a injeta na recuperacao de sidecars, na UI, no shell local e no
+  runtime de apps/editor. O editor adquire READ para open e uma unica WRITE para
+  toda a transacao de save; a recuperacao de sidecars usa WRITE durante toda a
+  operacao. Todas as operacoes sincronas do shell local que acessam caminhos SD
+  (`cat`, `ls`, `cd`, `touch`, `mkdir`, `rm`, `rmdir`) adquirem leases antes de
+  qualquer I/O e as mantêm durante a operacao. Stage 1 inclui todas as operacoes
+  sincronas locais do shell, a transacao de leitura/save do editor e a
+  recuperacao de boot, usando o coordinator injetado.
+- `tests/host/keymap/test_sd_io_coordinator.cpp` cobre o contrato de leases/gate;
+  `test_sd_io_integration_contract.py` verifica a integracao e injecao. Os casos
+  de gate fechado para `ls`, `cd` e `cat` ficam em `test_local_shell.cpp`.
+  `test_ssh_output_gap.py` e `test_prompt_behavior.py` incluem ajustes de link
+  do harness para o coordinator.
+- Exclusoes explicitas do Stage 1: escritores async globais, event log,
+  WiFi/audit, Serial/global `vprintf`, SSH, cat worker, leitores (incluindo
+  screenshot) e outros caminhos assincronos. Sync global, unmount e poweroff
+  tambem estao fora; o coordinator nao e um guard global.
+
 Para tarefas que envolvam `idf.py` ou outros recursos do ESP-IDF, o arquivo
 `AGENTS.md` tambem orienta usar `IDF_PATH` para localizar o diretorio padrao
 do IDF na maquina e carregar o ambiente quando necessario.
@@ -266,7 +302,8 @@ pelo comando `wifi` e pela auditoria local.
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
 | `components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp` | classe `cyberdeck_local_shell`; `cyberdeck_local_shell_cat`; `recover_save_sidecars` | Shell confinado ao root virtual `/`; `host_root` continua sendo o ponto fisico do SD (montado em `/sdcard`), e `/sdcard` e descendentes sao rejeitados no namespace virtual. Tokenizer manual byte-a-byte bounded para espacos/tabs; implementa `pwd`, `cd`, `ls`, `cat`, `touch`, `mkdir`, `rm`, `rmdir` e ajuda. A ajuda e as opcoes `-h`/`--help` consomem o catalogo compartilhado sem listas literais locais. A API cat-specific usa as mesmas regras de cwd/caminho, strings bounded e descritores confinados, sem `fs::path`, retorna output heap-backed, limita arquivos a 12288 bytes e chunks de 1024, e e usada pelo worker sem construir o shell geral. `recover_save_sidecars` enumera somente `<root>/data`, valida destinos confinados em `/data`, restaura `.rollback` somente quando o destino esta ausente, preserva como ambiguous qualquer rollback com destino existente, nunca publica `.tmp` e mantem diagnostico/idempotencia. |
-| `components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp`, `components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h` + `tests/host/keymap/test_cat_worker.cpp` | `cyberdeck_cat_worker_process_request`, `cyberdeck_cat_worker_start`, `cyberdeck_cat_worker_enqueue`, `cyberdeck_cat_worker_teardown` | Worker FreeRTOS com fila bounded para I/O de `cat`, stack explícita de 6144 bytes; `cyberdeck_cat_worker_process_request` é o seam host que chama a implementação cat-specific real, coberto pelo binário host sem usar o stub inativo. O worker deve chamar uma API cat-specific heap/bounded, sem construir/usar o shell genérico, `fs::path` ou `vector` no caminho específico. O contrato estrutural permite os identificadores `cyberdeck_local_shell_*` da API dedicada e rejeita apenas a construção/uso genérico. Cada start drena a sinalização de parada e cria uma geração nova, e teardown sinaliza/aguarda o retorno do worker antes de liberar fila, root e callback, invalidando callbacks LVGL tardios; resultados aceitos acordam explicitamente a task do port após o enfileiramento. |
+| `components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp`, `components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h` + `tests/host/keymap/test_cat_worker.cpp` | `cyberdeck_cat_worker_process_request`, `cyberdeck_cat_worker_bind_sd_io`, `cyberdeck_cat_worker_start`, `cyberdeck_cat_worker_enqueue`, `cyberdeck_cat_worker_teardown`, `cyberdeck_cat_worker::with_read_lease` | Worker FreeRTOS com fila bounded para I/O de `cat`, stack explícita de 6144 bytes; `with_read_lease` é um seam host-testável tipado que adquire READ e mantém lease RAII ao executar o callable, falhando fechado sem invocá-lo quando a admissão não ocorre; worker ESP delega o `cyberdeck_local_shell_cat` real através de `cyberdeck_cat_worker_process_request`. A UI injeta o coordinator compartilhado. O worker chama uma API cat-specific heap/bounded, sem construir/usar o shell genérico, `fs::path` ou `vector` no caminho específico. O contrato estrutural permite os identificadores `cyberdeck_local_shell_*` da API dedicada e rejeita apenas a construção/uso genérico. Cada start drena a sinalização de parada e cria uma geração nova, e teardown sinaliza/aguarda o retorno do worker antes de liberar fila, root e callback, invalidando callbacks LVGL tardios; resultados aceitos acordam explicitamente a task do port após o enfileiramento. |
+| `tests/host/keymap/cat_io_traceability.md` | TEST-FIXTURES-01..03, TEST-CAT-01..05 | Matriz TEST → AC-FIXTURES/AC-CAT para fixtures com coordinator, incluindo local shell com gate CLOSED fail-closed, lease callback/drain/gate/falha e delegação ESP → helper → cat real. Os testes do worker cobrem também cat vazio e rejeição oversized (12289 bytes), além da saída normal e confinamento. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_local_shell.h` | API do shell local | Contrato usado pela UI e testes. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h` | `cyberdeck_shell_help::kCatalog`, `cyberdeck_shell_help::text`, `cyberdeck_shell_help::command_text` | Modulo header-only puro STL com a unica tabela ordenada de 16 entradas e formatadores deterministicos; nao depende de LVGL, UI ou ESP-IDF. |
 | `tests/host/keymap/test_save_sidecar_recovery.cpp`, `save_sidecar_traceability.md`, `test_boot_sequence.py` | `TEST-SIDECAR-API` (B01-B05), `TEST-BOOT-SEQUENCE` | Teste comportamental host da API real de recuperação com layout real `<root>/data`: rollback restaurado/idempotente, fixture de regressão para scan apenas da raiz e confinamento (sidecar fora de `/data` intocado), destino ambíguo preservado, `.tmp` intocado, rejeição de symlink/traversal e diagnóstico action/stage/errno/falha de validação/enumeração. Contrato estrutural confirma a chamada após montagem e validação do SD em `app_main`. `save_sidecar_traceability.md` mapeia REQ/AC e casos B01-B05. O alvo declara dependências da VFS e da matriz de rastreabilidade. |

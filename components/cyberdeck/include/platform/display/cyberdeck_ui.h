@@ -1,10 +1,13 @@
 #pragma once
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
 #include "esp_err.h"
 #include <stddef.h>
 #include <stdint.h>
 
+
 #ifdef __cplusplus
+void cyberdeck_ui_bind_sd_io(cyberdeck_sd_io::coordinator &coordinator);
 extern "C" {
 #endif
 

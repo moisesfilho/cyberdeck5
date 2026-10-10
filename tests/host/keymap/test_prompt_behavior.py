@@ -30,6 +30,7 @@ PRODUCTION_SOURCES = [
 ]
 LOCAL_SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
 VFS_NAMESPACE = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp"
+SD_IO_COORDINATOR = ROOT / "components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
 LIMIT = 12288
 
 RENDERED_SIGNATURE = "std::string get_rendered_output(const cyberdeck_shell_console::line_view &view,"
@@ -729,6 +730,8 @@ int main(int argc, char **argv) {
     std::filesystem::path root = argv[1];
     std::filesystem::create_directories(root / "deep");
     cyberdeck_local_shell shell(root.string());
+    cyberdeck_sd_io::coordinator sd_io;
+    shell.bind_sd_io(sd_io);
     assert(shell.execute("cd deep").status == cyberdeck_local_shell_status::handled);
     for (const char *command : {"cd missing", "cd /tmp/outside", "cd deep/absent"}) {
         assert(shell.execute(command).status == cyberdeck_local_shell_status::rejected);
@@ -745,7 +748,8 @@ int main(int argc, char **argv) {
         subprocess.run([
             "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
             "-I", str(ROOT / "components/cyberdeck/include"), str(cpp),
-            str(LOCAL_SHELL), str(VFS_NAMESPACE), "-o", str(binary),
+            str(LOCAL_SHELL), str(VFS_NAMESPACE), str(SD_IO_COORDINATOR),
+            "-pthread", "-o", str(binary),
         ], check=True)
         subprocess.run([str(binary), str(root)], check=True)
 

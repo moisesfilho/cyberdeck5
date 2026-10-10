@@ -118,8 +118,11 @@ struct fake_host final : cyberdeck_shell_session::host {
     bool cat_accepted = true;
     std::string cat_cwd;
     std::string cat_line;
+    cyberdeck_sd_io::coordinator sd_io;
     cyberdeck_local_shell shell{std::string("/tmp/opencode/session-harness")};
     cyberdeck_apps::runtime apps;
+
+    fake_host() { shell.bind_sd_io(sd_io); }
 
     void append_output_line(const std::string &line) override { output += line; }
     void write_output(const char *data, std::size_t length) override
@@ -299,6 +302,8 @@ int main()
     /* --- editor and history ------------------------------------------- */
     {
         fake_host h;
+        /* One OPEN coordinator is shared by this fixture and remains bound
+         * across both cd operations in the session lifecycle. */
         session s(h);
         type(s, "pwd");
         check_eq(s.line(), "pwd", "typed text reaches the session line");

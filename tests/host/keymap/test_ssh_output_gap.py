@@ -70,6 +70,7 @@ CONSOLE_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_consol
 SCROLLBACK_SRC = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_terminal_scrollback.cpp"
 LOCAL_SHELL_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
 VFS_NAMESPACE_SRC = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp"
+SD_IO_COORDINATOR_SRC = ROOT / "components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
 RUNTIME_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp"
 RESOURCE_CATALOG_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp"
 SD_PACKAGE_SRC = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp"
@@ -83,7 +84,7 @@ PRODUCTION_SOURCES = [str(FILTER_SRC), str(COMPOSER_SRC), str(CONSOLE_SRC),
                        str(SD_PACKAGE_SRC), str(APP_QUOTA_SRC),
                        str(APP_STORAGE_SRC), str(APP_LOGGER_SRC),
                        str(LOCAL_SHELL_SRC), str(VFS_NAMESPACE_SRC),
-                       str(SCROLLBACK_SRC)]
+                       str(SCROLLBACK_SRC), str(SD_IO_COORDINATOR_SRC)]
 
 
 def transport_chunk_limit() -> int:
@@ -1328,7 +1329,7 @@ def test_ssh_output_gap_executes_production_seam() -> None:
         binary = root / "ssh_output_gap"
         cpp.write_text(source, encoding="utf-8")
         subprocess.run([
-            "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
+            "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1", "-pthread",
             "-I", str(ROOT / "tests/host/keymap/shim"),
             "-I", str(ROOT / "components/cyberdeck/include"),
             str(cpp), *PRODUCTION_SOURCES, "-o", str(binary),

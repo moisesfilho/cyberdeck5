@@ -671,6 +671,10 @@ cyberdeck_local_shell::cyberdeck_local_shell(const std::string &host_root, const
       virtual_root_(fs::path(virtual_root.empty() ? "/" : virtual_root).lexically_normal().string()),
       cwd_(virtual_root_) {}
 
+void cyberdeck_local_shell::bind_sd_io(cyberdeck_sd_io::coordinator &sd_io) {
+    sd_io_ = &sd_io;
+}
+
 std::string cyberdeck_local_shell::cwd() const {
     return cwd_;
 }
@@ -686,6 +690,17 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
                        command == "help";
     if (!local)
         return {cyberdeck_local_shell_status::passthrough, {}};
+
+    const bool is_write = command == "touch" || command == "mkdir" || command == "rmdir" || command == "rm";
+    const bool is_read = command == "cat" || command == "ls" || command == "cd";
+    cyberdeck_sd_io::lease io_lease;
+    if (is_write || is_read) {
+        if (sd_io_ == nullptr)
+            return {cyberdeck_local_shell_status::rejected, command + ": SD storage unavailable\n"};
+        io_lease = sd_io_->acquire(is_write ? cyberdeck_sd_io::access::write : cyberdeck_sd_io::access::read);
+        if (!io_lease)
+            return {cyberdeck_local_shell_status::rejected, command + ": SD storage is closing or unavailable\n"};
+    }
 
     if (words.size() == 2 && (words[1] == "-h" || words[1] == "--help") && command != "help")
         return {cyberdeck_local_shell_status::handled,

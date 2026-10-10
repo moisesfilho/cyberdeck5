@@ -13,6 +13,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKER = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp"
+WORKER_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h"
 SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp"
 SHELL_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_local_shell.h"
 
@@ -40,6 +41,7 @@ def body(source: str, marker: str) -> str:
 
 def main() -> int:
     worker = WORKER.read_text(encoding="utf-8")
+    worker_header = WORKER_HEADER.read_text(encoding="utf-8")
     shell = SHELL.read_text(encoding="utf-8")
     header = SHELL_HEADER.read_text(encoding="utf-8")
 
@@ -74,6 +76,17 @@ def main() -> int:
                 f"cat worker seam must remain a thin dedicated-API adapter: {forbidden}")
     require("lv_async_call" in task,
             "cat worker must hand results back asynchronously")
+    helper = body(worker_header, "bool with_read_lease")
+    require("coordinator.acquire(cyberdeck_sd_io::access::read)" in helper,
+            "read lease helper must acquire READ access")
+    admission_check = re.search(r"if\s*\(\s*!\s*read_lease\s*\)\s*return\s+false\s*;", helper)
+    callback_call = re.search(r"\boperation\s*\(\s*\)\s*;", helper)
+    require(admission_check and callback_call and admission_check.start() < callback_call.start(),
+            "read lease helper must reject failed admission before invoking callback")
+    require("cyberdeck_cat_worker::with_read_lease" in task,
+            "ESP worker must delegate through the host-testable lease helper")
+    require("cyberdeck_cat_worker_process_request(s_host_root, request.cwd, request.command)" in task,
+            "lease-protected worker callback must reach the real cat request")
 
     cat = body(shell, "cyberdeck_local_shell_cat")
     for forbidden in ("std::vector", "fs::path", "std::filesystem::path"):

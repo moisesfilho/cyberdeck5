@@ -9,6 +9,7 @@
 
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "apps/shell/cyberdeck_shell_utils.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -134,6 +135,8 @@ void test_help_parity(temporary_root &root)
     if (!root.valid()) return;
 
     cyberdeck_local_shell shell(root.path());
+    cyberdeck_sd_io::coordinator coordinator;
+    shell.bind_sd_io(coordinator);
     const std::string common = cyberdeck_help_text();
 
     for (const char *command : {"help", "help -h", "help --help"}) {
@@ -198,6 +201,8 @@ void test_local_command_help_uses_catalog_lines(temporary_root &root)
     };
 
     cyberdeck_local_shell shell(root.path());
+    cyberdeck_sd_io::coordinator coordinator;
+    shell.bind_sd_io(coordinator);
     for (const std::string &command : local_commands) {
         std::string expected_line;
         for (const std::string &line : expected_lines) {

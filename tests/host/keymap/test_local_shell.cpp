@@ -1,6 +1,7 @@
 /* TDD contract tests for the confined local shell rooted at virtual "/". */
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "apps/shell/cyberdeck_vfs_namespace.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +34,7 @@ int checks = 0;
 
 struct fixture {
     std::filesystem::path root;
+    cyberdeck_sd_io::coordinator coordinator;
     fixture() {
         char pattern[] = "/tmp/cyberdeck-local-shell-XXXXXX";
         const char *created = mkdtemp(pattern);
@@ -64,6 +66,7 @@ struct fixture {
     ~fixture() { std::error_code error; std::filesystem::remove_all(root, error); }
 };
 
+
 cyberdeck_local_shell_result execute_without_exception(cyberdeck_local_shell &shell,
                                                         const std::string &command)
 {
@@ -79,8 +82,40 @@ cyberdeck_local_shell_result execute_without_exception(cyberdeck_local_shell &sh
     return {cyberdeck_local_shell_status::rejected, {}};
 }
 
+void test_sd_io_closed_gate_fails_closed(fixture &f)
+{
+    cyberdeck_sd_io::coordinator coordinator;
+    cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(coordinator);
+    const auto owner = coordinator.begin_close();
+
+    const auto mutation = execute_without_exception(shell, "touch /gate-closed.txt");
+    CHECK(mutation.status == cyberdeck_local_shell_status::rejected);
+    CHECK(!fs::exists(f.root / "gate-closed.txt"));
+
+    const auto read = execute_without_exception(shell, "cat /visible.txt");
+    CHECK(read.status == cyberdeck_local_shell_status::rejected);
+    CHECK(!read.output.empty());
+    CHECK(read.output.find("closing or unavailable") != std::string::npos);
+
+    last_opendir_path.clear();
+    const auto listing = execute_without_exception(shell, "ls");
+    CHECK(listing.status == cyberdeck_local_shell_status::rejected);
+    CHECK(!listing.output.empty());
+    CHECK(listing.output.find("closing or unavailable") != std::string::npos);
+    CHECK(last_opendir_path.empty());
+
+    const auto navigation = execute_without_exception(shell, "cd /visible-dir");
+    CHECK(navigation.status == cyberdeck_local_shell_status::rejected);
+    CHECK_EQ(shell.cwd(), "/");
+    CHECK(fs::is_directory(f.root / "visible-dir"));
+    CHECK(coordinator.active_leases() == 0);
+    CHECK(coordinator.reopen(owner));
+}
+
 void test_navigation(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     CHECK_EQ(shell.cwd(), "/");
     auto r = shell.execute("pwd");
     CHECK(r.status == cyberdeck_local_shell_status::handled);
@@ -119,6 +154,7 @@ void test_navigation(fixture &f) {
 
 void test_invalid_cd_preserves_cwd_and_pwd(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
 
     CHECK(shell.execute("cd child").status == cyberdeck_local_shell_status::handled);
     CHECK_EQ(shell.cwd(), "/child");
@@ -138,6 +174,8 @@ void test_invalid_cd_preserves_cwd_and_pwd(fixture &f) {
 void test_cwd_is_instance_local_and_pwd_is_read_only(fixture &f) {
     cyberdeck_local_shell first(f.root.string());
     cyberdeck_local_shell second(f.root.string());
+    first.bind_sd_io(f.coordinator);
+    second.bind_sd_io(f.coordinator);
 
     CHECK(first.execute("cd nested").status == cyberdeck_local_shell_status::handled);
     CHECK_EQ(first.execute("pwd").output, "/nested\n");
@@ -148,6 +186,8 @@ void test_cwd_is_instance_local_and_pwd_is_read_only(fixture &f) {
 
 void test_listing(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
+    shell.bind_sd_io(f.coordinator);
     auto r = shell.execute("ls");
     CHECK(r.status == cyberdeck_local_shell_status::handled);
     CHECK(r.output.find("visible.txt") != std::string::npos);
@@ -170,6 +210,8 @@ void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
     fs::create_directories(f.root / "system" / "config", error);
     std::ofstream(f.root / "system" / "config" / "mode.txt") << "safe\n";
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
+    shell.bind_sd_io(f.coordinator);
 
     auto result = execute_without_exception(shell, "ls /");
     CHECK(result.status == cyberdeck_local_shell_status::handled);
@@ -224,6 +266,8 @@ void test_virtual_namespace_catalog_and_readonly_behavior(fixture &f) {
 
 void test_root_listing_resolves_exact_physical_root(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
+    shell.bind_sd_io(f.coordinator);
 
     last_opendir_path.clear();
     auto r = execute_without_exception(shell, "ls");
@@ -267,6 +311,8 @@ void test_backend_classification_is_centralized() {
 
 void test_child_listing_keeps_physical_path_mapping(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
+    shell.bind_sd_io(f.coordinator);
 
     last_opendir_path.clear();
     auto r = execute_without_exception(shell, "ls visible-dir");
@@ -288,6 +334,7 @@ void test_listing_order_visibility_and_empty_directory(fixture &f) {
         std::ofstream(ordered / name);
 
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     auto r = execute_without_exception(shell, "ls ordered");
     CHECK(r.status == cyberdeck_local_shell_status::handled);
     CHECK_EQ(r.output, "alpha\nmiddle\nzulu\n");
@@ -303,6 +350,7 @@ void test_listing_order_visibility_and_empty_directory(fixture &f) {
 
 void test_listing_rejects_invalid_targets_without_exception(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const std::vector<std::string> commands = {
         "ls visible.txt", "ls ../", "ls /sdcard/../", "ls dir-link", "ls /sdcard/dir-link"
     };
@@ -319,6 +367,7 @@ void test_listing_entry_limit_is_atomic(fixture &f) {
         std::ofstream(bulk / ("entry-" + std::to_string(i)));
 
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const auto r = execute_without_exception(shell, "ls bulk");
     CHECK(r.status == cyberdeck_local_shell_status::rejected);
     CHECK(r.output.find("entry-") == std::string::npos);
@@ -337,6 +386,7 @@ void test_listing_name_limit_when_host_supports_it(fixture &f) {
     }
 
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const auto r = execute_without_exception(shell, "ls");
     CHECK(r.status == cyberdeck_local_shell_status::rejected);
     CHECK(r.output.find(long_name) == std::string::npos);
@@ -349,6 +399,7 @@ void test_listing_output_limit_is_atomic(fixture &f) {
         std::ofstream(bulk / ("entry-" + std::to_string(i) + std::string(40, 'x')));
 
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const auto r = execute_without_exception(shell, "ls large-output");
     CHECK(r.status == cyberdeck_local_shell_status::rejected);
     CHECK(r.output.find("entry-") == std::string::npos);
@@ -356,6 +407,7 @@ void test_listing_output_limit_is_atomic(fixture &f) {
 
 void test_listing_is_repeatable_and_deterministic(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const auto first = execute_without_exception(shell, "ls -a");
     CHECK(first.status == cyberdeck_local_shell_status::handled);
     for (int i = 0; i < 20; ++i) {
@@ -367,6 +419,7 @@ void test_listing_is_repeatable_and_deterministic(fixture &f) {
 
 void test_ls_regression_stress_sequence(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const auto expected_visible = execute_without_exception(shell, "ls");
     const auto expected_all = execute_without_exception(shell, "ls -a");
     CHECK(expected_visible.status == cyberdeck_local_shell_status::handled);
@@ -383,6 +436,7 @@ void test_ls_regression_stress_sequence(fixture &f) {
 
 void test_mutations(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     CHECK(shell.execute("touch created.txt").status == cyberdeck_local_shell_status::handled);
     CHECK(std::filesystem::is_regular_file(f.root / "created.txt"));
     CHECK(std::filesystem::file_size(f.root / "created.txt") == 0);
@@ -400,6 +454,7 @@ void test_mutations(fixture &f) {
 
 void test_help_and_options(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const char *commands[] = {"pwd", "cd", "ls", "touch", "mkdir", "rm", "rmdir", "cat"};
     for (const char *command : commands) {
         const std::string short_help = std::string(command) + " -h";
@@ -423,6 +478,7 @@ void test_help_and_options(fixture &f) {
 
 void test_cat_reads_regular_files_and_help(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
 
     auto result = execute_without_exception(shell, "cat visible.txt");
     CHECK(result.status == cyberdeck_local_shell_status::handled);
@@ -445,6 +501,7 @@ void test_cat_reads_regular_files_and_help(fixture &f) {
 
 void test_tokenizer_whitespace_options_and_command_regressions(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
 
     // Leading/trailing runs of spaces and tabs are separators, not arguments.
     auto result = execute_without_exception(shell, " \tcat\t visible.txt \t ");
@@ -479,6 +536,7 @@ void test_tokenizer_whitespace_options_and_command_regressions(fixture &f) {
 
 void test_cat_rejects_unsafe_or_non_regular_targets(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const char *commands[] = {
         "cat", "cat one two", "cat missing.txt", "cat visible-dir",
         "cat ../visible.txt", "cat /sdcard/visible.txt", "cat /sdcard/../visible.txt", "cat /tmp/outside",
@@ -504,6 +562,7 @@ void test_cat_rejects_oversize_before_partial_output(fixture &f) {
     output.close();
 
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const auto result = execute_without_exception(shell, "cat large.txt");
     CHECK(result.status == cyberdeck_local_shell_status::rejected);
     CHECK(result.output.find('x') == std::string::npos);
@@ -518,6 +577,7 @@ void test_cat_accepts_exact_bounded_limit(fixture &f) {
     output.close();
 
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const auto result = execute_without_exception(shell, "cat exact-limit.txt");
     CHECK(result.status == cyberdeck_local_shell_status::handled);
     CHECK_EQ(result.output.size(), block.size());
@@ -532,6 +592,7 @@ void test_cat_bounded_workload_is_repeatable(fixture &f) {
     output.close();
 
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     for (int iteration = 0; iteration < 32; ++iteration) {
         const auto result = execute_without_exception(shell, "cat bounded-repeat.txt");
         CHECK(result.status == cyberdeck_local_shell_status::handled);
@@ -543,6 +604,7 @@ void test_cat_bounded_workload_is_repeatable(fixture &f) {
 
 void test_traversal(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const char *attempts[] = {"ls ../", "ls /sdcard/../", "ls ../../..", "touch ../escape.txt",
                               "mkdir /sdcard/../../escape-dir", "rm /sdcard/../visible.txt",
                               "rmdir /sdcard/../../", "touch visible-dir/../../escape.txt",
@@ -557,6 +619,7 @@ void test_traversal(fixture &f) {
 
 void test_absolute_paths_map_to_host_root(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
 
     CHECK_EQ(shell.cwd(), "/");
     CHECK_EQ(shell.execute("cat /visible.txt").output, "content");
@@ -577,6 +640,7 @@ void test_absolute_paths_map_to_host_root(fixture &f) {
 
 void test_nonexistent_absolute_paths_are_rejected_without_host_escape(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const char *outside_paths[] = {
         "/tmp/cyberdeck-local-shell-outside",
         "/var/tmp/cyberdeck-local-shell-outside/file"
@@ -594,6 +658,7 @@ void test_nonexistent_absolute_paths_are_rejected_without_host_escape(fixture &f
 
 void test_root_and_boundary_protection(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
     const char *root_removals[] = {
         "rm -r /", "rm -r //", "rm -r /.", "rm -r .",
         "rmdir /", "rmdir //", "rmdir /.", "rmdir ."
@@ -715,6 +780,11 @@ int main() {
         fixture f;
         if (f.root.empty()) return 1;
         test_mutations(f);
+    }
+    {
+        fixture f;
+        if (f.root.empty()) return 1;
+        test_sd_io_closed_gate_fails_closed(f);
     }
     {
         fixture f;

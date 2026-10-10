@@ -35,6 +35,9 @@ jobs:
             components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp
           clang-format --dry-run --Werror \
             components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
+          clang-format --dry-run --Werror \
+            components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h \
+            components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.

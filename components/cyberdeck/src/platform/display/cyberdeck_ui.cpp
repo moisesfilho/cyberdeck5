@@ -29,6 +29,7 @@
 #include "platform/display/cyberdeck_wifi_icon.h"
 #include "platform/display/cyberdeck_wifi_indicator.h"
 #include "platform/display/cyberdeck_window_manager_adapter.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 #include "platform/display/screen_off.h"
 #include "platform/input/cyberdeck_keyboard_dispatch.h"
 #include "platform/input/tab5_keyboard.h"
@@ -1447,6 +1448,11 @@ void terminal_key(lv_event_t *event) {
     }
 }
 } // namespace
+
+void cyberdeck_ui_bind_sd_io(cyberdeck_sd_io::coordinator &coordinator) {
+    s_local_shell.bind_sd_io(coordinator);
+    cyberdeck_cat_worker_bind_sd_io(coordinator);
+}
 
 namespace {
 /* Shell session host: borrows UI-owned output, models, menus and async

@@ -103,6 +103,9 @@ BATTERY_VIEW_CONTRACT_HDR := contracts/cyberdeck_battery_view.h
 BATTERY_VIEW_TEST := test_battery_view.cpp
 BATTERY_VIEW_BIN := test_battery_view_bin
 BATTERY_VIEW_CONTRACT := test_battery_view_contract.py
+SD_IO_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp
+SD_IO_COORDINATOR_HDR := ../../../components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h
+SD_IO_COORDINATOR_TEST := test_sd_io_coordinator.cpp
 BATTERY_BIN       := test_battery_contract
 SERIAL_BRIDGE_SRC := ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp
 SERIAL_BRIDGE_HDR := ../../../components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h
@@ -173,7 +176,7 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync test_sd_io_coordinator $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
 test_editor_model: test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp ../../../components/cyberdeck/include/apps/editor/cyberdeck_editor_model.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp -o $@
@@ -221,6 +224,15 @@ test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9
 .PHONY: test_terminal_scrollback test_lat03_contract test_lat04_contract
 .PHONY: test_display_lock_contract
 .PHONY: test_editor_save_contract
+
+.PHONY: test_sd_io_coordinator
+test_sd_io_coordinator: $(SD_IO_COORDINATOR_TEST) $(SD_IO_COORDINATOR_SRC) $(SD_IO_COORDINATOR_HDR) sd_io_traceability.md
+	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include $(SD_IO_COORDINATOR_TEST) $(SD_IO_COORDINATOR_SRC) -o test_sd_io_coordinator
+	./test_sd_io_coordinator
+
+.PHONY: test_sd_io_integration_contract
+test_sd_io_integration_contract: test_sd_io_integration_contract.py sd_io_traceability.md Makefile
+	$(PYTHON) test_sd_io_integration_contract.py
 
 all: test
 
@@ -434,7 +446,7 @@ test_terminal_output_contract: $(TERMINAL_OUTPUT_CONTRACT) ../../../components/c
 # TUs reais do filtro ANSI, do compositor de linha, do console e do runtime. So a
 # fila bounded e os efeitos de LVGL sao duplos do harness. O limite de payload e
 # derivado do buffer de leitura de ssh_client.cpp e entra como `static_assert`.
-test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SSH_CLIENT_SRC) $(TERMINAL_FILTER_SRC) $(LINE_COMPOSER_SRC) $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) Makefile
+test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SSH_CLIENT_SRC) $(TERMINAL_FILTER_SRC) $(LINE_COMPOSER_SRC) $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(SD_IO_COORDINATOR_SRC) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) Makefile
 	$(PYTHON) $(SSH_OUTPUT_GAP_TEST)
 
 # Logica pura (sem LVGL): modelo da linha de edicao + sessao SSH (contrato em
@@ -453,6 +465,7 @@ test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/pl
 # BLE/Wi-Fi, shell_utils, local_shell, protecao de tela e bateria).
 test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
+		$(SD_IO_COORDINATOR_SRC) \
 		$(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
 		$(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
@@ -462,7 +475,7 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 		shim/esp_err.h shim/esp_wifi_types.h shim/freertos/FreeRTOS.h
 	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_session.cpp \
 		$(SESSION_SRC) $(SHELL_CONSOLE_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
-		$(LOCAL_SHELL_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
+		$(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
 		$(APP_RUNTIME_SRC) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
 		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
@@ -478,17 +491,17 @@ test_runtime_sdk: test_runtime_sdk.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
 		$(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(COMMAND_CATALOG_SRC) \
 		$(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR)
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -I../../../components/cyberdeck/include \
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include \
 		test_runtime_sdk.cpp $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) \
 		$(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(COMMAND_CATALOG_SRC) \
-		$(LOCAL_SHELL_SRC) -o test_runtime_sdk
+		$(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -o test_runtime_sdk
 
 test_storage_facade: test_storage_facade.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(APP_STORAGE_SRC) \
 		$(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR)
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -I../../../components/cyberdeck/include \
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include \
 		test_storage_facade.cpp $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) \
-		$(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(LOCAL_SHELL_SRC) \
+		$(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) \
 		-Wl,--wrap=_Z40cyberdeck_local_shell_storage_write_tempPKcS0_St17basic_string_viewIcSt11char_traitsIcEES0_m \
 		-Wl,--wrap=_Z35cyberdeck_local_shell_storage_flushPKcS0_St17basic_string_viewIcSt11char_traitsIcEE \
 		-Wl,--wrap=_Z36cyberdeck_local_shell_storage_renamePKcS0_St17basic_string_viewIcSt11char_traitsIcEES4_ \
@@ -516,6 +529,7 @@ test_demo_app: test_demo_app.cpp $(DEMO_APP_SRC) $(DEMO_APP_HDR) $(APP_RUNTIME_S
 test_shell_app: test_shell_app.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
 		$(SHELL_APP_SRC) $(SHELL_APP_HDR) $(SESSION_SRC) $(SESSION_HDR) \
 		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
+		$(SD_IO_COORDINATOR_SRC) \
 		$(APP_RUNTIME_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
 		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
 		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) $(BLE_STATE_SRC) \
@@ -523,7 +537,7 @@ test_shell_app: test_shell_app.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
 	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_app.cpp \
 		$(SHELL_CONSOLE_SRC) $(SHELL_APP_SRC) \
 		$(SESSION_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
-		$(LOCAL_SHELL_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
+		$(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
 		$(APP_RUNTIME_SRC) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
 		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
@@ -629,10 +643,10 @@ test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../comp
 # header directly: a duplicate test-only ABI here can make the test compile
 # while linking a different class layout/API than the implementation.
 test_local_shell: test_local_shell.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_local_shell.cpp $(LOCAL_SHELL_SRC) -Wl,--wrap=opendir -o test_local_shell
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_local_shell.cpp $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -pthread -Wl,--wrap=opendir -o test_local_shell
 
-test_save_sidecar_recovery: test_save_sidecar_recovery.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_SRC) $(VFS_NAMESPACE_HDR) save_sidecar_traceability.md
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_save_sidecar_recovery.cpp $(LOCAL_SHELL_SRC) -o test_save_sidecar_recovery
+test_save_sidecar_recovery: test_save_sidecar_recovery.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_SRC) $(VFS_NAMESPACE_HDR) $(SD_IO_COORDINATOR_SRC) $(SD_IO_COORDINATOR_HDR) save_sidecar_traceability.md
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_save_sidecar_recovery.cpp $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -pthread -o test_save_sidecar_recovery
 	./test_save_sidecar_recovery
 
 # Host regression for the dedicated cat API.  This deliberately bypasses the
@@ -640,13 +654,13 @@ test_save_sidecar_recovery: test_save_sidecar_recovery.cpp $(LOCAL_SHELL_SRC) $(
 # seam, including CRLF, tabs, UTF-8, exact 12288-byte output, embedded NUL,
 # and a suffix after the first newline for the UI sanitizer.
 test_cat_multiline: $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) -o test_cat_multiline
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -pthread -o test_cat_multiline
 
 # RED: the menu and local shell must render one shared help catalog.  The
 # target links both real production implementations; no production edit is
 # implied by this test registration.
 test_help_unification: $(HELP_UNIFICATION_TEST) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR) shim/lvgl.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(HELP_UNIFICATION_TEST) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) -o test_help_unification
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(HELP_UNIFICATION_TEST) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -pthread -o test_help_unification
 
 # RED structural companion: rejects private literal help lists in the two
 # shells and in the non-linkable LVGL UI.  It performs source inspection only.
@@ -793,7 +807,7 @@ local_shell_tokenizer_contract: local_shell_tokenizer_contract.py ../../../compo
 local_shell_namespace_contract: $(LOCAL_SHELL_NAMESPACE_CONTRACT) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_SRC) $(VFS_NAMESPACE_HDR) ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md
 	$(PYTHON) $(LOCAL_SHELL_NAMESPACE_CONTRACT)
 
-test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(TERMINAL_FILTER_SRC) $(TERMINAL_FILTER_HDR) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR)
+test_prompt_behavior: test_prompt_behavior.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(SD_IO_COORDINATOR_SRC) $(TERMINAL_FILTER_SRC) $(TERMINAL_FILTER_HDR) $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR)
 	$(PYTHON) test_prompt_behavior.py
 
 test_wifi_dispatch_contract: test_wifi_dispatch_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp
@@ -839,7 +853,7 @@ test_fs_write_dispatch: test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_fs_write_dispatch
 
 test_cat_worker: test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR)
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -I../../../components/cyberdeck/include test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) -o test_cat_worker
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -o test_cat_worker
 
 test_ble_background: test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) $(BLE_BACKGROUND_HDR)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) -o test_ble_background
@@ -1047,6 +1061,10 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_lvgl_shell_lifecycle_contract
 	@echo "==> Executando o window manager da Fase 8 e seu contrato"
 	@./test_window_manager
+	@echo "==> Executando coordenador de I/O SD (Stage 0)"
+	@./test_sd_io_coordinator
+	@echo "==> Executando contrato de integracao de I/O SD"
+	@$(MAKE) --no-print-directory test_sd_io_integration_contract
 	@$(MAKE) --no-print-directory test_window_manager_contract
 	@echo "==> Executando contrato de lock do display"
 	@$(MAKE) --no-print-directory test_display_lock_contract

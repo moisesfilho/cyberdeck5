@@ -13,20 +13,30 @@
 #include "apps/screenshot/screenshot_server.h"
 #include "platform/display/cyberdeck_display_port.h"
 #include "bsp/m5stack_tab5.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
+#include "apps/runtime/cyberdeck_app_runtime.h"
 
 static const char *TAG = "cyberdeck5";
 
 extern "C" void app_main(void)
 {
+    static cyberdeck_sd_io::coordinator sd_io_coordinator;
     /* The terminal exposes its virtual root / only after the physical /sdcard
      * mount has completed and its BSP handle has been verified. */
     ESP_ERROR_CHECK(bsp_sdcard_mount());
     if (bsp_sdcard_get_handle() == nullptr) return;
-    const cyberdeck_recovery_report storage_recovery = recover_save_sidecars("/sdcard");
-    for (const auto &entry : storage_recovery.entries) {
-        ESP_LOGW(TAG, "storage recovery sidecar=%s action=%u stage=%u errno=%d",
-                 entry.sidecar.c_str(), static_cast<unsigned>(entry.action),
-                 static_cast<unsigned>(entry.stage), entry.error);
+    {
+        auto recovery_lease = sd_io_coordinator.acquire(cyberdeck_sd_io::access::write);
+        if (!recovery_lease) {
+            ESP_LOGW(TAG, "storage recovery skipped: SD storage unavailable");
+        } else {
+            const cyberdeck_recovery_report storage_recovery = recover_save_sidecars("/sdcard");
+            for (const auto &entry : storage_recovery.entries) {
+                ESP_LOGW(TAG, "storage recovery sidecar=%s action=%u stage=%u errno=%d",
+                         entry.sidecar.c_str(), static_cast<unsigned>(entry.action),
+                         static_cast<unsigned>(entry.stage), entry.error);
+            }
+        }
     }
 
     esp_err_t err = nvs_flash_init();
@@ -40,6 +50,8 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "recovery state unavailable: %s", esp_err_to_name(recovery_err));
     }
     ESP_ERROR_CHECK(cyberdeck_system_apps_register());
+    cyberdeck_apps::global_runtime().set_sd_io(&sd_io_coordinator);
+    cyberdeck_ui_bind_sd_io(sd_io_coordinator);
     /* Event-log startup is diagnostic infrastructure, not a boot prerequisite.
      * In particular, do not turn an unavailable NVS/log backend into a reboot
      * loop before the recovery latch can select safe mode. */

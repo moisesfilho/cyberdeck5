@@ -99,6 +99,13 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
     }
     if (args == "save as confirm" && document_.save_as_confirmation_required() && !pending_save_as_.empty()) {
         save_diagnostic_.clear();
+        auto *sd_io = app_sd_io();
+        auto io_lease = sd_io == nullptr ? cyberdeck_sd_io::lease{}
+                                         : sd_io->acquire(cyberdeck_sd_io::access::write);
+        if (!io_lease) {
+            save_diagnostic_ = "save failed: SD storage unavailable";
+            return {cyberdeck_apps::result_status::rejected, "edit: SD storage unavailable\n"};
+        }
         const std::string target = pending_save_as_;
         std::string bytes;
         if (!document_.save(bytes)) {
@@ -139,6 +146,11 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
     }
     if (args.empty() || args.size() > 256)
         return {cyberdeck_apps::result_status::rejected, "edit: path required\n"};
+    auto *sd_io = app_sd_io();
+    auto io_lease = sd_io == nullptr ? cyberdeck_sd_io::lease{}
+                                     : sd_io->acquire(cyberdeck_sd_io::access::read);
+    if (!io_lease)
+        return {cyberdeck_apps::result_status::rejected, "edit: SD storage unavailable\n"};
     std::string buffer(cyberdeck_editor::k_max_document_bytes, '\0');
     cyberdeck_apps::storage_facade storage(app_grant());
     const auto read = storage.bounded_read(args, buffer.data(), buffer.size());
@@ -156,6 +168,13 @@ bool application::save_current() {
     if (!running_ || document_.path().empty())
         return false;
     save_diagnostic_.clear();
+    auto *sd_io = app_sd_io();
+    auto io_lease = sd_io == nullptr ? cyberdeck_sd_io::lease{}
+                                     : sd_io->acquire(cyberdeck_sd_io::access::write);
+    if (!io_lease) {
+        save_diagnostic_ = "save failed: SD storage unavailable";
+        return false;
+    }
     const std::string target(document_.path());
     std::string bytes;
     if (!document_.save(bytes)) {

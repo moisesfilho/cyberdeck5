@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
 enum class cyberdeck_local_shell_status { handled, passthrough, rejected };
 
@@ -55,11 +56,13 @@ cyberdeck_recovery_report recover_save_sidecars(const char *host_root);
 class cyberdeck_local_shell {
   public:
     cyberdeck_local_shell(const std::string &host_root, const std::string &virtual_root = "/");
+    void bind_sd_io(cyberdeck_sd_io::coordinator &sd_io);
     cyberdeck_local_shell_result execute(const std::string &line);
     std::string cwd() const;
 
   private:
     std::string host_root_;
+    cyberdeck_sd_io::coordinator *sd_io_ = nullptr;
     std::string virtual_root_;
     std::string cwd_;
 };

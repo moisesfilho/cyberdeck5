@@ -7,6 +7,7 @@ idf_component_register(
         "src/platform/display/cyberdeck_terminal_scrollback.cpp"
         "src/apps/shell/cyberdeck_edit_line.cpp"
         "src/platform/networking/cyberdeck_net_coordinator.cpp"
+        "src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
         "src/apps/shell/cyberdeck_terminal_filter.cpp"
         "src/apps/shell/cyberdeck_ssh_echo_guard.cpp"
         # Stateful local/remote compositor; keep it in the firmware target so
