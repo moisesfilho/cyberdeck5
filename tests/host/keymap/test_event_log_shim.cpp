@@ -23,6 +23,20 @@ static void notify_task(void *argument) {
         test->gate.wait();
     test->result.set_value(ulTaskNotifyTake(test->clear, test->wait));
 }
+static void lifecycle_task(void *argument) {
+    auto *completed = static_cast<std::promise<void> *>(argument);
+    vTaskDelete(nullptr);
+    completed->set_value();
+}
+struct gated_task_case {
+    std::promise<void> started;
+    std::shared_future<void> release;
+};
+static void gated_task(void *argument) {
+    auto *test = static_cast<gated_task_case *>(argument);
+    test->started.set_value();
+    test->release.wait();
+}
 
 int main() {
     event_log_shim::reset_ticks();
@@ -254,4 +268,27 @@ int main() {
     early.wake();
     early_waiter.join();
     assert(woke);
+    std::promise<void> lifecycle_completed;
+    auto lifecycle_future = lifecycle_completed.get_future();
+    TaskHandle_t lifecycle_task_handle = nullptr;
+    assert(xTaskCreate(lifecycle_task, "lifecycle", 0, &lifecycle_completed, 0,
+                       &lifecycle_task_handle) == pdPASS);
+    assert(lifecycle_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+    assert(event_log_shim::wait_for_test_task(lifecycle_task_handle,
+                                              std::chrono::milliseconds(100)));
+    assert(test_task_self_delete_requested(lifecycle_task_handle));
+    assert(event_log_shim::join_test_task(lifecycle_task_handle));
+    assert(event_log_shim::join_test_task(lifecycle_task_handle));
+    std::promise<void> release_task;
+    gated_task_case gated{{}, release_task.get_future().share()};
+    auto gated_started = gated.started.get_future();
+    TaskHandle_t gated_handle = nullptr;
+    assert(xTaskCreate(gated_task, "gated", 0, &gated, 0, &gated_handle) == pdPASS);
+    assert(gated_started.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+    assert(!event_log_shim::wait_for_test_task(gated_handle, std::chrono::milliseconds(1)));
+    assert(!event_log_shim::join_test_task(gated_handle));
+    release_task.set_value();
+    assert(event_log_shim::wait_for_test_task(gated_handle, std::chrono::seconds(2)));
+    assert(event_log_shim::join_test_task(gated_handle));
+    event_log_shim::cleanup_test_tasks();
 }

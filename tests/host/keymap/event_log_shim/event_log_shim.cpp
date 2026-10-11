@@ -33,15 +33,21 @@ struct host_task {
     unsigned notifications = 0;
     bool completed = false;
     bool notification_wait_registered = false;
+    bool self_delete_requested = false;
+    bool joined = false;
 };
 static thread_local host_task *current_task = nullptr;
 namespace {
+std::mutex log_hook_mutex;
+vprintf_like_t current_vprintf = nullptr;
 std::mutex ticks_mutex;
 TickType_t ticks = 0;
 std::mutex waits_mutex;
 std::condition_variable waits_cv;
 std::vector<event_log_shim::timed_wait *> waits;
 uint64_t timed_wait_generation = 0;
+std::mutex task_registry_mutex;
+std::vector<host_task *> task_registry;
 std::mutex queue_registry_mutex;
 std::vector<host_queue *> queue_registry;
 void wake_registered_waits() {
@@ -79,6 +85,34 @@ void wait_for_test_task(TaskHandle_t task) {
     std::unique_lock<std::mutex> lock(task->mutex);
     if (!task->cv.wait_for(lock, kWaitWatchdog, [&] { return task->completed; }))
         throw std::runtime_error("watchdog: test task did not complete within 5s");
+}
+bool wait_for_test_task(TaskHandle_t task, std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(task->mutex);
+    return task->cv.wait_for(lock, timeout, [&] { return task->completed; });
+}
+bool join_test_task(TaskHandle_t task) {
+    if (!task)
+        return false;
+    std::lock_guard<std::mutex> lock(task->mutex);
+    if (!task->completed)
+        return false;
+    if (!task->joined) {
+        task->thread.join();
+        task->joined = true;
+    }
+    return true;
+}
+void cleanup_test_tasks() {
+    std::vector<host_task *> tasks;
+    { std::lock_guard<std::mutex> lock(task_registry_mutex); tasks.swap(task_registry); }
+    for (auto *task : tasks) {
+        if (!join_test_task(task)) {
+            std::lock_guard<std::mutex> lock(task_registry_mutex);
+            task_registry.push_back(task);
+            continue;
+        }
+        delete task;
+    }
 }
 void wait_for_notification_wait(TaskHandle_t task) {
     std::unique_lock<std::mutex> lock(task->mutex);
@@ -267,6 +301,7 @@ BaseType_t xSemaphoreGive(SemaphoreHandle_t s) {
 BaseType_t xTaskCreate(TaskFunction_t f, const char *, uint32_t, void *arg, unsigned, TaskHandle_t *out) {
     auto *t = new host_task;
     *out = t;
+    { std::lock_guard<std::mutex> lock(task_registry_mutex); task_registry.push_back(t); }
     std::promise<void> published;
     auto ready = published.get_future();
     t->thread = std::thread([=, ready = std::move(ready)]() mutable {
@@ -279,11 +314,27 @@ BaseType_t xTaskCreate(TaskFunction_t f, const char *, uint32_t, void *arg, unsi
         }
         t->cv.notify_all();
     });
-    t->thread.detach();
     published.set_value();
     return pdPASS;
 }
-void vTaskDelete(TaskHandle_t) {}
+void vTaskDelete(TaskHandle_t task) {
+    if (!task) {
+        if (current_task) {
+            std::lock_guard<std::mutex> lock(current_task->mutex);
+            current_task->self_delete_requested = true;
+        }
+        return;
+    }
+    // Host tasks are never forcibly terminated; external deletion is modeled
+    // only as a request, so their callback must return before join is safe.
+    std::lock_guard<std::mutex> lock(task->mutex);
+    task->self_delete_requested = true;
+}
+bool test_task_self_delete_requested(TaskHandle_t task) {
+    if (!task) return false;
+    std::lock_guard<std::mutex> lock(task->mutex);
+    return task->self_delete_requested;
+}
 TickType_t xTaskGetTickCount(void) {
     std::lock_guard<std::mutex> lock(ticks_mutex);
     return ticks;
@@ -337,7 +388,14 @@ esp_err_t bsp_sdcard_mount(void) {
     return ESP_OK;
 }
 vprintf_like_t esp_log_set_vprintf(vprintf_like_t hook) {
-    return hook;
+    std::lock_guard<std::mutex> lock(log_hook_mutex);
+    const auto previous = current_vprintf;
+    current_vprintf = hook;
+    return previous;
+}
+vprintf_like_t event_log_shim_current_vprintf(void) {
+    std::lock_guard<std::mutex> lock(log_hook_mutex);
+    return current_vprintf;
 }
 int esp_log_write(const char *, const char *, ...) {
     return 0;

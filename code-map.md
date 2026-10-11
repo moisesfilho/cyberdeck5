@@ -10,6 +10,20 @@
 
 ## Atualizacao de recuperacao de eventos
 
+- Milestone intermediário de lifecycle (não é quiescência final):
+  `event_log_init` usa estados atômicos e publica `OPEN` somente após criar
+  filas, semáforos, hook e workers; as APIs de I/O usam admission leases
+  contadas até o fim da operação, incluindo o fechamento dos snapshots textuais.
+  `event_log_quiesce(timeout_ms)` fecha o fence e aguarda leases, mas retorna
+  explicitamente `ESP_ERR_TIMEOUT` mesmo após drenagem: este milestone não para
+  workers, fecha arquivos/filas nem publica `CLOSED`, e não deve ser aceito ou
+  liberado como quiescência concluída. Falha de init depois de criar qualquer
+  worker mantém `CLOSING` e todos os handles/recursos estáticos preservados até
+  reboot; init subsequente falha fechado. Falha anterior a workers faz rollback
+  e pode retornar a `UNINITIALIZED`. `event_log_latest` permanece leitura da
+  memória recente sob mutex e não participa do fence SD. Stop/completion e
+  cleanup controlado pertencem ao milestone 2.
+
 - `components/cyberdeck/src/platform/logging/event_log.cpp` mantem
   `events.log` como fonte binaria e projeta best-effort em `events.txt`, com
   rotacao `.1`..`.7` limitada a 1 MiB por arquivo; estado recente e coordenacao
@@ -46,9 +60,14 @@
  - `tests/host/keymap/test_event_log_runtime.cpp` liga o TU real do event log
    com shims host dedicados (`event_log_shim/`) para filas, semáforos, tasks,
     BSP, timer e ESP logging, diretório SD temporário e `--wrap=fsync`. O runtime
-    caracteriza init, append normal, ACK durable após fsync e falhas de
+     caracteriza init, append normal, ACK durable após fsync e falhas de
     write/fsync, além de timeout/lifetime determinístico do caller e backpressure
-    da fila durável no TU real. Não prova quiescência nem shutdown. A matriz
+     da fila durável no TU real. Os cenários isolados `preinit`/`quiesce-fence`
+     comprovam INVALID_STATE pré-init, timeout sticky e rejeição de writers/
+     readers posteriores; `TEST-EVENT-VPRINTF-FENCE` observa forwarding serial
+     sem persistência e `TEST-EVENT-QUIESCE-FENCE` bloqueia `fread(events.txt)`
+     para provar lease ativa, timeout e retry sticky.
+     O milestone não prova shutdown nem quiescência final. A matriz
        `tests/host/keymap/event_log_shim/event_log_shim.{h,cpp}` extrai os adapters
         host e oferece introspecção passiva de snapshots imutáveis da fila (handle,
         capacidade, tamanho de item e depth sob mutex), enumeração dos handles válidos
@@ -71,8 +90,14 @@
        persiste exatamente uma vez. O sexto pedido retorna `ESP_ERR_NO_MEM` e
        seu token não aparece no log. Esses cenários caracterizam o logger atual,
        não implementam nem provam quiesce/fence. `make test_event_log_shim`
-     é alvo isolado.
-      `tests/host/keymap/event_log_traceability.md` separa essa evidência runtime
+      é alvo isolado. O shim mantém handles/task threads joinable: `wait_for_test_task`
+      observa completion com timeout, `join_test_task` só aceita task concluída,
+      e cleanup libera handles já joined. `vTaskDelete(NULL)` só marca self-delete
+      solicitado para retorno natural do callback; casos TEST-SHIM-TASK-COMPLETION-JOIN
+      e TEST-SHIM-TASK-TIMEOUT provam completion/join e timeout sem falso completion.
+      O runtime event-log não termina workers nesta etapa e preserva `_exit` para
+      seus loops infinitos; nenhum join é feito em worker vivo.
+        `tests/host/keymap/event_log_traceability.md` separa essa evidência runtime
      dos contratos estruturais existentes; `make test_event_log_runtime` compila
       e executa o TU real no agregado host e no alvo isolado, usando root
       temporário por execução e mantendo os perfis gcov no diretório de teste

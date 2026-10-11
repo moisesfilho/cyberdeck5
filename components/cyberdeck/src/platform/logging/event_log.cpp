@@ -47,6 +47,7 @@ constexpr TickType_t RETRY_INTERVAL = pdMS_TO_TICKS(5000);
 constexpr size_t TEXT_FILE_LIMIT = 1024U * 1024U;
 constexpr size_t TEXT_ROTATION_COUNT = 7;
 constexpr TickType_t TEXT_MUTEX_TIMEOUT = pdMS_TO_TICKS(100);
+enum class Lifecycle : uint8_t { UNINITIALIZED, INITIALIZING, OPEN, CLOSING, CLOSED };
 
 struct __attribute__((packed)) LogRecord {
     uint32_t magic;
@@ -83,7 +84,40 @@ size_t s_recent_next = 0;
 TaskHandle_t s_task = nullptr;
 TaskHandle_t s_text_task = nullptr;
 vprintf_like_t s_serial_vprintf = nullptr;
-bool s_initialized = false;
+std::atomic<Lifecycle> s_lifecycle{Lifecycle::UNINITIALIZED};
+std::atomic<uint32_t> s_active_ops{0};
+StaticSemaphore_t s_quiesce_changed_storage;
+SemaphoreHandle_t s_quiesce_changed = nullptr;
+
+class OperationLease {
+  public:
+    OperationLease() {
+        if (s_lifecycle.load(std::memory_order_acquire) != Lifecycle::OPEN)
+            return;
+        s_active_ops.fetch_add(1, std::memory_order_acq_rel);
+        counted_ = true;
+        if (s_lifecycle.load(std::memory_order_acquire) != Lifecycle::OPEN) {
+            release();
+            return;
+        }
+        admitted_ = true;
+    }
+    ~OperationLease() { release(); }
+    explicit operator bool() const { return admitted_; }
+    OperationLease(const OperationLease &) = delete;
+    OperationLease &operator=(const OperationLease &) = delete;
+  private:
+    void release() {
+        if (!admitted_ && !counted_)
+            return;
+        admitted_ = false;
+        counted_ = false;
+        if (s_active_ops.fetch_sub(1, std::memory_order_release) == 1 && s_quiesce_changed != nullptr)
+            (void)xSemaphoreGive(s_quiesce_changed);
+    }
+    bool admitted_ = false;
+    bool counted_ = false;
+};
 
 struct DurableRequest {
     LogRecord record{};
@@ -240,6 +274,9 @@ void wake_log_task() {
 }
 
 void enqueue_record(char level, const char *tag, const char *message) {
+    OperationLease lease;
+    if (!lease)
+        return;
     if (s_queue == nullptr) {
         return;
     }
@@ -504,18 +541,20 @@ int log_vprintf(const char *format, va_list args) {
 } // namespace
 
 extern "C" esp_err_t event_log_init(void) {
-    if (s_initialized) {
-        return ESP_OK;
-    }
+    Lifecycle expected = Lifecycle::UNINITIALIZED;
+    if (!s_lifecycle.compare_exchange_strong(expected, Lifecycle::INITIALIZING, std::memory_order_acq_rel))
+        return expected == Lifecycle::OPEN ? ESP_OK : ESP_ERR_INVALID_STATE;
 
     s_queue = xQueueCreateStatic(QUEUE_LENGTH, sizeof(LogRecord), s_queue_storage, &s_queue_struct);
     if (s_queue == nullptr) {
+        s_lifecycle.store(Lifecycle::UNINITIALIZED, std::memory_order_release);
         return ESP_ERR_NO_MEM;
     }
 
     s_recent_mutex = xSemaphoreCreateMutexStatic(&s_recent_mutex_storage);
     if (s_recent_mutex == nullptr) {
         s_queue = nullptr;
+        s_lifecycle.store(Lifecycle::UNINITIALIZED, std::memory_order_release);
         return ESP_ERR_NO_MEM;
     }
 
@@ -523,6 +562,19 @@ extern "C" esp_err_t event_log_init(void) {
     if (s_text_mutex == nullptr) {
         s_recent_mutex = nullptr;
         s_queue = nullptr;
+        s_lifecycle.store(Lifecycle::UNINITIALIZED, std::memory_order_release);
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_quiesce_changed = xSemaphoreCreateBinaryStatic(&s_quiesce_changed_storage);
+    if (s_quiesce_changed == nullptr) {
+        s_quiesce_changed = nullptr;
+        s_text_queue = nullptr;
+        s_durable_queue = nullptr;
+        s_text_mutex = nullptr;
+        s_recent_mutex = nullptr;
+        s_queue = nullptr;
+        s_lifecycle.store(Lifecycle::UNINITIALIZED, std::memory_order_release);
         return ESP_ERR_NO_MEM;
     }
 
@@ -531,31 +583,28 @@ extern "C" esp_err_t event_log_init(void) {
                                          &s_durable_queue_struct);
     if (s_text_queue == nullptr || s_durable_queue == nullptr ||
         xTaskCreate(text_log_task, "event_text", 4096, nullptr, 1, &s_text_task) != pdPASS) {
+        if (s_text_task != nullptr) {
+            s_lifecycle.store(Lifecycle::CLOSING, std::memory_order_release);
+            return ESP_ERR_NO_MEM;
+        }
         s_text_task = nullptr;
         s_text_queue = nullptr;
         s_durable_queue = nullptr;
         s_text_mutex = nullptr;
         s_recent_mutex = nullptr;
         s_queue = nullptr;
+        s_quiesce_changed = nullptr;
+        s_lifecycle.store(Lifecycle::UNINITIALIZED, std::memory_order_release);
         return ESP_ERR_NO_MEM;
     }
 
     s_serial_vprintf = esp_log_set_vprintf(log_vprintf);
     if (xTaskCreate(log_task, "event_log", 6144, nullptr, 2, &s_task) != pdPASS) {
         esp_log_set_vprintf(s_serial_vprintf);
-        s_serial_vprintf = nullptr;
-        if (s_text_task != nullptr) {
-            vTaskDelete(s_text_task);
-            s_text_task = nullptr;
-        }
-        s_text_queue = nullptr;
-        s_durable_queue = nullptr;
-        s_text_mutex = nullptr;
-        s_recent_mutex = nullptr;
-        s_queue = nullptr;
+        s_lifecycle.store(Lifecycle::CLOSING, std::memory_order_release);
         return ESP_ERR_NO_MEM;
     }
-    s_initialized = true;
+    s_lifecycle.store(Lifecycle::OPEN, std::memory_order_release);
     return ESP_OK;
 }
 
@@ -564,7 +613,7 @@ extern "C" void event_log_write(char level, const char *tag, const char *message
 }
 
 extern "C" esp_err_t event_log_write_durable(char level, const char *tag, const char *message) {
-    if (!s_initialized || s_durable_queue == nullptr)
+    if (s_lifecycle.load(std::memory_order_acquire) != Lifecycle::OPEN)
         return ESP_ERR_INVALID_STATE;
 
     DurableRequest *request = new (std::nothrow) DurableRequest;
@@ -579,11 +628,24 @@ extern "C" esp_err_t event_log_write_durable(char level, const char *tag, const 
 
     DurableRequest *request_pointer = request;
     for (int attempt = 0; attempt < 3; ++attempt) {
-        request->references.store(2, std::memory_order_release);
-        if (xQueueSend(s_durable_queue, &request_pointer, 0) == pdTRUE) {
-            wake_log_task();
-            /* The caller and writer own independent references. This keeps a
-             * timed-out request valid until the writer drains it. */
+        bool accepted = false;
+        {
+            OperationLease lease;
+            if (!lease) {
+                release_durable_request(request);
+                return ESP_ERR_INVALID_STATE;
+            }
+            if (s_durable_queue == nullptr) {
+                release_durable_request(request);
+                return ESP_ERR_INVALID_STATE;
+            }
+            request->references.store(2, std::memory_order_release);
+            accepted = xQueueSend(s_durable_queue, &request_pointer, 0) == pdTRUE;
+            if (accepted)
+                wake_log_task();
+        }
+        if (accepted) {
+            /* ACK wait is intentionally outside the admission lease. */
             if (xSemaphoreTake(request->complete, pdMS_TO_TICKS(250)) == pdTRUE) {
                 const bool persisted = request->persisted;
                 release_durable_request(request);
@@ -661,6 +723,9 @@ extern "C" size_t event_log_latest(size_t max_events, event_log_line_callback_t 
 }
 
 extern "C" size_t event_log_text_size(void) {
+    OperationLease lease;
+    if (!lease)
+        return 0;
     if (s_text_mutex == nullptr || xSemaphoreTake(s_text_mutex, TEXT_MUTEX_TIMEOUT) != pdTRUE)
         return 0;
     size_t total = 0;
@@ -678,6 +743,9 @@ extern "C" size_t event_log_text_size(void) {
 }
 
 extern "C" esp_err_t event_log_text_read(size_t offset, uint8_t *buffer, size_t capacity, size_t *out_read) {
+    OperationLease lease;
+    if (!lease)
+        return ESP_ERR_INVALID_STATE;
     if (out_read == nullptr || buffer == nullptr || capacity == 0 || capacity > 1024 || s_text_mutex == nullptr)
         return ESP_ERR_INVALID_ARG;
     *out_read = 0;
@@ -714,4 +782,29 @@ extern "C" esp_err_t event_log_text_read(size_t offset, uint8_t *buffer, size_t 
     }
     close_text_snapshot(&snapshot);
     return ESP_FAIL;
+}
+
+extern "C" esp_err_t event_log_quiesce(uint32_t timeout_ms) {
+    Lifecycle state = s_lifecycle.load(std::memory_order_acquire);
+    if (state == Lifecycle::UNINITIALIZED || state == Lifecycle::INITIALIZING)
+        return ESP_ERR_INVALID_STATE;
+    if (state == Lifecycle::CLOSED)
+        return ESP_OK;
+    if (state == Lifecycle::OPEN) {
+        Lifecycle expected = Lifecycle::OPEN;
+        (void)s_lifecycle.compare_exchange_strong(expected, Lifecycle::CLOSING, std::memory_order_acq_rel);
+    }
+
+    const int64_t deadline_us = esp_timer_get_time() + static_cast<int64_t>(timeout_ms) * 1000;
+    while (s_active_ops.load(std::memory_order_acquire) != 0) {
+        const int64_t remaining_us = deadline_us - esp_timer_get_time();
+        if (remaining_us <= 0)
+            return ESP_ERR_TIMEOUT;
+        TickType_t wait_ticks = pdMS_TO_TICKS((remaining_us + 999) / 1000);
+        if (wait_ticks == 0)
+            wait_ticks = 1;
+        (void)xSemaphoreTake(s_quiesce_changed, wait_ticks);
+    }
+    /* Milestone 1 only fences callers. Workers, queues and files are not stopped. */
+    return ESP_ERR_TIMEOUT;
 }

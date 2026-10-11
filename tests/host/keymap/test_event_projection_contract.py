@@ -138,13 +138,19 @@ def test_mutex_io_timeout_and_snapshot_lifecycle_contract():
     check("TextSnapshot snapshot" in read and "FILE *files[TEXT_ROTATION_COUNT + 1]" in source,
           "paged reads must retain bounded descriptors for one stable snapshot")
     init = block(source, 'extern "C" esp_err_t event_log_init', 'extern "C" void event_log_write')
-    check("vTaskDelete(s_text_task)" in init and "esp_log_set_vprintf(s_serial_vprintf)" in init,
-          "failed task initialization must roll back the projection task and logger hook")
-    check(init.index("s_initialized = true") > init.index("xTaskCreate(log_task"),
-          "init must publish initialized only after both tasks succeed")
+    check("s_lifecycle.store(Lifecycle::CLOSING" in init,
+          "partial worker creation failure must fail closed in CLOSING")
+    check("vTaskDelete(s_text_task)" not in init,
+          "partial init must preserve a created worker rather than delete it unsafely")
+    check("s_lifecycle.store(Lifecycle::UNINITIALIZED" in init,
+          "init failures before worker creation must retain rollback to UNINITIALIZED")
     for handle in ("s_text_queue = nullptr", "s_text_mutex = nullptr",
                    "s_recent_mutex = nullptr", "s_queue = nullptr"):
-        check(handle in init, f"init rollback must clear {handle}")
+        check(handle in init,
+              f"pre-worker rollback must clear {handle}; post-worker failure preserves resources")
+    vprintf = block(source, "int log_vprintf", "} // namespace")
+    check("s_serial_vprintf" in vprintf and "enqueue_record" in vprintf,
+          "vprintf must retain serial forwarding and route event logging through admission")
 
 
 def test_paged_snapshot_is_stable_under_rotation_model():

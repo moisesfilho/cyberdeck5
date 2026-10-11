@@ -1,5 +1,6 @@
 #include "event_log_shim/event_log_shim.h"
 #include "platform/logging/event_log.h"
+#include "esp_log.h"
 #include <algorithm>
 #include <cassert>
 #include <chrono>
@@ -26,7 +27,55 @@ std::condition_variable fsync_cv;
 bool block_fsync = false, fsync_entered = false, release_fsync = false;
 bool fail_next_binary_write = false, fail_next_binary_fsync = false;
 unsigned durable_release_count = 0;
+std::mutex projection_read_mutex;
+std::condition_variable projection_read_cv;
+bool block_projection_read = false, projection_read_entered = false, release_projection_read = false;
+std::mutex serial_mutex;
+std::string serial_output;
 } // namespace
+
+namespace {
+int capture_serial(const char *format, va_list args) {
+    va_list copy;
+    va_copy(copy, args);
+    const int required = std::vsnprintf(nullptr, 0, format, copy);
+    va_end(copy);
+    if (required < 0) return required;
+    std::string text(static_cast<size_t>(required), '\0');
+    va_copy(copy, args);
+    std::vsnprintf(text.data(), text.size() + 1, format, copy);
+    va_end(copy);
+    std::lock_guard<std::mutex> lock(serial_mutex);
+    serial_output += text;
+    return required;
+}
+bool is_projection_file(FILE *file) {
+    char link[64]{}, path[PATH_MAX + 1]{}, expected[PATH_MAX + 1]{};
+    const char *root = std::getenv("EVENT_LOG_TEST_ROOT");
+    if (!root || !realpath(root, expected)) return false;
+    std::strcat(expected, "/logs/events.txt");
+    std::snprintf(link, sizeof(link), "/proc/self/fd/%d", fileno(file));
+    const auto count = readlink(link, path, PATH_MAX);
+    if (count <= 0) return false;
+    path[count] = '\0';
+    char canonical[PATH_MAX + 1]{};
+    return realpath(path, canonical) && std::strcmp(canonical, expected) == 0;
+}
+}
+
+extern "C" size_t __real_fread(void *, size_t, size_t, FILE *);
+extern "C" size_t __wrap_fread(void *buffer, size_t size, size_t count, FILE *file) {
+    if (is_projection_file(file)) {
+        std::unique_lock<std::mutex> lock(projection_read_mutex);
+        if (block_projection_read) {
+            projection_read_entered = true;
+            projection_read_cv.notify_all();
+            if (!projection_read_cv.wait_for(lock, std::chrono::seconds(5), [] { return release_projection_read; }))
+                std::abort();
+        }
+    }
+    return __real_fread(buffer, size, count, file);
+}
 
 extern "C" void event_log_test_durable_request_released() {
     {
@@ -109,7 +158,7 @@ extern "C" size_t __wrap_fwrite(const void *data, size_t size, size_t count, FIL
 }
 extern "C" void __gcov_dump(void);
 
-int main() {
+int main(int argc, char **argv) {
     char unique_root[] = "/tmp/cyberdeck-event-log-host-XXXXXX";
     char *root = std::getenv("EVENT_LOG_TEST_ROOT");
     if (!root)
@@ -118,7 +167,94 @@ int main() {
     assert(setenv("EVENT_LOG_TEST_ROOT", root, 1) == 0);
     const auto logs_path = std::string(root) + "/logs";
     assert(mkdir(logs_path.c_str(), 0700) == 0);
+    assert(esp_log_set_vprintf(capture_serial) == nullptr);
+    const std::string scenario = argc > 1 ? argv[1] : "default";
+    if (scenario == "preinit") {
+        assert(event_log_quiesce(1) == ESP_ERR_INVALID_STATE);
+        std::puts("PASS: pre-init quiesce rejected");
+        std::fflush(stdout);
+        _exit(0);
+    }
+    assert(scenario == "default" || scenario == "quiesce-fence");
     assert(event_log_init() == ESP_OK);
+    if (scenario == "quiesce-fence") {
+        event_log_write('I', "fence", "before-fence");
+        const auto normal_path = std::string(root) + "/logs/events.log";
+        {
+            std::unique_lock<std::mutex> lock(audit_mutex);
+            assert(audit_cv.wait_for(lock, std::chrono::seconds(5), [] {
+                return std::find(audit.begin(), audit.end(), "binary-write") != audit.end();
+            }));
+        }
+        const auto projection_path = std::string(root) + "/logs/events.txt";
+        FILE *projection = std::fopen(projection_path.c_str(), "wb");
+        assert(projection != nullptr && std::fputs("snapshot-line\n", projection) >= 0);
+        assert(std::fclose(projection) == 0);
+        {
+            std::lock_guard<std::mutex> lock(projection_read_mutex);
+            block_projection_read = true;
+            projection_read_entered = false;
+            release_projection_read = false;
+        }
+        esp_err_t reader_result = ESP_OK;
+        uint8_t snapshot_buffer[32]{};
+        size_t snapshot_count = 0;
+        std::thread reader([&] {
+            reader_result = event_log_text_read(0, snapshot_buffer, sizeof(snapshot_buffer), &snapshot_count);
+        });
+        {
+            std::unique_lock<std::mutex> lock(projection_read_mutex);
+            assert(projection_read_cv.wait_for(lock, std::chrono::seconds(5), [] { return projection_read_entered; }));
+        }
+        assert(event_log_quiesce(0) == ESP_ERR_TIMEOUT);
+        {
+            std::lock_guard<std::mutex> lock(projection_read_mutex);
+            release_projection_read = true;
+            block_projection_read = false;
+        }
+        projection_read_cv.notify_all();
+        reader.join();
+        assert(reader_result == ESP_OK && snapshot_count >= std::strlen("snapshot-line\n"));
+        assert(std::memcmp(snapshot_buffer, "snapshot-line\n", std::strlen("snapshot-line\n")) == 0);
+        assert(event_log_quiesce(100) == ESP_ERR_TIMEOUT);
+        event_log_write('I', "fence", "after-fence-normal");
+        assert(event_log_write_durable('W', "fence", "after-fence-durable") == ESP_ERR_INVALID_STATE);
+        auto hooked_vprintf = event_log_shim_current_vprintf();
+        assert(hooked_vprintf != nullptr);
+        struct stat before_vprintf{};
+        assert(stat(normal_path.c_str(), &before_vprintf) == 0);
+        auto invoke_log = [&](const char *format, ...) {
+            va_list args;
+            va_start(args, format);
+            const int result = hooked_vprintf(format, args);
+            va_end(args);
+            return result;
+        };
+        assert(invoke_log("fenced-serial-%d", 37) == 16);
+        {
+            std::lock_guard<std::mutex> lock(serial_mutex);
+            assert(serial_output.find("fenced-serial-37") != std::string::npos);
+        }
+        struct stat after_vprintf{};
+        assert(stat(normal_path.c_str(), &after_vprintf) == 0 && after_vprintf.st_size == before_vprintf.st_size);
+        assert(event_log_text_size() == 0);
+        uint8_t text_buffer[32]{};
+        size_t out_read = 99;
+        assert(event_log_text_read(0, text_buffer, sizeof(text_buffer), &out_read) == ESP_ERR_INVALID_STATE);
+        std::string persisted;
+        char chunk[512];
+        FILE *file = std::fopen(normal_path.c_str(), "rb");
+        assert(file != nullptr);
+        while (const auto count = std::fread(chunk, 1, sizeof(chunk), file)) persisted.append(chunk, count);
+        assert(std::fclose(file) == 0);
+        assert(persisted.find("before-fence") != std::string::npos);
+        assert(persisted.find("after-fence-normal") == std::string::npos);
+        assert(persisted.find("after-fence-durable") == std::string::npos);
+        std::puts("PASS: quiesce remains fenced and rejects writers/readers");
+        std::fflush(stdout);
+        __gcov_dump();
+        _exit(0);
+    }
     const auto queue_descriptors = event_log_shim::snapshot_queues();
     std::vector<event_log_shim::queue_snapshot> durable_descriptors;
     for (const auto &descriptor : queue_descriptors) {

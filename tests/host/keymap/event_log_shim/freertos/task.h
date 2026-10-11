@@ -8,3 +8,4 @@ TickType_t xTaskGetTickCount(void);
 void xTaskNotifyGive(TaskHandle_t);
 uint32_t ulTaskNotifyTake(BaseType_t, TickType_t);
 void vTaskDelay(TickType_t);
+bool test_task_self_delete_requested(TaskHandle_t);

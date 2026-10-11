@@ -8,9 +8,14 @@
 extern "C" {
 #endif
 
-/* Starts asynchronous persistent logging to the SD card. */
+/* Starts asynchronous persistent logging to the SD card. Concurrent starts
+ * during initialization/closing fail with ESP_ERR_INVALID_STATE. */
 esp_err_t event_log_init(void);
 
+/* Fences new operations and waits for admitted callers. This intermediate
+ * lifecycle milestone deliberately returns ESP_ERR_TIMEOUT after the callers
+ * drain: worker tasks and files are not stopped/closed yet. */
+esp_err_t event_log_quiesce(uint32_t timeout_ms);
 /* Adds a structured event without going through ESP_LOG. */
 void event_log_write(char level, const char *tag, const char *message);
 
@@ -22,7 +27,8 @@ esp_err_t event_log_write_durable(char level, const char *tag, const char *messa
 
 typedef void (*event_log_line_callback_t)(const char *line, void *context);
 
-/* Returns the most recent records already processed by the logger task. */
+/* Returns recent in-memory records under their mutex; this is not SD I/O and
+ * is not fenced by event_log_quiesce. */
 size_t event_log_latest(size_t max_events, event_log_line_callback_t callback, void *context);
 
 /* Read-only projection, exposed in bounded chunks for recovery transports. */

@@ -4,6 +4,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include <condition_variable>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <thread>
@@ -23,6 +24,9 @@ void reset_ticks();
 void advance_ticks(TickType_t ticks);
 void wake_waiters();
 void wait_for_test_task(TaskHandle_t task);
+bool wait_for_test_task(TaskHandle_t task, std::chrono::milliseconds timeout);
+bool join_test_task(TaskHandle_t task);
+void cleanup_test_tasks();
 void wait_for_notification_wait(TaskHandle_t task);
 void wait_for_timed_wait_registration();
 void wait_for_timed_wait_registration(std::thread::id owner);

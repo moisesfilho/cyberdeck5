@@ -161,7 +161,7 @@ def test_durable_ack_timeout_has_single_token_ownership(source):
           "failed enqueue attempts must release the temporary writer reference")
     check("xSemaphoreTake(request->complete, pdMS_TO_TICKS(250))" in durable,
           "durable callers must wait for a bounded acknowledgement")
-    accepted = durable[durable.index("if (xQueueSend(s_durable_queue"):]
+    accepted = durable[durable.index("accepted = xQueueSend(s_durable_queue"):]
     check("return ESP_ERR_TIMEOUT" in accepted and
           accepted.index("release_durable_request(request)") < accepted.index("return ESP_ERR_TIMEOUT"),
           "an accepted request timeout must release caller ownership and return timeout")

@@ -2,10 +2,13 @@
 
 The host executable links the real `event_log.cpp` TU. It characterizes existing
 behavior, including deterministic caller timeout/lifetime and durable queue
-backpressure runtime cases; it does not test or imply a quiesce/fence API.
+backpressure runtime cases. Independent argv scenarios preserve process isolation.
 
 | Requirement / AC | TEST | Baseline evidence |
 |---|---|---|
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-01 | TEST-EVENT-QUIESCE-PREINIT | `preinit` process verifies quiesce returns `ESP_ERR_INVALID_STATE` before initialization. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-02/03 | TEST-EVENT-QUIESCE-FENCE | `quiesce-fence` verifies normal append before fence; active text snapshot blocks in linker-wrapped `fread(events.txt)`, `quiesce(0)` times out while its lease is held, reader completes after release, and retry remains timeout; subsequent normal/durable writes and text readers fail closed. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-03 | TEST-EVENT-VPRINTF-FENCE | Invokes the real callback installed by init with a shim-captured original serial vprintf; after fence, serial output contains the formatted message while binary file size remains unchanged. |
 | REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-01 | TEST-HARNESS-INIT-01 | Real init creates both workers against a host SD directory; normal append reaches the binary log. Admission/fence is not implemented in this phase. |
 | AC-GLOBAL-LOG-02 | TEST-HARNESS-DURABLE-ACK-01 | Real durable API returns success only after worker completion; wrapped fwrite/fsync audit asserts write → fsync → caller ACK, and a test-only observer confirms accepted-request release after ACK. Binary log contains normal and durable records. |
 | AC-GLOBAL-LOG-03 | TEST-HARNESS-FAILURE-01 | Reserved for later quiesce lifecycle; this phase does not claim drain/timeout behavior. |
@@ -13,12 +16,18 @@ backpressure runtime cases; it does not test or imply a quiesce/fence API.
 | TEST-HARNESS-FSYNC-ISOLATION-01 | TEST-HARNESS-FSYNC-ISOLATION-01 | Runtime wrapper canonicalizes `/proc/self/fd/<n>` and compares only the unique root's `logs/events.log`; the binary fsync blocks until release while projection fsync is observed to complete without consuming the barrier. Failure injection remains binary-only. |
 | REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-02 | TEST-EVENT-DURABLE-TIMEOUT-LIFETIME | Real TU request blocks in binary fsync; advancing fake ticks by 250 ms must return `ESP_ERR_TIMEOUT` while release observer remains unchanged. After releasing fsync, observer must increment once, caller result must remain timeout, and raw `events.log` must contain the unique message exactly once. |
 | REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-02 | TEST-EVENT-DURABLE-BACKPRESSURE | Real TU durable queue discovered by unique capacity-4/pointer-size descriptor; one in-flight and four queued accepted requests time out while fsync is held, each caller must record `ESP_ERR_TIMEOUT` within five seconds before join, a sixth request returns `ESP_ERR_NO_MEM`, queue depth remains four, observer is unchanged until release, and one binary-log snapshot contains the timeout message and each accepted token exactly once with no overflow token. |
+| REQ-TEST-TASK-LIFECYCLE / AC-TEST-TASK-01 | TEST-SHIM-TASK-COMPLETION-JOIN | Shim task callback calling `vTaskDelete(NULL)` returns naturally; bounded completion is observable, self-delete request is observable, repeated join is safe, and cleanup reclaims joined handles. |
+| REQ-TEST-TASK-LIFECYCLE / AC-TEST-TASK-02 | TEST-SHIM-TASK-TIMEOUT | A gated live callback times out without reporting completion or joining; its handle remains usable, then completes and joins after deterministic release. |
 
 ## Harness limits
 
 The custom FreeRTOS shim copies queue items by configured item size, bounds queue
-capacity, provides counting/binary semaphore behavior and starts real detached
-host threads for tasks. It is intentionally isolated from `shim/full/freertos`.
+capacity, provides counting/binary semaphore behavior and starts joinable host
+threads for tasks. Completion is observable; join is accepted only after completion,
+and explicit cleanup reclaims joined handles. Self `vTaskDelete(NULL)` records a
+request and allows the callback to return naturally; no host thread is forcibly
+terminated. The runtime TU still uses `_exit` and its infinite workers are not
+joined by this harness phase. It is intentionally isolated from `shim/full/freertos`.
 The test links the production TU and `cyberdeck_clock.cpp`; BSP, ESP logging,
 timer, sdkconfig and filesystem path are host adapters. `--wrap=fsync` observes
 real host fsync calls. Write/fsync failures are injected and asserted below.
