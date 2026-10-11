@@ -45,13 +45,14 @@
    cenários de I/O são contratos estruturais e modelos bounded determinísticos.
  - `tests/host/keymap/test_event_log_runtime.cpp` liga o TU real do event log
    com shims host dedicados (`event_log_shim/`) para filas, semáforos, tasks,
-   BSP, timer e ESP logging, diretório SD temporário e `--wrap=fsync`. A fase 1
-    caracteriza init, append normal e ACK durable após fsync e injeta falhas de
-     write/fsync. Timeout com retenção de request e backpressure no TU seguem
-     reservados para etapa posterior. Não prova quiescência nem shutdown. A matriz
+    BSP, timer e ESP logging, diretório SD temporário e `--wrap=fsync`. O runtime
+    caracteriza init, append normal, ACK durable após fsync e falhas de
+    write/fsync, além de timeout/lifetime determinístico do caller e backpressure
+    da fila durável no TU real. Não prova quiescência nem shutdown. A matriz
        `tests/host/keymap/event_log_shim/event_log_shim.{h,cpp}` extrai os adapters
-       host e oferece introspecção passiva de snapshots imutáveis da fila (handle,
-       capacidade, tamanho de item e depth sob mutex) e espera bounded por depth;
+        host e oferece introspecção passiva de snapshots imutáveis da fila (handle,
+        capacidade, tamanho de item e depth sob mutex), enumeração dos handles válidos
+        registrados por `xQueueCreateStatic` sem lock aninhado, e espera bounded por depth;
        `test_event_log_shim.cpp` valida fila bounded FIFO/cópia e backpressure
        comportamental em fila de 4 ponteiros (rejeição cheia, sender bloqueado,
        wake no receive, payload/order preservados), semáforos e
@@ -61,12 +62,15 @@
       registro imediatamente antes de waits por notificação e timed waits; os testes separam
      wake unitário, contagem acumulada gated (`clear=false`/`clear=true`) e
       timeout fake-clock após registro do timed wait, aguardando conclusão das tasks. Não há
-       `test_event_log_runtime.cpp` também exercita timeout/lifetime: após reter
-       o fsync binário, aguarda o timed wait do caller específico por thread ID,
-       avança o fake clock por 250 ms, exige timeout do caller,
-      liberação posterior do request e exatamente uma ocorrência do token no
-      `events.log` real. A repetibilidade ainda precisa ser confirmada. Backpressure
-      permanece fora deste cenário. `make test_event_log_shim`
+       `test_event_log_runtime.cpp` também caracteriza timeout/lifetime no TU real:
+       após reter o fsync binário, avança o fake clock por 250 ms e exige
+       `ESP_ERR_TIMEOUT` do caller; após liberar o fsync, o token aceito persiste
+       exatamente uma vez. Em backpressure, mantém o worker retido no fsync:
+       um request in-flight e quatro requests em fila são aceitos e expiram como
+       `ESP_ERR_TIMEOUT`; após a liberação, cada um dos cinco tokens aceitos
+       persiste exatamente uma vez. O sexto pedido retorna `ESP_ERR_NO_MEM` e
+       seu token não aparece no log. Esses cenários caracterizam o logger atual,
+       não implementam nem provam quiesce/fence. `make test_event_log_shim`
      é alvo isolado.
       `tests/host/keymap/event_log_traceability.md` separa essa evidência runtime
      dos contratos estruturais existentes; `make test_event_log_runtime` compila

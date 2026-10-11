@@ -19,7 +19,8 @@ struct notify_case {
 static void notify_task(void *argument) {
     auto *test = static_cast<notify_case *>(argument);
     test->started.set_value();
-    if (test->gate.valid()) test->gate.wait();
+    if (test->gate.valid())
+        test->gate.wait();
     test->result.set_value(ulTaskNotifyTake(test->clear, test->wait));
 }
 
@@ -28,6 +29,26 @@ int main() {
     StaticQueue_t durable_storage{};
     uint8_t durable_bytes[4 * sizeof(void *)]{};
     auto durable_queue = xQueueCreateStatic(4, sizeof(void *), durable_bytes, &durable_storage);
+    StaticQueue_t registry_storage{};
+    uint8_t registry_bytes[3 * sizeof(uint16_t)]{};
+    auto registry_queue = xQueueCreateStatic(3, sizeof(uint16_t), registry_bytes, &registry_storage);
+    uint16_t registry_value = 0x1234, registry_received = 0;
+    assert(xQueueSend(registry_queue, &registry_value, 0) == pdTRUE);
+    const auto queues_before_snapshot = event_log_shim::snapshot_queues();
+    assert(queues_before_snapshot.size() == 2);
+    assert(queues_before_snapshot[0].handle == durable_queue);
+    assert(queues_before_snapshot[0].capacity == 4);
+    assert(queues_before_snapshot[0].item_size == sizeof(void *));
+    assert(queues_before_snapshot[0].depth == 0);
+    assert(queues_before_snapshot[1].handle == registry_queue);
+    assert(queues_before_snapshot[1].capacity == 3);
+    assert(queues_before_snapshot[1].item_size == sizeof(uint16_t));
+    assert(queues_before_snapshot[1].depth == 1);
+    const auto queues_after_snapshot = event_log_shim::snapshot_queues();
+    assert(queues_after_snapshot[1].depth == 1);
+    assert(xQueueReceive(registry_queue, &registry_received, 0) == pdTRUE);
+    assert(registry_received == registry_value);
+    assert(event_log_shim::snapshot_queues()[1].depth == 0);
     int payloads[] = {101, 202, 303, 404};
     for (size_t index = 0; index < 4; ++index) {
         void *payload = &payloads[index];
@@ -40,9 +61,8 @@ int main() {
     assert(xQueueSend(durable_queue, &rejected, 0) == pdFALSE);
     assert(event_log_shim::snapshot_queue(durable_queue).depth == 4);
     void *blocked_payload = &payloads[0];
-    auto blocked_sender = std::async(std::launch::async, [&] {
-        return xQueueSend(durable_queue, &blocked_payload, portMAX_DELAY);
-    });
+    auto blocked_sender =
+        std::async(std::launch::async, [&] { return xQueueSend(durable_queue, &blocked_payload, portMAX_DELAY); });
     event_log_shim::wait_for_timed_wait_registration();
     assert(blocked_sender.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout);
     void *received_payload = nullptr;

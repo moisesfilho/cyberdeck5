@@ -1,7 +1,8 @@
-# Event log runtime harness — baseline characterization
+# Event log runtime harness — behavior characterization
 
-Phase 1 only: the host executable links the real `event_log.cpp` TU. It characterizes
-existing behavior and does not test or imply a quiesce/fence API.
+The host executable links the real `event_log.cpp` TU. It characterizes existing
+behavior, including deterministic caller timeout/lifetime and durable queue
+backpressure runtime cases; it does not test or imply a quiesce/fence API.
 
 | Requirement / AC | TEST | Baseline evidence |
 |---|---|---|
@@ -11,6 +12,7 @@ existing behavior and does not test or imply a quiesce/fence API.
 | AC-GLOBAL-LOG-04 | TEST-HARNESS-PROJECTION-01 | Existing structural contracts retain projection best-effort, rotation/read, durable timeout and queue ordering; runtime target starts projection worker. |
 | TEST-HARNESS-FSYNC-ISOLATION-01 | TEST-HARNESS-FSYNC-ISOLATION-01 | Runtime wrapper canonicalizes `/proc/self/fd/<n>` and compares only the unique root's `logs/events.log`; the binary fsync blocks until release while projection fsync is observed to complete without consuming the barrier. Failure injection remains binary-only. |
 | REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-02 | TEST-EVENT-DURABLE-TIMEOUT-LIFETIME | Real TU request blocks in binary fsync; advancing fake ticks by 250 ms must return `ESP_ERR_TIMEOUT` while release observer remains unchanged. After releasing fsync, observer must increment once, caller result must remain timeout, and raw `events.log` must contain the unique message exactly once. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-02 | TEST-EVENT-DURABLE-BACKPRESSURE | Real TU durable queue discovered by unique capacity-4/pointer-size descriptor; one in-flight and four queued accepted requests time out while fsync is held, each caller must record `ESP_ERR_TIMEOUT` within five seconds before join, a sixth request returns `ESP_ERR_NO_MEM`, queue depth remains four, observer is unchanged until release, and one binary-log snapshot contains the timeout message and each accepted token exactly once with no overflow token. |
 
 ## Harness limits
 
@@ -23,8 +25,10 @@ real host fsync calls. Write/fsync failures are injected and asserted below.
 `event_log_shim/event_log_shim.cpp` owns the extracted FreeRTOS/BSP/time
 adapters. Its unit target verifies copied FIFO bounded queue semantics,
 semaphore empty/give/take and mutex availability, deterministic monotonic tick
-advancement, deadline-pending behavior and wake-before-deadline. It does not
-yet test TU timeout/lifetime/backpressure. Test-task, notification, timed-wait,
+advancement, deadline-pending behavior and wake-before-deadline. The runtime
+target separately characterizes timeout/lifetime and backpressure behavior of
+the real logger TU; neither target implements or proves quiesce/fence behavior.
+Test-task, notification, timed-wait,
 binary-fsync barrier and observer waits have finite five-second watchdogs; expiry fails
 the host test rather than masquerading as an expected logger error. The queue and semaphore APIs still
 use host condition-variable waits for nonzero FreeRTOS waits; the explicit

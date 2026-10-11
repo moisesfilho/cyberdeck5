@@ -41,6 +41,9 @@ TickType_t ticks = 0;
 std::mutex waits_mutex;
 std::condition_variable waits_cv;
 std::vector<event_log_shim::timed_wait *> waits;
+uint64_t timed_wait_generation = 0;
+std::mutex queue_registry_mutex;
+std::vector<host_queue *> queue_registry;
 void wake_registered_waits() {
     std::lock_guard<std::mutex> lock(waits_mutex);
     for (auto *wait : waits)
@@ -48,10 +51,24 @@ void wake_registered_waits() {
 }
 } // namespace
 namespace event_log_shim {
-namespace { constexpr auto kWaitWatchdog = std::chrono::seconds(5); }
+namespace {
+constexpr auto kWaitWatchdog = std::chrono::seconds(5);
+}
 queue_snapshot snapshot_queue(QueueHandle_t handle) {
     std::lock_guard<std::mutex> lock(handle->mutex);
     return {handle, handle->length, handle->item_size, handle->values.size()};
+}
+std::vector<queue_snapshot> snapshot_queues() {
+    std::vector<host_queue *> handles;
+    {
+        std::lock_guard<std::mutex> lock(queue_registry_mutex);
+        handles = queue_registry;
+    }
+    std::vector<queue_snapshot> snapshots;
+    snapshots.reserve(handles.size());
+    for (auto *handle : handles)
+        snapshots.push_back(snapshot_queue(handle));
+    return snapshots;
 }
 void wait_for_queue_depth(QueueHandle_t handle, size_t expected) {
     std::unique_lock<std::mutex> lock(handle->mutex);
@@ -71,18 +88,34 @@ void wait_for_notification_wait(TaskHandle_t task) {
 void wait_for_timed_wait_registration() {
     std::unique_lock<std::mutex> lock(waits_mutex);
     if (!waits_cv.wait_for(lock, kWaitWatchdog, [] {
-        return std::any_of(waits.begin(), waits.end(), [](auto *wait) {
-            return wait->waiting_;
-        });
-    })) throw std::runtime_error("watchdog: timed wait was not registered within 5s");
+            return std::any_of(waits.begin(), waits.end(), [](auto *wait) { return wait->waiting_; });
+        }))
+        throw std::runtime_error("watchdog: timed wait was not registered within 5s");
 }
 void wait_for_timed_wait_registration(std::thread::id owner) {
     std::unique_lock<std::mutex> lock(waits_mutex);
     if (!waits_cv.wait_for(lock, kWaitWatchdog, [owner] {
-        return std::any_of(waits.begin(), waits.end(), [owner](auto *wait) {
-            return wait->waiting_ && wait->owner_ == owner;
-        });
-    })) throw std::runtime_error("watchdog: caller timed wait was not registered within 5s");
+            return std::any_of(waits.begin(), waits.end(),
+                               [owner](auto *wait) { return wait->waiting_ && wait->owner_ == owner; });
+        }))
+        throw std::runtime_error("watchdog: caller timed wait was not registered within 5s");
+}
+uint64_t timed_wait_registration_generation() {
+    std::lock_guard<std::mutex> lock(waits_mutex);
+    return timed_wait_generation;
+}
+uint64_t wait_for_next_timed_wait_registration(std::thread::id owner, uint64_t after_generation) {
+    std::unique_lock<std::mutex> lock(waits_mutex);
+    if (!waits_cv.wait_for(lock, kWaitWatchdog, [owner, after_generation] {
+            return std::any_of(waits.begin(), waits.end(), [owner, after_generation](auto *wait) {
+                return wait->waiting_ && wait->owner_ == owner && wait->registration_generation_ > after_generation;
+            });
+        }))
+        throw std::runtime_error("watchdog: next caller timed wait was not registered within 5s");
+    const auto found = std::find_if(waits.begin(), waits.end(), [owner, after_generation](auto *wait) {
+        return wait->waiting_ && wait->owner_ == owner && wait->registration_generation_ > after_generation;
+    });
+    return (*found)->registration_generation_;
 }
 void reset_ticks() {
     std::lock_guard<std::mutex> lock(ticks_mutex);
@@ -113,6 +146,7 @@ bool timed_wait::wait_until(TickType_t deadline) {
         std::lock_guard<std::mutex> registry_lock(waits_mutex);
         owner_ = std::this_thread::get_id();
         waiting_ = true;
+        registration_generation_ = ++timed_wait_generation;
         waits_cv.notify_all();
     }
     std::unique_lock<std::mutex> lock(mutex_);
@@ -145,6 +179,10 @@ QueueHandle_t xQueueCreateStatic(size_t n, size_t s, uint8_t *, StaticQueue_t *)
     auto *q = new host_queue;
     q->length = n;
     q->item_size = s;
+    {
+        std::lock_guard<std::mutex> lock(queue_registry_mutex);
+        queue_registry.push_back(q);
+    }
     return q;
 }
 BaseType_t xQueueSend(QueueHandle_t q, const void *item, TickType_t wait) {
@@ -152,8 +190,11 @@ BaseType_t xQueueSend(QueueHandle_t q, const void *item, TickType_t wait) {
     const auto deadline = wait == portMAX_DELAY ? portMAX_DELAY : xTaskGetTickCount() + wait;
     std::unique_lock<std::mutex> l(q->mutex);
     while (q->values.size() == q->length) {
-        if (!wait || xTaskGetTickCount() >= deadline) return pdFALSE;
-        l.unlock(); registered_wait.wait_until(deadline); l.lock();
+        if (!wait || xTaskGetTickCount() >= deadline)
+            return pdFALSE;
+        l.unlock();
+        registered_wait.wait_until(deadline);
+        l.lock();
     }
     std::vector<unsigned char> v(q->item_size);
     std::memcpy(v.data(), item, q->item_size);
@@ -168,8 +209,11 @@ BaseType_t xQueueReceive(QueueHandle_t q, void *out, TickType_t wait) {
     const auto deadline = wait == portMAX_DELAY ? portMAX_DELAY : xTaskGetTickCount() + wait;
     std::unique_lock<std::mutex> l(q->mutex);
     while (q->values.empty()) {
-        if (!wait || xTaskGetTickCount() >= deadline) return pdFALSE;
-        l.unlock(); registered_wait.wait_until(deadline); l.lock();
+        if (!wait || xTaskGetTickCount() >= deadline)
+            return pdFALSE;
+        l.unlock();
+        registered_wait.wait_until(deadline);
+        l.lock();
     }
     auto v = std::move(q->values.front());
     q->values.pop_front();
@@ -229,7 +273,10 @@ BaseType_t xTaskCreate(TaskFunction_t f, const char *, uint32_t, void *arg, unsi
         ready.wait();
         current_task = t;
         f(arg);
-        { std::lock_guard<std::mutex> lock(t->mutex); t->completed = true; }
+        {
+            std::lock_guard<std::mutex> lock(t->mutex);
+            t->completed = true;
+        }
         t->cv.notify_all();
     });
     t->thread.detach();
@@ -259,10 +306,13 @@ uint32_t ulTaskNotifyTake(BaseType_t clear, TickType_t wait) {
     const auto deadline = wait == portMAX_DELAY ? portMAX_DELAY : xTaskGetTickCount() + wait;
     std::unique_lock<std::mutex> l(task->mutex);
     while (!task->notifications) {
-        if (!wait || xTaskGetTickCount() >= deadline) return 0;
+        if (!wait || xTaskGetTickCount() >= deadline)
+            return 0;
         task->notification_wait_registered = true;
         task->cv.notify_all();
-        l.unlock(); registered_wait.wait_until(deadline); l.lock();
+        l.unlock();
+        registered_wait.wait_until(deadline);
+        l.lock();
     }
     unsigned n = task->notifications;
     if (clear)
@@ -272,7 +322,8 @@ uint32_t ulTaskNotifyTake(BaseType_t clear, TickType_t wait) {
     return n;
 }
 void vTaskDelay(TickType_t ms) {
-    if (!ms) return;
+    if (!ms)
+        return;
     event_log_shim::timed_wait registered_wait;
     registered_wait.wait_until(ms == portMAX_DELAY ? portMAX_DELAY : xTaskGetTickCount() + ms);
 }

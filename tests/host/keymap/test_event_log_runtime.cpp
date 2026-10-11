@@ -7,14 +7,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <functional>
 #include <limits.h>
-#include <fcntl.h>
 #include <mutex>
-#include <limits.h>
 #include <string>
-#include <thread>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -55,8 +54,7 @@ static bool is_binary_event_file(int fd) {
         return false;
     descriptor_path[path_length] = '\0';
     char canonical_descriptor[PATH_MAX + 1]{};
-    return realpath(descriptor_path, canonical_descriptor) &&
-           std::strcmp(canonical_descriptor, expected_path) == 0;
+    return realpath(descriptor_path, canonical_descriptor) && std::strcmp(canonical_descriptor, expected_path) == 0;
 }
 extern "C" int __wrap_fsync(int fd) {
     const bool is_binary = is_binary_event_file(fd);
@@ -121,6 +119,14 @@ int main() {
     const auto logs_path = std::string(root) + "/logs";
     assert(mkdir(logs_path.c_str(), 0700) == 0);
     assert(event_log_init() == ESP_OK);
+    const auto queue_descriptors = event_log_shim::snapshot_queues();
+    std::vector<event_log_shim::queue_snapshot> durable_descriptors;
+    for (const auto &descriptor : queue_descriptors) {
+        if (descriptor.capacity == 4 && descriptor.item_size == sizeof(void *))
+            durable_descriptors.push_back(descriptor);
+    }
+    assert(durable_descriptors.size() == 1);
+    const auto durable_queue = durable_descriptors.front().handle;
     {
         std::lock_guard<std::mutex> lock(fsync_mutex);
         block_fsync = true;
@@ -228,23 +234,139 @@ int main() {
     fsync_cv.notify_all();
     {
         std::unique_lock<std::mutex> lock(audit_mutex);
-        assert(audit_cv.wait_for(lock, std::chrono::seconds(5), [&] {
-            return durable_release_count == releases_before_timeout + 1;
-        }));
+        assert(audit_cv.wait_for(lock, std::chrono::seconds(5),
+                                 [&] { return durable_release_count == releases_before_timeout + 1; }));
     }
     caller.join();
     assert(timeout_result == ESP_ERR_TIMEOUT);
-    FILE *binary_log = std::fopen(normal_path.c_str(), "rb");
-    assert(binary_log != nullptr);
+
+    // Hold the real worker in binary fsync while saturating the production
+    // durable queue. Each caller's semaphore wait is observed before advancing
+    // fake time, so queue depth and ACK timeout are race-free observations.
+    event_log_shim::reset_ticks();
+    const auto releases_before_backpressure = durable_release_count;
     std::string persisted_bytes;
     char read_buffer[512];
-    while (const auto bytes_read = std::fread(read_buffer, 1, sizeof(read_buffer), binary_log))
+    {
+        std::lock_guard<std::mutex> lock(fsync_mutex);
+        block_fsync = true;
+        fsync_entered = false;
+        release_fsync = false;
+    }
+    constexpr size_t accepted_count = 5;
+    std::vector<std::string> accepted_tokens;
+    std::vector<esp_err_t> accepted_results(accepted_count, ESP_FAIL);
+    std::vector<unsigned char> accepted_done(accepted_count, 0);
+    std::mutex accepted_mutex;
+    std::condition_variable accepted_cv;
+    std::vector<std::thread> accepted_callers;
+    accepted_tokens.reserve(accepted_count);
+    accepted_callers.reserve(accepted_count);
+    accepted_callers.emplace_back([&] {
+        accepted_results[0] = event_log_write_durable('W', "backpressure", "backpressure-accepted-0");
+        {
+            std::lock_guard<std::mutex> lock(accepted_mutex);
+            accepted_done[0] = true;
+        }
+        accepted_cv.notify_all();
+    });
+    accepted_tokens.emplace_back("backpressure-accepted-0");
+    {
+        std::unique_lock<std::mutex> lock(fsync_mutex);
+        assert(fsync_cv.wait_for(lock, std::chrono::seconds(5), [] { return fsync_entered; }));
+    }
+    event_log_shim::wait_for_timed_wait_registration(accepted_callers[0].get_id());
+    for (size_t index = 1; index < accepted_count; ++index) {
+        accepted_tokens.emplace_back("backpressure-accepted-" + std::to_string(index));
+        accepted_callers.emplace_back([&, index] {
+            accepted_results[index] = event_log_write_durable('W', "backpressure", accepted_tokens[index].c_str());
+            {
+                std::lock_guard<std::mutex> lock(accepted_mutex);
+                accepted_done[index] = true;
+            }
+            accepted_cv.notify_all();
+        });
+        event_log_shim::wait_for_queue_depth(durable_queue, index);
+        event_log_shim::wait_for_timed_wait_registration(accepted_callers.back().get_id());
+    }
+    assert(event_log_shim::snapshot_queue(durable_queue).depth == 4);
+    const std::string overflow_token = "backpressure-overflow-unique";
+    esp_err_t overflow_result = ESP_FAIL;
+    bool overflow_done = false;
+    std::mutex overflow_mutex;
+    std::condition_variable overflow_cv;
+    const auto overflow_generation = event_log_shim::timed_wait_registration_generation();
+    std::thread overflow_caller([&] {
+        const auto result = event_log_write_durable('E', "backpressure", overflow_token.c_str());
+        {
+            std::lock_guard<std::mutex> lock(overflow_mutex);
+            overflow_result = result;
+            overflow_done = true;
+        }
+        overflow_cv.notify_all();
+    });
+    const auto overflow_id = overflow_caller.get_id();
+    auto observed_generation = overflow_generation;
+    for (unsigned retry = 0; retry < 3; ++retry) {
+        {
+            std::lock_guard<std::mutex> lock(overflow_mutex);
+            if (overflow_done)
+                break;
+        }
+        observed_generation = event_log_shim::wait_for_next_timed_wait_registration(overflow_id, observed_generation);
+        event_log_shim::advance_ticks(pdMS_TO_TICKS(20));
+    }
+    {
+        std::unique_lock<std::mutex> lock(overflow_mutex);
+        assert(overflow_cv.wait_for(lock, std::chrono::seconds(5), [&] { return overflow_done; }));
+        assert(overflow_result == ESP_ERR_NO_MEM);
+    }
+    assert(event_log_shim::snapshot_queue(durable_queue).depth == 4);
+    event_log_shim::advance_ticks(pdMS_TO_TICKS(250));
+    for (size_t index = 0; index < accepted_count; ++index) {
+        std::unique_lock<std::mutex> lock(accepted_mutex);
+        assert(accepted_cv.wait_for(lock, std::chrono::seconds(5), [&, index] { return accepted_done[index]; }));
+        assert(accepted_results[index] == ESP_ERR_TIMEOUT);
+    }
+    // Every accepted caller has recorded its timeout before joining.
+    for (auto &caller_thread : accepted_callers)
+        caller_thread.join();
+    for (const auto result : accepted_results)
+        assert(result == ESP_ERR_TIMEOUT);
+    {
+        std::lock_guard<std::mutex> lock(audit_mutex);
+        assert(durable_release_count == releases_before_backpressure);
+    }
+    {
+        std::lock_guard<std::mutex> lock(fsync_mutex);
+        release_fsync = true;
+        block_fsync = false;
+    }
+    fsync_cv.notify_all();
+    {
+        std::unique_lock<std::mutex> lock(audit_mutex);
+        assert(audit_cv.wait_for(lock, std::chrono::seconds(5), [&] {
+            return durable_release_count == releases_before_backpressure + accepted_count;
+        }));
+    }
+    overflow_caller.join();
+    assert(overflow_result == ESP_ERR_NO_MEM);
+    FILE *backpressure_log = std::fopen(normal_path.c_str(), "rb");
+    assert(backpressure_log != nullptr);
+    persisted_bytes.clear();
+    while (const auto bytes_read = std::fread(read_buffer, 1, sizeof(read_buffer), backpressure_log))
         persisted_bytes.append(read_buffer, bytes_read);
-    assert(std::ferror(binary_log) == 0);
-    assert(std::fclose(binary_log) == 0);
-    const auto token_position = persisted_bytes.find(timeout_message);
-    assert(token_position != std::string::npos);
-    assert(persisted_bytes.find(timeout_message, token_position + timeout_message.size()) == std::string::npos);
+    assert(std::ferror(backpressure_log) == 0);
+    assert(std::fclose(backpressure_log) == 0);
+    const auto timeout_position = persisted_bytes.find(timeout_message);
+    assert(timeout_position != std::string::npos);
+    assert(persisted_bytes.find(timeout_message, timeout_position + timeout_message.size()) == std::string::npos);
+    for (const auto &token : accepted_tokens) {
+        const auto position = persisted_bytes.find(token);
+        assert(position != std::string::npos);
+        assert(persisted_bytes.find(token, position + token.size()) == std::string::npos);
+    }
+    assert(persisted_bytes.find(overflow_token) == std::string::npos);
     assert(access(normal_path.c_str(), F_OK) == 0);
     struct stat before_failed_write {};
     assert(stat(normal_path.c_str(), &before_failed_write) == 0);
