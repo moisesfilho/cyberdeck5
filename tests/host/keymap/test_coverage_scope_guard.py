@@ -32,7 +32,6 @@ PRE_EXISTING_ALLOWLIST = frozenset({
     "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp",
     "components/cyberdeck/src/platform/display/screen_off.cpp",
     "components/cyberdeck/src/platform/input/tab5_keyboard.cpp",
-    "components/cyberdeck/src/platform/logging/event_log.cpp",
     "components/cyberdeck/src/platform/sensors/battery_protection.cpp",
     "components/cyberdeck/src/platform/sensors/imu_reader.cpp",
     "components/cyberdeck/src/platform/sensors/ina226_reader.cpp",
@@ -145,10 +144,10 @@ def write_report(report: Path, files) -> None:
 # --- TEST-COV-001..005: structural contract of the reviewed allowlist ---------
 
 def test_allowlist_is_exactly_the_reviewed_set() -> None:
-    """TEST-COV-001: 12 pre-existing adapters plus exactly 5 new ones."""
+    """TEST-COV-001: 11 pre-existing adapters plus exactly 5 new ones."""
     expected = PRE_EXISTING_ALLOWLIST | NEWLY_ALLOWLISTED
-    assert len(ALLOWLIST) == 17, \
-        f"allowlist must hold exactly 17 entries, found {len(ALLOWLIST)}"
+    assert len(ALLOWLIST) == 16, \
+        f"allowlist must hold exactly 16 entries, found {len(ALLOWLIST)}"
     assert set(ALLOWLIST) == expected, (
         "allowlist drifted from the reviewed set: "
         f"missing={sorted(expected - set(ALLOWLIST))} "

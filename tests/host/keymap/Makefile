@@ -176,7 +176,7 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync test_sd_io_coordinator $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_event_log_runtime test_event_log_shim test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync test_sd_io_coordinator $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
 test_editor_model: test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp ../../../components/cyberdeck/include/apps/editor/cyberdeck_editor_model.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp -o $@
@@ -291,6 +291,18 @@ test_event_log_recent: test_event_log_recent.cpp $(EVENT_LOG_RECENT_SRC) ../../.
 
 test_event_log_contract: test_event_log_contract.py ../../../components/cyberdeck/src/platform/logging/event_log.cpp Makefile
 	$(PYTHON) test_event_log_contract.py
+
+EVENT_LOG_SRC := ../../../components/cyberdeck/src/platform/logging/event_log.cpp
+.PHONY: test_event_log_runtime
+EVENT_LOG_RUNTIME_TEST := test_event_log_runtime.cpp
+EVENT_LOG_SHIM := event_log_shim
+test_event_log_shim: test_event_log_shim.cpp $(EVENT_LOG_SHIM)/event_log_shim.cpp $(EVENT_LOG_SHIM)/event_log_shim.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -pthread -I$(EVENT_LOG_SHIM) -Ishim test_event_log_shim.cpp $(EVENT_LOG_SHIM)/event_log_shim.cpp -o $@
+	./$@
+
+test_event_log_runtime: $(EVENT_LOG_RUNTIME_TEST) $(EVENT_LOG_SRC) $(EVENT_LOG_SHIM)/event_log_shim.cpp event_log_traceability.md $(EVENT_LOG_SHIM)/cyberdeck_paths.h $(EVENT_LOG_SHIM)/esp_log.h $(EVENT_LOG_SHIM)/esp_timer.h $(EVENT_LOG_SHIM)/sdkconfig.h $(EVENT_LOG_SHIM)/bsp/esp-bsp.h $(EVENT_LOG_SHIM)/freertos/FreeRTOS.h $(EVENT_LOG_SHIM)/freertos/queue.h $(EVENT_LOG_SHIM)/freertos/semphr.h $(EVENT_LOG_SHIM)/freertos/task.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Wno-format -O0 --coverage -fsanitize=address,undefined -pthread -DCYBERDECK_EVENT_LOG_TEST -I$(EVENT_LOG_SHIM) -Ishim -I../../../components/cyberdeck/include $(EVENT_LOG_RUNTIME_TEST) $(EVENT_LOG_SHIM)/event_log_shim.cpp $(EVENT_LOG_SRC) ../../../components/cyberdeck/src/platform/logging/event_log_recent.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_clock.cpp -Wl,--wrap=fsync -Wl,--wrap=fwrite -o test_event_log_runtime
+	@runtime_root=$$(mktemp -d); EVENT_LOG_TEST_ROOT="$$runtime_root" ./test_event_log_runtime; result=$$?; rm -rf "$$runtime_root"; exit $$result
 
 test_event_projection_contract: test_event_projection_contract.py event_projection_traceability.md ../../../components/cyberdeck/src/platform/logging/event_log.cpp ../../../components/cyberdeck/include/platform/logging/event_log.h ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp Makefile
 	$(PYTHON) test_event_projection_contract.py
@@ -986,6 +998,8 @@ test: $(BINS)
 	@./test_keyboard_event
 	@echo "==> Executando testes da selecao de indices do anel recente do log"
 	@./test_event_log_recent
+	@./test_event_log_shim
+	@./test_event_log_runtime
 	@echo "==> Executando contrato estrutural do event log"
 	@$(MAKE) --no-print-directory test_event_log_contract
 	@echo "==> Executando contrato estrutural da projecao textual de eventos"
@@ -1206,4 +1220,4 @@ test: $(BINS)
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
 	@$(MAKE) --no-print-directory imu_sensor_contract
 clean:
-	rm -f $(BINS) test_battery_protection
+	rm -f $(BINS) test_battery_protection ./*.gcda ./*.gcno ./*.gcov

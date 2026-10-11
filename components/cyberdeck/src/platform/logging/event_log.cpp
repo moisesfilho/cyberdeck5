@@ -25,6 +25,10 @@
 
 #include "sdkconfig.h"
 
+#if defined(CYBERDECK_EVENT_LOG_TEST)
+extern "C" void event_log_test_durable_request_released(void);
+#endif
+
 #if CONFIG_CYBERDECK_LOG_LINES < 1 || CONFIG_CYBERDECK_LOG_LINES > 64
 #error "CONFIG_CYBERDECK_LOG_LINES must be in the range 1..64"
 #endif
@@ -451,6 +455,9 @@ void log_task(void *) {
                 (void)xSemaphoreGive(durable->complete);
             }
             release_durable_request(durable);
+#if defined(CYBERDECK_EVENT_LOG_TEST)
+            event_log_test_durable_request_released();
+#endif
             continue;
         }
 

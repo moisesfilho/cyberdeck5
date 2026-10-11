@@ -49,8 +49,6 @@ ALLOWLIST = {
         "BSP/I2C/FreeRTOS sensor adapter",
     "components/cyberdeck/src/platform/sensors/battery_protection.cpp":
         "BSP/expander/NVS adapter",
-    "components/cyberdeck/src/platform/logging/event_log.cpp":
-        "ESP timer/FreeRTOS logging adapter",
 }
 
 FORBIDDEN_ALLOWLIST = {

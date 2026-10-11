@@ -42,7 +42,46 @@
   existentes. `event_projection_traceability.md` mantém a matriz REQ/AC ->
   TEST; o alvo isolado `make test_event_projection_contract` também entra no
   agregado host `make test`. Como a implementação depende de ESP-IDF/SD, os
-  cenários de I/O são contratos estruturais e modelos bounded determinísticos.
+   cenários de I/O são contratos estruturais e modelos bounded determinísticos.
+ - `tests/host/keymap/test_event_log_runtime.cpp` liga o TU real do event log
+   com shims host dedicados (`event_log_shim/`) para filas, semáforos, tasks,
+   BSP, timer e ESP logging, diretório SD temporário e `--wrap=fsync`. A fase 1
+    caracteriza init, append normal e ACK durable após fsync e injeta falhas de
+     write/fsync. Timeout com retenção de request e backpressure no TU seguem
+     reservados para etapa posterior. Não prova quiescência nem shutdown. A matriz
+       `tests/host/keymap/event_log_shim/event_log_shim.{h,cpp}` extrai os adapters
+       host e oferece introspecção passiva de snapshots imutáveis da fila (handle,
+       capacidade, tamanho de item e depth sob mutex) e espera bounded por depth;
+       `test_event_log_shim.cpp` valida fila bounded FIFO/cópia e backpressure
+       comportamental em fila de 4 ponteiros (rejeição cheia, sender bloqueado,
+       wake no receive, payload/order preservados), semáforos e
+      espera por deadline/wake com ticks falsos. A barreira de registro do timed wait
+      e os wakes do fake clock sincronizam notificacoes sob o mutex de cada wait,
+      evitando lost wakes sem confundir avanço de ticks com wake antecipado. O shim oferece barreiras de
+      registro imediatamente antes de waits por notificação e timed waits; os testes separam
+     wake unitário, contagem acumulada gated (`clear=false`/`clear=true`) e
+      timeout fake-clock após registro do timed wait, aguardando conclusão das tasks. Não há
+       `test_event_log_runtime.cpp` também exercita timeout/lifetime: após reter
+       o fsync binário, aguarda o timed wait do caller específico por thread ID,
+       avança o fake clock por 250 ms, exige timeout do caller,
+      liberação posterior do request e exatamente uma ocorrência do token no
+      `events.log` real. A repetibilidade ainda precisa ser confirmada. Backpressure
+      permanece fora deste cenário. `make test_event_log_shim`
+     é alvo isolado.
+      `tests/host/keymap/event_log_traceability.md` separa essa evidência runtime
+     dos contratos estruturais existentes; `make test_event_log_runtime` compila
+      e executa o TU real no agregado host e no alvo isolado, usando root
+      temporário por execução e mantendo os perfis gcov no diretório de teste
+      para o gcovr/scope guard da mesma CI. `make clean` remove binários e
+      sidecars gcov; o TU deixa a allowlist do coverage scope guard.
+      Somente esse alvo define `CYBERDECK_EVENT_LOG_TEST`; o observer de release
+      é implementado no TU de teste e sua execução após ACK durable é aguardada
+       com watchdog bounded. O wrapper fsync identifica por caminho canonicalizado
+       o descritor exato `<EVENT_LOG_TEST_ROOT>/logs/events.log`: somente esse
+       descritor pode consumir a barreira binária ou a falha injetada; fsync de
+       `events.txt` delega imediatamente ao host. O runtime comprova projeção
+       fsync enquanto o fsync binário está retido. Todos os waits de sincronização do harness runtime
+      e shim expiram em cinco segundos e falham explicitamente.
 
 Mapa de navegacao do OS embarcado simplificado ESP-IDF para o unico alvo
 M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.

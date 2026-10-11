@@ -1,0 +1,46 @@
+#pragma once
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
+namespace event_log_shim {
+struct queue_snapshot {
+    QueueHandle_t handle;
+    size_t capacity;
+    size_t item_size;
+    size_t depth;
+};
+queue_snapshot snapshot_queue(QueueHandle_t handle);
+void wait_for_queue_depth(QueueHandle_t handle, size_t expected);
+void reset_ticks();
+void advance_ticks(TickType_t ticks);
+void wake_waiters();
+void wait_for_test_task(TaskHandle_t task);
+void wait_for_notification_wait(TaskHandle_t task);
+void wait_for_timed_wait_registration();
+void wait_for_timed_wait_registration(std::thread::id owner);
+class timed_wait {
+  public:
+    timed_wait();
+    ~timed_wait();
+    timed_wait(const timed_wait &) = delete;
+    timed_wait &operator=(const timed_wait &) = delete;
+    bool wait_until(TickType_t deadline);
+    void wake();
+    void notify_tick_advanced();
+
+  private:
+    friend void wake_waiters();
+    friend void wait_for_timed_wait_registration();
+    friend void wait_for_timed_wait_registration(std::thread::id owner);
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool woken_ = false;
+    bool waiting_ = false;
+    std::thread::id owner_;
+};
+} // namespace event_log_shim
