@@ -17,8 +17,15 @@ global coverage or synchronization guarantee from this stage.
 | REQ-SDIO-04 / AC-SDIO-04: Editor open admits one READ lease before storage access; denied admission performs no I/O | Check lease acquisition and denial precede facade construction/read; boot/UI/runtime share the one coordinator | `test_sd_io_integration_contract.py::test_editor_open_read_lease_precedes_facade_and_read`, `test_coordinator_identity_is_shared_by_boot_ui_and_application_runtime` | structural integration contract |
 | REQ-SDIO-05 / AC-SDIO-05: Each editor save transaction owns one WRITE lease from admission through temp write, flush, rename, rollback result handling and directory fsync; denial precedes storage and automatic release covers success/failure returns | Verify one acquisition per save path, operation ordering, fail-closed branches, automatic local lifetime and preserved sidecar/editor regression contracts | `test_sd_io_integration_contract.py::test_save_leases_cover_complete_transaction_and_denial_precedes_io`, `test_storage_failures_return_with_raii_lease_and_existing_contracts_remain`; `test_editor_save_contract`; `test_save_sidecar_recovery` | structural plus targeted existing behavioral contracts |
 | REQ-SDIO-BOOT-01 / AC-SDIO-BOOT-01: After SD mount/handle validation, boot recovery runs under one WRITE lease on the shared coordinator | Check mount validation order, single instance, recovery lease, and injection into runtime/UI before apps start | `test_sd_io_integration_contract.py::test_coordinator_identity_is_shared_by_boot_ui_and_application_runtime` | structural integration contract |
+| REQ-CAT / REQ-SDIO-02 (partial): async cat worker receives the shared coordinator through UI binding; each worker request uses a READ lease; boot injects the coordinator before UI/worker startup | Assert UI bind delegates to `cyberdeck_cat_worker_bind_sd_io`, worker binding updates `s_sd_io_coordinator`, request path uses `with_read_lease`, and `app_main` injects before UI init and system-app startup | `test_sd_io_integration_contract.py::test_async_cat_worker_uses_shared_coordinator` (`TEST-CAT-WORKER-BINDING`) | partial structural integration evidence; not proof of all SD paths |
 
 READ/WRITE leases may overlap by design. The gate blocks new leases while
 CLOSING, and drain waits for all existing active leases. AC-SDIO-02 and
 AC-SDIO-03 are broader integration/lifecycle requirements and are not covered by
 these coordinator unit tests.
+
+This cat-worker scenario establishes only the READ integration wiring described
+above. A missing coordinator binding is fail-closed in the worker (the request
+remains rejected and is not executed), not an unleased I/O path. REQ-SDIO-02 /
+AC-SDIO-02 (integration across all paths) and AC-SDIO-03 (safe unmount) remain
+incomplete; REQ-GLOBAL-QUIESCE and REQ-SD-SYNC remain blockers.

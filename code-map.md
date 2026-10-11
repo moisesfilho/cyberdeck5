@@ -217,17 +217,20 @@ continuam sendo renderizados pelos fluxos existentes.
   runtime de apps/editor. O editor adquire READ para open e uma unica WRITE para
   toda a transacao de save; a recuperacao de sidecars usa WRITE durante toda a
   operacao. Todas as operacoes sincronas do shell local que acessam caminhos SD
-  (`cat`, `ls`, `cd`, `touch`, `mkdir`, `rm`, `rmdir`) adquirem leases antes de
-  qualquer I/O e as mantêm durante a operacao. Stage 1 inclui todas as operacoes
-  sincronas locais do shell, a transacao de leitura/save do editor e a
-  recuperacao de boot, usando o coordinator injetado.
+  (`ls`, `cd`, `touch`, `mkdir`, `rm`, `rmdir`) adquirem leases antes de
+  qualquer I/O e as mantêm durante a operacao; `cat` e executado pelo worker
+  assincrono e usa READ lease por request quando o coordinator compartilhado e
+  injetado pela UI. Stage 1 inclui as operacoes sincronas locais do shell (nao
+  cat), a transacao de leitura/save do editor e a recuperacao de boot. A
+  integracao READ do cat tem evidencia estrutural parcial; lifecycle/fence
+  global permanece aberto.
 - `tests/host/keymap/test_sd_io_coordinator.cpp` cobre o contrato de leases/gate;
   `test_sd_io_integration_contract.py` verifica a integracao e injecao. Os casos
   de gate fechado para `ls`, `cd` e `cat` ficam em `test_local_shell.cpp`.
   `test_ssh_output_gap.py` e `test_prompt_behavior.py` incluem ajustes de link
   do harness para o coordinator.
 - Exclusoes explicitas do Stage 1: escritores async globais, event log,
-  WiFi/audit, Serial/global `vprintf`, SSH, cat worker, leitores (incluindo
+  WiFi/audit, Serial/global `vprintf`, SSH, leitores (incluindo
   screenshot) e outros caminhos assincronos. Sync global, unmount e poweroff
   tambem estao fora; o coordinator nao e um guard global.
 

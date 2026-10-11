@@ -69,6 +69,21 @@ def test_coordinator_identity_is_shared_by_boot_ui_and_application_runtime() -> 
     assert "sd_io_->acquire(is_write ? cyberdeck_sd_io::access::write" in SHELL
 
 
+def test_async_cat_worker_uses_shared_coordinator() -> None:
+    ui_bind = body(UI, "void cyberdeck_ui_bind_sd_io")
+    assert "cyberdeck_cat_worker_bind_sd_io(coordinator)" in ui_bind
+    worker = read("components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp")
+    worker_header = read("components/cyberdeck/include/apps/shell/cyberdeck_cat_worker.h")
+    assert "s_sd_io_coordinator = &coordinator" in body(worker, "void cyberdeck_cat_worker_bind_sd_io")
+    assert "with_read_lease(*s_sd_io_coordinator, cat_operation)" in worker
+    assert "coordinator.acquire(cyberdeck_sd_io::access::read)" in worker_header
+
+    coordinator_injection = MAIN.index("cyberdeck_ui_bind_sd_io(sd_io_coordinator)")
+    assert MAIN.index("set_sd_io(&sd_io_coordinator)") < coordinator_injection
+    assert coordinator_injection < MAIN.index("cyberdeck_ui_init()")
+    assert coordinator_injection < MAIN.index("cyberdeck_system_apps_start()")
+
+
 def test_storage_failures_return_with_raii_lease_and_existing_contracts_remain() -> None:
     # Both save methods keep the lease as an automatic local through every
     # early return, including structured storage failures and directory fsync.
@@ -86,8 +101,9 @@ def test_storage_failures_return_with_raii_lease_and_existing_contracts_remain()
 
 if __name__ == "__main__":
     for test in (test_save_leases_cover_complete_transaction_and_denial_precedes_io,
-                 test_editor_open_read_lease_precedes_facade_and_read,
-                 test_coordinator_identity_is_shared_by_boot_ui_and_application_runtime,
-                 test_storage_failures_return_with_raii_lease_and_existing_contracts_remain):
+                  test_editor_open_read_lease_precedes_facade_and_read,
+                  test_coordinator_identity_is_shared_by_boot_ui_and_application_runtime,
+                  test_async_cat_worker_uses_shared_coordinator,
+                  test_storage_failures_return_with_raii_lease_and_existing_contracts_remain):
         test()
     print("PASS: SD I/O integration contract")
