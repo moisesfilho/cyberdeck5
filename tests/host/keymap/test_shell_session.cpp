@@ -340,12 +340,12 @@ int main()
         submit(s, "poweroff"); submit(s, "y");
         check(h.poweroff_admissions == 1, "admission rejection is not retried");
     }
-    for (const auto [reason, expected] : {
-             std::pair{cyberdeck_poweroff::admission_result::unavailable, "coordinator unavailable"},
-             std::pair{cyberdeck_poweroff::admission_result::already_requested, "request already consumed"},
-             std::pair{cyberdeck_poweroff::admission_result::fence_failed, "storage fence unavailable"},
-             std::pair{cyberdeck_poweroff::admission_result::watchdog_unavailable, "watchdog unavailable"},
-             std::pair{cyberdeck_poweroff::admission_result::task_unavailable, "shutdown task unavailable"}}) {
+    for (const auto &[reason, expected] :
+         {std::pair{cyberdeck_poweroff::admission_result::unavailable, "coordinator unavailable"},
+          std::pair{cyberdeck_poweroff::admission_result::already_requested, "request already consumed"},
+          std::pair{cyberdeck_poweroff::admission_result::fence_failed, "storage fence unavailable"},
+          std::pair{cyberdeck_poweroff::admission_result::watchdog_unavailable, "watchdog unavailable"},
+          std::pair{cyberdeck_poweroff::admission_result::task_unavailable, "shutdown task unavailable"}}) {
         fake_host h;
         h.poweroff_admission = reason;
         session s(h);
