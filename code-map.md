@@ -2,19 +2,21 @@
 
 ## Plano de poweroff
 
-- Teste real posterior ao flash (13/out/2026) **FAIL**: confirmação aparece,
-  mas `y` resulta em `request failed; reboot required`; ponte/uptime continuam
-  ativos. O estado atual e evidências estão em `poweroff-implementation-plan.md`.
-  As notas de prontidão local abaixo não equivalem ao aceite em dispositivo.
+- Testes reais em 13/out/2026 **FAIL**: a tentativa histórica retornou
+  `request failed; reboot required`; o teste diagnóstico posterior retornou
+  `shutdown task unavailable; reboot required`. A captura registrou 6935 B
+  livres/5632 B largest em heap interno 8-bit para uma stack solicitada de
+  8192 B. Causa imediata diagnosticada; correção e aceite físico pendentes. Ver
+  `poweroff-implementation-plan.md`; notas locais não equivalem a aceite.
 
 - Comando `poweroff` documentado em `README.md`/`README.pt-BR.md`; catálogo
   compartilhado passa a 18 entradas, mantendo ordem das 17 anteriores. Contratos
   de paridade/help/BLE são atualizados com a nova entrada, não relaxados.
-- Validação final do batch: agregado limpo PASS, gcovr 86.9% linhas / 95.5%
-  funções / 59.4% branches (gates 80/94/59); guard 61 TUs cobertas e 16 hardware
-  allowlisted, build ESP-IDF e guard de linker reais PASS. Dependências do harness
-  cat têm gcov alinhado aos outros alvos; worker/teste/shim continuam ASan/UBSan.
-  Software pronto para flash manual; aceite físico continua pendente no plano.
+- Validação local: agregado PASS, gcovr 86.9% linhas / 95.5% funções / 59.3%
+  branches (gates 80/94/59); guard 61 TUs cobertas e 16 hardware allowlisted,
+  build ESP-IDF/linker PASS. Quality Gate remoto PASS no commit b0ce47f.
+  O firmware diagnóstico foi gravado, mas a falha de heap interno permanece sem
+  correção; não fazer novo flash nem declarar aceite físico sem novo checkpoint.
 
 - `tools/poweroff_link_guard.py` verifica no cross-reference map GNU que
   `ff.c.obj` realmente chama os hooks `__wrap_ff_disk_write/ioctl` do poweroff,
@@ -58,8 +60,9 @@
   e BSP. `test_cat_worker_runtime.cpp` liga o worker ESP real com adapters em
   `cat_runtime_shim/`, shims compartilhados do logger e barreira em read: timeout
   preserva fila/lease, reject de start/enqueue, completion/join antes de cleanup
-  único, no-reopen. Novos alvos entram no agregado/coverage. Hardware ainda não
-  foi gravado nem testado nesta rodada; plano/manual registram aceitação física.
+  único, no-reopen. Novos alvos entram no agregado/coverage. Teste diagnóstico
+  no Tab5 confirmou falha de criação por heap interno insuficiente; correção e
+  aceitação física permanecem pendentes no plano.
 
 - `poweroff-implementation-plan.md` registra aprovações, implementação global,
   estratégia de sync/FatFS/BSP, matriz REQ/evidência/estado e gates restantes.

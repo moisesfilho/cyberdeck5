@@ -1,7 +1,7 @@
 # Plano de implementação: `poweroff` no Tab5
 
 **Tipo:** documento de controle de progresso; não é evidência de teste.  
-**Estado geral:** **DEVICE TEST FAILED — diagnóstico pendente**. Gates locais passaram, mas o flash e teste no dispositivo em 13/out/2026 revelaram falha na admissão do shutdown após confirmação. **HW-ACCEPT NOT DONE**; não declarar desligamento validado.
+**Estado geral:** **DEVICE TEST FAILED — causa imediata diagnosticada; correção pendente**. O teste no dispositivo confirmou heap interno insuficiente para criar a task de shutdown. Nenhuma otimização/alocação alternativa foi implementada. **HW-ACCEPT NOT DONE**; não declarar desligamento validado.
 
 ### Teste no dispositivo — 13/out/2026
 
@@ -12,9 +12,17 @@
 - Uma captura inicial com alteração explícita de DTR/RTS provocou `CHIP_USB_UART_RESET`, cancelando o prompt anterior; esse envio de `y` não é evidência de shutdown. O cenário válido foi repetido numa única conexão sem alterar essas linhas, verificando prompt antes de confirmar.
 - Evidências locais: `/tmp/opencode/cyberdeck5-poweroff-device-flash.log`, `/tmp/opencode/cyberdeck5-poweroff-device-command.log`, `/tmp/opencode/cyberdeck5-poweroff-device-test.log`.
 
+### Flash diagnóstico e captura de heap — 13/out/2026
+
+- Commit testado: `b0ce47fe5bad592744a662aafa6b5e05073b2e41`; Tab5 `/dev/ttyACM0`, Espressif USB JTAG `E8:F6:0A:E3:22:29`, IDF v5.5.5. `sys.info` confirmou firmware `b0ce47f`, ESP32-P4, `safe_mode=false`; `ping` respondeu antes e depois.
+- SHA-256 do `build/cyberdeck5.bin` efetivamente gravado/verificado pelo esptool: `05a6f1a498cf7e1a57f437fe9bd00965e8b08e5f98a48f484ab0104882e3c447`. O `idf.py flash` refez o build no commit publicado; o hash pré-flash anterior era outro, portanto este hash pós-build é o da imagem testada.
+- Uma única sequência: `ui.type poweroff`; `term.dump` confirmou o prompt exato; `ui.type y` uma vez. Retorno: `poweroff: shutdown task unavailable; reboot required.` `ping` e `sys.info` responderam depois, sem reboot observado. Nenhum retry.
+- Log serial bruto: `/tmp/opencode/cyberdeck5-poweroff-attempt-serial.log`. No instante da falha: heap `MALLOC_CAP_8BIT` livre `31469647`, maior bloco `30932992`; heap `MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT` livre `6935`, maior bloco `5632` bytes. Como a task solicita stack de `8192` bytes, o heap interno livre e o bloco contíguo eram menores que a stack, identificando insuficiência de heap interno como causa imediata da falha de criação. Isso não determina ainda a correção segura nem prova corte físico.
+- `idf.py monitor` competia com a CLI pelo leitor serial; foi fechado sem reset e a captura foi feita por tee serial de leitura única ao redor do protocolo/cliente da CLI. Não houve manipulação manual de DTR/RTS. Sem evidência de pulso/corte físico. Após esta falha one-shot, não repetir `poweroff` sem reboot controlado.
+
 ## Objetivo e decisões aprovadas
 
-Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5 pelo sinal de fábrica do BSP. Aprovações humanas registradas: usar o BSP atual e o sinal real de fábrica; exigir a sequência exata `poweroff` e depois `y`; persistir dados e quiescer escritores SD antes do corte; arquitetura de coordenador global de I/O; implementação em etapas por módulo. Stage 1 foi ampliado para editor/storage e recuperação de sidecars. A instrução vigente é finalizar software e avisar para o usuário realizar flash/testes manuais, sem flash automático.
+Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5 pelo sinal de fábrica do BSP. Aprovações humanas registradas: usar o BSP atual e o sinal real de fábrica; exigir a sequência exata `poweroff` e depois `y`; persistir dados e quiescer escritores SD antes do corte; arquitetura de coordenador global de I/O; implementação em etapas por módulo. Stage 1 foi ampliado para editor/storage e recuperação de sidecars. A instrução inicial de flash manual foi substituída por autorizações explícitas para os flashes diagnósticos registrados acima; não há autorização vigente para novo flash.
 
 ## Evidência de hardware (não confundir com implementação)
 
@@ -40,15 +48,15 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 | --- | --- | --- |
 | REQ-COORD — leases/gate Stage 0 | `test_sd_io_coordinator` | PASS |
 | REQ-SHELL — shell local e contratos de integração | 13/out: agregado `make CXXFLAGS='-std=c++17 -Wall -Wextra -Werror -O0 --coverage' test` completo após correções de logger e barreira do teste Wi-Fi | PASS local |
-| REQ-BUILD/QUALITY — firmware e qualidade | 13/out: build ESP-IDF final, guard real de linker, ranges clang-format do workflow, cppcheck incluindo poweroff/known_hosts/coordinator, ruff F e bandit | PASS local; não equivale a execução remota de CI |
+| REQ-BUILD/QUALITY — firmware e qualidade | Build ESP-IDF final e guard real de linker; Quality Gate remoto no commit `b0ce47f` (run `38476339304`) | PASS local e remoto |
 | REQ-SESSION — sessão de shell | Confirmação exata, respostas inválidas/Escape, contexto SSH alterado, worker indisponível, one-shot/paste suffix e admissão bloqueada; fixture OPEN/CLOSING/CLOSED | PASS local no agregado final |
 | REQ-FIXTURES — paridade de fixtures | 13/out/2026: fixture da aplicação já vinculada; `test_shell_app`: 281 checks PASS, incluindo preservação do gate CLOSED após stop/start do console | PASS local |
 | REQ-CAT — leitura/lifecycle real | Harness ESP retém read, prova timeout sem cleanup, reject de start/enqueue, liberação/join/drain e cleanup único; contratos e seam READ | IMPLEMENTED; testes locais PASS |
-| REQ-COVERAGE — thresholds locais | 13/out final: gcovr 86.9% linhas, 95.5% funções, 59.4% branches; gates 80/94/59 PASS; guard: 61 TUs cobertas, 16 hardware allowlisted | PASS local; CI remota não executada |
+| REQ-COVERAGE — thresholds locais | 13/out final: gcovr 86.9% linhas, 95.5% funções, 59.3% branches; gates 80/94/59 PASS; guard: 61 TUs cobertas, 16 hardware allowlisted; CI run `38476339304` | PASS local e remoto |
 | REQ-LOG-M2 — quiescência do logger | 15 cenários runtime, incluindo dois pontos de falha na criação de tasks e drain multi-item, com ASan/UBSan; contratos de projection/durable | IMPLEMENTED; testes locais PASS |
 | REQ-GLOBAL-QUIESCE — I/O e handles | Inventário SD/NVS, leases/fences, stop/join/close e erro sticky; controller por falha/timeout/cancelamento em cada etapa, known_hosts e cat reais | IMPLEMENTED; PASS local; hardware pendente |
 | REQ-SD-SYNC — persistência final | FIL modificado dispara sync_fs; hooks ff_disk_write/ioctl observam inclusive FSInfo ignorado pelo upstream; guard real de linker confirma callers FatFS; BSP unmount antes de LDO | IMPLEMENTED; build/link guard PASS; hardware pendente |
-| REQ-POWER — comando/HAL | shell confirma exatamente poweroff/y; controller one-shot, budget/watchdog, pulse core testado com fake e HAL nativo compilado | IMPLEMENTED; não emitido em hardware |
+| REQ-POWER — comando/HAL | Uma tentativa real no commit `b0ce47f` retorna `shutdown task unavailable`; heap interno 6935 B livre/5632 B largest versus stack 8192 B. Sem retry. | IMPLEMENTED; falha de admissão diagnosticada; correção pendente |
 | REQ-HW-ACCEPT — validação Tab5 | corte físico de rail sob condições controladas | NOT DONE |
 
 ## Trabalho restante, em ordem
@@ -56,17 +64,18 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 - [x] **REQ-FIXTURES:** fixtures vinculam coordinator OPEN compartilhado; testes de sessão/aplicação executados em 13/out/2026. Regressões adicionais verificam rejeição CLOSING/CLOSED e stop/start sem reabertura.
 - [x] **REQ-CAT-READ:** caminho dedicado com READ lease e contratos locais aprovados; não abrange teardown bounded nem fence global.
 - [x] **REQ-LOG-IMPLEMENTATION:** fence/stop/drain/close do logger implementados; corrigida ordem binário → textual e adicionados cenários partial-init/race ao alvo padrão. Aceitação/revisão final segue aberta.
-- [x] **REQ-QUALITY-LOCAL:** gates locais de formatação do workflow, lint e segurança passam; firmware compila após correção. Sem flash ou corte físico nesta etapa.
+- [x] **REQ-QUALITY-LOCAL:** gates locais de formatação do workflow, lint e segurança passam; firmware compila após correção. Os flashes diagnósticos estão registrados acima; nenhum corte físico foi comprovado.
 - [x] **REQ-AGGREGATE-LOCAL:** agregado completo com coverage passa após correção da barreira do teste concorrente de auditoria Wi-Fi. O teste espera a resposta de enqueue antes de liberar rename, com watchdog de 5 s; nenhuma mudança em produção Wi-Fi.
-- [x] **REQ-COVERAGE-LOCAL:** gcovr e guard finais passam: 86.9/95.5/59.4 contra gates 80/94/59; 61 TUs cobertas, 16 hardware allowlisted. Não confundir com CI remota.
+- [x] **REQ-COVERAGE-LOCAL:** gcovr e guard finais passam: 86.9/95.5/59.3 contra gates 80/94/59; 61 TUs cobertas, 16 hardware allowlisted.
 - [x] **REQ-CAT:** lifecycle bounded, fence permanente e cleanup somente após completion; callback fence antes de lock, READ lease e testes reais/contratos.
 - [x] **REQ-GLOBAL-QUIESCE:** inventário e admissão por módulo, stop/join/close antes de SD detach, recursos retidos em timeout; controller não autoriza sinal após falha ou budget expirado.
 - [x] **REQ-SD-SYNC:** estratégia suportada por fsync/FIL modificado e metadata barrier; erro sticky também na fronteira disk-I/O; BSP ordenado sem unmount como atalho de sync.
 - [x] **REQ-POWER:** comando, confirmação/cancelamento/one-shot, deadline/watchdog e HAL de fábrica implementados. Testes não emitem sinal real.
 - [x] **REQ-TEST-IMPLEMENTATION:** testes de comando, erros por etapa, prazo/cancelamento, admissão concorrente, metadata/pulso, leases/close reais de known_hosts, worker ESP cat e logger multi-item/creation failure.
 - [x] **REQ-REVIEW-LOCAL-FINAL:** revisão de ownership/fences, criação de tasks, fechamento opaco da libssh, FSInfo mascarado, ordem de RPCs/parada e deadline absoluto antes do primeiro high; agregado limpo/gcovr/guard/qualidade/build/link guard finais PASS. Nenhum threshold ou módulo de cobertura foi excluído/reduzido.
-- [ ] **REQ-CI-REMOTE:** workflow inclui guard de linker após build; execução remota não foi disparada (sem commit/push nesta tarefa).
+- [x] **REQ-CI-REMOTE:** Quality Gate no commit `b0ce47fe5bad592744a662aafa6b5e05073b2e41`, run `38476339304` — PASS.
 - [ ] **REQ-HW-ACCEPT:** validação manual em Tab5 real de corte do rail, sequência, persistência, rejeições/timeout e riscos de alimentação; registrar dispositivo, firmware e evidências. Sem isso, declarar hardware BLOCKED.
+- [ ] **REQ-POWER-HEAP-FIX:** escolher e testar uma correção segura para a insuficiência do heap interno sem retry especulativo; requer aprovação/revisão e novo checkpoint humano antes de outro flash.
 
 ## Restrições de aceitação
 
@@ -75,9 +84,9 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 - Agregado com coverage: `/tmp/opencode/cyberdeck5-poweroff-host-coverage-test.log`.
 - gcovr: `/tmp/opencode/cyberdeck5-poweroff-coverage.log` e JSON `/tmp/opencode/cyberdeck5-poweroff-coverage.json`.
 - Build: `/tmp/opencode/cyberdeck5-poweroff-build.log`.
-- Binário pronto: `build/cyberdeck5.bin`; SHA-256 **eea07174c649a6d8721caa3a5f9de8619d2302350aabe301c0e176473c6de606**.
+- Binário da primeira rodada de implementação (histórico, não o diagnóstico posterior): `build/cyberdeck5.bin`; SHA-256 **eea07174c649a6d8721caa3a5f9de8619d2302350aabe301c0e176473c6de606**. Hash do flash diagnóstico posterior consta acima.
 - Guard de linker real: `python3 tools/poweroff_link_guard.py --map build/cyberdeck5.map` PASS; ambos os hooks têm caller `esp-idf/fatfs/libfatfs.a(ff.c.obj)` no cross-reference table.
-- Execução final limpa: agregado PASS, 86.9/95.5/59.4 de cobertura, scope guard PASS. O harness cat separa objetos de filesystem/VFS/coordinator com gcov convencional; worker, teste e adapters de task mantêm ASan/UBSan. A primeira variante instrumentava helpers de filesystem novamente com UBSan e inflava branches do compilador (54.3%); foi corrigida a construção do harness, sem remover fontes ou baixar o gate.
+- Execução final limpa do snapshot revisado: agregado PASS, 86.9/95.5/59.3 de cobertura, scope guard PASS. O harness cat separa objetos de filesystem/VFS/coordinator com gcov convencional; worker, teste e adapters de task mantêm ASan/UBSan. A primeira variante instrumentava helpers de filesystem novamente com UBSan e inflava branches do compilador (54.3%); foi corrigida a construção do harness, sem remover fontes ou baixar o gate.
 - Primeira tentativa limpa com coverage falhou no teste concorrente Wi-Fi; execução isolada passou. A barreira incorreta foi corrigida e o agregado completo rerodado com sucesso, sem mascarar a falha ou reduzir asserts. Estes artefatos são locais/temporários, não evidência física.
 
 ### Estratégia SD resolvida em software — 13/out/2026
@@ -91,10 +100,11 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 
 ### Próximo checkpoint humano
 
-Gates locais finais passaram. O usuário pode realizar flash e executar
-`tests/manual/poweroff-validation.pt-BR.md`. Usar dados descartáveis/backup,
-validar cancelamentos antes do corte, testar inicialmente com bateria e sem USB,
-religar e comparar dados/configurações. Timeout/export pendente sem confirmação
-recusa corte e exige reboot controlado; não há retry/reabertura automática.
+O flash diagnóstico e a tentativa única já ocorreram; a task de shutdown falhou por
+heap interno insuficiente e o fence permanece one-shot até reboot. Não repetir o
+comando. A correção ainda exige plano/aprovação e novo checkpoint humano para
+qualquer flash subsequente. HW-ACCEPT permanece pendente; usar o roteiro
+`tests/manual/poweroff-validation.pt-BR.md` somente após nova imagem revisada,
+backup/dados descartáveis, alimentação segura e monitor/captura serial.
 
 O comando só pode ser considerado pronto após todos os itens bloqueadores resolvidos, revisão e gates aceitos, e validação física documentada. Timeout, I/O pendente, handle aberto ou sync não demonstrado deve falhar fechado: não emitir pulso. Este documento e os resultados host não são evidência de corte físico.
