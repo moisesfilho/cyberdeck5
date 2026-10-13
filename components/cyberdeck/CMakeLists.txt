@@ -8,6 +8,7 @@ idf_component_register(
         "src/apps/shell/cyberdeck_edit_line.cpp"
         "src/platform/networking/cyberdeck_net_coordinator.cpp"
         "src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
+        "src/platform/power/cyberdeck_poweroff.cpp"
         "src/apps/shell/cyberdeck_terminal_filter.cpp"
         "src/apps/shell/cyberdeck_ssh_echo_guard.cpp"
         # Stateful local/remote compositor; keep it in the firmware target so
@@ -61,6 +62,7 @@ idf_component_register(
         "src/platform/sensors/battery_protection.cpp"
         "src/platform/display/screen_off.cpp"
         "src/apps/ssh/ssh_client.cpp"
+        "src/apps/ssh/cyberdeck_known_hosts_file.cpp"
         "src/platform/input/tab5_keyboard.cpp"
         "src/platform/input/cyberdeck_keyboard_dispatch.cpp"
         "src/platform/input/tab5_keyboard_event.cpp"
@@ -118,3 +120,6 @@ idf_component_register(
         bt
         esp_hosted
 )
+
+# Observe public FatFS disk-I/O errors even where upstream masks FSInfo status.
+target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=ff_disk_write" "-Wl,--wrap=ff_disk_ioctl")

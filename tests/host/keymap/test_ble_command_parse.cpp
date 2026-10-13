@@ -158,7 +158,8 @@ void test_help_catalog_documents_bluetooth_exactly_once()
                                  "touch <file> - create an empty file",
                                  "mkdir <directory> - create a directory",
                                  "rm [-r] <path> - remove a file or directory",
-                                 "rmdir <directory> - remove an empty directory"}) {
+                                  "rmdir <directory> - remove an empty directory",
+                                  "poweroff - power off this device after exact y confirmation"}) {
         CHECK(help.find(existing) != std::string::npos);
     }
 
@@ -167,7 +168,7 @@ void test_help_catalog_documents_bluetooth_exactly_once()
     for (char value : help) {
         if (value == '\n') ++lines;
     }
-    CHECK_EQ(lines, std::size_t(17));
+    CHECK_EQ(lines, std::size_t(18));
 }
 
 } // namespace

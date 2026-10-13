@@ -54,6 +54,7 @@ public:
     audit_controller &operator=(const audit_controller &) = delete;
     bool initialize();
     void teardown();
+    bool quiesce(std::uint32_t timeout_ms);
     bool initialized() const;
     state status() const;
     std::uint64_t begin(const association &hint);

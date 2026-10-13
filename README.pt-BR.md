@@ -115,6 +115,19 @@ simbólicos. Essa é uma interface local de arquivos, não um shell POSIX comple
 o parsing dos comandos é baseado em espaços, e comandos não suportados são
 encaminhados ao contexto de terminal ativo.
 
+### Desligar o dispositivo
+
+No shell local, digite `poweroff` e depois exatamente `y` e Enter para confirmar.
+Outra resposta ou Escape cancela. Salve/feche o editor e saia do SSH antes:
+comandos digitados numa sessão SSH pertencem ao servidor remoto.
+
+O desligamento bloqueia novas operações, quiesce os proprietários SD/NVS,
+verifica persistência e desmonta o SD antes do pulso de fábrica do Tab5.
+Erro ou timeout na preparação impede o sinal; falha exige reboot controlado,
+sem retry automático. Perda da USB ou tela apagada não prova corte do rail.
+Veja o [roteiro de validação manual](tests/manual/poweroff-validation.pt-BR.md).
+A implementação está pronta para validação manual; o corte físico ainda não foi aceito.
+
 ### Aplicações compiladas e SDK
 
 Apps são registradas no supervisor, iniciadas em ordem declarativa e compiladas

@@ -180,6 +180,29 @@ void test_concurrent_read_and_write_leases_account_for_all_users()
 
 int main()
 {
+    {
+        CHECK(!cyberdeck_sd_io::acquire_global(access::read));
+        CHECK(cyberdeck_sd_io::global_fenced());
+        cyberdeck_sd_io::record_global_persistence_failure();
+        static coordinator global;
+        cyberdeck_sd_io::bind_global(global);
+        CHECK(!cyberdeck_sd_io::global_fenced());
+        CHECK(!global.persistence_failed());
+        auto admitted = cyberdeck_sd_io::acquire_global(access::write);
+        CHECK(admitted);
+        const auto owner = global.begin_close();
+        CHECK(cyberdeck_sd_io::global_fenced());
+        CHECK(!cyberdeck_sd_io::acquire_global(access::read));
+        cyberdeck_sd_io::record_global_persistence_failure();
+        CHECK(global.persistence_failed());
+        admitted.release();
+        CHECK(global.drain(owner, std::chrono::steady_clock::now()) == drain_result::drained);
+        CHECK(global.persistence_failed());
+        static coordinator replacement;
+        cyberdeck_sd_io::bind_global(replacement);
+        CHECK(!cyberdeck_sd_io::acquire_global(access::write));
+        CHECK(replacement.state() == gate_state::open);
+    }
     test_raii_move_and_idempotent_release();
     test_move_assignment_transfers_and_releases_exactly_once();
     test_close_blocks_admission_and_owner_controls_reopen();

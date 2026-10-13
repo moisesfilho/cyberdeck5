@@ -7,7 +7,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "nvs.h"
+#include <atomic>
 
 namespace {
 
@@ -22,6 +24,7 @@ const char *TAG = "cyberdeck_screen";
 
 struct persistence_request {
     persisted_timeout value;
+    bool stop = false;
 };
 
 lv_display_t *s_display = nullptr;
@@ -30,6 +33,10 @@ lv_obj_t *s_previous_screen = nullptr;
 lv_timer_t *s_inactivity_timer = nullptr;
 QueueHandle_t s_persistence_queue = nullptr;
 TaskHandle_t s_persistence_task = nullptr;
+SemaphoreHandle_t s_persistence_stopped = nullptr;
+SemaphoreHandle_t s_persistence_gate = nullptr;
+std::atomic<bool> s_persistence_closing{false};
+std::atomic<bool> s_persistence_failed{false};
 uint32_t s_last_tap = 0;
 bool s_tap_pending = false;
 int s_active_brightness = 20;
@@ -103,8 +110,14 @@ void persistence_task(void *)
             continue;
         }
 
+        if (request.stop) {
+            (void)xSemaphoreGive(s_persistence_stopped);
+            vTaskDelete(nullptr);
+            return;
+        }
         const esp_err_t result = persist_timeout(request.value);
         if (result != ESP_OK) {
+            s_persistence_failed.store(true, std::memory_order_release);
             ESP_LOGW(TAG, "falha ao persistir timeout de tela: %s",
                      esp_err_to_name(result));
         }
@@ -123,9 +136,25 @@ esp_err_t start_persistence_task()
         return ESP_ERR_NO_MEM;
     }
 
+    s_persistence_stopped = xSemaphoreCreateBinary();
+    s_persistence_gate = xSemaphoreCreateMutex();
+    if (s_persistence_stopped == nullptr || s_persistence_gate == nullptr) {
+        if (s_persistence_stopped != nullptr) vSemaphoreDelete(s_persistence_stopped);
+        if (s_persistence_gate != nullptr) vSemaphoreDelete(s_persistence_gate);
+        s_persistence_stopped = nullptr;
+        s_persistence_gate = nullptr;
+        vQueueDelete(s_persistence_queue);
+        s_persistence_queue = nullptr;
+        return ESP_ERR_NO_MEM;
+    }
+
     const BaseType_t created = xTaskCreate(
         persistence_task, "screen_nvs", 4096, nullptr, 4, &s_persistence_task);
     if (created != pdPASS) {
+        vSemaphoreDelete(s_persistence_stopped);
+        s_persistence_stopped = nullptr;
+        vSemaphoreDelete(s_persistence_gate);
+        s_persistence_gate = nullptr;
         vQueueDelete(s_persistence_queue);
         s_persistence_queue = nullptr;
         s_persistence_task = nullptr;
@@ -136,14 +165,23 @@ esp_err_t start_persistence_task()
 
 esp_err_t queue_timeout_persistence(const persisted_timeout &value)
 {
+    if (s_persistence_closing.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;
     if (s_persistence_queue == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_persistence_gate == nullptr || xSemaphoreTake(s_persistence_gate, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (s_persistence_closing.load(std::memory_order_acquire)) {
+        xSemaphoreGive(s_persistence_gate);
         return ESP_ERR_INVALID_STATE;
     }
 
     const persistence_request request{value};
     if (xQueueSend(s_persistence_queue, &request, 0) != pdTRUE) {
+        xSemaphoreGive(s_persistence_gate);
         return ESP_ERR_NO_MEM;
     }
+    xSemaphoreGive(s_persistence_gate);
     return ESP_OK;
 }
 
@@ -284,6 +322,7 @@ extern "C" void screen_off_turn_off(void)
 
 extern "C" esp_err_t screen_off_set_timeout_minutes(uint16_t minutes)
 {
+    if (s_persistence_closing.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;
     if (s_display == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -300,4 +339,24 @@ extern "C" esp_err_t screen_off_set_timeout_minutes(uint16_t minutes)
     }
 
     return queue_timeout_persistence(s_state.persistence_view());
+}
+
+extern "C" esp_err_t screen_off_quiesce(uint32_t timeout_ms) {
+    bool expected = false;
+    if (!s_persistence_closing.compare_exchange_strong(expected, true)) return ESP_ERR_INVALID_STATE;
+    if (s_persistence_task == nullptr) return s_persistence_failed.load() ? ESP_FAIL : ESP_OK;
+    const TickType_t started = xTaskGetTickCount();
+    const TickType_t budget = pdMS_TO_TICKS(timeout_ms);
+    // Join admissions that observed OPEN before our fence, before the FIFO stop.
+    if (xSemaphoreTake(s_persistence_gate, budget) != pdTRUE) return ESP_ERR_TIMEOUT;
+    xSemaphoreGive(s_persistence_gate);
+    const persistence_request stop{{}, true};
+    const TickType_t admission_elapsed = xTaskGetTickCount() - started;
+    const TickType_t enqueue_budget = admission_elapsed >= budget ? 0 : budget - admission_elapsed;
+    if (xQueueSend(s_persistence_queue, &stop, enqueue_budget) != pdTRUE) return ESP_ERR_TIMEOUT;
+    const TickType_t elapsed = xTaskGetTickCount() - started;
+    const TickType_t remaining = elapsed >= budget ? 0 : budget - elapsed;
+    if (xSemaphoreTake(s_persistence_stopped, remaining) != pdTRUE) return ESP_ERR_TIMEOUT;
+    s_persistence_task = nullptr;
+    return s_persistence_failed.load(std::memory_order_acquire) ? ESP_FAIL : ESP_OK;
 }

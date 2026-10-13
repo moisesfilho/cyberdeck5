@@ -21,6 +21,7 @@
 #include "sys/types.h"
 #include "fcntl.h"
 #include "unistd.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 #else
 #define CYBERDECK_AUDIT_FIRMWARE 0
 #endif
@@ -221,6 +222,11 @@ bool export_file_via_persistence(const char *path,
                                  std::uint64_t token,
                                  const std::string &data)
 {
+    auto lease = cyberdeck_sd_io::acquire_global(cyberdeck_sd_io::access::write);
+    if (!lease) {
+        cyberdeck_sd_io::record_global_persistence_failure();
+        return false;
+    }
     if (path == nullptr || token == 0 || data.empty() ||
         data.size() > wifi_audit_persistence::max_payload) {
         return false;
@@ -233,6 +239,7 @@ bool export_file_via_persistence(const char *path,
         persistence.enqueue(token, path, data) !=
             wifi_audit_persistence::submit_status::accepted ||
         !persistence.pump_one()) {
+        cyberdeck_sd_io::record_global_persistence_failure();
         return false;
     }
 
@@ -241,6 +248,7 @@ bool export_file_via_persistence(const char *path,
         if (!persistence.drain(retained)) return false;
         sink.result = std::move(retained);
     }
+    if (!sink.result.ok) cyberdeck_sd_io::record_global_persistence_failure();
     return sink.result.ok;
 }
 
@@ -593,6 +601,42 @@ bool audit_controller::initialize()
     }
 #endif
     return true;
+}
+
+bool audit_controller::quiesce(std::uint32_t timeout_ms)
+{
+    auto &s = *impl_;
+#if CYBERDECK_AUDIT_FIRMWARE
+    const TickType_t started = xTaskGetTickCount();
+    const TickType_t budget = pdMS_TO_TICKS(timeout_ms);
+    const auto remaining = [&]() {
+        const auto elapsed = xTaskGetTickCount() - started;
+        return elapsed >= budget ? TickType_t{0} : budget - elapsed;
+    };
+    if (s.lock != nullptr && xSemaphoreTake(s.lock, remaining()) != pdTRUE) return false;
+    const bool was_live = s.live;
+    if (s.export_in_flight || export_backend_busy.load(std::memory_order_acquire))
+        cyberdeck_sd_io::record_global_persistence_failure();
+    s.live = false;
+    s.token = 0;
+    ++s.next;
+    if (s.lock != nullptr) s.leave();
+    if (s.task != nullptr) {
+        if (!was_live) return false; // A timed-out stop remains quarantined.
+        implementation::work_item stop{};
+        if (xQueueSend(s.work, &stop, remaining()) != pdTRUE ||
+            xSemaphoreTake(s.stopped, remaining()) != pdTRUE) return false;
+        s.task = nullptr;
+    }
+    return !export_backend_busy.load(std::memory_order_acquire);
+#else
+    (void)timeout_ms;
+    s.live = false;
+    s.token = 0;
+    s.export_in_flight = false;
+    ++s.next;
+    return true;
+#endif
 }
 
 void audit_controller::teardown()

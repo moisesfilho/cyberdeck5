@@ -1,4 +1,4 @@
-# Event log runtime harness — behavior characterization
+# Event log runtime harness — behavior characterization and M2 quiesce
 
 The host executable links the real `event_log.cpp` TU. It characterizes existing
 behavior, including deterministic caller timeout/lifetime and durable queue
@@ -7,7 +7,17 @@ backpressure runtime cases. Independent argv scenarios preserve process isolatio
 | Requirement / AC | TEST | Baseline evidence |
 |---|---|---|
 | REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-01 | TEST-EVENT-QUIESCE-PREINIT | `preinit` process verifies quiesce returns `ESP_ERR_INVALID_STATE` before initialization. |
-| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-02/03 | TEST-EVENT-QUIESCE-FENCE | `quiesce-fence` verifies normal append before fence; active text snapshot blocks in linker-wrapped `fread(events.txt)`, `quiesce(0)` times out while its lease is held, reader completes after release, and retry remains timeout; subsequent normal/durable writes and text readers fail closed. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-01/03/04 | TEST-QUIESCE-M2-PARTIAL-INIT | `partial-init` injects failure of binary worker creation after the text worker starts. Real init restores the serial hook, rejects admission/reinit, preserves queue handles, and quiesce stops the sole worker. Bounded completion and join precede idempotent CLOSED/no-reopen assertions. No log file is created. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-02/03 | TEST-QUIESCE-M2-READERS / TEST-QUIESCE-M2-TIMEOUT-RETRY | `quiesce-fence` blocks real TU text snapshot at wrapped `fread`; zero-budget quiesce times out, release drains the reader, retry succeeds, and writers/readers remain fenced. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-03/04 | TEST-QUIESCE-M2-DRAIN / TEST-QUIESCE-M2-OWNERSHIP-CLOSE / TEST-QUIESCE-M2-CLOSED-IDEMPOTENCE / TEST-QUIESCE-M2-NO-REOPEN | Same isolated scenario observes binary owner close, successful drain, idempotent quiesce, and rejected init after CLOSED. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-04 | TEST-QUIESCE-M2-FAILURE-STICKY-CLOSE | `sticky-close` injects failure only for binary log FILE close; repeated quiesce returns `ESP_FAIL`, init remains rejected. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-02 | TEST-QUIESCE-M2-DURABLE-ACK / TEST-QUIESCE-M2-CALLER-TIMEOUT | Existing real-TU default verifies ACK after binary fsync and accepted caller timeout does not cancel persistence (exactly once). |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-02 | TEST-QUIESCE-M2-DURABLE-TIMEOUT-RACE | Isolated `durable-timeout-quiesce` submits an accepted durable request, holds its binary fsync, witnesses caller timed-wait registration, advances fake ticks to caller timeout, and starts quiesce before releasing fsync. Quiesce must time out without releasing/closing the owner; after release, the caller remains timed out, the token persists once, the owner drains/closes once, and retry quiesce succeeds. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-04 | TEST-QUIESCE-M2-FAILURE-STICKY-WRITE / TEST-QUIESCE-M2-FAILURE-STICKY-FSYNC | Isolated `sticky-write` injects the ordinary void API's binary fwrite failure and waits for the wrapper failure witness; `sticky-fsync` does the same after accepted ordinary write. Both assert initial quiesce and retry return `ESP_FAIL`, and init cannot reopen. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-05 | TEST-QUIESCE-M2-PROJECTION | Three isolated runtime processes inject events.txt `fwrite`, `fsync`, or `fclose` failure while the real text worker drains on quiesce. Each requires successful/idempotent quiesce and CLOSED/no-reopen, the binary event exactly once, and binary `fsync` plus owner close; text failure is best-effort and does not become sticky binary failure. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-06 | TEST-QUIESCE-M2-WORKER-TIMEOUT-RETRY | Isolated `worker-timeout-retry` holds the real worker in wrapped binary fsync, asserts a bounded quiesce timeout, releases the accepted write, then succeeds on an independent 1000 ms budget and checks the record occurs exactly once. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-07/08 | TEST-QUIESCE-M2-WORKER-COMPLETION | `worker-completion` enqueues an identifiable event, blocks the real `events.txt` fwrite wrapper after projection work reaches it, starts quiesce concurrently and observes it cannot have succeeded before release; successful quiesce follows release/drain. Direct startup-name-to-`std::thread::id` correlation (never hashes) maps the actual `s_quiesce_changed` handle, requires text/binary owner close before each give and no file/queue I/O by either worker afterwards. It proves one accepted projection drains; it does not prove queue saturation/drain of multiple projections. Race and partial-init remain open. |
+| REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-07/08 | TEST-QUIESCE-M2-RACE-BOUNDARIES | `quiesce-race` holds the real binary worker in wrapped fsync; registers two independent real-TU callers at 20 ms and 200 ms fake-tick budgets before advancing 30 ms. A must time out while B remains pending and binary owner remains open; release permits B success, one close, and exactly-once record persistence. |
 | REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-03 | TEST-EVENT-VPRINTF-FENCE | Invokes the real callback installed by init with a shim-captured original serial vprintf; after fence, serial output contains the formatted message while binary file size remains unchanged. |
 | REQ-GLOBAL-QUIESCE / AC-GLOBAL-LOG-01 | TEST-HARNESS-INIT-01 | Real init creates both workers against a host SD directory; normal append reaches the binary log. Admission/fence is not implemented in this phase. |
 | AC-GLOBAL-LOG-02 | TEST-HARNESS-DURABLE-ACK-01 | Real durable API returns success only after worker completion; wrapped fwrite/fsync audit asserts write → fsync → caller ACK, and a test-only observer confirms accepted-request release after ACK. Binary log contains normal and durable records. |
@@ -20,6 +30,16 @@ backpressure runtime cases. Independent argv scenarios preserve process isolatio
 | REQ-TEST-TASK-LIFECYCLE / AC-TEST-TASK-02 | TEST-SHIM-TASK-TIMEOUT | A gated live callback times out without reporting completion or joining; its handle remains usable, then completes and joins after deterministic release. |
 
 ## Harness limits
+
+Current M2 evidence supersedes historical milestone notes above:
+`worker-completion` holds one projection and queues four more, requires all five
+to drain before success and checks exactly-once queued tokens/zero depth.
+`init-text-failure` proves rollback/reinit before any worker; `partial-init`
+proves quarantine/drain after the sole text worker starts. `quiesce-race` also
+expires an empty text receive while binary fsync is blocked and requires late
+projection persistence after release. Full 32-item projection saturation and
+all individual pre-worker allocation faults are not claimed. These tests do
+not prove physical poweroff; the controller/global contracts are separate.
 
 The custom FreeRTOS shim copies queue items by configured item size, bounds queue
 capacity, provides counting/binary semaphore behavior and starts joinable host

@@ -347,7 +347,7 @@ def check_shell_routing(report: Report) -> None:
     entries = re.findall(r'\{"bluetooth"[^\n]*\}', catalog)
     report.require(len(entries) == 1,
                    "the bluetooth help row must exist exactly once in the catalog")
-    report.require(re.search(r"std::array\s*<\s*entry\s*,\s*17\s*>\s+kCatalog", catalog)
+    report.require(re.search(r"std::array\s*<\s*entry\s*,\s*18\s*>\s+kCatalog", catalog)
                     is not None,
                     "the shared help catalog must contain 17 entries")
 

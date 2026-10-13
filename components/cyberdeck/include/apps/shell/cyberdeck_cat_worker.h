@@ -34,3 +34,5 @@ bool cyberdeck_cat_worker_start(const char *host_root,
 bool cyberdeck_cat_worker_enqueue(const char *cwd, const char *command);
 /* Idempotent: stops and joins the worker before releasing its queue/state. */
 void cyberdeck_cat_worker_teardown(void);
+/* Permanent poweroff fence; timeout retains all potentially live resources. */
+bool cyberdeck_cat_worker_quiesce(unsigned timeout_ms);

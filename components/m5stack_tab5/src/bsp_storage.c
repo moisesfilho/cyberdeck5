@@ -203,15 +203,18 @@ esp_err_t bsp_sdcard_unmount(void)
 {
     esp_err_t ret = ESP_OK;
 
+    if (bsp_sdcard == NULL) return ESP_ERR_INVALID_STATE;
+    ret = esp_vfs_fat_sdcard_unmount(BSP_SD_MOUNT_POINT, bsp_sdcard);
+    bsp_sdcard = NULL;
+    if (ret != ESP_OK) return ret;
     if (pwr_ctrl_handle) {
-        ret |= sd_pwr_ctrl_del_on_chip_ldo(pwr_ctrl_handle);
+        ret = sd_pwr_ctrl_del_on_chip_ldo(pwr_ctrl_handle);
+        if (ret != ESP_OK) return ret;
         pwr_ctrl_handle = NULL;
     }
-
-    ret |= esp_vfs_fat_sdcard_unmount(BSP_SD_MOUNT_POINT, bsp_sdcard);
-    bsp_sdcard = NULL;
     if (spi_sd_initialized) {
-        ret |= spi_bus_free(BSP_SDSPI_HOST);
+        ret = spi_bus_free(BSP_SDSPI_HOST);
+        if (ret != ESP_OK) return ret;
         spi_sd_initialized = false;
     }
 

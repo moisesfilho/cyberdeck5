@@ -14,7 +14,7 @@
  * shell. O teste fixa o catalogo completo, incluindo os comandos comuns e os
  * comandos locais, byte a byte (separador "-" entre comando e descricao,
  * newline final). Alem da igualdade exata, os testes fixam a estrutura
- * (17 newlines, 17 linhas nao vazias, newline final), a presenca de cada
+ * (18 newlines, 18 linhas nao vazias, newline final), a presenca de cada
  * comando e o determinismo entre chamadas.
  */
 #include "apps/shell/cyberdeck_shell_utils.h"
@@ -789,8 +789,8 @@ void test_help_text_exact_block()
 void test_help_text_structure()
 {
     // Arrange & Act
-    // Estrutura do catalogo unificado: exatamente 17 newlines (um por linha) e
-    // 17 linhas nao vazias; o texto termina obrigatoriamente em newline.
+    // Estrutura do catalogo unificado: exatamente 18 newlines (um por linha) e
+    // 18 linhas nao vazias; o texto termina obrigatoriamente em newline.
     const std::string text = cyberdeck_help_text();
 
     // Assert
@@ -803,7 +803,7 @@ void test_help_text_structure()
             ++newlines;
         }
     }
-    CHECK(newlines == 17);
+    CHECK(newlines == 18);
 
     // Split por '\n': linhas nao vazias entre quebras. Uma linha vazia
     // (start == i, sem caracteres) nao conta; a cauda apos o ultimo '\n'
@@ -818,7 +818,7 @@ void test_help_text_structure()
             line_start = i + 1;
         }
     }
-    CHECK(non_empty_lines == 17);
+    CHECK(non_empty_lines == 18);
 }
 
 void test_help_text_commands_present()
@@ -847,6 +847,7 @@ void test_help_text_commands_present()
         "bluetooth [search|paired] - search for or list paired Bluetooth devices",
         "app [list|info|start|stop] [id] - manage compiled-in applications",
         "ssh [user@]host[:port] - start an SSH session",
+        "poweroff - power off this device after exact y confirmation",
     };
     for (const char *entry : entries) {
         CHECK(text.find(entry) != std::string::npos);
@@ -856,7 +857,7 @@ void test_help_text_commands_present()
     // esta contagem, uma linha nova no catalogo passaria despercebida porque
     // o teste so procuraria as entradas conhecidas.
     const size_t expected_rows = sizeof(entries) / sizeof(entries[0]);
-    CHECK(expected_rows == 17);
+    CHECK(expected_rows == 18);
     size_t rows_seen = 0;
     for (const char *entry : entries) {
         size_t position = 0;

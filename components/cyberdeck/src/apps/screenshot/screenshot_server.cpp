@@ -30,6 +30,7 @@ static SemaphoreHandle_t s_quiesced = NULL;
 static std::atomic<TaskHandle_t> s_task{NULL};
 static std::atomic<bool> s_stop_requested{false};
 static bool s_quarantined = false;
+static std::atomic<bool> s_stop_failed{false};
 
 constexpr size_t k_control_queue_depth = 8;
 constexpr uint32_t k_task_stack_bytes = 6144;
@@ -213,13 +214,13 @@ static esp_err_t start_server(void)
     if (result == ESP_OK) {
         httpd_uri_t events_uri = {.uri = "/events.txt", .method = HTTP_GET, .handler = events_handler, .user_ctx = NULL};
         if (httpd_register_uri_handler(s_server, &events_uri) != ESP_OK) {
-            httpd_stop(s_server);
-            s_server = NULL;
+            if (httpd_stop(s_server) != ESP_OK) s_stop_failed.store(true, std::memory_order_release);
+            else s_server = NULL;
             return ESP_FAIL;
         }
     } else {
-        httpd_stop(s_server);
-        s_server = NULL;
+        if (httpd_stop(s_server) != ESP_OK) s_stop_failed.store(true, std::memory_order_release);
+        else s_server = NULL;
     }
     return result;
 }
@@ -227,8 +228,8 @@ static esp_err_t start_server(void)
 static void stop_server(void)
 {
     if (s_server != NULL) {
-        httpd_stop(s_server);
-        s_server = NULL;
+        if (httpd_stop(s_server) != ESP_OK) s_stop_failed.store(true, std::memory_order_release);
+        else s_server = NULL;
     }
 }
 
@@ -303,6 +304,7 @@ esp_err_t screenshot_server_start(void)
 
 esp_err_t screenshot_server_stop(uint32_t timeout_ms)
 {
+    if (s_stop_failed.load(std::memory_order_acquire)) return ESP_FAIL;
     if (s_quarantined) return ESP_ERR_INVALID_STATE;
     if (s_task.load(std::memory_order_acquire) == NULL) return ESP_OK;
     s_stop_requested.store(true, std::memory_order_release);
@@ -315,7 +317,7 @@ esp_err_t screenshot_server_stop(uint32_t timeout_ms)
         s_quarantined = true;
         return ESP_ERR_TIMEOUT;
     }
-    return ESP_OK;
+    return s_stop_failed.load(std::memory_order_acquire) ? ESP_FAIL : ESP_OK;
 }
 
 esp_err_t screenshot_server_set_display_port(screenshot_capture_fn capture,

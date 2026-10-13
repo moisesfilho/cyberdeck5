@@ -46,6 +46,8 @@ class coordinator final {
     bool reopen(std::uint64_t owner);
     gate_state state() const;
     std::size_t active_leases() const;
+    void record_persistence_failure();
+    bool persistence_failed() const;
 
   private:
     friend class lease;
@@ -58,6 +60,13 @@ class coordinator final {
     std::uint64_t next_id_ = 1;
     std::uint64_t close_owner_ = 0;
     std::size_t active_ = 0;
+    bool persistence_failed_ = false;
 };
+
+// Bound once at boot; ownership remains with app_main for the process lifetime.
+void bind_global(coordinator &owner);
+lease acquire_global(access mode);
+void record_global_persistence_failure();
+bool global_fenced();
 
 } // namespace cyberdeck_sd_io

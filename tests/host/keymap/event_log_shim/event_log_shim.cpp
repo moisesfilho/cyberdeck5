@@ -46,8 +46,24 @@ std::mutex waits_mutex;
 std::condition_variable waits_cv;
 std::vector<event_log_shim::timed_wait *> waits;
 uint64_t timed_wait_generation = 0;
+std::mutex sync_history_mutex;
+std::vector<event_log_shim::sync_event> recorded_sync_events;
+std::vector<event_log_shim::file_event> recorded_file_events;
+std::vector<event_log_shim::audit_event> recorded_audit_events;
+uint64_t audit_sequence = 0;
+std::vector<event_log_shim::semaphore_creation> created_semaphores;
+std::vector<event_log_shim::task_start_event> started_tasks;
+void record_sync(event_log_shim::sync_kind kind, void *handle) {
+    const char *name = kind == event_log_shim::sync_kind::semaphore_take ? "semaphore-take" :
+        kind == event_log_shim::sync_kind::semaphore_give ? "semaphore-give" :
+        kind == event_log_shim::sync_kind::queue_send ? "queue-send" : "queue-receive";
+    event_log_shim::record_audit_event(name, handle);
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    recorded_sync_events.push_back({kind, handle, std::this_thread::get_id()});
+}
 std::mutex task_registry_mutex;
 std::vector<host_task *> task_registry;
+std::string task_creation_failure;
 std::mutex queue_registry_mutex;
 std::vector<host_queue *> queue_registry;
 void wake_registered_waits() {
@@ -57,8 +73,65 @@ void wake_registered_waits() {
 }
 } // namespace
 namespace event_log_shim {
+void fail_next_task_creation(const std::string &name) {
+    std::lock_guard<std::mutex> lock(task_registry_mutex);
+    task_creation_failure = name;
+}
 namespace {
 constexpr auto kWaitWatchdog = std::chrono::seconds(5);
+}
+std::vector<sync_event> sync_history() {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    return recorded_sync_events;
+}
+std::vector<semaphore_creation> semaphore_creation_history() {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    return created_semaphores;
+}
+std::vector<task_start_event> task_start_history() {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    return started_tasks;
+}
+void wait_for_task_starts(size_t expected) {
+    std::unique_lock<std::mutex> lock(sync_history_mutex);
+    if (!waits_cv.wait_for(lock, kWaitWatchdog, [expected] { return started_tasks.size() >= expected; }))
+        throw std::runtime_error("watchdog: expected task starts did not occur within 5s");
+}
+void record_semaphore_creation(void *handle, bool binary) {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    created_semaphores.push_back({handle, created_semaphores.size() + 1, binary});
+}
+uint64_t record_audit_event(const char *kind, void *handle, const char *path) {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    const auto sequence = ++audit_sequence;
+    recorded_audit_events.push_back({sequence, kind, handle, path ? path : "", std::this_thread::get_id()});
+    return sequence;
+}
+std::vector<audit_event> audit_history() {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    return recorded_audit_events;
+}
+void clear_audit_history() {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    recorded_audit_events.clear();
+    audit_sequence = 0;
+}
+void clear_sync_history() {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    recorded_sync_events.clear();
+}
+void record_file_event(const char *operation, void *handle, const char *path) {
+    record_audit_event(operation, handle, path);
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    recorded_file_events.push_back({operation, std::this_thread::get_id()});
+}
+std::vector<file_event> file_history() {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    return recorded_file_events;
+}
+void clear_file_history() {
+    std::lock_guard<std::mutex> lock(sync_history_mutex);
+    recorded_file_events.clear();
 }
 queue_snapshot snapshot_queue(QueueHandle_t handle) {
     std::lock_guard<std::mutex> lock(handle->mutex);
@@ -220,6 +293,7 @@ QueueHandle_t xQueueCreateStatic(size_t n, size_t s, uint8_t *, StaticQueue_t *)
     return q;
 }
 BaseType_t xQueueSend(QueueHandle_t q, const void *item, TickType_t wait) {
+    record_sync(event_log_shim::sync_kind::queue_send, q);
     event_log_shim::timed_wait registered_wait;
     const auto deadline = wait == portMAX_DELAY ? portMAX_DELAY : xTaskGetTickCount() + wait;
     std::unique_lock<std::mutex> l(q->mutex);
@@ -239,6 +313,7 @@ BaseType_t xQueueSend(QueueHandle_t q, const void *item, TickType_t wait) {
     return pdTRUE;
 }
 BaseType_t xQueueReceive(QueueHandle_t q, void *out, TickType_t wait) {
+    record_sync(event_log_shim::sync_kind::queue_receive, q);
     event_log_shim::timed_wait registered_wait;
     const auto deadline = wait == portMAX_DELAY ? portMAX_DELAY : xTaskGetTickCount() + wait;
     std::unique_lock<std::mutex> l(q->mutex);
@@ -258,12 +333,17 @@ BaseType_t xQueueReceive(QueueHandle_t q, void *out, TickType_t wait) {
     return pdTRUE;
 }
 SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t *) {
-    return new host_semaphore{{}, {}, 1, false};
+    auto *semaphore = new host_semaphore{{}, {}, 1, false};
+    event_log_shim::record_semaphore_creation(semaphore, false);
+    return semaphore;
 }
 SemaphoreHandle_t xSemaphoreCreateBinaryStatic(StaticSemaphore_t *) {
-    return new host_semaphore{{}, {}, 0, true};
+    auto *semaphore = new host_semaphore{{}, {}, 0, true};
+    event_log_shim::record_semaphore_creation(semaphore, true);
+    return semaphore;
 }
 BaseType_t xSemaphoreTake(SemaphoreHandle_t s, TickType_t wait) {
+    record_sync(event_log_shim::sync_kind::semaphore_take, s);
     if (!wait) {
         std::lock_guard<std::mutex> lock(s->mutex);
         if (!s->count)
@@ -285,6 +365,7 @@ BaseType_t xSemaphoreTake(SemaphoreHandle_t s, TickType_t wait) {
     return pdTRUE;
 }
 BaseType_t xSemaphoreGive(SemaphoreHandle_t s) {
+    record_sync(event_log_shim::sync_kind::semaphore_give, s);
     {
         std::lock_guard<std::mutex> l(s->mutex);
         if (s->binary)
@@ -298,7 +379,15 @@ BaseType_t xSemaphoreGive(SemaphoreHandle_t s) {
     wake_registered_waits();
     return pdTRUE;
 }
-BaseType_t xTaskCreate(TaskFunction_t f, const char *, uint32_t, void *arg, unsigned, TaskHandle_t *out) {
+BaseType_t xTaskCreate(TaskFunction_t f, const char *name, uint32_t, void *arg, unsigned, TaskHandle_t *out) {
+    {
+        std::lock_guard<std::mutex> lock(task_registry_mutex);
+        if (!task_creation_failure.empty() && name != nullptr && task_creation_failure == name) {
+            task_creation_failure.clear();
+            if (out != nullptr) *out = nullptr;
+            return pdFALSE;
+        }
+    }
     auto *t = new host_task;
     *out = t;
     { std::lock_guard<std::mutex> lock(task_registry_mutex); task_registry.push_back(t); }
@@ -307,6 +396,11 @@ BaseType_t xTaskCreate(TaskFunction_t f, const char *, uint32_t, void *arg, unsi
     t->thread = std::thread([=, ready = std::move(ready)]() mutable {
         ready.wait();
         current_task = t;
+        {
+            std::lock_guard<std::mutex> lock(sync_history_mutex);
+            started_tasks.push_back({name ? name : "", std::this_thread::get_id(), ++audit_sequence, t});
+        }
+        waits_cv.notify_all();
         f(arg);
         {
             std::lock_guard<std::mutex> lock(t->mutex);

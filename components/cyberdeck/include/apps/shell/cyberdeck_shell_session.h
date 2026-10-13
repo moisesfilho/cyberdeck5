@@ -143,6 +143,7 @@ struct host {
 
     /* Compiled-in application runtime owned by the UI composition. */
     virtual cyberdeck_apps::runtime &app_runtime() = 0;
+    virtual bool request_poweroff() { return false; }
 };
 
 /* Stateful local/remote line dispatcher.  Owns the editor, the history, the
@@ -204,6 +205,8 @@ private:
     std::uint64_t wifi_connection_token_ = 0;
     std::uint64_t wifi_model_connection_token_ = 0;
     std::size_t log_lines_;
+    bool poweroff_confirmation_ = false;
+    bool poweroff_requested_ = false;
 };
 
 } // namespace cyberdeck_shell_session

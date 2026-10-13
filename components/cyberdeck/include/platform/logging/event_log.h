@@ -12,9 +12,7 @@ extern "C" {
  * during initialization/closing fail with ESP_ERR_INVALID_STATE. */
 esp_err_t event_log_init(void);
 
-/* Fences new operations and waits for admitted callers. This intermediate
- * lifecycle milestone deliberately returns ESP_ERR_TIMEOUT after the callers
- * drain: worker tasks and files are not stopped/closed yet. */
+/* Permanently fences new operations and drains admitted callers and workers. */
 esp_err_t event_log_quiesce(uint32_t timeout_ms);
 /* Adds a structured event without going through ESP_LOG. */
 void event_log_write(char level, const char *tag, const char *message);

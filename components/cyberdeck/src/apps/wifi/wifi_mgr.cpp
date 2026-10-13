@@ -4,6 +4,7 @@
 #include "apps/wifi/wifi_storage.h"
 #include "apps/wifi/cyberdeck_wifi_event_dispatch.h"
 #include "apps/wifi/cyberdeck_wifi_persistence_queue.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 #include "apps/wifi/cyberdeck_wifi_persistence_coordinator.h"
 #include <stdlib.h>
 #include <string.h>
@@ -267,6 +268,13 @@ static esp_err_t rollback_start(bool wifi_started, esp_err_t failure)
         s_lifecycle = wifi_manager_context::lifecycle_state::quarantined;
         ESP_LOGE(TAG, "worker Wi-Fi nao confirmou quiescencia; rollback retido");
         return ESP_ERR_TIMEOUT;
+    }
+    if (cyberdeck_sd_io::global_fenced() &&
+        (s_wifi_dispatch.pending() != 0 || s_wifi_persistence.pending() != 0 ||
+         s_wifi_persistence_coordinator.producer_pending() ||
+         s_wifi_persistence_coordinator.persist_pending() ||
+         s_wifi_persistence_coordinator.retry_pending())) {
+        cyberdeck_sd_io::record_global_persistence_failure();
     }
     wipe_sensitive_state(true);
     if (s_net_session_event_queue != NULL) {
@@ -1321,6 +1329,13 @@ esp_err_t wifi_mgr_stop(uint32_t timeout_ms)
         return ESP_ERR_TIMEOUT;
     }
 
+    if (cyberdeck_sd_io::global_fenced() &&
+        (s_wifi_dispatch.pending() != 0 || s_wifi_persistence.pending() != 0 ||
+         s_wifi_persistence_coordinator.producer_pending() ||
+         s_wifi_persistence_coordinator.persist_pending() ||
+         s_wifi_persistence_coordinator.retry_pending())) {
+        cyberdeck_sd_io::record_global_persistence_failure();
+    }
     wipe_sensitive_state(true);
     if (s_radio_enabled) (void)esp_wifi_stop();
     if (s_wifi_initialized) { (void)esp_wifi_deinit(); s_wifi_initialized = false; }

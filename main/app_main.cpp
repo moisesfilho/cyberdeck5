@@ -15,12 +15,15 @@
 #include "bsp/m5stack_tab5.h"
 #include "platform/storage/cyberdeck_sd_io_coordinator.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
+#include "platform/power/cyberdeck_poweroff.h"
 
 static const char *TAG = "cyberdeck5";
 
 extern "C" void app_main(void)
 {
     static cyberdeck_sd_io::coordinator sd_io_coordinator;
+    cyberdeck_sd_io::bind_global(sd_io_coordinator);
+    cyberdeck_poweroff_init(sd_io_coordinator);
     /* The terminal exposes its virtual root / only after the physical /sdcard
      * mount has completed and its BSP handle has been verified. */
     ESP_ERROR_CHECK(bsp_sdcard_mount());

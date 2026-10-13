@@ -17,6 +17,10 @@
 #include <sys/stat.h>
 #include <atomic>
 #include <mutex>
+#include <fcntl.h>
+#include <unistd.h>
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
+#include "apps/ssh/cyberdeck_known_hosts_file.h"
 
 static const char *TAG = "tab5_ssh";
 
@@ -98,16 +102,43 @@ void dispatch_rx(ssh_client_generation_t generation, const char *data, size_t le
 
 bool verify_host_key(ssh_client_generation_t generation, ssh_session session)
 {
-    const enum ssh_known_hosts_e host_state = ssh_session_is_known_server(session);
-    if (host_state == SSH_KNOWN_HOSTS_OK) {
+    char *exported = nullptr;
+    if (ssh_session_export_known_hosts_entry(session, &exported) != SSH_OK || exported == nullptr) return false;
+    const std::string entry(exported);
+    ssh_string_free_char(exported);
+    const auto split = entry.find(' ');
+    if (split == std::string::npos) return false;
+    const std::string hostname = entry.substr(0, split);
+    ssh_knownhosts_entry *expected = nullptr;
+    if (ssh_known_hosts_parse_line(hostname.c_str(), entry.c_str(), &expected) != SSH_OK || expected == nullptr) return false;
+    class key_verifier final : public cyberdeck_known_hosts::verifier {
+      public:
+        key_verifier(const std::string &host, ssh_key key) : host_(host), key_(key) {}
+        cyberdeck_known_hosts::status compare(std::string_view line) override {
+            ssh_knownhosts_entry *parsed = nullptr;
+            const std::string text(line);
+            const int result = ssh_known_hosts_parse_line(host_.c_str(), text.c_str(), &parsed);
+            if (result == SSH_AGAIN) return cyberdeck_known_hosts::status::unknown;
+            if (result != SSH_OK || parsed == nullptr) return cyberdeck_known_hosts::status::invalid;
+            const bool same = ssh_key_cmp(key_, parsed->publickey, SSH_KEY_CMP_PUBLIC) == 0;
+            ssh_knownhosts_entry_free(parsed);
+            return same ? cyberdeck_known_hosts::status::matching : cyberdeck_known_hosts::status::changed;
+        }
+      private:
+        const std::string &host_;
+        ssh_key key_;
+    } keys(hostname, expected->publickey);
+    const auto host_state = cyberdeck_known_hosts::read(CYBERDECK_KNOWN_HOSTS_PATH, keys);
+    ssh_knownhosts_entry_free(expected);
+    if (host_state == cyberdeck_known_hosts::status::matching) {
         return true;
     }
-    if (host_state == SSH_KNOWN_HOSTS_UNKNOWN || host_state == SSH_KNOWN_HOSTS_NOT_FOUND) {
+    if (host_state == cyberdeck_known_hosts::status::unknown) {
         set_state_locked(generation, SSH_CLIENT_NEED_HOST_KEY, "Chave de host desconhecida. Confirme para continuar.");
         uint8_t accepted = 0;
         while (!s_stop_requested.load(std::memory_order_acquire)) {
             if (xQueueReceive(s_host_key_queue, &accepted, pdMS_TO_TICKS(100)) == pdTRUE && accepted != 0) {
-                if (ssh_session_update_known_hosts(session) != SSH_OK) {
+                if (!cyberdeck_known_hosts::append(CYBERDECK_KNOWN_HOSTS_PATH, entry)) {
                     set_state_locked(generation, SSH_CLIENT_ERROR, "Nao foi possivel salvar a chave do host.");
                     return false;
                 }

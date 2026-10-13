@@ -409,7 +409,7 @@ esp_err_t ble_mgr_stop(void)
     /* The explicit quiescence barrier above is the join.  In particular, the
      * stop ACK alone is not sufficient: a self-deleting task can acknowledge
      * before the scheduler has completed its final task transition. */
-    nimble_port_stop();
+    if (nimble_port_stop() != 0) return ESP_FAIL;
     nimble_port_freertos_deinit();
 
     if (s_ble_mutex != NULL) {

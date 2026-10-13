@@ -1,4 +1,5 @@
 #include "platform/display/cyberdeck_ui.h"
+#include "platform/power/cyberdeck_poweroff.h"
 #include "apps/bluetooth/cyberdeck_ble_background.h"
 #include "apps/bluetooth/cyberdeck_ble_state_machine.h"
 #include "apps/bluetooth/cyberdeck_ble_types.h"
@@ -168,6 +169,7 @@ cyberdeck_ble_background::scheduler s_ble_background;
  * and pending Wi-Fi password target.  The host below borrows UI-owned output,
  * models, menus and async handles; every method runs on the LVGL task. */
 struct shell_session_host final : public cyberdeck_shell_session::host {
+    bool request_poweroff() override { return cyberdeck_poweroff_request(); }
     void append_output_line(const std::string &line) override;
     void write_output(const char *data, std::size_t length) override;
     void append_output_text(const std::string &text) override;
@@ -1379,6 +1381,7 @@ void virtual_keyboard_changed(lv_event_t *event) {
 }
 
 void terminal_insert(lv_event_t *event) {
+    if (cyberdeck_poweroff_pending()) return;
     if (!event || s_rendering || !s_terminal)
         return;
     const char *inserted = static_cast<const char *>(lv_event_get_param(event));
@@ -1404,6 +1407,7 @@ void terminal_insert(lv_event_t *event) {
 }
 
 void terminal_changed(lv_event_t *) {
+    if (cyberdeck_poweroff_pending()) return;
     if (s_rendering || !s_terminal)
         return;
     const char *text = lv_textarea_get_text(s_terminal);
@@ -1428,6 +1432,7 @@ void terminal_changed(lv_event_t *) {
 }
 
 void terminal_key(lv_event_t *event) {
+    if (cyberdeck_poweroff_pending()) return;
     if (!event || s_rendering)
         return;
     uint32_t key = lv_event_get_key(event);
@@ -1864,5 +1869,28 @@ extern "C" void cyberdeck_ui_deinit(void) {
 }
 
 extern "C" void cyberdeck_keyboard_input(const char *text, size_t length, uint8_t modifier, uint32_t special_key) {
+    if (cyberdeck_poweroff_pending()) return;
     s_keyboard_dispatch.submit(text, length, modifier, special_key);
+}
+
+extern "C" bool cyberdeck_ui_poweroff_freeze(uint32_t timeout_ms) {
+    if (!bsp_display_lock(pdMS_TO_TICKS(timeout_ms))) return false;
+    for (auto *timer : {s_clock_timer, s_wifi_state_timer, s_wifi_scan_timer, s_ble_timer,
+                        s_ssh_timer, s_wifi_audit_timer, s_battery_timer, s_terminal_output_timer}) {
+        if (timer != nullptr) lv_timer_pause(timer);
+    }
+    s_keyboard_dispatch.stop();
+    bsp_display_unlock();
+    return true;
+}
+
+extern "C" bool cyberdeck_ui_audit_quiesce(uint32_t timeout_ms) {
+    return s_wifi_audit.quiesce(timeout_ms);
+}
+
+extern "C" void cyberdeck_ui_poweroff_message(const char *message) {
+    if (message == nullptr || !bsp_display_lock(pdMS_TO_TICKS(1000))) return;
+    append_output(message, strlen(message), false);
+    render_terminal();
+    bsp_display_unlock();
 }

@@ -49,7 +49,7 @@ def main() -> int:
 
     # Lifecycle: the no-task branch may only release queue/state; the task
     # branch must invalidate, wake, acknowledge/join, then destroy state.
-    teardown = body(worker, "void cyberdeck_cat_worker_teardown(void)")
+    teardown = body(worker, "static bool stop_cat_worker")
     no_task = body(teardown, "if (s_task == nullptr)")
     require("s_closing = true;" in no_task, "no-task teardown must close lifecycle state")
     require("vQueueDelete(s_queue)" in no_task and "s_queue = nullptr" in no_task,
@@ -57,17 +57,17 @@ def main() -> int:
     require("xTaskNotifyGive" not in no_task and "xSemaphoreTake(s_stopped" not in no_task,
             "no-task teardown must not notify or join a nonexistent task")
 
-    no_task_end = teardown.find("return;", teardown.find("if (s_task == nullptr)"))
+    no_task_end = teardown.find("return true;", teardown.find("if (s_task == nullptr)"))
     require(no_task_end >= 0, "no-task teardown branch must return")
     task_branch = teardown[teardown.find("s_closing = true;", no_task_end):]
     before(task_branch, "s_closing = true;", "xTaskNotifyGive", "teardown must cancel before wakeup")
-    before(task_branch, "xTaskNotifyGive", "xSemaphoreTake(s_stopped, portMAX_DELAY)",
+    before(task_branch, "xTaskNotifyGive", "xSemaphoreTake(s_stopped, remaining())",
            "task teardown must wake before waiting for the stop acknowledgement")
-    before(task_branch, "xSemaphoreTake(s_stopped, portMAX_DELAY)", "vQueueDelete(s_queue)",
+    before(task_branch, "xSemaphoreTake(s_stopped, remaining())", "vQueueDelete(s_queue)",
            "queue must survive until the worker is joined")
     require("vTaskDelete(task)" not in task_branch,
             "join acknowledgement must replace deletion of an already-ended task")
-    require("xSemaphoreTake(s_lifecycle_mutex, portMAX_DELAY)" in task_branch,
+    require("xSemaphoreTake(s_lifecycle_mutex, remaining())" in task_branch,
             "post-join state reset must be synchronized")
     require("Idempotent" in header and "cyberdeck_cat_worker_teardown" in header,
             "public contract must document idempotent teardown")

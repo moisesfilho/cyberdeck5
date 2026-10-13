@@ -24,6 +24,9 @@
 #include "freertos/task.h"
 
 #include "sdkconfig.h"
+#if defined(ESP_PLATFORM)
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
+#endif
 
 #if defined(CYBERDECK_EVENT_LOG_TEST)
 extern "C" void event_log_test_durable_request_released(void);
@@ -86,6 +89,10 @@ TaskHandle_t s_text_task = nullptr;
 vprintf_like_t s_serial_vprintf = nullptr;
 std::atomic<Lifecycle> s_lifecycle{Lifecycle::UNINITIALIZED};
 std::atomic<uint32_t> s_active_ops{0};
+std::atomic<bool> s_stop_requested{false};
+std::atomic<bool> s_binary_failed{false};
+std::atomic<bool> s_log_complete{false};
+std::atomic<bool> s_text_complete{false};
 StaticSemaphore_t s_quiesce_changed_storage;
 SemaphoreHandle_t s_quiesce_changed = nullptr;
 
@@ -149,8 +156,11 @@ struct TextSnapshot {
 
 void close_text_snapshot(TextSnapshot *snapshot) {
     for (size_t index = 0; index < snapshot->count; ++index) {
-        if (snapshot->files[index] != nullptr)
-            fclose(snapshot->files[index]);
+        if (snapshot->files[index] != nullptr && fclose(snapshot->files[index]) != 0) {
+#if defined(ESP_PLATFORM)
+            cyberdeck_sd_io::record_global_persistence_failure();
+#endif
+        }
         snapshot->files[index] = nullptr;
     }
     snapshot->count = 0;
@@ -169,7 +179,11 @@ bool open_text_snapshot(TextSnapshot *snapshot) {
         }
         struct stat info = {};
         if (fstat(fileno(file), &info) != 0 || info.st_size < 0) {
-            fclose(file);
+            if (fclose(file) != 0) {
+#if defined(ESP_PLATFORM)
+                cyberdeck_sd_io::record_global_persistence_failure();
+#endif
+            }
             close_text_snapshot(snapshot);
             return false;
         }
@@ -427,19 +441,38 @@ bool append_text_projection(const LogRecord &record) {
     if (file == nullptr)
         return false;
     const bool ok = fwrite(line, 1, length, file) == length && fflush(file) == 0 && fsync(fileno(file)) == 0;
-    fclose(file);
-    return ok;
+    const bool closed = fclose(file) == 0;
+#if defined(ESP_PLATFORM)
+    if (!closed) cyberdeck_sd_io::record_global_persistence_failure();
+#endif
+    return ok && closed;
 }
 
 void text_log_task(void *) {
     LogRecord record;
-    while (true) {
-        if (xQueueReceive(s_text_queue, &record, portMAX_DELAY) == pdTRUE && s_text_mutex != nullptr &&
-            xSemaphoreTake(s_text_mutex, portMAX_DELAY) == pdTRUE) {
+    for (;;) {
+        bool received = xQueueReceive(s_text_queue, &record, pdMS_TO_TICKS(50)) == pdTRUE;
+        // The binary owner can still publish projections while draining.
+        if (!received && s_stop_requested.load(std::memory_order_acquire) &&
+            (s_task == nullptr || s_log_complete.load(std::memory_order_acquire))) {
+            // Completion may have raced the timed receive; recheck the queue
+            // only after observing that its final producer has finished.
+            received = xQueueReceive(s_text_queue, &record, 0) == pdTRUE;
+            if (!received)
+                break;
+        }
+        if (received) {
+            if (s_text_mutex != nullptr && xSemaphoreTake(s_text_mutex, portMAX_DELAY) == pdTRUE) {
             (void)append_text_projection(record);
             xSemaphoreGive(s_text_mutex);
+            }
+            continue;
         }
     }
+    s_text_complete.store(true, std::memory_order_release);
+    if (s_quiesce_changed != nullptr)
+        (void)xSemaphoreGive(s_quiesce_changed);
+    vTaskDelete(nullptr);
 }
 
 bool write_record(FILE *file, LogRecord *record, uint32_t *next_slot, uint32_t *next_sequence) {
@@ -476,9 +509,10 @@ void log_task(void *) {
     TickType_t next_retry = 0;
     LogRecord record{};
 
-    while (true) {
+    for (;;) {
         if (file == nullptr && xTaskGetTickCount() >= next_retry) {
             if (!open_log_file(&file, &next_slot, &next_sequence)) {
+                s_binary_failed.store(true, std::memory_order_release);
                 next_retry = xTaskGetTickCount() + RETRY_INTERVAL;
             }
         }
@@ -488,6 +522,7 @@ void log_task(void *) {
             if (file != nullptr) {
                 complete_durable_request(file, durable, &next_slot, &next_sequence);
             } else {
+                s_binary_failed.store(true, std::memory_order_release);
                 durable->persisted = false;
                 (void)xSemaphoreGive(durable->complete);
             }
@@ -505,7 +540,9 @@ void log_task(void *) {
             }
 
             if (!write_record(file, &record, &next_slot, &next_sequence)) {
-                fclose(file);
+                s_binary_failed.store(true, std::memory_order_release);
+                if (fclose(file) != 0)
+                    s_binary_failed.store(true, std::memory_order_release);
                 file = nullptr;
                 next_retry = xTaskGetTickCount() + RETRY_INTERVAL;
                 remember_record(record);
@@ -519,8 +556,21 @@ void log_task(void *) {
             continue;
         }
 
+        if (s_stop_requested.load(std::memory_order_acquire))
+            break;
+
         (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
     }
+    if (file != nullptr) {
+        if (fflush(file) != 0 || fsync(fileno(file)) != 0)
+            s_binary_failed.store(true, std::memory_order_release);
+        if (fclose(file) != 0)
+            s_binary_failed.store(true, std::memory_order_release);
+    }
+    s_log_complete.store(true, std::memory_order_release);
+    if (s_quiesce_changed != nullptr)
+        (void)xSemaphoreGive(s_quiesce_changed);
+    vTaskDelete(nullptr);
 }
 
 int log_vprintf(const char *format, va_list args) {
@@ -544,6 +594,11 @@ extern "C" esp_err_t event_log_init(void) {
     Lifecycle expected = Lifecycle::UNINITIALIZED;
     if (!s_lifecycle.compare_exchange_strong(expected, Lifecycle::INITIALIZING, std::memory_order_acq_rel))
         return expected == Lifecycle::OPEN ? ESP_OK : ESP_ERR_INVALID_STATE;
+
+    s_stop_requested.store(false, std::memory_order_relaxed);
+    s_binary_failed.store(false, std::memory_order_relaxed);
+    s_log_complete.store(false, std::memory_order_relaxed);
+    s_text_complete.store(false, std::memory_order_relaxed);
 
     s_queue = xQueueCreateStatic(QUEUE_LENGTH, sizeof(LogRecord), s_queue_storage, &s_queue_struct);
     if (s_queue == nullptr) {
@@ -795,8 +850,22 @@ extern "C" esp_err_t event_log_quiesce(uint32_t timeout_ms) {
         (void)s_lifecycle.compare_exchange_strong(expected, Lifecycle::CLOSING, std::memory_order_acq_rel);
     }
 
+    s_stop_requested.store(true, std::memory_order_release);
+    if (s_task != nullptr)
+        xTaskNotifyGive(s_task);
+
     const int64_t deadline_us = esp_timer_get_time() + static_cast<int64_t>(timeout_ms) * 1000;
-    while (s_active_ops.load(std::memory_order_acquire) != 0) {
+    for (;;) {
+        const bool readers_drained = s_active_ops.load(std::memory_order_acquire) == 0;
+        const bool workers_drained = (s_task == nullptr || s_log_complete.load(std::memory_order_acquire)) &&
+                                     (s_text_task == nullptr || s_text_complete.load(std::memory_order_acquire));
+        if (readers_drained && workers_drained) {
+            if (s_binary_failed.load(std::memory_order_acquire))
+                return ESP_FAIL;
+            Lifecycle expected = Lifecycle::CLOSING;
+            (void)s_lifecycle.compare_exchange_strong(expected, Lifecycle::CLOSED, std::memory_order_acq_rel);
+            return s_lifecycle.load(std::memory_order_acquire) == Lifecycle::CLOSED ? ESP_OK : ESP_ERR_INVALID_STATE;
+        }
         const int64_t remaining_us = deadline_us - esp_timer_get_time();
         if (remaining_us <= 0)
             return ESP_ERR_TIMEOUT;
@@ -805,6 +874,4 @@ extern "C" esp_err_t event_log_quiesce(uint32_t timeout_ms) {
             wait_ticks = 1;
         (void)xSemaphoreTake(s_quiesce_changed, wait_ticks);
     }
-    /* Milestone 1 only fences callers. Workers, queues and files are not stopped. */
-    return ESP_ERR_TIMEOUT;
 }

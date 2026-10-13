@@ -5,6 +5,7 @@
 // host below.  This exercises handle_key()/execute_line()/text insertion as
 // behavior, complementing the structural contracts that inspect the source.
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -113,6 +114,9 @@ struct fake_host final : cyberdeck_shell_session::host {
     std::vector<std::string> events;
     std::string recent;
     std::size_t recent_requested = 0;
+    int poweroff_requests = 0;
+    bool poweroff_accept = true;
+    bool request_poweroff() override { ++poweroff_requests; return poweroff_accept; }
 
     /* Local shell / cat. */
     bool cat_accepted = true;
@@ -299,11 +303,74 @@ void submit(session &s, const std::string &text)
 
 int main()
 {
+    for (const std::string answer : {"Y", "yes", " y", "y ", "", "pwd"}) {
+        fake_host h;
+        session s(h);
+        submit(s, "poweroff");
+        check(h.poweroff_requests == 0, "poweroff alone never requests a physical cut");
+        check(h.output.find("Type exactly y") != std::string::npos, "poweroff prompts for exact confirmation");
+        submit(s, answer);
+        check(h.poweroff_requests == 0, "non-exact confirmations cancel without side effects");
+        check(h.output.find("poweroff: cancelled") != std::string::npos, "cancellation is visible");
+        submit(s, "y");
+        check(h.poweroff_requests == 0, "cancelled confirmation cannot be reused");
+    }
+    {
+        fake_host h;
+        session s(h);
+        submit(s, "poweroff");
+        submit(s, "y");
+        check(h.poweroff_requests == 1, "exact poweroff/y requests shutdown once");
+        submit(s, "poweroff");
+        submit(s, "y");
+        check(h.poweroff_requests == 1, "shutdown cannot retry or admit subsequent commands");
+    }
+    {
+        fake_host h;
+        h.poweroff_accept = false;
+        session s(h);
+        submit(s, "poweroff"); submit(s, "y");
+        check(h.output.find("reboot required") != std::string::npos, "worker allocation failure is visible");
+        submit(s, "poweroff"); submit(s, "y");
+        check(h.poweroff_requests == 1, "failed request is not automatically retried");
+    }
+    {
+        fake_host h;
+        session s(h);
+        submit(s, "poweroff"); s.handle_key(key::esc); submit(s, "y");
+        check(h.poweroff_requests == 0, "Escape clears the pending confirmation");
+        submit(s, "poweroff --help"); submit(s, "y");
+        check(h.poweroff_requests == 0, "help never arms confirmation");
+    }
+    for (const std::string command : {" poweroff", "poweroff ", "poweroff y", "poweroffx"}) {
+        fake_host h;
+        session s(h);
+        submit(s, command); submit(s, "y");
+        check(h.poweroff_requests == 0, "only an exact poweroff line arms confirmation");
+    }
+    {
+        fake_host h;
+        session s(h);
+        submit(s, "poweroff");
+        h.phase = cyberdeck_session_state::HOST_KEY;
+        submit(s, "y");
+        check(h.poweroff_requests == 0 && h.host_key_accepted == 0,
+              "context change cancels poweroff without accepting a remote host key");
+    }
+    {
+        fake_host h;
+        session s(h);
+        bool enter = false;
+        s.insert_virtual_text("poweroff\ny\nclear\npoweroff\ny\n", &enter);
+        check(h.poweroff_requests == 1 && h.clear_count == 0,
+              "multiline paste requests once and discards its suffix after confirmation");
+        check(!s.insert_physical_text("x", 1), "physical input is rejected after shutdown admission");
+        check(!s.insert_virtual_text("x", &enter), "virtual input is rejected after shutdown admission");
+        check(!s.insert_modified_key('c', 1), "modified input is rejected after shutdown admission");
+    }
     /* --- editor and history ------------------------------------------- */
     {
         fake_host h;
-        /* One OPEN coordinator is shared by this fixture and remains bound
-         * across both cd operations in the session lifecycle. */
         session s(h);
         type(s, "pwd");
         check_eq(s.line(), "pwd", "typed text reaches the session line");
@@ -360,6 +427,29 @@ int main()
         submit(s, "help");
         check(h.output.find("help - show this help") != std::string::npos,
               "help prints the shared catalog");
+    }
+
+    {
+        fake_host h;
+        session s(h);
+        check(h.sd_io.state() == cyberdeck_sd_io::gate_state::open,
+              "session fixture starts with an OPEN SD coordinator");
+        const auto owner = h.sd_io.begin_close();
+        submit(s, "cd /");
+        check(h.output.find("cd: SD storage is closing or unavailable") != std::string::npos,
+              "session rejects SD reads while CLOSING");
+        check_eq(h.shell.cwd(), "/", "rejected cd preserves cwd");
+        check(h.sd_io.active_leases() == 0, "rejected session read acquires no lease");
+        check(h.sd_io.drain(owner, std::chrono::steady_clock::now()) ==
+                  cyberdeck_sd_io::drain_result::drained,
+              "session fixture drains to CLOSED");
+        h.output.clear();
+        submit(s, "touch /data/poweroff-fence-test");
+        check(h.output.find("touch: SD storage is closing or unavailable") != std::string::npos,
+              "session rejects SD writes while CLOSED");
+        check(h.sd_io.state() == cyberdeck_sd_io::gate_state::closed &&
+                  h.sd_io.active_leases() == 0,
+              "session commands cannot reopen the gate or acquire leases");
     }
 
     /* --- screen commands go through the host port ---------------------- */

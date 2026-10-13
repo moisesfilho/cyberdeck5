@@ -16,6 +16,7 @@
 #include "apps/shell/cyberdeck_edit_line.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <string>
 
@@ -44,6 +45,7 @@ void check(bool condition, const char *message)
 class fake_host final : public cyberdeck_shell_session::host {
 public:
     fake_host() { local_.bind_sd_io(sd_io_); }
+    cyberdeck_sd_io::coordinator &sd_io() { return sd_io_; }
     void append_output_line(const std::string &line) override { output += line; }
     void write_output(const char *data, std::size_t length) override
     {
@@ -1022,6 +1024,39 @@ void supervisor_ownership_contract() {
           "an unrelated application cascades into no console");
 }
 
+void sd_fence_survives_console_restart_contract()
+{
+    fake_host host;
+    cyberdeck_shell_app::application shell;
+    shell.attach_console(host);
+    check(shell.start(), "SD fence fixture starts the shell");
+    check(host.sd_io().state() == cyberdeck_sd_io::gate_state::open,
+          "application fixture starts with an OPEN coordinator");
+    const auto owner = host.sd_io().begin_close();
+    check(shell.insert_physical_text("cd /", 4), "console accepts a command while SD is CLOSING");
+    shell.execute_line();
+    check(host.output.find("cd: SD storage is closing or unavailable") != std::string::npos,
+          "application rejects SD reads while CLOSING");
+    check(host.local_shell().cwd() == "/", "rejected application cd preserves cwd");
+    check(host.sd_io().active_leases() == 0, "rejected application read acquires no lease");
+    check(host.sd_io().drain(owner, std::chrono::steady_clock::now()) ==
+              cyberdeck_sd_io::drain_result::drained,
+          "application fixture drains to CLOSED");
+    check(shell.stop(), "console stops with CLOSED storage");
+    check(shell.start(), "console restarts without reopening storage");
+    host.output.clear();
+    const std::string command = "touch /data/poweroff-fence-test";
+    check(shell.insert_physical_text(command.data(), command.size()),
+          "restarted console accepts a command");
+    shell.execute_line();
+    check(host.output.find("touch: SD storage is closing or unavailable") != std::string::npos,
+          "restarted application rejects SD writes while CLOSED");
+    check(host.sd_io().state() == cyberdeck_sd_io::gate_state::closed &&
+              host.sd_io().active_leases() == 0,
+          "console restart preserves the shared CLOSED coordinator");
+    check(shell.stop(), "SD fence fixture releases the console");
+}
+
 } // namespace
 
 int main()
@@ -1037,6 +1072,7 @@ int main()
     console_isolation_contract();
     lifecycle_does_not_render_or_reuse_console_contract();
     supervisor_ownership_contract();
+    sd_fence_survives_console_restart_contract();
 
     if (failures == 0) {
         std::printf("PASS: shell application (%d checks)\n", checks);

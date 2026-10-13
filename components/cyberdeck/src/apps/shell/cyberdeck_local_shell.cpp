@@ -25,6 +25,26 @@ namespace {
 constexpr size_t k_shell_max_tokens = 32;
 constexpr size_t k_shell_max_line_bytes = 1024;
 
+int close_descriptor(int descriptor) {
+    const int result = ::close(descriptor);
+    const int saved = errno;
+#if defined(ESP_PLATFORM)
+    if (result != 0) cyberdeck_sd_io::record_global_persistence_failure();
+#endif
+    errno = saved;
+    return result;
+}
+
+int close_directory(DIR *directory) {
+    const int result = ::closedir(directory);
+    const int saved = errno;
+#if defined(ESP_PLATFORM)
+    if (result != 0) cyberdeck_sd_io::record_global_persistence_failure();
+#endif
+    errno = saved;
+    return result;
+}
+
 bool is_token_separator(const char byte) {
     // Match the command-line whitespace accepted previously, without
     // consulting the current C++ locale.
@@ -151,7 +171,7 @@ int cat_open_regular(const char *root, const std::string &relative) {
         return -1;
     struct stat info = {};
     if (::fstat(descriptor, &info) != 0 || !S_ISREG(info.st_mode)) {
-        ::close(descriptor);
+        close_descriptor(descriptor);
         return -1;
     }
     return descriptor;
@@ -169,13 +189,13 @@ int cat_open_regular(const char *root, const std::string &relative) {
         const size_t length = end - begin;
         std::memcpy(component, relative.data() + begin, length);
         const int next = ::openat(directory, component, O_RDONLY | O_NOFOLLOW | (last ? 0 : O_DIRECTORY));
-        ::close(directory);
+        close_descriptor(directory);
         if (next < 0)
             return -1;
         if (last) {
             struct stat info = {};
             if (::fstat(next, &info) != 0 || !S_ISREG(info.st_mode)) {
-                ::close(next);
+                close_descriptor(next);
                 return -1;
             }
             return next;
@@ -183,7 +203,7 @@ int cat_open_regular(const char *root, const std::string &relative) {
         directory = next;
         begin = end + 1;
     }
-    ::close(directory);
+    close_descriptor(directory);
     return -1;
 #else
     (void)root;
@@ -237,7 +257,7 @@ int secure_open_regular(const fs::path &root, const fs::path &path) {
         return -1;
     struct stat info = {};
     if (::fstat(file, &info) != 0 || !S_ISREG(info.st_mode)) {
-        ::close(file);
+        close_descriptor(file);
         return -1;
     }
     return file;
@@ -255,18 +275,18 @@ int secure_open_regular(const fs::path &root, const fs::path &path) {
         parts.push_back(part.string());
     }
     if (parts.empty()) {
-        ::close(directory);
+        close_descriptor(directory);
         return -1;
     }
     for (size_t i = 0; i + 1 < parts.size(); ++i) {
         const int next = ::openat(directory, parts[i].c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
-        ::close(directory);
+        close_descriptor(directory);
         if (next < 0)
             return -1;
         directory = next;
     }
     const int file = ::openat(directory, parts.back().c_str(), O_RDONLY | O_NOFOLLOW);
-    ::close(directory);
+    close_descriptor(directory);
     return file;
 #else
     /* Without descriptor-relative traversal and without O_NOFOLLOW there is
@@ -285,7 +305,7 @@ class directory_handle {
 
     ~directory_handle() {
         if (directory_ != nullptr)
-            (void)::closedir(directory_);
+            (void)close_directory(directory_);
     }
 
     bool close() {
@@ -293,7 +313,7 @@ class directory_handle {
             return true;
         DIR *directory = directory_;
         directory_ = nullptr;
-        return ::closedir(directory) == 0;
+        return close_directory(directory) == 0;
     }
 
   private:
@@ -421,11 +441,11 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat_bounded(const char *host_
     }
     struct stat file_info = {};
     if (::fstat(descriptor, &file_info) != 0 || !S_ISREG(file_info.st_mode)) {
-        ::close(descriptor);
+        close_descriptor(descriptor);
         return reject_cat("cat: not a regular file");
     }
     if (file_info.st_size < 0 || static_cast<unsigned long long>(file_info.st_size) > bounded_max_bytes) {
-        ::close(descriptor);
+        close_descriptor(descriptor);
         return reject_cat("cat: file is too large");
     }
     std::string output;
@@ -436,16 +456,16 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat_bounded(const char *host_
         if (count == 0)
             break;
         if (count < 0) {
-            ::close(descriptor);
+            close_descriptor(descriptor);
             return reject_cat("cat: cannot read file");
         }
         output.append(chunk, static_cast<size_t>(count));
         if (output.size() > k_cat_max_output_bytes || output.size() > bounded_max_bytes) {
-            ::close(descriptor);
+            close_descriptor(descriptor);
             return reject_cat("cat: file is too large");
         }
     }
-    ::close(descriptor);
+    if (close_descriptor(descriptor) != 0) return reject_cat("cat: failed to close file");
     return {cyberdeck_local_shell_status::handled, std::move(output)};
 }
 
@@ -495,12 +515,12 @@ cyberdeck_storage_result cyberdeck_local_shell_storage_write_temp(const char *ro
         const ssize_t count = ::write(descriptor, bytes + written, size - written);
         if (count <= 0) {
             const int saved = errno;
-            ::close(descriptor);
+            close_descriptor(descriptor);
             return fail(saved);
         }
         written += static_cast<std::size_t>(count);
     }
-    if (::close(descriptor) != 0)
+    if (close_descriptor(descriptor) != 0)
         return fail(errno);
     return {true, cyberdeck_storage_stage::write_temp, 0};
 }
@@ -517,8 +537,11 @@ cyberdeck_storage_result cyberdeck_local_shell_storage_flush(const char *root, c
         return fail(errno);
     const int result = ::fsync(descriptor);
     const int saved = errno;
-    ::close(descriptor);
-    return result == 0 ? cyberdeck_storage_result{true, cyberdeck_storage_stage::flush_fsync_file, 0} : fail(saved);
+    const int closed = close_descriptor(descriptor);
+#if defined(ESP_PLATFORM)
+    if (result != 0) cyberdeck_sd_io::record_global_persistence_failure();
+#endif
+    return result == 0 && closed == 0 ? cyberdeck_storage_result{true, cyberdeck_storage_stage::flush_fsync_file, 0} : fail(result != 0 ? saved : errno);
 }
 
 cyberdeck_storage_result cyberdeck_local_shell_storage_rename(const char *root, const char *cwd,
@@ -597,7 +620,7 @@ cyberdeck_storage_result cyberdeck_local_shell_storage_fsync_directory(const cha
         return fail(errno);
     const int result = ::fsync(descriptor);
     const int saved = errno;
-    ::close(descriptor);
+    close_descriptor(descriptor);
     return result == 0 ? cyberdeck_storage_result{true, cyberdeck_storage_stage::fsync_directory, 0} : fail(saved);
 }
 
@@ -906,11 +929,11 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
             return reject("cat: secure open unavailable");
         struct stat file_info = {};
         if (::fstat(descriptor, &file_info) != 0 || !S_ISREG(file_info.st_mode)) {
-            ::close(descriptor);
+            close_descriptor(descriptor);
             return reject("cat: not a regular file");
         }
         if (file_info.st_size < 0 || static_cast<unsigned long long>(file_info.st_size) > k_cat_max_output_bytes) {
-            ::close(descriptor);
+            close_descriptor(descriptor);
             return reject("cat: file is too large");
         }
         std::string output;
@@ -921,16 +944,16 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
             if (count == 0)
                 break;
             if (count < 0) {
-                ::close(descriptor);
+                close_descriptor(descriptor);
                 return reject("cat: cannot read file");
             }
             output.append(chunk, static_cast<size_t>(count));
             if (output.size() > k_cat_max_output_bytes) {
-                ::close(descriptor);
+                close_descriptor(descriptor);
                 return reject("cat: file is too large");
             }
         }
-        ::close(descriptor);
+        if (close_descriptor(descriptor) != 0) return reject("cat: failed to close file");
         return {cyberdeck_local_shell_status::handled, output};
     }
     struct stat info = {};
@@ -942,9 +965,17 @@ cyberdeck_local_shell_result cyberdeck_local_shell::execute(const std::string &l
     if (command == "touch") {
         if (path_exists && !S_ISREG(info.st_mode))
             return reject("touch: not a file");
-        std::ofstream file(host, std::ios::app);
-        if (!file)
+        const int descriptor = ::open(host.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0600);
+        if (descriptor < 0)
             return reject("touch: cannot create file");
+        const int synced = ::fsync(descriptor);
+        const int closed = close_descriptor(descriptor);
+        if (synced != 0 || closed != 0) {
+#if defined(ESP_PLATFORM)
+            cyberdeck_sd_io::record_global_persistence_failure();
+#endif
+            return reject("touch: failed to persist file");
+        }
         return {cyberdeck_local_shell_status::handled, {}};
     }
     if (command == "mkdir") {

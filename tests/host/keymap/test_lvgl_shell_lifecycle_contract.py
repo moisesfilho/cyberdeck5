@@ -43,7 +43,7 @@ def main() -> int:
     result = body(UI, "void on_cat_result(")
     worker_task = body(WORKER, "void cat_worker_task(void *)")
     worker_start = body(WORKER, "bool cyberdeck_cat_worker_start(")
-    worker_stop = body(WORKER, "void cyberdeck_cat_worker_teardown(void)")
+    worker_stop = body(WORKER, "static bool stop_cat_worker")
 
     # TEST-LVGL-01: no direct render in application lifecycle; initial prompt
     # is deferred to the existing timer callback in the LVGL task.

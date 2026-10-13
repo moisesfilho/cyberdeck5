@@ -82,7 +82,9 @@ jobs:
           version: v5.5.5
       - name: Build firmware
         id: firmware-build
-        run: idf.py build
+        run: |
+          idf.py build
+          python3 tools/poweroff_link_guard.py --map build/cyberdeck5.map
       - name: Job summary
         if: always()
         run: |

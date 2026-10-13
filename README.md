@@ -118,6 +118,19 @@ context.
 output, reads use bounded chunks, and file I/O runs in a worker before the
 result is handed back to LVGL through a bounded asynchronous queue.
 
+### Power off
+
+In the local shell, enter `poweroff`, then exactly `y` and Enter to confirm.
+Any other answer or Escape cancels. Save/close the editor and exit SSH first:
+commands typed in an SSH session belong to the remote host.
+
+Shutdown fences new I/O, quiesces SD/NVS owners, verifies persistence and
+unmounts the SD before sending the Tab5 factory poweroff pulse. Errors or a
+preparation timeout prevent the signal; failed attempts require a controlled
+reboot rather than retry. USB disconnection or a dark display is not proof of
+physical rail cut. See the [manual validation procedure](tests/manual/poweroff-validation.pt-BR.md).
+The implementation is ready for manual validation; physical cut is not yet accepted.
+
 ### Compiled-in applications
 
 The firmware starts directly in the terminal shell. Compiled applications are

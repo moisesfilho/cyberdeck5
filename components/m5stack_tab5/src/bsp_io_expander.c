@@ -32,10 +32,9 @@ esp_io_expander_handle_t bsp_io_expander1_init(void)
         return io_expander1;
     }
     /* Initilize I2C */
-    BSP_ERROR_CHECK_RETURN_NULL(bsp_i2c_init());
-
-    BSP_ERROR_CHECK_RETURN_NULL(esp_io_expander_new_i2c_pi4ioe5v6408(bsp_i2c_get_handle(),
-                                BSP_IO_EXPANDER_ADDRESS_1, &io_expander1));
+    if (bsp_i2c_init() != ESP_OK) return NULL;
+    if (esp_io_expander_new_i2c_pi4ioe5v6408(bsp_i2c_get_handle(),
+                                          BSP_IO_EXPANDER_ADDRESS_1, &io_expander1) != ESP_OK) return NULL;
 
     return io_expander1;
 }

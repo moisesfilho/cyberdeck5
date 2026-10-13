@@ -47,7 +47,7 @@ CATALOG_DESCRIPTIONS = (
 
 COMMAND_NAMES = (
     "help", "wifi", "log", "clear", "screen", "battery", "bluetooth", "app", "ssh",
-    "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm", "rmdir",
+    "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm", "rmdir", "poweroff",
 )
 
 # Any quoted entry shaped like a catalog row would be an independent help
@@ -88,8 +88,8 @@ def main() -> int:
     # approved battery and bluetooth rows.  This keeps a stale executable/fixture
     # from being mistaken for a passing help contract after a rebuild.
     require("kCatalog" in shell_help and
-            re.search(r"std::array\s*<\s*entry\s*,\s*17\s*>\s+kCatalog", shell_help) is not None,
-            "production help header must retain the 17-entry ordered catalog")
+            re.search(r"std::array\s*<\s*entry\s*,\s*18\s*>\s+kCatalog", shell_help) is not None,
+            "production help header must retain the 18-entry ordered catalog")
     require(re.search(
         r'\{"battery"\s*,\s*"battery \[protection on\|off\|status\]"\s*,\s*'
         r'"show or control battery protection"\}', shell_help) is not None,

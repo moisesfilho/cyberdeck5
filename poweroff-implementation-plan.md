@@ -1,11 +1,20 @@
 # Plano de implementação: `poweroff` no Tab5
 
 **Tipo:** documento de controle de progresso; não é evidência de teste.  
-**Estado geral:** poweroff **NOT DONE**. Há componentes Stage 1 IMPLEMENTED no worktree, não commitados e ainda não plenamente aceitos. Nenhuma validação final de segurança ou corte físico foi concluída.
+**Estado geral:** **DEVICE TEST FAILED — diagnóstico pendente**. Gates locais passaram, mas o flash e teste no dispositivo em 13/out/2026 revelaram falha na admissão do shutdown após confirmação. **HW-ACCEPT NOT DONE**; não declarar desligamento validado.
+
+### Teste no dispositivo — 13/out/2026
+
+- Flash autorizado pelo usuário em `/dev/ttyACM0`, Espressif USB JTAG `E8:F6:0A:E3:22:29`: PASS, hashes de gravação verificados. Binário SHA-256 `eea07174c649a6d8721caa3a5f9de8619d2302350aabe301c0e176473c6de606`.
+- Boot/ponte: `sys.info` retorna `e6f1ef3-dirty`, IDF v5.5.5, ESP32-P4, safe_mode=false e interrupted_boots=0.
+- `poweroff` via `ui.type`: prompt exato observado em `term.dump`. `y` aceito pela ponte, mas efeito observado depois: `poweroff: quiescing storage; do not remove power.` seguido de **`poweroff: request failed; reboot required.`**.
+- `ping` e `sys.info` continuam respondendo; uptime evoluiu de 00:01:16 para 00:02:14 sem reboot. Não há evidência de pulso/corte; teste FAIL na admissão. Causa específica ainda não determinada; não repetir a tentativa one-shot sem reboot controlado.
+- Uma captura inicial com alteração explícita de DTR/RTS provocou `CHIP_USB_UART_RESET`, cancelando o prompt anterior; esse envio de `y` não é evidência de shutdown. O cenário válido foi repetido numa única conexão sem alterar essas linhas, verificando prompt antes de confirmar.
+- Evidências locais: `/tmp/opencode/cyberdeck5-poweroff-device-flash.log`, `/tmp/opencode/cyberdeck5-poweroff-device-command.log`, `/tmp/opencode/cyberdeck5-poweroff-device-test.log`.
 
 ## Objetivo e decisões aprovadas
 
-Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5 pelo sinal de fábrica do BSP. Aprovações humanas registradas: usar o BSP atual e o sinal real de fábrica; exigir a sequência exata `poweroff` e depois `y`; persistir dados e quiescer escritores SD antes do corte; arquitetura de coordenador global de I/O; implementação em etapas por módulo. Stage 1 foi ampliado para transação do editor/storage e recuperação de sidecars no boot. A autorização para continuar além do ciclo normal não elimina o checkpoint atual. O comando de poweroff não foi implementado.
+Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5 pelo sinal de fábrica do BSP. Aprovações humanas registradas: usar o BSP atual e o sinal real de fábrica; exigir a sequência exata `poweroff` e depois `y`; persistir dados e quiescer escritores SD antes do corte; arquitetura de coordenador global de I/O; implementação em etapas por módulo. Stage 1 foi ampliado para editor/storage e recuperação de sidecars. A instrução vigente é finalizar software e avisar para o usuário realizar flash/testes manuais, sem flash automático.
 
 ## Evidência de hardware (não confundir com implementação)
 
@@ -18,35 +27,74 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 
 - **IMPLEMENTED — Stage 0:** `components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h` e `src/platform/storage/cyberdeck_sd_io_coordinator.cpp`: leases RAII move-only, gate OPEN/CLOSING/CLOSED, drenagem bounded e reabertura conforme estado.
 - **IMPLEMENTED — Stage 1 parcial:** `main/app_main.cpp` mantém a instância pelo ciclo do processo e injeta a recuperação de boot, UI, shell local e runtime/editor. Recovery usa lease WRITE; editor usa READ no open e WRITE abrangendo save-as/save_current até flush/fsync/rename/rollback/fsync de diretório. Shell local protege operações síncronas de SD. Testes relacionados também foram adicionados anteriormente; não são aceitação completa.
-- A integração não cobre todos os leitores/escritores assíncronos. Não declarar segurança global, sincronização global, unmount seguro ou poweroff pronto.
+- **IMPLEMENTED — cat READ/lifecycle:** READ lease e quiesce permanente bounded; timeout mantém fila/root/lease. A admissão de callbacks é invalidada atomicamente antes de tentar o lock de lifecycle. Worker self-delete após completion, cleanup único depois de ACK e no-reopen. Harness ESP real em `test_cat_worker_runtime.cpp`.
+- **IMPLEMENTED — event log M2:** fence permanente, leases de callers/readers, drain/completion e close pelos workers, erros binários sticky. Worker textual aguarda o binário e reconsulta sua fila após completion. Runtime inclui falha de criação textual com rollback/reinit, falha após apenas o worker textual, corrida de deadlines e drain de cinco projeções aceitas. Matriz em `event_log_traceability.md`.
+- **IMPLEMENTED — I/O global:** Wi-Fi config, backend de audit, Serial `fs.write`, shell/editor/recovery e known_hosts usam o coordinator único. Known_hosts tem I/O próprio bounded, mantendo export/parse/compare criptográfico da libssh; nenhuma confiança em fclose ignorado pela biblioteca. Readers HTTP/Serial do event log usam o fence próprio do logger e são parados antes dele.
+- **IMPLEMENTED — NVS e fontes de trabalho:** screen NVS tem fence serializado de enqueue, sentinel FIFO e ACK após persistência; BLE para antes de Wi-Fi. A task Serial é parada antes de desmontar serviços que suas RPCs poderiam acessar. Falhas/timeout preservam recursos potencialmente vivos e bloqueiam corte.
+- **IMPLEMENTED — orquestração/comando:** confirmação local exata, cancelamento por qualquer outra entrada/Escape/contexto alterado; one-shot e descarte de suffix após paste confirmado. Task `poweroff` e watchdog de 45 s não rodam teardown sob lock LVGL. Fence SD é fechado na admissão, inclusive em falha de alocação da task. UI é pausada; expiração durante preparação impede qualquer fase posterior. O início irreversível do sinal tem transição atômica própria.
+- **IMPLEMENTED — SD/HAL:** fsync/close por proprietário, barreira de metadata `.poweroff-sync`, erro disk-I/O sticky e unmount VFS antes do LDO. HAL B (`0x44`, assert de build), P4, estabelece latch low em HIGH-Z antes de PUSH_PULL e emite três ciclos high/low de 100 ms. Não usa LCD_EN/deep sleep; sinal enviado não comprova corte físico.
 
 ## Matriz de progresso e evidências
 
 | ID/escopo | Evidência registrada | Estado |
 | --- | --- | --- |
 | REQ-COORD — leases/gate Stage 0 | `test_sd_io_coordinator` | PASS |
-| REQ-SHELL — shell local e contratos de integração | `test_local_shell`, contratos de integração, editor, sidecar, boot/runtime | PASS nos alvos registrados, mas agregado posterior não passou |
-| REQ-BUILD/QUALITY — firmware e qualidade | build ESP-IDF 5.5.5, clang-format, cppcheck, ruff, bandit | PASS nos comandos registrados |
-| REQ-SESSION — sessão de shell | agregado reviewer: três asserts `cd` falham porque fixture não injeta coordinator OPEN | FAIL; correção pendente |
-| REQ-FIXTURES — paridade de fixtures | `test_shell_app` também deve vincular coordinator OPEN | NOT DONE |
-| REQ-CAT — caminho real de leitura cat | produção encaminha `cyberdeck_shell_session` a `cat_worker`; leases do `local_shell::cat` não cobrem esse caminho | NOT DONE |
-| REQ-COVERAGE — thresholds locais | gcovr local 83.7/93.5/51.1 contra baseline 83.9/93.8/51.3 | BLOCKED/inconclusivo ambiental; exige gate confirmado em CI |
-| REQ-GLOBAL-QUIESCE — todos os I/O e handles | event_log persistente/global vprintf, Wi-Fi config/audit, Serial fs.write/vprintf, SSH known_hosts, cat-worker, screenshot/leitores e hooks ainda sem fence/stop/join completo | NOT DONE; bloqueador de segurança |
-| REQ-SD-SYNC — persistência final | IDF 5.5.5/FatFS R0.15 sem API pública de sync global; fsync é por descritor/FIL. BSP `bsp_sdcard_unmount()` desliga SD antes do unmount VFS e não verifica handles abertos | BLOCKED; estratégia suportada não estabelecida |
-| REQ-POWER — comando e corte de rail | confirmação exata, precondições duráveis, HAL expander1 `0x44` P4 push-pull e pulso de fábrica | NOT DONE |
+| REQ-SHELL — shell local e contratos de integração | 13/out: agregado `make CXXFLAGS='-std=c++17 -Wall -Wextra -Werror -O0 --coverage' test` completo após correções de logger e barreira do teste Wi-Fi | PASS local |
+| REQ-BUILD/QUALITY — firmware e qualidade | 13/out: build ESP-IDF final, guard real de linker, ranges clang-format do workflow, cppcheck incluindo poweroff/known_hosts/coordinator, ruff F e bandit | PASS local; não equivale a execução remota de CI |
+| REQ-SESSION — sessão de shell | Confirmação exata, respostas inválidas/Escape, contexto SSH alterado, worker indisponível, one-shot/paste suffix e admissão bloqueada; fixture OPEN/CLOSING/CLOSED | PASS local no agregado final |
+| REQ-FIXTURES — paridade de fixtures | 13/out/2026: fixture da aplicação já vinculada; `test_shell_app`: 281 checks PASS, incluindo preservação do gate CLOSED após stop/start do console | PASS local |
+| REQ-CAT — leitura/lifecycle real | Harness ESP retém read, prova timeout sem cleanup, reject de start/enqueue, liberação/join/drain e cleanup único; contratos e seam READ | IMPLEMENTED; testes locais PASS |
+| REQ-COVERAGE — thresholds locais | 13/out final: gcovr 86.9% linhas, 95.5% funções, 59.4% branches; gates 80/94/59 PASS; guard: 61 TUs cobertas, 16 hardware allowlisted | PASS local; CI remota não executada |
+| REQ-LOG-M2 — quiescência do logger | 15 cenários runtime, incluindo dois pontos de falha na criação de tasks e drain multi-item, com ASan/UBSan; contratos de projection/durable | IMPLEMENTED; testes locais PASS |
+| REQ-GLOBAL-QUIESCE — I/O e handles | Inventário SD/NVS, leases/fences, stop/join/close e erro sticky; controller por falha/timeout/cancelamento em cada etapa, known_hosts e cat reais | IMPLEMENTED; PASS local; hardware pendente |
+| REQ-SD-SYNC — persistência final | FIL modificado dispara sync_fs; hooks ff_disk_write/ioctl observam inclusive FSInfo ignorado pelo upstream; guard real de linker confirma callers FatFS; BSP unmount antes de LDO | IMPLEMENTED; build/link guard PASS; hardware pendente |
+| REQ-POWER — comando/HAL | shell confirma exatamente poweroff/y; controller one-shot, budget/watchdog, pulse core testado com fake e HAL nativo compilado | IMPLEMENTED; não emitido em hardware |
 | REQ-HW-ACCEPT — validação Tab5 | corte físico de rail sob condições controladas | NOT DONE |
 
 ## Trabalho restante, em ordem
 
-- [ ] **REQ-FIXTURES:** corrigir fixture de `test_shell_session` vinculando coordinator OPEN compartilhado; fazer o mesmo em `test_shell_app` para paridade. Executar somente alvos relacionados.
-- [ ] **REQ-CAT:** incluir `cat_worker` e demais leitores no coordinator/fence; se os critérios forem alterados, obter revisão/aprovação humana antes de reduzir cobertura.
-- [ ] **REQ-REVIEW:** rerodar agregado do reviewer, guard de escopo/gcovr e gates de qualidade/build ESP-IDF; registrar resultados sem converter falha ambiental em PASS.
-- [ ] **REQ-GLOBAL-QUIESCE:** projetar e integrar fence de admissão e lifecycle bounded para cada escritor/leitor/event logger/hook; parar/join tarefas e fechar handles antes de declarar quiescência. Falha/timeout deve impedir corte.
-- [ ] **REQ-SD-SYNC:** determinar estratégia final suportada de persistência sem presumir sync global inexistente; compreender e tratar a ordem de energia do BSP. Não chamar unmount como atalho.
-- [ ] **REQ-POWER:** implementar comando só após resolver os bloqueadores: prompt em duas etapas exatamente `poweroff` e `y`, condições de persistência/quiescência satisfeitas, falha fechada sem retry e sinal confirmado via HAL no expander B 0x44 P4 configurado push-pull com pulso de fábrica. Não tocar `LCD_EN`.
-- [ ] **REQ-TEST/REVIEW:** acrescentar testes de comando, confirmação, falhas, timeouts e pré-condições; executar alvos locais e revisão completa. Testes não substituem validação física.
+- [x] **REQ-FIXTURES:** fixtures vinculam coordinator OPEN compartilhado; testes de sessão/aplicação executados em 13/out/2026. Regressões adicionais verificam rejeição CLOSING/CLOSED e stop/start sem reabertura.
+- [x] **REQ-CAT-READ:** caminho dedicado com READ lease e contratos locais aprovados; não abrange teardown bounded nem fence global.
+- [x] **REQ-LOG-IMPLEMENTATION:** fence/stop/drain/close do logger implementados; corrigida ordem binário → textual e adicionados cenários partial-init/race ao alvo padrão. Aceitação/revisão final segue aberta.
+- [x] **REQ-QUALITY-LOCAL:** gates locais de formatação do workflow, lint e segurança passam; firmware compila após correção. Sem flash ou corte físico nesta etapa.
+- [x] **REQ-AGGREGATE-LOCAL:** agregado completo com coverage passa após correção da barreira do teste concorrente de auditoria Wi-Fi. O teste espera a resposta de enqueue antes de liberar rename, com watchdog de 5 s; nenhuma mudança em produção Wi-Fi.
+- [x] **REQ-COVERAGE-LOCAL:** gcovr e guard finais passam: 86.9/95.5/59.4 contra gates 80/94/59; 61 TUs cobertas, 16 hardware allowlisted. Não confundir com CI remota.
+- [x] **REQ-CAT:** lifecycle bounded, fence permanente e cleanup somente após completion; callback fence antes de lock, READ lease e testes reais/contratos.
+- [x] **REQ-GLOBAL-QUIESCE:** inventário e admissão por módulo, stop/join/close antes de SD detach, recursos retidos em timeout; controller não autoriza sinal após falha ou budget expirado.
+- [x] **REQ-SD-SYNC:** estratégia suportada por fsync/FIL modificado e metadata barrier; erro sticky também na fronteira disk-I/O; BSP ordenado sem unmount como atalho de sync.
+- [x] **REQ-POWER:** comando, confirmação/cancelamento/one-shot, deadline/watchdog e HAL de fábrica implementados. Testes não emitem sinal real.
+- [x] **REQ-TEST-IMPLEMENTATION:** testes de comando, erros por etapa, prazo/cancelamento, admissão concorrente, metadata/pulso, leases/close reais de known_hosts, worker ESP cat e logger multi-item/creation failure.
+- [x] **REQ-REVIEW-LOCAL-FINAL:** revisão de ownership/fences, criação de tasks, fechamento opaco da libssh, FSInfo mascarado, ordem de RPCs/parada e deadline absoluto antes do primeiro high; agregado limpo/gcovr/guard/qualidade/build/link guard finais PASS. Nenhum threshold ou módulo de cobertura foi excluído/reduzido.
+- [ ] **REQ-CI-REMOTE:** workflow inclui guard de linker após build; execução remota não foi disparada (sem commit/push nesta tarefa).
 - [ ] **REQ-HW-ACCEPT:** validação manual em Tab5 real de corte do rail, sequência, persistência, rejeições/timeout e riscos de alimentação; registrar dispositivo, firmware e evidências. Sem isso, declarar hardware BLOCKED.
 
 ## Restrições de aceitação
+
+### Evidências locais da rodada de 13/out/2026
+
+- Agregado com coverage: `/tmp/opencode/cyberdeck5-poweroff-host-coverage-test.log`.
+- gcovr: `/tmp/opencode/cyberdeck5-poweroff-coverage.log` e JSON `/tmp/opencode/cyberdeck5-poweroff-coverage.json`.
+- Build: `/tmp/opencode/cyberdeck5-poweroff-build.log`.
+- Binário pronto: `build/cyberdeck5.bin`; SHA-256 **eea07174c649a6d8721caa3a5f9de8619d2302350aabe301c0e176473c6de606**.
+- Guard de linker real: `python3 tools/poweroff_link_guard.py --map build/cyberdeck5.map` PASS; ambos os hooks têm caller `esp-idf/fatfs/libfatfs.a(ff.c.obj)` no cross-reference table.
+- Execução final limpa: agregado PASS, 86.9/95.5/59.4 de cobertura, scope guard PASS. O harness cat separa objetos de filesystem/VFS/coordinator com gcov convencional; worker, teste e adapters de task mantêm ASan/UBSan. A primeira variante instrumentava helpers de filesystem novamente com UBSan e inflava branches do compilador (54.3%); foi corrigida a construção do harness, sem remover fontes ou baixar o gate.
+- Primeira tentativa limpa com coverage falhou no teste concorrente Wi-Fi; execução isolada passou. A barreira incorreta foi corrigida e o agregado completo rerodado com sucesso, sem mascarar a falha ou reduzir asserts. Estes artefatos são locais/temporários, não evidência física.
+
+### Estratégia SD resolvida em software — 13/out/2026
+
+- `vfs_fat_fsync` no ESP-IDF aplica `f_sync` a um único `FIL`; não é sync global.
+- `esp_vfs_fat_sdcard_unmount` chama o core que faz `f_mount(0, ...)`, remove diskio/host e libera o card; não é prova de persistência nem validação de ausência de handles.
+- O BSP vendored foi corrigido: unmount VFS antes de eliminar LDO, propagando erro sem pulso.
+- Proprietários terminam writes, verificam flush/fsync/close e reportam completion antes de detach. A barreira escreve um byte em `.poweroff-sync`: em IDF 5.5.5/FatFS R0.15, FA_MODIFIED em f_sync chama sync_fs, que sincroniza window/FAT/FSInfo e CTRL_SYNC. Não usar fsync de diretorio como garantia FatFS.
+- O upstream ignora o resultado de disk_write de FSInfo. Interposição GNU dos símbolos públicos **ff_disk_write/ff_disk_ioctl** delega ao original e registra erro sticky; o estado é rechecado depois da barreira e do unmount. O guard de map confirma que ff.c.obj realmente chama os hooks, evitando um wrapper presente mas inativo. Não foram alterados o IDF instalado nem componentes gerenciados.
+- Hardware/cartão/alimentação ainda requerem validação; a estratégia de software não prova durabilidade física nem corte real.
+
+### Próximo checkpoint humano
+
+Gates locais finais passaram. O usuário pode realizar flash e executar
+`tests/manual/poweroff-validation.pt-BR.md`. Usar dados descartáveis/backup,
+validar cancelamentos antes do corte, testar inicialmente com bateria e sem USB,
+religar e comparar dados/configurações. Timeout/export pendente sem confirmação
+recusa corte e exige reboot controlado; não há retry/reabertura automática.
 
 O comando só pode ser considerado pronto após todos os itens bloqueadores resolvidos, revisão e gates aceitos, e validação física documentada. Timeout, I/O pendente, handle aberto ou sync não demonstrado deve falhar fechado: não emitir pulso. Este documento e os resultados host não são evidência de corte físico.

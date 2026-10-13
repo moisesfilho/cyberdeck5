@@ -1,8 +1,44 @@
 #include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
+#include <atomic>
 #include <utility>
 
 namespace cyberdeck_sd_io {
+
+namespace {
+std::atomic<coordinator *> global_owner{nullptr};
+}
+
+void bind_global(coordinator &owner) {
+    coordinator *expected = nullptr;
+    (void)global_owner.compare_exchange_strong(expected, &owner);
+}
+
+lease acquire_global(access mode) {
+    auto *owner = global_owner.load(std::memory_order_acquire);
+    return owner == nullptr ? lease{} : owner->acquire(mode);
+}
+
+void record_global_persistence_failure() {
+    auto *owner = global_owner.load(std::memory_order_acquire);
+    if (owner != nullptr)
+        owner->record_persistence_failure();
+}
+
+bool global_fenced() {
+    auto *owner = global_owner.load(std::memory_order_acquire);
+    return owner == nullptr || owner->state() != gate_state::open;
+}
+
+void coordinator::record_persistence_failure() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    persistence_failed_ = true;
+}
+
+bool coordinator::persistence_failed() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return persistence_failed_;
+}
 
 lease::lease(coordinator *owner, std::uint64_t generation, std::uint64_t id) noexcept
     : owner_(owner), generation_(generation), id_(id) {}

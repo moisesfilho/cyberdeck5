@@ -25,6 +25,7 @@ inline constexpr std::string_view kUnifiedHelpText =
     "touch <file> - create an empty file\n"
     "mkdir <directory> - create a directory\n"
     "rm [-r] <path> - remove a file or directory\n"
-    "rmdir <directory> - remove an empty directory\n";
+    "rmdir <directory> - remove an empty directory\n"
+    "poweroff - power off this device after exact y confirmation\n";
 
 } // namespace cyberdeck_help_test

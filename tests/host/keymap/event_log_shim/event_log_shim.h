@@ -8,9 +8,29 @@
 #include <cstdint>
 #include <mutex>
 #include <thread>
+#include <string>
 #include <vector>
 
 namespace event_log_shim {
+enum class sync_kind { semaphore_take, semaphore_give, queue_send, queue_receive };
+struct sync_event { sync_kind kind; void *handle; std::thread::id thread; };
+struct file_event { std::string operation; std::thread::id thread; };
+struct audit_event { uint64_t sequence; std::string kind; void *handle; std::string path; std::thread::id owner; };
+struct semaphore_creation { void *handle; uint64_t ordinal; bool binary; };
+struct task_start_event { std::string name; std::thread::id owner; uint64_t sequence; TaskHandle_t handle; };
+void fail_next_task_creation(const std::string &name);
+std::vector<task_start_event> task_start_history();
+void wait_for_task_starts(size_t expected);
+std::vector<semaphore_creation> semaphore_creation_history();
+void record_semaphore_creation(void *handle, bool binary);
+uint64_t record_audit_event(const char *kind, void *handle = nullptr, const char *path = nullptr);
+std::vector<audit_event> audit_history();
+void clear_audit_history();
+std::vector<sync_event> sync_history();
+void clear_sync_history();
+void record_file_event(const char *operation, void *handle = nullptr, const char *path = nullptr);
+std::vector<file_event> file_history();
+void clear_file_history();
 struct queue_snapshot {
     QueueHandle_t handle;
     size_t capacity;

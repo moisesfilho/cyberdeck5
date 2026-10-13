@@ -2,15 +2,98 @@
 
 ## Plano de poweroff
 
-- `poweroff-implementation-plan.md` registra aprovações, evidência documental
-  do sinal de fábrica, progresso parcial do coordenador SD Stage 0/1, matriz
-  REQ/evidência/estado e trabalho restante para o comando `poweroff`. É documento
-  de controle, não evidência de teste; o comando e a quiescência global estão
-  incompletos e persistem bloqueios de sync SD e validação física.
+- Teste real posterior ao flash (13/out/2026) **FAIL**: confirmação aparece,
+  mas `y` resulta em `request failed; reboot required`; ponte/uptime continuam
+  ativos. O estado atual e evidências estão em `poweroff-implementation-plan.md`.
+  As notas de prontidão local abaixo não equivalem ao aceite em dispositivo.
+
+- Comando `poweroff` documentado em `README.md`/`README.pt-BR.md`; catálogo
+  compartilhado passa a 18 entradas, mantendo ordem das 17 anteriores. Contratos
+  de paridade/help/BLE são atualizados com a nova entrada, não relaxados.
+- Validação final do batch: agregado limpo PASS, gcovr 86.9% linhas / 95.5%
+  funções / 59.4% branches (gates 80/94/59); guard 61 TUs cobertas e 16 hardware
+  allowlisted, build ESP-IDF e guard de linker reais PASS. Dependências do harness
+  cat têm gcov alinhado aos outros alvos; worker/teste/shim continuam ASan/UBSan.
+  Software pronto para flash manual; aceite físico continua pendente no plano.
+
+- `tools/poweroff_link_guard.py` verifica no cross-reference map GNU que
+  `ff.c.obj` realmente chama os hooks `__wrap_ff_disk_write/ioctl` do poweroff,
+  não apenas que existem no ELF. CMake intercede os símbolos públicos `ff_disk_*`;
+  erros, inclusive FSInfo que FatFS R0.15 mascara, são sticky e impedem unmount/
+  pulso. CI roda o guard após build; `test_poweroff_link_guard.py` valida fixtures
+  positivas e ausência/owner incorreto/hooks não referenciados. Não acessa drive.
+
+- `components/cyberdeck/include/apps/ssh/cyberdeck_known_hosts_file.h` e
+  `components/cyberdeck/src/apps/ssh/cyberdeck_known_hosts_file.cpp` controlam READ/WRITE, leitura
+  bounded de known_hosts (128 KiB/linha 4096), write parcial/EINTR, fsync e
+  fechamento verificado. `ssh_client` usa export/parse/comparação de chaves da
+  libssh (incluindo matching de host/porta/hash), mas não seu I/O com fclose
+  ignorado. `test_known_hosts_file.cpp` cobre o helper real com wrappers de
+  falhas e gate; symlinks/arquivo oversized/erro de fechamento falham fechado.
+
+- `components/cyberdeck/include/platform/power/cyberdeck_poweroff.h` e
+  `components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp` implementam controller one-shot,
+  ordem de quiescência com deadline global de 45 s, watchdog que mantém recursos
+  vivos em timeout, barreira de metadata SD e pulso de fábrica B/P4. A task não
+  faz teardown sob lock LVGL; UI apenas agenda e fica bloqueada/pausada.
+- `cyberdeck_shell_session` exige linhas exatas `poweroff` e `y`, cancela qualquer
+  outra confirmação ou Escape e impede retry. Cat tem quiesce permanente bounded;
+  auditoria mantém recursos em timeout e recusa corte com export pendente.
+- A instância única de SD em `app_main` também é publicada por `bind_global`:
+  Wi-Fi config, backend de audit, Serial fs.write e known_hosts SSH usam leases;
+  logger usa fence/leases próprios e é drenado após seus clientes. Falhas de
+  fechamento/persistência são sticky e bloqueiam sync/unmount/corte.
+- `screen_off_quiesce` drena FIFO de NVS por sentinel/ACK; BLE para antes de
+  Wi-Fi; HTTP e Serial reportam falhas sem liberar recursos vivos. O BSP faz
+  unmount VFS antes de retirar o LDO SD. `.poweroff-sync` é barreira FatFS de
+  metadata, não sync global nem substituto do fsync/close por proprietário.
+- `test_poweroff.cpp` liga o controller, metadata barrier e pulso reais com
+  ports/wrappers de falha; `test_poweroff_contract.py` confirma wiring dos fences
+  e BSP. `test_cat_worker_runtime.cpp` liga o worker ESP real com adapters em
+  `cat_runtime_shim/`, shims compartilhados do logger e barreira em read: timeout
+  preserva fila/lease, reject de start/enqueue, completion/join antes de cleanup
+  único, no-reopen. Novos alvos entram no agregado/coverage. Hardware ainda não
+  foi gravado nem testado nesta rodada; plano/manual registram aceitação física.
+
+- `poweroff-implementation-plan.md` registra aprovações, implementação global,
+  estratégia de sync/FatFS/BSP, matriz REQ/evidência/estado e gates restantes.
+  É controle de progresso, não prova de corte físico.
+  `tests/manual/poweroff-validation.pt-BR.md` orienta flash pelo usuário,
+  confirmação/cancelamento, rail/alimentação e persistência após religar.
+  As notas históricas Stage 1 abaixo não delimitam o poweroff global atual.
 
 ## Atualizacao de recuperacao de eventos
 
-- Milestone intermediário de lifecycle (não é quiescência final):
+- `test_event_log_runtime.cpp` acrescenta `partial-init`: falha injetada de
+  criação do worker binário após iniciar `event_text`, restauração do hook
+  serial, rejeição de novas operações, preservação dos handles de fila e
+  quiescência/idempotência sem reopen. O shim oferece falha one-shot por nome
+  e associa handle ao evento de startup para completion/join bounded.
+  Esta cobertura não substitui o fence global de SD nem testes físicos.
+- Validação local em 13/out/2026: agregado com coverage e gates gcovr
+  80/94/59 passam (86.9% linhas, 95.3% funções, 61.0% branches); guard confirma
+  59 TUs cobertas e 16 hardware allowlisted. Build ESP-IDF passa. O plano
+  separa essa evidência local da aceitação global/CI remota e do corte físico.
+- `text_log_task` aguarda completion do proprietário binário antes de parar e
+  reconsulta a fila após observar completion, evitando perder publicação que
+  correu com o timeout de receive. `quiesce-race` força um receive textual
+  expirado enquanto o binário está retido em fsync e exige projeção única após
+  a liberação. `partial-init` e `quiesce-race` entram nos cenários padrão do
+  Makefile; permanecem lacunas de drain multi-item e outros pontos de init.
+
+- Milestone 2 adiciona stop cooperativo dos workers proprietários após fence:
+  `event_log_quiesce` aguarda leases e completion lógico, cada worker drena sua
+  fila e fecha o próprio arquivo, e falhas binárias permanecem sticky até reboot.
+  Timeout mantém `CLOSING`; uma nova chamada usa orçamento próprio. `CLOSED` é
+  publicado somente após drain/completion sem falha. Projeção textual segue
+  best-effort; recursos estáticos são preservados. Esta implementação requer
+  revisão e os cenários M2 do tester antes de ser considerada validada.
+  Revisão deste batch: a falha de init após iniciar apenas o worker textual
+  mantém `CLOSING` e seus recursos; quiesce sinaliza stop e espera seu drain.
+  Chamadores concorrentes reavaliam as condições atômicas de lease/completion
+  após todo wake (o semáforo é apenas uma notificação), com deadline monotônico
+  local; nenhum defeito adicional foi confirmado nesta inspeção.
+- Histórico do milestone intermediário de lifecycle:
   `event_log_init` usa estados atômicos e publica `OPEN` somente após criar
   filas, semáforos, hook e workers; as APIs de I/O usam admission leases
   contadas até o fim da operação, incluindo o fechamento dos snapshots textuais.
@@ -97,7 +180,30 @@
       e TEST-SHIM-TASK-TIMEOUT provam completion/join e timeout sem falso completion.
       O runtime event-log não termina workers nesta etapa e preserva `_exit` para
       seus loops infinitos; nenhum join é feito em worker vivo.
-        `tests/host/keymap/event_log_traceability.md` separa essa evidência runtime
+        `test_event_log_runtime.cpp` inclui os casos M2 `quiesce-fence` (reader
+        lease bloqueada, timeout/retry, close do owner, idempotência e no-reopen)
+         e `sticky-close`, `sticky-write`, `sticky-fsync` e `worker-timeout-retry`.
+         Os wrappers witness falhas binárias write/fsync após a API void e quiesce
+         sticky; o worker real retido no fsync comprova timeout e retry com
+         orçamento novo, persistindo o registro uma vez. O wrapper de
+        fclose só injeta falha no descritor canônico `events.log`. A matriz
+          `event_log_traceability.md` registra os cenários M2 já comprovados,
+           incluindo falhas separadas de fwrite/fsync/fclose da projection durante
+           quiesce, preservação do sucesso binário e corrida de caller durable timeout
+              versus quiesce; `TEST-QUIESCE-M2-WORKER-COMPLETION` enfileira evento
+                identificável, bloqueia fwrite em `events.txt`, inicia quiesce
+                concorrentemente e prova que não teve sucesso antes da liberação e
+                 drain. Identifica `s_quiesce_changed` pela ordem de criação,
+                correlaciona nomes de startup a `std::thread::id` diretos, exige
+                fechamento por worker antes do give e nenhuma operação de arquivo/
+                fila depois. Prova drain de uma projection aceita, não de fila
+                 múltipla; init parcial permanece gap explícito. `quiesce-race`
+                 retém o worker binário em fsync, registra dois callers com budgets
+                 independentes, avança além do deadline curto e exige timeout
+                 somente de A antes de liberar o worker; B conclui após persistência/
+                 drain e o close ocorre uma vez. O alvo runtime aceita `SCENARIOS=`
+                 para executar somente cenários selecionados.
+         `tests/host/keymap/event_log_traceability.md` separa essa evidência runtime
      dos contratos estruturais existentes; `make test_event_log_runtime` compila
       e executa o TU real no agregado host e no alvo isolado, usando root
       temporário por execução e mantendo os perfis gcov no diretório de teste
@@ -110,7 +216,7 @@
        descritor pode consumir a barreira binária ou a falha injetada; fsync de
        `events.txt` delega imediatamente ao host. O runtime comprova projeção
        fsync enquanto o fsync binário está retido. Todos os waits de sincronização do harness runtime
-      e shim expiram em cinco segundos e falham explicitamente.
+       e shim expiram em cinco segundos e falham explicitamente.
 
 Mapa de navegacao do OS embarcado simplificado ESP-IDF para o unico alvo
 M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
@@ -230,6 +336,18 @@ durante a inicialização sem acrescentar banner; o prompt e as demais saídas
 continuam sendo renderizados pelos fluxos existentes.
 
 ## Coordenacao de I/O SD (Stage 1)
+
+- `test_wifi_audit_persistence.cpp` mantém o rename retido até observar a
+  conclusão do enqueue concorrente (watchdog de 5 s), exigindo
+  `rejected_queue_full`. Evita confundir startup da thread com execução do
+  enqueue, fonte de flakiness no agregado com coverage; produção Wi-Fi intacta.
+
+- As fixtures de `test_shell_session.cpp` e `test_shell_app.cpp` vinculam um
+  coordenador OPEN por host. Regressões comportamentais exigem rejeição de
+  `cd` em CLOSING e `touch` em CLOSED, cwd preservado e zero leases; o teste
+  da aplicação também exige que stop/start do console não reabra o gate.
+  `cat_io_traceability.md` registra TEST-FIXTURES-04/05. Isto não comprova
+  quiescência global nem autoriza corte físico.
 
 - `components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h`
   e `src/platform/storage/cyberdeck_sd_io_coordinator.cpp` fornecem leases

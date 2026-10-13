@@ -8,6 +8,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "bsp/esp-bsp.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
 static const char *TAG = "tab5_wifi_storage";
 
@@ -59,6 +60,8 @@ static void migrate_legacy_files(void)
 
 esp_err_t wifi_storage_mount(void)
 {
+    auto lease = cyberdeck_sd_io::acquire_global(cyberdeck_sd_io::access::write);
+    if (!lease) return ESP_ERR_INVALID_STATE;
     if (s_mounted) {
         return ESP_OK;
     }
@@ -77,6 +80,8 @@ esp_err_t wifi_storage_mount(void)
 
 esp_err_t wifi_storage_load_all(wifi_saved_list_t *list)
 {
+    auto lease = cyberdeck_sd_io::acquire_global(cyberdeck_sd_io::access::read);
+    if (!lease) return ESP_ERR_INVALID_STATE;
     if (list == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -160,34 +165,43 @@ esp_err_t wifi_storage_load_all(wifi_saved_list_t *list)
         list->count++;
     }
 
-    fclose(f);
+    const bool read_ok = ferror(f) == 0;
+    const bool closed = fclose(f) == 0;
+    if (!closed) cyberdeck_sd_io::record_global_persistence_failure();
     clear_secret(line, sizeof(line));
     clear_secret(cur_pwd, sizeof(cur_pwd));
-    return ESP_OK;
+    return read_ok && closed ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t wifi_storage_save_all(const wifi_saved_list_t *list)
 {
+    auto lease = cyberdeck_sd_io::acquire_global(cyberdeck_sd_io::access::write);
+    if (!lease) return ESP_ERR_INVALID_STATE;
     if (list == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
     int fd = open(WIFI_CFG_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (fd < 0) {
+        cyberdeck_sd_io::record_global_persistence_failure();
         return ESP_FAIL;
     }
     FILE *f = fdopen(fd, "w");
     if (f == NULL) {
         close(fd);
+        cyberdeck_sd_io::record_global_persistence_failure();
         return ESP_FAIL;
     }
 
+    bool ok = true;
     for (int i = 0; i < list->count; i++) {
         // codeql[cpp/cleartext-storage-file]
-        fprintf(f, "ssid=%s\npassword=%s\n\n", list->items[i].ssid, list->items[i].password);
+        if (fprintf(f, "ssid=%s\npassword=%s\n\n", list->items[i].ssid, list->items[i].password) < 0) ok = false;
     }
-    fclose(f);
-    return ESP_OK;
+    if (fflush(f) != 0 || fsync(fd) != 0) ok = false;
+    if (fclose(f) != 0) ok = false;
+    if (!ok) cyberdeck_sd_io::record_global_persistence_failure();
+    return ok ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t wifi_storage_load(wifi_cfg_t *cfg)

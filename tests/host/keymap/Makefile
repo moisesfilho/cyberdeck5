@@ -18,7 +18,6 @@
 #   make test_battery_contract test_battery_reader_contract test_battery_ui_contract
 #                 -> contratos host para tensao real/estados neutros/UI e
 #                    rastreabilidade; devem falhar ate a correcao do coder
-
 CXX      ?= g++
 PYTHON   ?= python3
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O2
@@ -300,9 +299,9 @@ test_event_log_shim: test_event_log_shim.cpp $(EVENT_LOG_SHIM)/event_log_shim.cp
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -pthread -I$(EVENT_LOG_SHIM) -Ishim test_event_log_shim.cpp $(EVENT_LOG_SHIM)/event_log_shim.cpp -o $@
 	./$@
 
-test_event_log_runtime: $(EVENT_LOG_RUNTIME_TEST) $(EVENT_LOG_SRC) $(EVENT_LOG_SHIM)/event_log_shim.cpp event_log_traceability.md $(EVENT_LOG_SHIM)/cyberdeck_paths.h $(EVENT_LOG_SHIM)/esp_log.h $(EVENT_LOG_SHIM)/esp_timer.h $(EVENT_LOG_SHIM)/sdkconfig.h $(EVENT_LOG_SHIM)/bsp/esp-bsp.h $(EVENT_LOG_SHIM)/freertos/FreeRTOS.h $(EVENT_LOG_SHIM)/freertos/queue.h $(EVENT_LOG_SHIM)/freertos/semphr.h $(EVENT_LOG_SHIM)/freertos/task.h
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -Wno-format -O0 --coverage -fsanitize=address,undefined -pthread -DCYBERDECK_EVENT_LOG_TEST -I$(EVENT_LOG_SHIM) -Ishim -I../../../components/cyberdeck/include $(EVENT_LOG_RUNTIME_TEST) $(EVENT_LOG_SHIM)/event_log_shim.cpp $(EVENT_LOG_SRC) ../../../components/cyberdeck/src/platform/logging/event_log_recent.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_clock.cpp -Wl,--wrap=fsync -Wl,--wrap=fwrite -Wl,--wrap=fread -o test_event_log_runtime
-	@set -e; for scenario in default preinit quiesce-fence; do runtime_root=$$(mktemp -d); EVENT_LOG_TEST_ROOT="$$runtime_root" ./test_event_log_runtime "$$scenario"; result=$$?; rm -rf "$$runtime_root"; test $$result -eq 0; done
+test_event_log_runtime: $(EVENT_LOG_RUNTIME_TEST) $(EVENT_LOG_SRC) $(EVENT_LOG_SHIM)/event_log_shim.cpp $(EVENT_LOG_SHIM)/event_log_shim.h event_log_traceability.md $(EVENT_LOG_SHIM)/cyberdeck_paths.h $(EVENT_LOG_SHIM)/esp_log.h $(EVENT_LOG_SHIM)/esp_timer.h $(EVENT_LOG_SHIM)/sdkconfig.h $(EVENT_LOG_SHIM)/bsp/esp-bsp.h $(EVENT_LOG_SHIM)/freertos/FreeRTOS.h $(EVENT_LOG_SHIM)/freertos/queue.h $(EVENT_LOG_SHIM)/freertos/semphr.h $(EVENT_LOG_SHIM)/freertos/task.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -Wno-format -O0 --coverage -fsanitize=address,undefined -pthread -DCYBERDECK_EVENT_LOG_TEST -I$(EVENT_LOG_SHIM) -Ishim -I../../../components/cyberdeck/include $(EVENT_LOG_RUNTIME_TEST) $(EVENT_LOG_SHIM)/event_log_shim.cpp $(EVENT_LOG_SRC) ../../../components/cyberdeck/src/platform/logging/event_log_recent.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_clock.cpp -Wl,--wrap=fsync -Wl,--wrap=fwrite -Wl,--wrap=fread -Wl,--wrap=fclose -o test_event_log_runtime
+	@set -e; for scenario in $(if $(SCENARIOS),$(SCENARIOS),default preinit init-text-failure partial-init quiesce-race quiesce-fence durable-timeout-quiesce worker-completion projection-fwrite projection-fsync projection-fclose sticky-close sticky-write sticky-fsync worker-timeout-retry); do runtime_root=$$(mktemp -d); EVENT_LOG_TEST_ROOT="$$runtime_root" ./test_event_log_runtime "$$scenario"; result=$$?; rm -rf "$$runtime_root"; test $$result -eq 0; done
 
 test_event_projection_contract: test_event_projection_contract.py event_projection_traceability.md ../../../components/cyberdeck/src/platform/logging/event_log.cpp ../../../components/cyberdeck/include/platform/logging/event_log.h ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp Makefile
 	$(PYTHON) test_event_projection_contract.py
@@ -865,7 +864,7 @@ test_fs_write_dispatch: test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_fs_write_dispatch
 
 test_cat_worker: test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR)
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -o test_cat_worker
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -DCYBERDECK_CAT_CORE_ONLY -I../../../components/cyberdeck/include test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -o test_cat_worker
 
 test_ble_background: test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) $(BLE_BACKGROUND_HDR)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) -o test_ble_background
@@ -983,7 +982,39 @@ test_ble_bond_reconnect: test_ble_state_machine test_ble_event_dispatch test_ble
 	@$(MAKE) --no-print-directory test_ble_bond_name_contract
 
 
+BINS += test_poweroff
+BINS += test_cat_worker_runtime
+BINS += test_known_hosts_file
+
+test_known_hosts_file: test_known_hosts_file.cpp ../../../components/cyberdeck/src/apps/ssh/cyberdeck_known_hosts_file.cpp ../../../components/cyberdeck/include/apps/ssh/cyberdeck_known_hosts_file.h $(SD_IO_COORDINATOR_SRC)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include test_known_hosts_file.cpp ../../../components/cyberdeck/src/apps/ssh/cyberdeck_known_hosts_file.cpp $(SD_IO_COORDINATOR_SRC) -Wl,--wrap=write -Wl,--wrap=fsync -Wl,--wrap=close -Wl,--wrap=fclose -o $@
+
+CAT_RUNTIME_OBJS := test_cat_runtime_local_shell.o test_cat_runtime_vfs.o test_cat_runtime_sd_io.o
+
+# Keep dependency gcov instrumentation aligned with their other host targets.
+# UBSan adds compiler-generated branches to filesystem/STL code; the real
+# worker, task adapters and lifetime harness remain ASan/UBSan instrumented.
+test_cat_runtime_local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp $(LOCAL_SHELL_HDR) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -DESP_PLATFORM -I../../../components/cyberdeck/include -c $< -o $@
+
+test_cat_runtime_vfs.o: $(VFS_NAMESPACE_SRC) $(VFS_NAMESPACE_HDR) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -I../../../components/cyberdeck/include -c $< -o $@
+
+test_cat_runtime_sd_io.o: $(SD_IO_COORDINATOR_SRC) $(SD_IO_COORDINATOR_HDR) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -c $< -o $@
+
+test_cat_worker_runtime: test_cat_worker_runtime.cpp $(CAT_WORKER_SRC) $(CAT_RUNTIME_OBJS) event_log_shim/event_log_shim.cpp cat_runtime_shim/freertos/queue.h cat_runtime_shim/freertos/task.h cat_runtime_shim/freertos/semphr.h cat_runtime_shim/freertos/FreeRTOS.h cat_runtime_shim/lvgl.h cat_runtime_shim/esp_lvgl_port.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -DESP_PLATFORM -Icat_runtime_shim -Ievent_log_shim -Ishim -I../../../components/cyberdeck/include test_cat_worker_runtime.cpp $(CAT_WORKER_SRC) $(CAT_RUNTIME_OBJS) event_log_shim/event_log_shim.cpp -Wl,--wrap=read -o $@
+
+test_poweroff: test_poweroff.cpp ../../../components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp ../../../components/cyberdeck/include/platform/power/cyberdeck_poweroff.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include test_poweroff.cpp ../../../components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp -Wl,--wrap=write -Wl,--wrap=fsync -Wl,--wrap=close -o $@
+
 test: $(BINS)
+	@./test_poweroff
+	@./test_cat_worker_runtime
+	@./test_known_hosts_file
+	@$(PYTHON) test_poweroff_contract.py
+	@$(PYTHON) test_poweroff_link_guard.py
 	@echo "==> Executando teste comportamental de sincronizacao UTC (TEST-TIME-01..08)"
 	@./test_time_sync
 	@echo "==> Executando contrato de runtime da sincronizacao UTC (TEST-TIME-09 + TEST-TIME-STACK-01)"
@@ -1220,4 +1251,4 @@ test: $(BINS)
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
 	@$(MAKE) --no-print-directory imu_sensor_contract
 clean:
-	rm -f $(BINS) test_battery_protection ./*.gcda ./*.gcno ./*.gcov
+	rm -f $(BINS) $(CAT_RUNTIME_OBJS) test_battery_protection ./*.gcda ./*.gcno ./*.gcov

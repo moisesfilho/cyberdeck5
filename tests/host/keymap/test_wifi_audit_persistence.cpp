@@ -928,18 +928,31 @@ void test_concurrent_enqueue_during_publish_is_rejected_without_duplicate_commit
     CHECK(reached_rename);
 
     submit_status contender_status = submit_status::rejected_invalid;
-    std::atomic<bool> contender_started{false};
+    std::mutex contender_mutex;
+    std::condition_variable contender_cv;
+    bool contender_done = false;
     std::thread contender([&] {
-        contender_started.store(true, std::memory_order_release);
         contender_status = worker.enqueue(851, destination, second_payload);
+        {
+            std::lock_guard<std::mutex> lock(contender_mutex);
+            contender_done = true;
+        }
+        contender_cv.notify_all();
     });
-    while (!contender_started.load(std::memory_order_acquire)) std::this_thread::yield();
+    bool rejected_before_publish = false;
+    {
+        std::unique_lock<std::mutex> lock(contender_mutex);
+        rejected_before_publish = contender_cv.wait_for(lock, std::chrono::seconds(5), [&] {
+            return contender_done;
+        });
+    }
     files.release_candidate_rename();
     pump.join();
     contender.join();
 
     CHECK(pump_result);
-    CHECK(contender_status != submit_status::accepted);
+    CHECK(rejected_before_publish);
+    CHECK(contender_status == submit_status::rejected_queue_full);
     CHECK(sink.delivered_count() == 1);
     CHECK(files.write_calls() == 1);
     CHECK(files.rename_calls() == 1);

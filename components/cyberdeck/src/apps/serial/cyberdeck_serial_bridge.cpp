@@ -21,6 +21,7 @@
 
 #ifdef ESP_PLATFORM
 #include "platform/logging/event_log.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 #include "bsp/esp-bsp.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -2750,6 +2751,10 @@ dispatch_result exec_fs_write(const request &req, const std::vector<json_field> 
     if (size != bytes.size()) {
         return fs_write_error(req, dispatch_error::invalid_payload, "size difere do tamanho decodificado");
     }
+#ifdef ESP_PLATFORM
+    auto io_lease = cyberdeck_sd_io::acquire_global(cyberdeck_sd_io::access::write);
+    if (!io_lease) return fs_write_error(req, dispatch_error::io_error, "SD storage is closing");
+#endif
     const std::string root = fs_write_physical_root();
     fs_write_ensure_physical_root(root);
     const std::string relative = path_field.s.substr(k_fs_write_root_len);
@@ -2760,7 +2765,11 @@ dispatch_result exec_fs_write(const request &req, const std::vector<json_field> 
     if (!fs_write_validate_disk(physical, target_exists, disk_err, disk_detail)) {
         return fs_write_error(req, disk_err, disk_detail);
     }
-    return fs_write_commit(req, physical, root, relative, bytes, target_exists);
+    auto result = fs_write_commit(req, physical, root, relative, bytes, target_exists);
+#ifdef ESP_PLATFORM
+    if (!result.ok) cyberdeck_sd_io::record_global_persistence_failure();
+#endif
+    return result;
 }
 
 } // namespace

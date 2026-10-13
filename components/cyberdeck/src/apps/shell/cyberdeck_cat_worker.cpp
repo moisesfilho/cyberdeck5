@@ -22,6 +22,7 @@ void cyberdeck_cat_worker_bind_sd_io(cyberdeck_sd_io::coordinator &coordinator) 
 #include "lvgl.h"
 #include <cstring>
 #include <cstdint>
+#include <atomic>
 #include <fcntl.h>
 #include <new>
 #include <string>
@@ -37,6 +38,8 @@ TaskHandle_t s_task = nullptr;
 SemaphoreHandle_t s_lifecycle_mutex = nullptr;
 SemaphoreHandle_t s_stopped = nullptr;
 bool s_closing = false;
+std::atomic<bool> s_shutdown{false};
+std::atomic<bool> s_delivery_disabled{false};
 char s_host_root[k_cat_field_bytes] = {};
 cyberdeck_cat_result_callback s_callback = nullptr;
 void *s_context = nullptr;
@@ -50,7 +53,8 @@ void deliver_cat_result(void *data)
         /* Teardown invalidates already queued LVGL callbacks.  Keep the lock
          * across the call so teardown cannot destroy the callback context
          * while LVGL is delivering it. */
-        if (!s_closing && result->generation == s_generation && s_callback != nullptr)
+        if (!s_closing && !s_delivery_disabled.load(std::memory_order_acquire) &&
+            result->generation == s_generation && s_callback != nullptr)
             s_callback(result->output.data(), result->output.size(), result->accepted, s_context);
         xSemaphoreGive(s_lifecycle_mutex);
     }
@@ -92,7 +96,7 @@ void cat_worker_task(void *)
             delete result;
             continue;
         }
-        const bool closing = s_closing;
+        const bool closing = s_closing || s_delivery_disabled.load(std::memory_order_acquire);
         const lv_result_t scheduled = closing ? LV_RESULT_INVALID : lv_async_call(deliver_cat_result, result);
         xSemaphoreGive(s_lifecycle_mutex);
         if (scheduled != LV_RESULT_OK) {
@@ -104,6 +108,7 @@ void cat_worker_task(void *)
         }
     }
     if (s_stopped != nullptr) xSemaphoreGive(s_stopped);
+    vTaskDelete(nullptr);
 }
 } // namespace
 
@@ -112,14 +117,20 @@ bool cyberdeck_cat_worker_start(const char *host_root,
                                 void *context)
 {
     if (host_root == nullptr || callback == nullptr) return false;
+    if (s_shutdown.load(std::memory_order_acquire)) return false;
     if (std::strlen(host_root) >= sizeof(s_host_root)) return false;
     if (s_lifecycle_mutex == nullptr) s_lifecycle_mutex = xSemaphoreCreateMutex();
     if (s_stopped == nullptr) s_stopped = xSemaphoreCreateBinary();
     if (s_lifecycle_mutex == nullptr || s_stopped == nullptr) return false;
     if (xSemaphoreTake(s_lifecycle_mutex, portMAX_DELAY) != pdTRUE) return false;
-    if (s_task != nullptr) {
+    if (s_shutdown.load(std::memory_order_acquire)) {
         xSemaphoreGive(s_lifecycle_mutex);
-        return true;
+        return false;
+    }
+    if (s_task != nullptr) {
+        const bool running = !s_closing && !s_delivery_disabled.load(std::memory_order_acquire);
+        xSemaphoreGive(s_lifecycle_mutex);
+        return running;
     }
 
     /* A binary semaphore is a generation-local stop notification.  Consume
@@ -131,6 +142,7 @@ bool cyberdeck_cat_worker_start(const char *host_root,
     s_callback = callback;
     s_context = context;
     s_closing = false;
+    s_delivery_disabled.store(false, std::memory_order_release);
     s_queue = xQueueCreate(k_cat_work_queue_capacity, sizeof(cat_request));
     if (s_queue == nullptr || xTaskCreate(cat_worker_task, "cat_worker", k_cat_worker_stack_size, nullptr, 4, &s_task) != pdPASS) {
         if (s_queue != nullptr) vQueueDelete(s_queue);
@@ -149,6 +161,7 @@ bool cyberdeck_cat_worker_start(const char *host_root,
 
 bool cyberdeck_cat_worker_enqueue(const char *cwd, const char *command)
 {
+    if (s_shutdown.load(std::memory_order_acquire) || s_delivery_disabled.load(std::memory_order_acquire)) return false;
     if (s_lifecycle_mutex == nullptr || cwd == nullptr || command == nullptr ||
         std::strlen(cwd) >= k_cat_field_bytes || std::strlen(command) >= k_cat_field_bytes) return false;
     cat_request request = {};
@@ -159,10 +172,18 @@ bool cyberdeck_cat_worker_enqueue(const char *cwd, const char *command)
     return accepted;
 }
 
-void cyberdeck_cat_worker_teardown(void)
+static bool stop_cat_worker(unsigned timeout_ms)
 {
-    if (s_lifecycle_mutex == nullptr || xSemaphoreTake(s_lifecycle_mutex, portMAX_DELAY) != pdTRUE)
-        return;
+    // Invalidate callback admission even if the lifecycle lock itself times out.
+    s_delivery_disabled.store(true, std::memory_order_release);
+    const TickType_t started = xTaskGetTickCount();
+    const TickType_t budget = pdMS_TO_TICKS(timeout_ms);
+    const auto remaining = [&]() {
+        const TickType_t elapsed = xTaskGetTickCount() - started;
+        return elapsed >= budget ? TickType_t{0} : budget - elapsed;
+    };
+    if (s_lifecycle_mutex == nullptr) return true;
+    if (xSemaphoreTake(s_lifecycle_mutex, remaining()) != pdTRUE) return false;
     if (s_task == nullptr) {
         s_closing = true;
         s_callback = nullptr;
@@ -171,7 +192,7 @@ void cyberdeck_cat_worker_teardown(void)
         s_queue = nullptr;
         std::memset(s_host_root, 0, sizeof(s_host_root));
         xSemaphoreGive(s_lifecycle_mutex);
-        return;
+        return true;
     }
     s_closing = true;
     s_callback = nullptr;
@@ -179,17 +200,33 @@ void cyberdeck_cat_worker_teardown(void)
     TaskHandle_t task = s_task;
     xSemaphoreGive(s_lifecycle_mutex);
     (void)xTaskNotifyGive(task);
-    (void)xSemaphoreTake(s_stopped, portMAX_DELAY);
-    if (xSemaphoreTake(s_lifecycle_mutex, portMAX_DELAY) == pdTRUE) {
+    if (xSemaphoreTake(s_stopped, remaining()) != pdTRUE) return false;
+    if (xSemaphoreTake(s_lifecycle_mutex, remaining()) == pdTRUE) {
         if (s_queue != nullptr) vQueueDelete(s_queue);
         s_queue = nullptr;
         s_task = nullptr;
         std::memset(s_host_root, 0, sizeof(s_host_root));
         xSemaphoreGive(s_lifecycle_mutex);
+        return true;
     }
+    // Preserve completion for a later lifecycle owner if lock reacquisition expired.
+    (void)xSemaphoreGive(s_stopped);
+    return false;
+}
+
+bool cyberdeck_cat_worker_quiesce(unsigned timeout_ms) {
+    s_shutdown.store(true, std::memory_order_release);
+    return stop_cat_worker(timeout_ms);
+}
+
+void cyberdeck_cat_worker_teardown(void) {
+    (void)stop_cat_worker(2000);
 }
 #else
+#if !defined(CYBERDECK_CAT_CORE_ONLY)
 bool cyberdeck_cat_worker_start(const char *, cyberdeck_cat_result_callback, void *) { return false; }
 bool cyberdeck_cat_worker_enqueue(const char *, const char *) { return false; }
 void cyberdeck_cat_worker_teardown(void) {}
+bool cyberdeck_cat_worker_quiesce(unsigned) { return true; }
+#endif
 #endif

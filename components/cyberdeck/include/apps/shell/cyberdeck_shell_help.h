@@ -16,7 +16,7 @@ struct entry {
     std::string_view description;
 };
 
-inline constexpr std::array<entry, 17> kCatalog = {{
+inline constexpr std::array<entry, 18> kCatalog = {{
     {"help", "help", "show this help"},
     {"wifi", "wifi [search|saved|audit]", "show status, manage Wi-Fi, or audit"},
     {"log", "log [lines <1-64>]", "show recent events"},
@@ -34,6 +34,7 @@ inline constexpr std::array<entry, 17> kCatalog = {{
     {"mkdir", "mkdir <directory>", "create a directory"},
     {"rm", "rm [-r] <path>", "remove a file or directory"},
     {"rmdir", "rmdir <directory>", "remove an empty directory"},
+    {"poweroff", "poweroff", "power off this device after exact y confirmation"},
 }};
 
 inline std::string format_entry(const entry &item)

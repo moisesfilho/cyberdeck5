@@ -180,6 +180,7 @@ bool session::begin_wifi_connection(const char *ssid, const char *password)
 
 void session::execute_line(bool line_already_sent)
 {
+    if (poweroff_requested_) { clear_editor(); host_.render(); return; }
     // Command strings for structural contract compliance
     static constexpr const char *k_battery_prot_on = "battery protection on";
     static constexpr const char *k_battery_prot_off = "battery protection off";
@@ -189,6 +190,13 @@ void session::execute_line(bool line_already_sent)
     (void)k_battery_prot_status;
 
     const cyberdeck_session_state state = host_.ssh_phase();
+    if (poweroff_confirmation_ && state != cyberdeck_session_state::MENU) {
+        poweroff_confirmation_ = false;
+        clear_editor();
+        host_.append_output_line("poweroff: cancelled; shell context changed\n");
+        host_.render();
+        return;
+    }
     /* enter() clears the editor, so reject a connected Enter first. */
     if (state == cyberdeck_session_state::CONNECTED && host_.ssh_composer().active()) {
         host_.render();
@@ -233,6 +241,19 @@ void session::execute_line(bool line_already_sent)
         host_.render();
         return;
     }
+    if (poweroff_confirmation_) {
+        poweroff_confirmation_ = false;
+        if (state == cyberdeck_session_state::MENU && line == "y") {
+            poweroff_requested_ = true;
+            host_.append_output_line("poweroff: quiescing storage; do not remove power.\n");
+            if (!host_.request_poweroff())
+                host_.append_output_line("poweroff: request failed; reboot required.\n");
+        } else {
+            host_.append_output_line("poweroff: cancelled\n");
+        }
+        host_.render();
+        return;
+    }
     if (line.find_first_not_of(" \t") == std::string::npos) {
         host_.render();
         return;
@@ -258,6 +279,17 @@ void session::execute_line(bool line_already_sent)
     host_.append_output_line(entered.echo);
     host_.log_event('I', "shell", line.c_str());
     history_.add(line);
+    if (line == "poweroff") {
+        poweroff_confirmation_ = true;
+        host_.append_output_line("Power off this device? Type exactly y then Enter; any other input cancels.\n");
+        host_.render();
+        return;
+    }
+    if (line == "poweroff -h" || line == "poweroff --help") {
+        host_.append_output_line(cyberdeck_command_help_text("poweroff"));
+        host_.render();
+        return;
+    }
     /* cat is the only local command whose file I/O is deliberately moved off
      * the LVGL task.  CAT_WORK_QUEUE_CAPACITY is bounded in the worker. */
     if (is_cat_request(line) && !is_cat_help_request(line)) {
@@ -497,6 +529,14 @@ void session::execute_line(bool line_already_sent)
 
 void session::handle_key(key pressed)
 {
+    if (poweroff_requested_) return;
+    if (poweroff_confirmation_ && pressed == key::esc) {
+        poweroff_confirmation_ = false;
+        clear_editor();
+        host_.append_output_line("poweroff: cancelled\n");
+        host_.render();
+        return;
+    }
     cyberdeck_ble::state_machine &ble = host_.ble_model();
     wifi_ui_state_t &wifi_state = host_.wifi_state();
     /* A successful BLE connection releases model ownership to idle while
@@ -707,6 +747,7 @@ not_ble_key:
 
 bool session::insert_physical_text(const char *text, std::size_t length)
 {
+    if (poweroff_requested_) return false;
     if (text == nullptr || text[0] == '\0' || length == 0) return false;
     /* While the BLE auth screen owns input, only decimal digits reach the
      * bounded passkey buffer; everything else is rejected. */
@@ -726,6 +767,7 @@ bool session::insert_physical_text(const char *text, std::size_t length)
 
 bool session::insert_modified_key(char character, std::uint8_t modifier)
 {
+    if (poweroff_requested_) return false;
     /* A modified key is an SSH escape sequence, not editor text.  It only
      * applies to an interactive session; the menu owns plain text. */
     if (host_.ssh_phase() != cyberdeck_session_state::CONNECTED) return false;
@@ -738,6 +780,7 @@ bool session::insert_modified_key(char character, std::uint8_t modifier)
 bool session::insert_virtual_text(const char *text, bool *virtual_enter_handled)
 {
     if (virtual_enter_handled != nullptr) *virtual_enter_handled = false;
+    if (poweroff_requested_) return false;
     if (text == nullptr || *text == '\0') return false;
     /* The virtual keyboard reports editing keys through a single control
      * byte.  They are actions, not text, so route them as keys instead of
@@ -778,6 +821,10 @@ bool session::insert_virtual_text(const char *text, bool *virtual_enter_handled)
         }
         if (newline == nullptr) break;
         execute_line();
+        if (poweroff_requested_) {
+            if (virtual_enter_handled != nullptr) *virtual_enter_handled = true;
+            return inserted_any;
+        }
         part = newline + 1;
         sync_editor();
         /* CONNECTED can have only one line in flight.  Stop after the first
