@@ -72,6 +72,37 @@ extern "C" int __wrap_close(int fd) {
 }
 
 int main() {
+    {
+        unsigned probes = 0;
+        unsigned records = 0;
+        task_create_heap_snapshot observed{};
+        observe_task_create_failure(
+            [&] {
+                ++probes;
+                 return task_create_heap_snapshot{123456, 32768, 65432, 16384};
+            },
+            [&](task_create_heap_snapshot snapshot) {
+                ++records;
+                observed = snapshot;
+            });
+        assert(probes == 1);
+        assert(records == 1);
+        assert(observed.free_bytes == 123456);
+        assert(observed.largest_block_bytes == 32768);
+        assert(observed.internal_free_bytes == 65432);
+        assert(observed.internal_largest_block_bytes == 16384);
+    }
+    {
+        controller operation;
+        fake_ports backend;
+        assert(operation.request());
+        assert(operation.expire());
+        assert(operation.status() == state::failed);
+        assert(operation.last_stage() == stage::idle);
+        assert(!operation.request());
+        assert(!operation.execute(backend, 45000));
+        assert(backend.calls.empty());
+    }
     assert(mkdir("/tmp/opencode", 0700) == 0 || errno == EEXIST);
     {
         controller operation;

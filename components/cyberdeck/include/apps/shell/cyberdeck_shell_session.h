@@ -18,6 +18,7 @@
 #include "apps/wifi/wifi_mgr.h"
 #include "apps/wifi/wifi_storage.h"
 #include "platform/sensors/battery_protection.h"
+#include "platform/power/cyberdeck_poweroff.h"
 
 namespace cyberdeck_shell_session {
 
@@ -144,6 +145,10 @@ struct host {
     /* Compiled-in application runtime owned by the UI composition. */
     virtual cyberdeck_apps::runtime &app_runtime() = 0;
     virtual bool request_poweroff() { return false; }
+    virtual cyberdeck_poweroff::admission_result admit_poweroff() {
+        return request_poweroff() ? cyberdeck_poweroff::admission_result::admitted
+                                  : cyberdeck_poweroff::admission_result::unavailable;
+    }
 };
 
 /* Stateful local/remote line dispatcher.  Owns the editor, the history, the

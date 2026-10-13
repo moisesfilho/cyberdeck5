@@ -12,6 +12,25 @@ def read(relative: str) -> str:
 
 def main() -> None:
     power = (SRC / "platform/power/cyberdeck_poweroff.cpp").read_text()
+    header = (ROOT / "components/cyberdeck/include/platform/power/cyberdeck_poweroff.h").read_text()
+    admission = power[power.index("cyberdeck_poweroff::admission_result cyberdeck_poweroff_request()"):
+                     power.index("\n}\n#endif", power.index("cyberdeck_poweroff::admission_result cyberdeck_poweroff_request()"))]
+    assert '"poweroff", 8192' in admission
+    for result in ("fence_failed", "watchdog_unavailable", "task_unavailable"):
+        failure = admission.index(f"return admission_result::{result}")
+        assert admission.rfind("shutdown.expire()", 0, failure) >= 0, result
+    assert "fence_owner = 0" not in admission and "begin_close" in admission
+    assert "reopen" not in admission.lower()
+    task_create_failure = admission.index('xTaskCreate(shutdown_task, "poweroff", 8192')
+    observer = admission.index("observe_task_create_failure(")
+    task_failure_branch = admission.rfind("!= pdPASS", 0, task_create_failure)
+    assert task_failure_branch >= 0 and task_failure_branch < observer
+    assert admission.count("observe_task_create_failure(") == 1
+    assert admission.index("return admission_result::task_unavailable") > observer
+    assert admission.count('xTaskCreate(shutdown_task, "poweroff", 8192') == 1
+    assert "MALLOC_CAP_8BIT" in admission
+    assert admission.count("MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT") == 2
+    assert "MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT" not in header
     main_source = read("main/app_main.cpp")
     assert main_source.index("bind_global(sd_io_coordinator)") < main_source.index("bsp_sdcard_mount()")
     assert "cyberdeck_poweroff_init(sd_io_coordinator)" in main_source
@@ -57,13 +76,14 @@ def main() -> None:
     assert "xSemaphoreTake(s_stopped, remaining()) != pdTRUE) return false" in bounded
     assert bounded.index("xSemaphoreTake(s_stopped, remaining())") < bounded.rindex("vQueueDelete(s_queue)")
     ui = (SRC / "platform/display/cyberdeck_ui.cpp").read_text()
-    assert "lv_timer_pause(timer)" in ui and "request_poweroff() override" in ui
+    assert "lv_timer_pause(timer)" in ui and "admit_poweroff() override" in ui
+    assert "cyberdeck_poweroff_request()" in ui
     assert ui.count("if (cyberdeck_poweroff_pending()) return;") >= 4
     screen = (SRC / "platform/display/screen_off.cpp").read_text()
     assert "s_persistence_closing.compare_exchange_strong" in screen
     assert "xSemaphoreTake(s_persistence_stopped, remaining)" in screen
     assert "s_persistence_failed.store(true" in screen
-    print("PASS: poweroff global SD/NVS fences, bounded quarantine, unmount-before-LDO and expander-B wiring")
+    print("PASS: poweroff admission failure ordering, stack, one-shot fence, heap masks and global fences")
 
 
 if __name__ == "__main__":

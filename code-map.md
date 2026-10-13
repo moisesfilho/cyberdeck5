@@ -35,7 +35,13 @@
   `components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp` implementam controller one-shot,
   ordem de quiescência com deadline global de 45 s, watchdog que mantém recursos
   vivos em timeout, barreira de metadata SD e pulso de fábrica B/P4. A task não
-  faz teardown sob lock LVGL; UI apenas agenda e fica bloqueada/pausada.
+  faz teardown sob lock LVGL; UI apenas agenda e fica bloqueada/pausada. A admissão
+  retorna causa tipada para coordinator ausente, one-shot consumido, fence ou
+  alocação de watchdog/task; falha na criação da task principal registra heap
+  livre e maior bloco MALLOC_CAP_8BIT e INTERNAL|8BIT uma única vez via seam
+  host-testável. Snapshots instantâneos auxiliam diagnóstico, mas não provam
+  causa única. A
+  shell distingue admissão da conclusão assíncrona.
 - `cyberdeck_shell_session` exige linhas exatas `poweroff` e `y`, cancela qualquer
   outra confirmação ou Escape e impede retry. Cat tem quiesce permanente bounded;
   auditoria mantém recursos em timeout e recusa corte com export pendente.
@@ -58,6 +64,8 @@
 - `poweroff-implementation-plan.md` registra aprovações, implementação global,
   estratégia de sync/FatFS/BSP, matriz REQ/evidência/estado e gates restantes.
   É controle de progresso, não prova de corte físico.
+  `tests/host/keymap/poweroff_traceability.md` mapeia os contratos host para
+  REQ-POWER/AC-POWER e evidencia observador de falha de criação da task.
   `tests/manual/poweroff-validation.pt-BR.md` orienta flash pelo usuário,
   confirmação/cancelamento, rail/alimentação e persistência após religar.
   As notas históricas Stage 1 abaixo não delimitam o poweroff global atual.

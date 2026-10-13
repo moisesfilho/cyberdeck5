@@ -245,9 +245,27 @@ void session::execute_line(bool line_already_sent)
         poweroff_confirmation_ = false;
         if (state == cyberdeck_session_state::MENU && line == "y") {
             poweroff_requested_ = true;
-            host_.append_output_line("poweroff: quiescing storage; do not remove power.\n");
-            if (!host_.request_poweroff())
-                host_.append_output_line("poweroff: request failed; reboot required.\n");
+            const auto result = host_.admit_poweroff();
+            switch (result) {
+            case cyberdeck_poweroff::admission_result::admitted:
+                host_.append_output_line("poweroff: admitted; quiescing storage. Do not remove power.\n");
+                break;
+            case cyberdeck_poweroff::admission_result::unavailable:
+                host_.append_output_line("poweroff: coordinator unavailable; reboot required.\n");
+                break;
+            case cyberdeck_poweroff::admission_result::already_requested:
+                host_.append_output_line("poweroff: request already consumed; reboot required.\n");
+                break;
+            case cyberdeck_poweroff::admission_result::fence_failed:
+                host_.append_output_line("poweroff: storage fence unavailable; reboot required.\n");
+                break;
+            case cyberdeck_poweroff::admission_result::watchdog_unavailable:
+                host_.append_output_line("poweroff: watchdog unavailable; reboot required.\n");
+                break;
+            case cyberdeck_poweroff::admission_result::task_unavailable:
+                host_.append_output_line("poweroff: shutdown task unavailable; reboot required.\n");
+                break;
+            }
         } else {
             host_.append_output_line("poweroff: cancelled\n");
         }

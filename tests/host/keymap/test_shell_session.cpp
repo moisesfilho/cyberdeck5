@@ -114,9 +114,12 @@ struct fake_host final : cyberdeck_shell_session::host {
     std::vector<std::string> events;
     std::string recent;
     std::size_t recent_requested = 0;
-    int poweroff_requests = 0;
-    bool poweroff_accept = true;
-    bool request_poweroff() override { ++poweroff_requests; return poweroff_accept; }
+    int poweroff_admissions = 0;
+    cyberdeck_poweroff::admission_result poweroff_admission = cyberdeck_poweroff::admission_result::admitted;
+    cyberdeck_poweroff::admission_result admit_poweroff() override {
+        ++poweroff_admissions;
+        return poweroff_admission;
+    }
 
     /* Local shell / cat. */
     bool cat_accepted = true;
@@ -307,46 +310,64 @@ int main()
         fake_host h;
         session s(h);
         submit(s, "poweroff");
-        check(h.poweroff_requests == 0, "poweroff alone never requests a physical cut");
+        check(h.poweroff_admissions == 0, "poweroff alone never requests a physical cut");
         check(h.output.find("Type exactly y") != std::string::npos, "poweroff prompts for exact confirmation");
         submit(s, answer);
-        check(h.poweroff_requests == 0, "non-exact confirmations cancel without side effects");
+        check(h.poweroff_admissions == 0, "non-exact confirmations cancel without side effects");
         check(h.output.find("poweroff: cancelled") != std::string::npos, "cancellation is visible");
         submit(s, "y");
-        check(h.poweroff_requests == 0, "cancelled confirmation cannot be reused");
+        check(h.poweroff_admissions == 0, "cancelled confirmation cannot be reused");
     }
     {
         fake_host h;
         session s(h);
         submit(s, "poweroff");
         submit(s, "y");
-        check(h.poweroff_requests == 1, "exact poweroff/y requests shutdown once");
+        check(h.poweroff_admissions == 1, "exact poweroff/y requests shutdown once");
+        check(h.output.find("poweroff: admitted; quiescing storage") != std::string::npos,
+              "typed successful admission reports asynchronous quiescence");
         submit(s, "poweroff");
         submit(s, "y");
-        check(h.poweroff_requests == 1, "shutdown cannot retry or admit subsequent commands");
+        check(h.poweroff_admissions == 1, "shutdown cannot retry or admit subsequent commands");
     }
     {
         fake_host h;
-        h.poweroff_accept = false;
+        h.poweroff_admission = cyberdeck_poweroff::admission_result::task_unavailable;
         session s(h);
         submit(s, "poweroff"); submit(s, "y");
-        check(h.output.find("reboot required") != std::string::npos, "worker allocation failure is visible");
+        check(h.output.find("shutdown task unavailable; reboot required") != std::string::npos,
+              "immediate task-admission failure is reported distinctly");
         submit(s, "poweroff"); submit(s, "y");
-        check(h.poweroff_requests == 1, "failed request is not automatically retried");
+        check(h.poweroff_admissions == 1, "admission rejection is not retried");
+    }
+    for (const auto [reason, expected] : {
+             std::pair{cyberdeck_poweroff::admission_result::unavailable, "coordinator unavailable"},
+             std::pair{cyberdeck_poweroff::admission_result::already_requested, "request already consumed"},
+             std::pair{cyberdeck_poweroff::admission_result::fence_failed, "storage fence unavailable"},
+             std::pair{cyberdeck_poweroff::admission_result::watchdog_unavailable, "watchdog unavailable"},
+             std::pair{cyberdeck_poweroff::admission_result::task_unavailable, "shutdown task unavailable"}}) {
+        fake_host h;
+        h.poweroff_admission = reason;
+        session s(h);
+        submit(s, "poweroff"); submit(s, "y");
+        check(h.output.find(expected) != std::string::npos && h.output.find("reboot required") != std::string::npos,
+              "typed admission rejection has its specific fail-closed diagnostic");
+        submit(s, "poweroff"); submit(s, "y");
+        check(h.poweroff_admissions == 1, "typed admission rejection remains one-shot");
     }
     {
         fake_host h;
         session s(h);
         submit(s, "poweroff"); s.handle_key(key::esc); submit(s, "y");
-        check(h.poweroff_requests == 0, "Escape clears the pending confirmation");
+        check(h.poweroff_admissions == 0, "Escape clears the pending confirmation");
         submit(s, "poweroff --help"); submit(s, "y");
-        check(h.poweroff_requests == 0, "help never arms confirmation");
+        check(h.poweroff_admissions == 0, "help never arms confirmation");
     }
     for (const std::string command : {" poweroff", "poweroff ", "poweroff y", "poweroffx"}) {
         fake_host h;
         session s(h);
         submit(s, command); submit(s, "y");
-        check(h.poweroff_requests == 0, "only an exact poweroff line arms confirmation");
+        check(h.poweroff_admissions == 0, "only an exact poweroff line arms confirmation");
     }
     {
         fake_host h;
@@ -354,7 +375,7 @@ int main()
         submit(s, "poweroff");
         h.phase = cyberdeck_session_state::HOST_KEY;
         submit(s, "y");
-        check(h.poweroff_requests == 0 && h.host_key_accepted == 0,
+        check(h.poweroff_admissions == 0 && h.host_key_accepted == 0,
               "context change cancels poweroff without accepting a remote host key");
     }
     {
@@ -362,7 +383,7 @@ int main()
         session s(h);
         bool enter = false;
         s.insert_virtual_text("poweroff\ny\nclear\npoweroff\ny\n", &enter);
-        check(h.poweroff_requests == 1 && h.clear_count == 0,
+        check(h.poweroff_admissions == 1 && h.clear_count == 0,
               "multiline paste requests once and discards its suffix after confirmation");
         check(!s.insert_physical_text("x", 1), "physical input is rejected after shutdown admission");
         check(!s.insert_virtual_text("x", &enter), "virtual input is rejected after shutdown admission");

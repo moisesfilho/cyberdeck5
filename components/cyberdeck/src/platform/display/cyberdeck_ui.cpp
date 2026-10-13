@@ -169,7 +169,7 @@ cyberdeck_ble_background::scheduler s_ble_background;
  * and pending Wi-Fi password target.  The host below borrows UI-owned output,
  * models, menus and async handles; every method runs on the LVGL task. */
 struct shell_session_host final : public cyberdeck_shell_session::host {
-    bool request_poweroff() override { return cyberdeck_poweroff_request(); }
+    cyberdeck_poweroff::admission_result admit_poweroff() override { return cyberdeck_poweroff_request(); }
     void append_output_line(const std::string &line) override;
     void write_output(const char *data, std::size_t length) override;
     void append_output_text(const std::string &text) override;

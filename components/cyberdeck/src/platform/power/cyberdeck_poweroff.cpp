@@ -104,6 +104,7 @@ const char *stage_name(stage value) {
 #include "platform/logging/event_log.h"
 #include "bsp/esp-bsp.h"
 #include "esp_io_expander_pi4ioe5v6408.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
 #include "ff.h"
@@ -245,24 +246,41 @@ void shutdown_watchdog(void *) {
 
 void cyberdeck_poweroff_init(cyberdeck_sd_io::coordinator &storage) { sd_io = &storage; }
 bool cyberdeck_poweroff_pending() { return shutdown.status() != cyberdeck_poweroff::state::idle; }
-bool cyberdeck_poweroff_request() {
-    if (sd_io == nullptr || !shutdown.request()) return false;
+cyberdeck_poweroff::admission_result cyberdeck_poweroff_request() {
+    using cyberdeck_poweroff::admission_result;
+    if (sd_io == nullptr) return admission_result::unavailable;
+    if (!shutdown.request()) return admission_result::already_requested;
     shutdown_deadline_ms.store(static_cast<std::uint64_t>(esp_timer_get_time() / 1000) + 45000,
                                std::memory_order_release);
     fence_owner = sd_io->begin_close();
     if (fence_owner == 0) {
         (void)shutdown.expire();
-        return false;
+        return admission_result::fence_failed;
     }
     if (xTaskCreate(shutdown_watchdog, "poweroff_watch", 4096, nullptr, 5, nullptr) != pdPASS) {
         (void)shutdown.expire();
-        return false;
+        return admission_result::watchdog_unavailable;
     }
     if (xTaskCreate(shutdown_task, "poweroff", 8192, nullptr, 4, nullptr) != pdPASS) {
         (void)shutdown.expire();
         // Retain the one-shot fence; task allocation failure must not allow retry.
-        return false;
+        cyberdeck_poweroff::observe_task_create_failure(
+            [] {
+                return cyberdeck_poweroff::task_create_heap_snapshot{
+                    heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                    heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                    heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                    heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                };
+            },
+            [](const cyberdeck_poweroff::task_create_heap_snapshot &snapshot) {
+                printf("poweroff: shutdown task unavailable; heap 8bit free=%u largest_block=%u; internal 8bit free=%u largest_block=%u bytes\n",
+                       static_cast<unsigned>(snapshot.free_bytes), static_cast<unsigned>(snapshot.largest_block_bytes),
+                       static_cast<unsigned>(snapshot.internal_free_bytes),
+                       static_cast<unsigned>(snapshot.internal_largest_block_bytes));
+            });
+        return admission_result::task_unavailable;
     }
-    return true;
+    return admission_result::admitted;
 }
 #endif
