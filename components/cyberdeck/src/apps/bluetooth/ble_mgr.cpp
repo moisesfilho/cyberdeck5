@@ -410,7 +410,6 @@ esp_err_t ble_mgr_stop(void)
      * stop ACK alone is not sufficient: a self-deleting task can acknowledge
      * before the scheduler has completed its final task transition. */
     if (nimble_port_stop() != 0) return ESP_FAIL;
-    nimble_port_freertos_deinit();
 
     if (s_ble_mutex != NULL) {
         vSemaphoreDelete(s_ble_mutex);
@@ -925,8 +924,8 @@ static void ble_host_task(void *arg)
     (void)arg;
     ESP_LOGI(TAG, "BLE host task started");
     nimble_port_run();
-    nimble_port_freertos_deinit();
-    ESP_LOGI(TAG, "BLE host task stopped");
+    ESP_LOGI(TAG, "BLE host task exiting");
+    vTaskDelete(nullptr);
 }
 
 static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)

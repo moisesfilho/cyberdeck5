@@ -15,19 +15,23 @@ def main() -> None:
     header = (ROOT / "components/cyberdeck/include/platform/power/cyberdeck_poweroff.h").read_text()
     admission = power[power.index("cyberdeck_poweroff::admission_result cyberdeck_poweroff_request()"):
                      power.index("\n}\n#endif", power.index("cyberdeck_poweroff::admission_result cyberdeck_poweroff_request()"))]
-    assert '"poweroff", 8192' in admission
+    task_create = 'xTaskCreateWithCaps(shutdown_task, "poweroff", 8192, nullptr, 4, nullptr, MALLOC_CAP_SPIRAM)'
+    assert task_create in admission
+    sdkconfig_defaults = read("sdkconfig.defaults")
+    assert "CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y" in sdkconfig_defaults
+    assert "CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y" in read("sdkconfig")
     for result in ("fence_failed", "watchdog_unavailable", "task_unavailable"):
         failure = admission.index(f"return admission_result::{result}")
         assert admission.rfind("shutdown.expire()", 0, failure) >= 0, result
     assert "fence_owner = 0" not in admission and "begin_close" in admission
     assert "reopen" not in admission.lower()
-    task_create_failure = admission.index('xTaskCreate(shutdown_task, "poweroff", 8192')
+    task_create_failure = admission.index(task_create)
     observer = admission.index("observe_task_create_failure(")
     task_failure_branch = admission.rfind("!= pdPASS", 0, task_create_failure)
     assert task_failure_branch >= 0 and task_failure_branch < observer
     assert admission.count("observe_task_create_failure(") == 1
     assert admission.index("return admission_result::task_unavailable") > observer
-    assert admission.count('xTaskCreate(shutdown_task, "poweroff", 8192') == 1
+    assert admission.count(task_create) == 1
     assert "MALLOC_CAP_8BIT" in admission
     assert admission.count("MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT") == 2
     assert "MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT" not in header

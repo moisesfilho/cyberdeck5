@@ -1,6 +1,17 @@
 # Validação manual de `poweroff` — Tab5
 
-Estado: implementação para teste; **corte físico ainda não validado**.
+Estado: desligamentos confirmados pelo usuário em bateria-only, bateria+USB e cabo externo. Canário/hash pós-relight verificados em bateria-only e bateria+USB; cancelamentos `Y`/`yes`, `.poweroff-sync`, `sys.info` e `ping` passaram. Falhas/timeout cobertas em host; não se recomenda indução destrutiva no dispositivo.
+
+Tentativa adicional em bateria + USB: admitida; usuário confirmou o corte físico.
+Após religar, boot/ponte e canário de 1272 bytes/hash passaram. A desconexão USB
+foi registrada, mas não usada isoladamente como critério de sucesso.
+
+Tentativa em bateria-only, sem USB/fonte externa: usuário confirmou desligamento
+e religamento; `sys.info`/`ping` e readback/hash pós-relight do canário passaram.
+
+O usuário informa também que o cenário somente com cabo de alimentação externo foi
+testado e que todas as formas suportadas foram exercitadas. Não há hash
+pós-relight independente registrado para esse cenário específico.
 Não inferir desligamento pela tela preta nem pela perda da USB Serial-JTAG.
 
 ## Antes do flash

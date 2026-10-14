@@ -261,7 +261,7 @@ cyberdeck_poweroff::admission_result cyberdeck_poweroff_request() {
         (void)shutdown.expire();
         return admission_result::watchdog_unavailable;
     }
-    if (xTaskCreate(shutdown_task, "poweroff", 8192, nullptr, 4, nullptr) != pdPASS) {
+    if (xTaskCreateWithCaps(shutdown_task, "poweroff", 8192, nullptr, 4, nullptr, MALLOC_CAP_SPIRAM) != pdPASS) {
         (void)shutdown.expire();
         // Retain the one-shot fence; task allocation failure must not allow retry.
         cyberdeck_poweroff::observe_task_create_failure(

@@ -2,12 +2,32 @@
 
 ## Plano de poweroff
 
-- Testes reais em 13/out/2026 **FAIL**: a tentativa histórica retornou
-  `request failed; reboot required`; o teste diagnóstico posterior retornou
-  `shutdown task unavailable; reboot required`. A captura registrou 6935 B
-  livres/5632 B largest em heap interno 8-bit para uma stack solicitada de
-  8192 B. Causa imediata diagnosticada; correção e aceite físico pendentes. Ver
-  `poweroff-implementation-plan.md`; notas locais não equivalem a aceite.
+- Testes reais em 13/out/2026: após correções de stack PSRAM e autoexclusão BLE,
+  stop BLE ocorreu sem panic, seguido de BOD/USB disconnect. Usuário confirmou
+  desligamento físico e pós-relight íntegro; `sys.info`/`ping` passaram e
+  `cat /.poweroff-sync` retornou `1`. Usuário confirma cenários bateria-only,
+  bateria+USB e cabo externo; canário/hash verificados nos dois primeiros.
+  Fault/timeout têm cobertura host. Não há implementação pendente conhecida; ver
+  `poweroff-implementation-plan.md` para o caveat de CI remoto do delta local.
+- Rodada com canário: cancelamentos `Y`/`yes` passaram; arquivo descartável de
+  1272 bytes foi gravado e lido antes do shutdown (hash esperado
+  `860367d95a4c84b3790ddf5306fc5d2807cfbce37e2c1e9128dfa4b18c96cc14`). Após
+  uma confirmação `y`, usuário confirmou corte físico. Pós-relight `sys.info`/
+  `ping` passaram e os 24 registros foram lidos exatamente; hash SHA-256 confere.
+  Matriz de alimentação e falhas/timeout ainda pendente.
+- Rechecagem posterior: agregado `make -C tests/host/keymap test` e os três alvos
+  poweroff focados (`test_poweroff`, contrato e linker guard) passaram. Isso valida
+  os cenários host/estruturais, não fault injection física no Tab5.
+- Tentativa bateria + USB: boot/ponte/canário conferidos, uma confirmação admitida,
+  USB desconectou às 20:30. Usuário confirmou corte físico; pós-relight `sys.info`/
+  `ping` passaram e o canário permaneceu integral, com SHA-256 conferido. Cenário
+  bateria+USB PASS.
+- Cenário bateria-only executado pelo usuário e confirmado fisicamente; pós-relight
+  `sys.info`/`ping` e readback/hash do mesmo canário passaram. Bateria-only e
+  bateria+USB agora têm evidência de ciclo e persistência.
+- Usuário confirmou ainda teste somente com cabo externo e que todas as formas de
+  alimentação suportadas foram testadas. Não há hash pós-relight independente
+  registrado para cabo-only; não falta outro ciclo de alimentação conhecido.
 
 - Comando `poweroff` documentado em `README.md`/`README.pt-BR.md`; catálogo
   compartilhado passa a 18 entradas, mantendo ordem das 17 anteriores. Contratos
@@ -15,8 +35,9 @@
 - Validação local: agregado PASS, gcovr 86.9% linhas / 95.5% funções / 59.3%
   branches (gates 80/94/59); guard 61 TUs cobertas e 16 hardware allowlisted,
   build ESP-IDF/linker PASS. Quality Gate remoto PASS no commit b0ce47f.
-  O firmware diagnóstico foi gravado, mas a falha de heap interno permanece sem
-  correção; não fazer novo flash nem declarar aceite físico sem novo checkpoint.
+  Stack PSRAM foi admitida, BLE avançou sem assert, e o usuário confirmou
+  desligamento físico e pós-relight correto. A barreira `.poweroff-sync` persistiu;
+  completar a matriz de persistência/cenários antes do aceite HW integral.
 
 - `tools/poweroff_link_guard.py` verifica no cross-reference map GNU que
   `ff.c.obj` realmente chama os hooks `__wrap_ff_disk_write/ioctl` do poweroff,
@@ -39,8 +60,10 @@
   vivos em timeout, barreira de metadata SD e pulso de fábrica B/P4. A task não
   faz teardown sob lock LVGL; UI apenas agenda e fica bloqueada/pausada. A admissão
   retorna causa tipada para coordinator ausente, one-shot consumido, fence ou
-  alocação de watchdog/task; falha na criação da task principal registra heap
-  livre e maior bloco MALLOC_CAP_8BIT e INTERNAL|8BIT uma única vez via seam
+  alocação de watchdog/task; task principal mantém stack de 8192 bytes explicitamente
+  alocada na PSRAM (`xTaskCreateWithCaps`/`MALLOC_CAP_SPIRAM`), preservando stack
+  mesmo com heap interno fragmentado; falha na criação registra heap livre e
+  maior bloco MALLOC_CAP_8BIT e INTERNAL|8BIT uma única vez via seam
   host-testável. Snapshots instantâneos auxiliam diagnóstico, mas não provam
   causa única. A
   shell distingue admissão da conclusão assíncrona.
@@ -60,9 +83,10 @@
   e BSP. `test_cat_worker_runtime.cpp` liga o worker ESP real com adapters em
   `cat_runtime_shim/`, shims compartilhados do logger e barreira em read: timeout
   preserva fila/lease, reject de start/enqueue, completion/join antes de cleanup
-  único, no-reopen. Novos alvos entram no agregado/coverage. Teste diagnóstico
-  no Tab5 confirmou falha de criação por heap interno insuficiente; correção e
-  aceitação física permanecem pendentes no plano.
+  único, no-reopen. Novos alvos entram no agregado/coverage. Teste no Tab5
+  confirmou admissão com stack PSRAM, stop BLE sem panic e ciclo físico básico
+  confirmado pelo usuário; pós-relight, `sys.info`/`ping` e marcador `.poweroff-sync`
+  passaram. A matriz HW integral segue pendente no plano.
 
 - `poweroff-implementation-plan.md` registra aprovações, implementação global,
   estratégia de sync/FatFS/BSP, matriz REQ/evidência/estado e gates restantes.
@@ -733,16 +757,25 @@ monotônicos impedem callbacks atrasados de alterar uma tentativa nova.
 
 ### Bluetooth LE no ESP32-C6 hospedado (REQ-BLE-001..014)
 
-Implementacao revisada: `address_type` em `cyberdeck_ble_types`/acoes/eventos/store
-
-O lifecycle do `ble_mgr` agora possui uma barreira de quiescencia separada do
-ACK de STOP: a task só sinaliza após sua última operação em filas, mutexes e
-estado de lifecycle, e `ble_mgr_stop` só executa NimBLE teardown e destrói os
-recursos depois dessa confirmação. Em timeout, os handles são preservados.
-preserva public, random static, RPA e NRPA. `ble_mgr` usa scan NimBLE de 5000 ms
-com parametros zero e filtro de duplicatas, parse bounded por `ble_hs_adv_parse_fields` e
-agregacao ADV/SCAN_RSP por endereco + tipo; somente o anuncio primario define
+`address_type` é preservado entre `cyberdeck_ble_types`, ações, eventos e store,
+incluindo public, random static, RPA e NRPA. `ble_mgr` usa scan NimBLE de 5000 ms
+com parâmetros zero e filtro de duplicatas, parse bounded por `ble_hs_adv_parse_fields` e
+agregação ADV/SCAN_RSP por endereço + tipo; somente o anúncio primário define
 `connectable`.
+
+O lifecycle do `ble_mgr` possui uma barreira de quiescência separada do ACK de
+STOP: a task só sinaliza após sua última operação em filas, mutexes e estado de
+lifecycle; `ble_mgr_stop` só executa NimBLE teardown e destrói recursos depois
+dessa confirmação. Em timeout, os handles são preservados.
+
+Após o teste de poweroff de 13/out/2026 revelar abort quando `ble_host` retornava,
+a causa foi identificada: a task é criada por `xTaskCreate`, logo não possui o
+handle privado que `nimble_port_freertos_deinit()` espera registrar via
+`nimble_port_freertos_init()`. A task agora chama `vTaskDelete(nullptr)` após
+`nimble_port_run()`; `ble_mgr_stop` solicita a parada via `nimble_port_stop()` e
+não deleta a task externa ou concorrentemente. `test_ble_review_regressions.py`
+protege esse contrato. Build e agregado host passam; no teste posterior, BLE
+avançou sem o assert anterior. O encerramento físico ainda aguarda confirmação.
 
 O radio BLE nao e do ESP32-P4: e do coprocessor ESP32-C6 alcancado por
 `esp_hosted` (VHCI/HCI), e a stack host roda no P4. Nenhum modulo BLE toca

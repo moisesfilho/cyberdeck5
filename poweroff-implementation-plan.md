@@ -1,7 +1,7 @@
 # Plano de implementação: `poweroff` no Tab5
 
 **Tipo:** documento de controle de progresso; não é evidência de teste.  
-**Estado geral:** **DEVICE TEST FAILED — causa imediata diagnosticada; correção pendente**. O teste no dispositivo confirmou heap interno insuficiente para criar a task de shutdown. Nenhuma otimização/alocação alternativa foi implementada. **HW-ACCEPT NOT DONE**; não declarar desligamento validado.
+**Estado geral:** **POWER-CYCLE MATRIX PASS — desligamento físico confirmado pelo usuário em bateria-only, bateria+USB e cabo de alimentação externo**. Nos ciclos bateria-only e bateria+USB, pós-relight `sys.info`/`ping` e readback/hash do canário passaram; cancelamentos e `.poweroff-sync` também foram verificados. O cenário somente com cabo externo foi reportado como testado pelo usuário, sem readback/hash independente registrado aqui. Falhas/timeout têm cobertura host; não foi feita injeção destrutiva de falha no hardware.
 
 ### Teste no dispositivo — 13/out/2026
 
@@ -19,6 +19,45 @@
 - Uma única sequência: `ui.type poweroff`; `term.dump` confirmou o prompt exato; `ui.type y` uma vez. Retorno: `poweroff: shutdown task unavailable; reboot required.` `ping` e `sys.info` responderam depois, sem reboot observado. Nenhum retry.
 - Log serial bruto: `/tmp/opencode/cyberdeck5-poweroff-attempt-serial.log`. No instante da falha: heap `MALLOC_CAP_8BIT` livre `31469647`, maior bloco `30932992`; heap `MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT` livre `6935`, maior bloco `5632` bytes. Como a task solicita stack de `8192` bytes, o heap interno livre e o bloco contíguo eram menores que a stack, identificando insuficiência de heap interno como causa imediata da falha de criação. Isso não determina ainda a correção segura nem prova corte físico.
 - `idf.py monitor` competia com a CLI pelo leitor serial; foi fechado sem reset e a captura foi feita por tee serial de leitura única ao redor do protocolo/cliente da CLI. Não houve manipulação manual de DTR/RTS. Sem evidência de pulso/corte físico. Após esta falha one-shot, não repetir `poweroff` sem reboot controlado.
+
+### Correção de alocação da task — validada até admissão
+
+- A task de shutdown agora conserva os 8192 bytes de stack e usa `xTaskCreateWithCaps(..., MALLOC_CAP_SPIRAM)`. O projeto já habilita `CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y`; a configuração efetiva do firmware habilita `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y`, e `cyberdeck_time_sync.cpp` já usa a mesma API para stack em PSRAM.
+- A escolha evita reduzir stack de uma rotina de shutdown complexa e não depende do heap interno fragmentado observado. Se não houver alocação PSRAM, a admissão permanece falha, fence sticky e sem retry.
+- Validação local pós-delta: teste isolado `test_poweroff` e contrato `test_poweroff_contract.py` PASS; agregado `make test` PASS; build ESP-IDF 5.5.5 PASS; formato das linhas alteradas e `git diff --check` PASS. O CI remoto ainda não foi executado para este delta.
+- Imagem construída e gravada na rodada seguinte: SHA-256 `a760fe7d57ca4f070a9555c51e7fdb71815e80c1ad6a0b4b5c50ea25a938571a`.
+
+### Flash e tentativa única após correção — 13/out/2026
+
+- Pré-condições confirmadas pelo usuário: backup/dados descartáveis, alimentação segura e captura serial disponível. Tab5 `/dev/ttyACM0`, USB JTAG `E8:F6:0A:E3:22:29`; `idf.py flash` concluiu com verificação de hash esptool. Firmware reportou `cef3257-dirty`, IDF v5.5.5, ESP32-P4, safe_mode=false; `ping` respondeu antes do teste.
+- Uma única sequência confirmou o prompt exato, enviou `y` uma vez e recebeu `poweroff: admitted; quiescing storage. Do not remove power.` A admissão confirma que a criação da task com stack PSRAM passou neste dispositivo.
+- Log serial bruto: `/tmp/opencode/cyberdeck5-poweroff-psram-validation-serial.log`. Na primeira etapa de quiescência BLE, o log registrou `BLE manager stopped`, `BLE host task stopped` e imediatamente `FreeRTOS: FreeRTOS Task "ble_host" should not return, Aborting now!`, seguido de dump de registradores e `Rebooting...`. Depois do reboot `sys.info` mostrou uptime ~7 s e `ping` voltou a responder. Isto é panic/reboot observado, não sucesso de poweroff nem prova de corte físico.
+- Hash do binário gravado: `b9da9404e293f86454c082e2862766c71587be58b379f5d961600a0f8c769e03`. `sys.info` confirmou `cef3257-dirty`, IDF v5.5.5, ESP32-P4, `safe_mode=false`; `ping` respondeu antes do teste.
+- A única sequência confirmou o prompt, enviou `y` uma vez e recebeu `poweroff: admitted; quiescing storage`. O log `/tmp/opencode/cyberdeck5-poweroff-ble-fix-validation-serial.log` registra BLE manager parado, `BLE host task exiting`, e novamente `FreeRTOS Task "ble_host" should not return`, dump e reboot. Após o reboot, `sys.info` respondeu com uptime ~51 s; não houve retry.
+- A mudança anterior, que removeu apenas a chamada externa duplicada, **não corrigiu** o panic. Investigação do port ESP-IDF confirma que `nimble_port_freertos_deinit()` apaga somente o `host_task_h` criado por `nimble_port_freertos_init()`, mas este firmware cria `ble_host_task` diretamente via `xTaskCreate`; portanto o handle privado é nulo e deinit retorna sem apagar a task. A correção proposta é autoexclusão explícita `vTaskDelete(nullptr)` após `nimble_port_run()`.
+- Esta falha não comprova que a hipótese explique todo o panic até runtime validar a mudança. O corte físico não foi comprovado. A autorização para esta rodada foi de uma tentativa; não repetir sem novo checkpoint específico.
+- Hash do `build/cyberdeck5.bin` após flash: `a760fe7d57ca4f070a9555c51e7fdb71815e80c1ad6a0b4b5c50ea25a938571a`.
+
+### Correção BLE por autoexclusão explícita
+
+- Diagnóstico corrigido: `ble_host_task` é criado diretamente por `xTaskCreate`, sem handle no adaptador NimBLE. `nimble_port_freertos_deinit()` não é mecanismo válido para autoexclusão nesse caminho; o log da segunda tentativa mostra que a task ainda retorna após a chamada.
+- Ajuste local atual: após `nimble_port_run()`, `ble_host_task` registra saída e chama `vTaskDelete(nullptr)`. `ble_mgr_stop()` mantém o `nimble_port_stop()` e não tenta deletar o handle externo. `test_ble_review_regressions.py` exige essa ordem, autoexclusão final e criação direta por `xTaskCreate`.
+- Validação local deste delta: agregado `make test` PASS; build ESP-IDF 5.5.5 PASS; contratos BLE, `git diff --check` e clang-format nas linhas alteradas PASS. Imagem local **não gravada**: SHA-256 `38e3279b2c8e8c6e3a1cb1ea9d8b53df71d959616d754930fee2e878e99517a5`.
+- No momento do build local, a imagem ainda não havia sido gravada; o teste físico da imagem está registrado na seção seguinte. CI remota pendente.
+
+### Flash e validação da autoexclusão BLE — 13/out/2026
+
+- Usuário confirmou novamente backup/dados descartáveis, alimentação segura e captura serial, autorizando ciclos controlados com no máximo uma tentativa por boot. Binário flashado: SHA-256 `38e3279b2c8e8c6e3a1cb1ea9d8b53df71d959616d754930fee2e878e99517a5`; esptool verificou os hashes.
+- `sys.info` confirmou `cef3257-dirty`, ESP32-P4, IDF v5.5.5, safe_mode=false; `ping` respondeu antes. Prompt exato confirmado; um `y` foi enviado. `term.dump` retornou `poweroff: admitted; quiescing storage. Do not remove power.`
+- Log bruto `/tmp/opencode/cyberdeck5-poweroff-self-delete-validation-serial.log` mostra `BLE manager stopped` e `BLE host task exiting`, sem o assert anterior `FreeRTOS Task "ble_host" should not return`; em seguida Wi-Fi reportou stop e o console emitiu `E BOD: Brownout detector was triggered`. A USB Serial-JTAG desconectou e `/dev/ttyACM0` não reapareceu na verificação subsequente.
+- Resultado: progresso além do panic BLE anterior, mas **corte físico não confirmado**. Brownout e ausência USB são compatíveis com corte, mas não o provam; não há mensagem observada `factory signal sent`, nem medição independente do rail, nem validação de persistência pós-religamento. Nenhuma nova tentativa foi feita. Aguardando confirmação física do estado/rail e decisão sobre religar/validar dados antes de novo ciclo.
+- Após o usuário religar o Tab5, houve um reset `CHIP_USB_UART_RESET` durante a conexão host; o boot voltou a completar (`sys.info`: cef3257-dirty, safe_mode=false, uptime 19 s; `ping` PASS). Uma nova tentativa autorizada neste boot confirmou prompt e enviou `y` exatamente uma vez. Captura `/tmp/opencode/cyberdeck5-poweroff-relight-cycle-serial.log`: `BLE manager stopped`, `BLE host task exiting` sem assert/abort, `wifi station stopped`, `E BOD: Brownout detector was triggered`, seguida de USB disconnect. A porta não reapareceu. Resultado igualmente compatível com desligamento físico, mas sem prova independente nem verificação de dados após religar; não repetir no estado atual.
+- O usuário confirmou que esse ciclo desligou corretamente e que, após religar, o dispositivo e os dados pareciam corretos. Verificação pós-relight: `sys.info` (`cef3257-dirty`, IDF v5.5.5, ESP32-P4, safe_mode=false), `ping` PASS e `cat /.poweroff-sync` retornou `1`; captura `/tmp/opencode/cyberdeck5-poweroff-post-relight-check.log`. Confirma boot normal, SD/barreira presentes e o resultado físico reportado pelo usuário, mas não substitui canário de dados com hash nem a matriz completa.
+- Rodada com canário: boot verificado e `ping` respondeu; cancelamentos com `Y` maiúsculo e `yes` passaram sem admissão. Canário descartável `/data/poweroff-acceptance-2259ed40.txt` (1272 bytes) foi gravado via `fs.write` e lido integralmente antes do shutdown. SHA-256 esperado: `860367d95a4c84b3790ddf5306fc5d2807cfbce37e2c1e9128dfa4b18c96cc14`. Prompt exato confirmado e `y` enviado uma vez; ponte retornou `poweroff: admitted; quiescing storage`. USB desconectou às 20:19:33. Captura do ciclo: `/tmp/opencode/cyberdeck5-poweroff-canary-cycle-serial.log`.
+- O usuário confirmou que o desligamento foi correto e religou o dispositivo. Pós-relight, `sys.info` confirmou `cef3257-dirty`/IDF v5.5.5/ESP32-P4/safe_mode=false; `ping` passou e o `cat` retornou todos os 24 registros do canário, byte por byte igual ao conteúdo esperado. SHA-256 calculado do conteúdo esperado/readback: `860367d95a4c84b3790ddf5306fc5d2807cfbce37e2c1e9128dfa4b18c96cc14` (1272 bytes). Captura: `/tmp/opencode/cyberdeck5-poweroff-canary-post-relight.log`. Ciclo de corte + persistência do canário PASS.
+- Cenário selecionado pelo usuário: bateria + USB conectadas. No boot `cef3257-dirty`/IDF v5.5.5, `sys.info`/`ping` passaram, o canário existente foi lido integralmente antes do comando e o prompt exato foi conferido; um único `y` foi enviado e a ponte retornou `poweroff: admitted; quiescing storage`. USB Serial-JTAG desconectou às 20:30:00; captura `/tmp/opencode/cyberdeck5-poweroff-battery-usb-cycle.log`. O usuário confirmou o desligamento físico e religou o Tab5. Pós-relight, `sys.info`/`ping` passaram e o canário foi lido com os 24 registros intactos; SHA-256 `860367d95a4c84b3790ddf5306fc5d2807cfbce37e2c1e9128dfa4b18c96cc14`, captura `/tmp/opencode/cyberdeck5-poweroff-battery-usb-post-relight.log`. Resultado: cenário bateria+USB PASS, inclusive persistência; não inferido pela desconexão USB.
+- Cenário bateria-only executado pelo usuário, sem USB/fonte externa durante o corte; usuário confirmou desligamento e religamento. Pós-relight no Tab5: `sys.info` confirmou `cef3257-dirty`, IDF v5.5.5, ESP32-P4, safe_mode=false; `ping` PASS e leitura dos 24 registros do canário PASS (1272 bytes, SHA-256 `860367d95a4c84b3790ddf5306fc5d2807cfbce37e2c1e9128dfa4b18c96cc14`). Captura `/tmp/opencode/cyberdeck5-poweroff-battery-only-post-relight.log`. Bateria-only PASS.
+- O usuário informa também que o cenário somente com cabo de alimentação externo já foi testado e que todas as formas suportadas foram exercitadas. Registro como confirmação do usuário; não há nesta sessão evidência serial pós-relight/hash específica desse cenário.
 
 ## Objetivo e decisões aprovadas
 
@@ -54,17 +93,17 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 | REQ-CAT — leitura/lifecycle real | Harness ESP retém read, prova timeout sem cleanup, reject de start/enqueue, liberação/join/drain e cleanup único; contratos e seam READ | IMPLEMENTED; testes locais PASS |
 | REQ-COVERAGE — thresholds locais | 13/out final: gcovr 86.9% linhas, 95.5% funções, 59.3% branches; gates 80/94/59 PASS; guard: 61 TUs cobertas, 16 hardware allowlisted; CI run `38476339304` | PASS local e remoto |
 | REQ-LOG-M2 — quiescência do logger | 15 cenários runtime, incluindo dois pontos de falha na criação de tasks e drain multi-item, com ASan/UBSan; contratos de projection/durable | IMPLEMENTED; testes locais PASS |
-| REQ-GLOBAL-QUIESCE — I/O e handles | Inventário SD/NVS, leases/fences, stop/join/close e erro sticky; controller por falha/timeout/cancelamento em cada etapa, known_hosts e cat reais | IMPLEMENTED; PASS local; hardware pendente |
-| REQ-SD-SYNC — persistência final | FIL modificado dispara sync_fs; hooks ff_disk_write/ioctl observam inclusive FSInfo ignorado pelo upstream; guard real de linker confirma callers FatFS; BSP unmount antes de LDO | IMPLEMENTED; build/link guard PASS; hardware pendente |
-| REQ-POWER — comando/HAL | Uma tentativa real no commit `b0ce47f` retorna `shutdown task unavailable`; heap interno 6935 B livre/5632 B largest versus stack 8192 B. Sem retry. | IMPLEMENTED; falha de admissão diagnosticada; correção pendente |
-| REQ-HW-ACCEPT — validação Tab5 | corte físico de rail sob condições controladas | NOT DONE |
+| REQ-GLOBAL-QUIESCE — I/O e handles | Inventário SD/NVS, leases/fences, stop/join/close e erro sticky; controller por falha/timeout/cancelamento em cada etapa, known_hosts e cat reais | IMPLEMENTED; PASS local e exercitado no ciclo de hardware |
+| REQ-SD-SYNC — persistência final | FIL modificado dispara sync_fs; hooks ff_disk_write/ioctl observam inclusive FSInfo ignorado pelo upstream; guard real de linker confirma callers FatFS; BSP unmount antes de LDO | IMPLEMENTED; build/link guard e persistência física verificados |
+| REQ-POWER — comando/HAL | Stack PSRAM admitida; BLE encerrou sem panic; cortes confirmados nas fontes reportadas pelo usuário; canário/hash e cancelamentos verificados | IMPLEMENTED; validação funcional PASS |
+| REQ-HW-ACCEPT — validação Tab5 | Corte em todas as fontes suportadas confirmado pelo usuário; canário/hash pós-relight verificado em bateria-only e bateria+USB. Cabo-only reportado testado, sem hash independente. Fault/timeout exercitados em host, não por injeção física. | FUNCIONAL PASS; sem fault injection física |
 
 ## Trabalho restante, em ordem
 
 - [x] **REQ-FIXTURES:** fixtures vinculam coordinator OPEN compartilhado; testes de sessão/aplicação executados em 13/out/2026. Regressões adicionais verificam rejeição CLOSING/CLOSED e stop/start sem reabertura.
 - [x] **REQ-CAT-READ:** caminho dedicado com READ lease e contratos locais aprovados; não abrange teardown bounded nem fence global.
 - [x] **REQ-LOG-IMPLEMENTATION:** fence/stop/drain/close do logger implementados; corrigida ordem binário → textual e adicionados cenários partial-init/race ao alvo padrão. Aceitação/revisão final segue aberta.
-- [x] **REQ-QUALITY-LOCAL:** gates locais de formatação do workflow, lint e segurança passam; firmware compila após correção. Os flashes diagnósticos estão registrados acima; nenhum corte físico foi comprovado.
+- [x] **REQ-QUALITY-LOCAL:** gates locais de formatação do workflow, lint e segurança passam; firmware compila após correção. Os flashes/testes estão registrados acima; ciclo físico básico confirmado pelo usuário.
 - [x] **REQ-AGGREGATE-LOCAL:** agregado completo com coverage passa após correção da barreira do teste concorrente de auditoria Wi-Fi. O teste espera a resposta de enqueue antes de liberar rename, com watchdog de 5 s; nenhuma mudança em produção Wi-Fi.
 - [x] **REQ-COVERAGE-LOCAL:** gcovr e guard finais passam: 86.9/95.5/59.3 contra gates 80/94/59; 61 TUs cobertas, 16 hardware allowlisted.
 - [x] **REQ-CAT:** lifecycle bounded, fence permanente e cleanup somente após completion; callback fence antes de lock, READ lease e testes reais/contratos.
@@ -74,8 +113,17 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 - [x] **REQ-TEST-IMPLEMENTATION:** testes de comando, erros por etapa, prazo/cancelamento, admissão concorrente, metadata/pulso, leases/close reais de known_hosts, worker ESP cat e logger multi-item/creation failure.
 - [x] **REQ-REVIEW-LOCAL-FINAL:** revisão de ownership/fences, criação de tasks, fechamento opaco da libssh, FSInfo mascarado, ordem de RPCs/parada e deadline absoluto antes do primeiro high; agregado limpo/gcovr/guard/qualidade/build/link guard finais PASS. Nenhum threshold ou módulo de cobertura foi excluído/reduzido.
 - [x] **REQ-CI-REMOTE:** Quality Gate no commit `b0ce47fe5bad592744a662aafa6b5e05073b2e41`, run `38476339304` — PASS.
-- [ ] **REQ-HW-ACCEPT:** validação manual em Tab5 real de corte do rail, sequência, persistência, rejeições/timeout e riscos de alimentação; registrar dispositivo, firmware e evidências. Sem isso, declarar hardware BLOCKED.
-- [ ] **REQ-POWER-HEAP-FIX:** escolher e testar uma correção segura para a insuficiência do heap interno sem retry especulativo; requer aprovação/revisão e novo checkpoint humano antes de outro flash.
+- [x] **REQ-HW-POWER-MATRIX:** usuário confirma desligamento nas condições bateria-only, bateria+USB e cabo externo; pós-relight/hash verificados em bateria-only e bateria+USB. Cenário de cabo externo anotado como user-reported, sem hash serial independente.
+- [x] **REQ-HW-ACCEPT-FUNCTIONAL:** corte físico, persistência do canário/hash, cancelamentos (`Y`/`yes`), `sys.info`/`ping` e `.poweroff-sync` PASS. Fault/timeout continuam cobertos por injeções host; não se recomenda induzir falhas destrutivas no Tab5.
+- [x] **REQ-POWER-HEAP-FIX:** stack de 8192 B alocada via PSRAM; build, agregado host e tentativa autorizada confirmam que a admissão progride.
+- [x] **REQ-POWER-BLE-STOP-LOCAL:** `ble_host_task` criada por `xTaskCreate` autoexclui com `vTaskDelete(nullptr)`; regressão estrutural e gates locais passam.
+- [x] **REQ-POWER-BLE-STOP-HW:** log real mostra `BLE manager stopped`/`BLE host task exiting` sem panic/assert; execução avançou até Wi-Fi stop/BOD, seguida de ciclo físico básico confirmado pelo usuário.
+
+### Rechecagem host após validação do canário
+
+- `make -C tests/host/keymap test` PASS no snapshot atual.
+- Alvos poweroff focados executados diretamente: `./test_poweroff`, `python3 test_poweroff_contract.py` e `python3 test_poweroff_link_guard.py` — todos PASS (ordem/erros/deadlines/one-shot/barreira/pulso; contrato de admissão/stack/fences; hooks de linker).
+- Esta cobertura é simulada/estrutural e não substitui injeção de falha/timeout no Tab5. Nenhum comando de desligamento, flash ou mudança de alimentação foi executado nesta rechecagem.
 
 ## Restrições de aceitação
 
@@ -100,11 +148,12 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 
 ### Próximo checkpoint humano
 
-O flash diagnóstico e a tentativa única já ocorreram; a task de shutdown falhou por
-heap interno insuficiente e o fence permanece one-shot até reboot. Não repetir o
-comando. A correção ainda exige plano/aprovação e novo checkpoint humano para
-qualquer flash subsequente. HW-ACCEPT permanece pendente; usar o roteiro
-`tests/manual/poweroff-validation.pt-BR.md` somente após nova imagem revisada,
-backup/dados descartáveis, alimentação segura e monitor/captura serial.
+O binário `cef3257-dirty` (SHA-256 registrado acima) passou nos cenários de
+alimentação que o usuário informa serem suportados. Canário/hash está verificado
+após ciclos bateria-only e bateria+USB. Não há necessidade de novo flash nem de
+outra tentativa física para o aceite funcional. Qualquer fault injection real
+exigiria procedimento seguro, dados descartáveis e checkpoint específico; preferir
+a cobertura host já existente. Consultar `tests/manual/poweroff-validation.pt-BR.md`
+antes de qualquer nova rodada.
 
 O comando só pode ser considerado pronto após todos os itens bloqueadores resolvidos, revisão e gates aceitos, e validação física documentada. Timeout, I/O pendente, handle aberto ou sync não demonstrado deve falhar fechado: não emitir pulso. Este documento e os resultados host não são evidência de corte físico.
