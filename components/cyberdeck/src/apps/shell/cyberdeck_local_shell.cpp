@@ -475,20 +475,30 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root, co
 
 namespace {
 bool storage_path(const char *root, const char *cwd, std::string_view input, fs::path &out) {
-    if (root == nullptr || cwd == nullptr || input.empty() || input.size() > 256)
+    errno = 0;
+    if (root == nullptr || cwd == nullptr || input.empty() || input.size() > 256) {
+        errno = EINVAL;
         return false;
+    }
     const std::string raw(input);
     const std::string virtual_path =
         raw[0] == '/' ? raw : (std::string(cwd) == "/" ? "/" + raw : std::string(cwd) + "/" + raw);
-    if (!valid_virtual_path(virtual_path, "/"))
+    if (!valid_virtual_path(virtual_path, "/")) {
+        errno = EACCES;
         return false;
+    }
     cyberdeck_vfs_namespace::resolved_path target{};
     if (!cyberdeck_vfs_namespace::resolve(cwd, raw.c_str(), target) ||
-        !cyberdeck_vfs_namespace::is_filesystem_backend(target) || !cyberdeck_vfs_namespace::is_mutable_backend(target))
+        !cyberdeck_vfs_namespace::is_filesystem_backend(target) ||
+        !cyberdeck_vfs_namespace::is_mutable_backend(target)) {
+        errno = EACCES;
         return false;
+    }
     const std::string relative = virtual_path.size() > 1 ? virtual_path.substr(1) : std::string{};
-    if (!cat_relative_safe(relative) || relative == "sdcard" || relative.rfind("sdcard/", 0) == 0)
+    if (!cat_relative_safe(relative) || relative == "sdcard" || relative.rfind("sdcard/", 0) == 0) {
+        errno = EACCES;
         return false;
+    }
     out = fs::path(root) / relative;
     return true;
 }

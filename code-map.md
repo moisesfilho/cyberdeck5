@@ -275,12 +275,15 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
   parsing bounded de argumentos para `edit <arquivo>`, confirmacao de save-as sem mutacao antecipada,
   entrada validada pelo window manager e save atomico via SDK. O catalogo declara
   `edit` uma unica vez no campo de comandos.
-- `cyberdeck_app_storage.{h,cpp}` expoe leitura bounded e a transacao de escrita
+ - `cyberdeck_app_storage.{h,cpp}` expoe leitura bounded e a transacao de escrita
   temporario -> flush/fsync_file -> commit sem overwrite no mesmo diretorio; se o
   destino existir, o backend serializa a reserva do sidecar exclusivo `.rollback`,
   move o original para backup e tenta restaurar em falha. O resultado distingue
   stage/errno primarios de rollback_stage/rollback_errno e rollback_attempted;
-  `fsync_directory` e best-effort. Cada chamada revalida grant e
+   `fsync_directory` e best-effort. A facade resolve caminhos relativos com
+   cwd virtual `/data`, aceitando alvos absolutos apenas quando a resolucao
+   permanece no namespace mutavel; recusas de politica nao reutilizam errno
+   stale. Cada chamada revalida grant e
   lifecycle; o backend permanece confinado e nao entrega
   VFS/descritor ao app. A leitura do editor usa o `cat_bounded`, que preserva
   ENOENT somente para ausencia real, com rejeicao por tamanho antes da abertura
@@ -326,7 +329,9 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
       local; um seam de linker redireciona `/sdcard` para um diretório
       temporário confinado e cobre a transação real write-temp -> flush/fsync
        -> rename -> fsync-directory, destino existente/ausente, colisão `.rollback`
-       sem overwrite, preservação do original e sidecars, leitura, falhas de I/O e grant revogado.
+        sem overwrite, preservação do original e sidecars, leitura, falhas de I/O e grant revogado.
+       O wrapper `link` falha somente publicação e restauração identificadas pelos paths completos;
+       o cenário confirma errno/stages estruturados e destino ausente com backup/temp íntegros.
       `test_editor_surface_contract.py` cobre a superfície
       e2e, slots bounded, footer de uma linha bounded com atalhos e UTF-8/UTF-16LE/
       UTF-16BE/Windows-1252, truncamento com sigla preservada, altura dinâmica,

@@ -517,6 +517,7 @@ test_storage_facade: test_storage_facade.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HD
 		-Wl,--wrap=_Z35cyberdeck_local_shell_storage_flushPKcS0_St17basic_string_viewIcSt11char_traitsIcEE \
 		-Wl,--wrap=_Z36cyberdeck_local_shell_storage_renamePKcS0_St17basic_string_viewIcSt11char_traitsIcEES4_ \
 		-Wl,--wrap=_Z45cyberdeck_local_shell_storage_fsync_directoryPKcS0_St17basic_string_viewIcSt11char_traitsIcEE \
+		-Wl,--wrap=link \
 		-Wl,--wrap=_Z33cyberdeck_local_shell_cat_boundedPKcS0_S0_m -o $@
 
 .PHONY: test_storage_facade
