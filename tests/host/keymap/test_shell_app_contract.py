@@ -181,11 +181,22 @@ def main() -> int:
             "the dispatcher must run before the legacy parser")
     require("host_.app_runtime().execute_line(line)" not in execute,
             "the session must not hand every line to the runtime")
-    for legacy in ("CYBERDECK_CMD_WIFI", "CYBERDECK_CMD_HELP", "CYBERDECK_CMD_SCREEN_ON"):
+    for legacy in ("CYBERDECK_CMD_WIFI", "CYBERDECK_CMD_SCREEN_ON"):
         require(legacy in execute,
                 f"the legacy parser must keep owning {legacy}")
     require("local_shell().execute(line)" in execute,
             "the local shell must stay the first owner of local commands")
+    require("const bool help_request = is_help_request(line);" in execute,
+            "the session must recognize supported help forms before command dispatch")
+    if "const bool help_request = is_help_request(line);" in execute:
+        help_position = execute.index("const bool help_request = is_help_request(line);")
+        echo_position = execute.find("host_.append_output_line(entered.echo);", help_position)
+        help_route_position = execute.find("if (help_request)", help_position)
+        local_parser_position = execute.find("local_shell().execute(line)", help_position)
+        require(echo_position >= 0 and echo_position < help_route_position,
+                "recognized help must preserve the entered echo before rendering help")
+        require(help_route_position >= 0 and help_route_position < local_parser_position,
+                "help must be routed by the session before the local/legacy parser")
 
     # --- the reserved command list is derived from the help catalog --------
     require("cyberdeck_shell_help::kCatalog" in console_src,

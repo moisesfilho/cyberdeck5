@@ -10,8 +10,10 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "apps/shell/cyberdeck_shell_help.h"
 #include "apps/shell/cyberdeck_shell_session.h"
 
 namespace {
@@ -41,6 +43,28 @@ void check_eq(const std::string &actual, const std::string &expected, const char
 using cyberdeck_shell_session::key;
 using cyberdeck_shell_session::session;
 using cyberdeck_shell_session::wifi_ui_state_t;
+
+class help_manifest_app final : public cyberdeck_apps::application {
+public:
+    explicit help_manifest_app(cyberdeck_apps::manifest manifest)
+        : manifest_(std::move(manifest)) {}
+
+    const cyberdeck_apps::manifest &get_manifest() const override { return manifest_; }
+    bool start() override { running_ = true; return true; }
+    bool stop() override { running_ = false; return true; }
+    bool running() const override { return running_; }
+    cyberdeck_apps::result execute(std::string_view command, std::string_view) override
+    {
+        ++executions;
+        return {cyberdeck_apps::result_status::handled, std::string(command) + " handled\n"};
+    }
+
+    int executions = 0;
+
+private:
+    cyberdeck_apps::manifest manifest_;
+    bool running_ = false;
+};
 
 struct fake_host final : cyberdeck_shell_session::host {
     /* Output. */
@@ -446,8 +470,82 @@ int main()
         fake_host h;
         session s(h);
         submit(s, "help");
+        const std::string help_echo = "/$ help\n";
+        check(h.output.compare(0, help_echo.size(), help_echo) == 0,
+              "help command keeps its local terminal echo");
         check(h.output.find("help - show this help") != std::string::npos,
               "help prints the shared catalog");
+        check(h.output.compare(help_echo.size(), cyberdeck_shell_help::text().size(),
+                               cyberdeck_shell_help::text()) == 0,
+              "all legacy help entries remain in the canonical order and wording");
+        check(h.output.find("ls [-a] [path] - list directory contents [terminal]\n") != std::string::npos &&
+              h.output.find("cat <file> - print a regular file [terminal]\n") != std::string::npos,
+              "legacy ls and cat entries are explicitly terminal commands");
+        check(h.output.find("help - show this help [terminal]\n") != std::string::npos,
+              "legacy help entry is tagged terminal");
+    }
+
+    /* TEST-HELP-LEGACY-PARITY, RUNTIME-MANIFESTS, DISTINCTION, SAFE-MODE,
+     * COLLISION-PRECEDENCE and DETERMINISM: dynamic help enumerates registered
+     * manifest metadata, not lifecycle state, and filters duplicate/colliding
+     * commands while preserving the full legacy catalog. */
+    {
+        fake_host h;
+        cyberdeck_apps::manifest editor_manifest{};
+        editor_manifest.id = "cyberdeck.editor";
+        editor_manifest.command = "edit";
+        help_manifest_app editor(editor_manifest);
+        cyberdeck_apps::manifest demo_manifest{};
+        demo_manifest.id = "cyberdeck.demo";
+        demo_manifest.type = cyberdeck_apps::app_type::demo;
+        demo_manifest.command = "demo";
+        demo_manifest.commands[0] = "demo-tool";
+        demo_manifest.commands[1] = "ls";
+        demo_manifest.commands[2] = "demo-tool";
+        demo_manifest.command_count = 3;
+        help_manifest_app demo(demo_manifest);
+        cyberdeck_apps::manifest no_command_manifest{};
+        no_command_manifest.id = "no-command";
+        help_manifest_app no_command(no_command_manifest);
+        check(h.apps.register_application(editor), "editor manifest registers");
+        check(h.apps.register_application(demo), "demo manifest registers");
+        check(h.apps.register_application(no_command), "commandless manifest registers");
+        check(h.apps.state("cyberdeck.editor") == cyberdeck_apps::app_state::registered,
+              "editor lifecycle remains stopped before help");
+        session s(h);
+        submit(s, "help");
+        const std::string first = h.output;
+        const std::string expected_output =
+            "/$ help\n" + std::string(cyberdeck_shell_help::text()) +
+            "edit - start compiled application [app]\n"
+            "demo - start compiled application [app]\n"
+            "demo-tool - start compiled application [app]\n";
+        check_eq(first, expected_output,
+                 "help echo and terminal/app entries render exactly in stable order");
+        check(first.find("edit - start compiled application [app]\n") != std::string::npos,
+              "registered editor command is present with app metadata");
+        check(first.find("demo - start compiled application [app]\n") != std::string::npos &&
+              first.find("demo-tool - start compiled application [app]\n") != std::string::npos,
+              "manifest command and declared commands are listed");
+        check(first.find("no-command - start compiled application") == std::string::npos,
+              "registered manifest without command is omitted");
+        check(first.find("ls - start compiled application [app]") == std::string::npos,
+              "legacy collision is not duplicated as an application command");
+        check(first.find("demo-tool - start compiled application [app]\n", first.find("demo-tool") + 1) == std::string::npos,
+              "duplicate declarations produce one help row");
+        check(first.find("[terminal]") != std::string::npos && first.find("[app]") != std::string::npos,
+              "terminal and app entries have distinct tags");
+        check(h.apps.state("cyberdeck.editor") == cyberdeck_apps::app_state::registered,
+              "help does not start registered applications");
+        h.output.clear();
+        submit(s, "help");
+        check_eq(h.output, first, "manifest help order and serialization are deterministic");
+        h.output.clear();
+        submit(s, "ls");
+        check(editor.executions == 0 && demo.executions == 0,
+              "legacy command collision remains owned by terminal dispatcher");
+        check(h.output.find("unknown command") == std::string::npos,
+              "legacy ls dispatch does not fall through to the app runtime");
     }
 
     {

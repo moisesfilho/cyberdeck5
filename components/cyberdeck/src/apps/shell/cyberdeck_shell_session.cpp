@@ -1,10 +1,13 @@
 #include "apps/shell/cyberdeck_shell_session.h"
 
 #include "apps/shell/cyberdeck_shell_console.h"
+#include "apps/shell/cyberdeck_shell_help.h"
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifdef ESP_PLATFORM
@@ -70,6 +73,22 @@ bool is_cat_help_request(const std::string &line)
     return end == std::string::npos || line.find_first_not_of(" \t", end) == std::string::npos;
 }
 
+bool is_help_request(const std::string &line)
+{
+    const std::size_t command_start = line.find_first_not_of(" \t");
+    if (command_start == std::string::npos || line.compare(command_start, 4, "help") != 0)
+        return false;
+
+    const std::size_t argument_start = line.find_first_not_of(" \t", command_start + 4);
+    if (argument_start == std::string::npos) return true;
+    const std::size_t argument_end = line.find_first_of(" \t", argument_start);
+    const std::string_view argument(line.data() + argument_start,
+                                    (argument_end == std::string::npos ? line.size() : argument_end) - argument_start);
+    if (argument != "-h" && argument != "--help") return false;
+    return argument_end == std::string::npos ||
+           line.find_first_not_of(" \t", argument_end) == std::string::npos;
+}
+
 bool parse_log_lines_argument(const std::string &argument, std::size_t &lines)
 {
     const size_t first = argument.find_first_not_of(" \t");
@@ -92,6 +111,33 @@ bool parse_log_lines_argument(const std::string &argument, std::size_t &lines)
     }
     lines = value;
     return true;
+}
+
+std::string help_text(cyberdeck_apps::runtime &runtime)
+{
+    std::string output = cyberdeck_shell_help::text();
+    std::array<std::string_view, cyberdeck_apps::k_max_applications *
+                                      (cyberdeck_apps::k_max_commands + 1)> listed{};
+    std::size_t listed_count = 0;
+    for (std::size_t index = 0; index < runtime.size(); ++index) {
+        const cyberdeck_apps::application *app = runtime.at(index);
+        if (app == nullptr) continue;
+        const cyberdeck_apps::manifest &manifest = app->get_manifest();
+        const auto append_command = [&](std::string_view command) {
+            if (command.empty()) return;
+            for (const auto &legacy : cyberdeck_shell_help::kCatalog)
+                if (legacy.command == command) return;
+            for (std::size_t i = 0; i < listed_count; ++i)
+                if (listed[i] == command) return;
+            if (listed_count == listed.size()) return;
+            listed[listed_count++] = command;
+            output += cyberdeck_shell_help::format_app_entry(command);
+        };
+        append_command(manifest.command);
+        for (std::size_t command = 0; command < manifest.command_count; ++command)
+            append_command(manifest.commands[command]);
+    }
+    return output;
 }
 
 } // namespace
@@ -294,6 +340,7 @@ void session::execute_line(bool line_already_sent)
         return;
     }
     if (entered.action != cyberdeck_enter_action::LOCAL_COMMAND) { host_.render(); return; }
+    const bool help_request = is_help_request(line);
     host_.append_output_line(entered.echo);
     host_.log_event('I', "shell", line.c_str());
     history_.add(line);
@@ -305,6 +352,13 @@ void session::execute_line(bool line_already_sent)
     }
     if (line == "poweroff -h" || line == "poweroff --help") {
         host_.append_output_line(cyberdeck_command_help_text("poweroff"));
+        host_.render();
+        return;
+    }
+    /* Resolve help in the composed session before the local shell handles its
+     * legacy command, so registered application manifests are included. */
+    if (help_request) {
+        host_.append_output_line(help_text(host_.app_runtime()));
         host_.render();
         return;
     }
@@ -345,7 +399,6 @@ void session::execute_line(bool line_already_sent)
     }
     cyberdeck_cmd_t cmd = cyberdeck_parse_command(line.c_str());
     switch (cmd.type) {
-    case CYBERDECK_CMD_HELP: host_.append_output_line(cyberdeck_help_text()); break;
         case CYBERDECK_CMD_CLEAR:
             host_.clear_output();
             host_.reset_ssh_filter();

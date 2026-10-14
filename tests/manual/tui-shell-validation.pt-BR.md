@@ -83,7 +83,7 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
-| CMD1 | Digitar `help` + `Enter` | Ecoa `$ help`; imprime exatamente `help - show this help`<br>`wifi [search|saved|audit] - show status, manage Wi-Fi, or audit`<br>`log [lines <1-64>] - show recent events`<br>`clear - clear the terminal`<br>`screen [on|off|timeout <0-1440>] - control screen protection`<br>`ssh [user@]host[:port] - start an SSH session` (com newline final); permanece no menu |  |  |
+| CMD1 | Digitar `help` + `Enter` | Mantém o eco normal do comando (por exemplo, `/$ help`); imprime o catálogo legado de 18 comandos com tag `[terminal]` e, para comandos de aplicações registrados, linhas dinâmicas com tag `[app]` (incluindo `edit`/`demo` quando registrados), cada uma com newline final; permanece no menu |  |  |
 | CMD2 | Digitar `clear` + `Enter` | Limpa o texto de saida do terminal unificado |  |  |
 | CMD3 | Digitar `wifi` + `Enter` | Imprime `wifi: enabled connected <ip>` / `wifi: enabled disconnected` / `wifi: disabled disconnected`, ou `wifi: unavailable` se `wifi_mgr_get_status` falhar; sem crash |  |  |
 | CMD3a | Digitar `log` + `Enter` repetidamente | Imprime os eventos recentes, ou `(nenhum evento disponivel)`, sem reiniciar o dispositivo nem gerar panic |  |  |

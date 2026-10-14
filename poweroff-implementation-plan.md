@@ -22,7 +22,7 @@
 
 ### Correção de alocação da task — validada até admissão
 
-- A task de shutdown agora conserva os 8192 bytes de stack e usa `xTaskCreateWithCaps(..., MALLOC_CAP_SPIRAM)`. O projeto já habilita `CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y`; a configuração efetiva do firmware habilita `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y`, e `cyberdeck_time_sync.cpp` já usa a mesma API para stack em PSRAM.
+- A task de shutdown conserva os 8192 bytes de stack e usa `xTaskCreateWithCaps(..., MALLOC_CAP_SPIRAM)`. A opção canônica `CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM` está habilitada em `sdkconfig.defaults`; a configuração gerada habilita `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY`, e `cyberdeck_time_sync.cpp` também usa a API de criação de task com stack em PSRAM. A evidência de build local confirma a configuração usada, mas não implica aprovação do CI para o delta atual.
 - A escolha evita reduzir stack de uma rotina de shutdown complexa e não depende do heap interno fragmentado observado. Se não houver alocação PSRAM, a admissão permanece falha, fence sticky e sem retry.
 - Validação local pós-delta: teste isolado `test_poweroff` e contrato `test_poweroff_contract.py` PASS; agregado `make test` PASS; build ESP-IDF 5.5.5 PASS; formato das linhas alteradas e `git diff --check` PASS. O CI remoto ainda não foi executado para este delta.
 - Imagem construída e gravada na rodada seguinte: SHA-256 `a760fe7d57ca4f070a9555c51e7fdb71815e80c1ad6a0b4b5c50ea25a938571a`.
@@ -87,7 +87,7 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 | --- | --- | --- |
 | REQ-COORD — leases/gate Stage 0 | `test_sd_io_coordinator` | PASS |
 | REQ-SHELL — shell local e contratos de integração | 13/out: agregado `make CXXFLAGS='-std=c++17 -Wall -Wextra -Werror -O0 --coverage' test` completo após correções de logger e barreira do teste Wi-Fi | PASS local |
-| REQ-BUILD/QUALITY — firmware e qualidade | Build ESP-IDF final e guard real de linker; Quality Gate remoto no commit `b0ce47f` (run `38476339304`) | PASS local e remoto |
+| REQ-BUILD/QUALITY — firmware e qualidade | Build ESP-IDF final e guard real de linker; Quality Gate remoto no commit `b0ce47f` (run `38476339304`) é evidência histórica, anterior ao delta atual | PASS local; CI remoto pendente para o delta atual |
 | REQ-SESSION — sessão de shell | Confirmação exata, respostas inválidas/Escape, contexto SSH alterado, worker indisponível, one-shot/paste suffix e admissão bloqueada; fixture OPEN/CLOSING/CLOSED | PASS local no agregado final |
 | REQ-FIXTURES — paridade de fixtures | 13/out/2026: fixture da aplicação já vinculada; `test_shell_app`: 281 checks PASS, incluindo preservação do gate CLOSED após stop/start do console | PASS local |
 | REQ-CAT — leitura/lifecycle real | Harness ESP retém read, prova timeout sem cleanup, reject de start/enqueue, liberação/join/drain e cleanup único; contratos e seam READ | IMPLEMENTED; testes locais PASS |
@@ -112,7 +112,7 @@ Adicionar o comando terminal `poweroff` para desligar fisicamente o rail do Tab5
 - [x] **REQ-POWER:** comando, confirmação/cancelamento/one-shot, deadline/watchdog e HAL de fábrica implementados. Testes não emitem sinal real.
 - [x] **REQ-TEST-IMPLEMENTATION:** testes de comando, erros por etapa, prazo/cancelamento, admissão concorrente, metadata/pulso, leases/close reais de known_hosts, worker ESP cat e logger multi-item/creation failure.
 - [x] **REQ-REVIEW-LOCAL-FINAL:** revisão de ownership/fences, criação de tasks, fechamento opaco da libssh, FSInfo mascarado, ordem de RPCs/parada e deadline absoluto antes do primeiro high; agregado limpo/gcovr/guard/qualidade/build/link guard finais PASS. Nenhum threshold ou módulo de cobertura foi excluído/reduzido.
-- [x] **REQ-CI-REMOTE:** Quality Gate no commit `b0ce47fe5bad592744a662aafa6b5e05073b2e41`, run `38476339304` — PASS.
+- [ ] **REQ-CI-REMOTE:** Quality Gate PASS em commit anterior `b0ce47fe5bad592744a662aafa6b5e05073b2e41`, run `38476339304`; não conclui o gate para o delta atual, cujo CI remoto permanece pendente.
 - [x] **REQ-HW-POWER-MATRIX:** usuário confirma desligamento nas condições bateria-only, bateria+USB e cabo externo; pós-relight/hash verificados em bateria-only e bateria+USB. Cenário de cabo externo anotado como user-reported, sem hash serial independente.
 - [x] **REQ-HW-ACCEPT-FUNCTIONAL:** corte físico, persistência do canário/hash, cancelamentos (`Y`/`yes`), `sys.info`/`ping` e `.poweroff-sync` PASS. Fault/timeout continuam cobertos por injeções host; não se recomenda induzir falhas destrutivas no Tab5.
 - [x] **REQ-POWER-HEAP-FIX:** stack de 8192 B alocada via PSRAM; build, agregado host e tentativa autorizada confirmam que a admissão progride.

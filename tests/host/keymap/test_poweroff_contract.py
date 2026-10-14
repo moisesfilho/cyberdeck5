@@ -18,8 +18,8 @@ def main() -> None:
     task_create = 'xTaskCreateWithCaps(shutdown_task, "poweroff", 8192, nullptr, 4, nullptr, MALLOC_CAP_SPIRAM)'
     assert task_create in admission
     sdkconfig_defaults = read("sdkconfig.defaults")
+    assert (ROOT / "sdkconfig.defaults").is_file()
     assert "CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y" in sdkconfig_defaults
-    assert "CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y" in read("sdkconfig")
     for result in ("fence_failed", "watchdog_unavailable", "task_unavailable"):
         failure = admission.index(f"return admission_result::{result}")
         assert admission.rfind("shutdown.expire()", 0, failure) >= 0, result

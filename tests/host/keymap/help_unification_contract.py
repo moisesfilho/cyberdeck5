@@ -146,9 +146,9 @@ def main() -> int:
             and not re.search(r"\bstd::string\s+cyberdeck_help_text\s*\(", session_source),
             "the UI/session shell command path must not define a second help_text implementation")
 
-    # The local and UI paths must consume the same public source.  The options
-    # are still checked behaviorally; these source checks ensure they cannot
-    # silently regress to private lists while the test is being wired in.
+    # Each shell path must consume the canonical catalog. The session adds
+    # runtime manifest entries, while the legacy adapter remains for the
+    # standalone local shell; neither may grow a private legacy list.
     require(
         '#include "apps/shell/cyberdeck_shell_utils.h"' in local_source,
         "local_shell.cpp must include the shared shell help contract",
@@ -156,9 +156,10 @@ def main() -> int:
     require("cyberdeck_help_text()" in local_source,
             "local_shell.cpp must call cyberdeck_help_text()")
     require(
-        '#include "apps/shell/cyberdeck_shell_utils.h"' in session_source
-        and "cyberdeck_help_text()" in session_source,
-        "cyberdeck_shell_session.cpp must consume cyberdeck_help_text()",
+        '#include "apps/shell/cyberdeck_shell_help.h"' in session_source
+        and "cyberdeck_shell_help::text()" in session_source
+        and "cyberdeck_shell_help::format_app_entry" in session_source,
+        "cyberdeck_shell_session.cpp must compose help from the canonical catalog and manifest formatter",
     )
     require(
         '"-h"' in local_source and '"--help"' in local_source,
@@ -177,6 +178,24 @@ def main() -> int:
             "Makefile must register help_unification_contract")
     require("SHELL_HELP_HDR" in makefile and "cyberdeck_shell_help.h" in makefile,
             "Makefile help targets must depend on the production catalog header")
+    require(re.search(
+        r"formatted_entry_size\s*\([^)]*\).*?return\s+item\.usage\.size\(\)"
+        r"\s*\+\s*kEntrySeparator\.size\(\)\s*\+\s*item\.description\.size\(\)"
+        r"\s*\+\s*kTerminalTag\.size\(\)\s*\+\s*1\s*;",
+        shell_help, flags=re.S) is not None,
+        "legacy formatted size helper must account for every rendered byte and newline")
+    require(re.search(
+        r"format_entry\s*\([^)]*\).*?reserve\s*\(\s*formatted_entry_size\(item\)\s*\)",
+        shell_help, flags=re.S) is not None,
+        "legacy formatter reserve must use the exact-size helper")
+    require(re.search(
+        r"format_app_entry\s*\([^)]*\).*?reserve\s*\(\s*command\.size\(\)\s*"
+        r"\+\s*kAppEntrySuffix\.size\(\)\s*\).*?append\(command\.data\(\),\s*command\.size\(\)\)"
+        r".*?append\(kAppEntrySuffix\.data\(\),\s*kAppEntrySuffix\.size\(\)\)",
+        shell_help, flags=re.S) is not None,
+        "app formatter reserve must equal its rendered command plus suffix")
+    require("capacity()" not in shell_help,
+            "help size contract must not infer rendered length from string capacity")
     require("test_help_unification.cpp" in code_map,
             "code-map.md must map test_help_unification.cpp")
     require("help_unification_contract.py" in code_map,

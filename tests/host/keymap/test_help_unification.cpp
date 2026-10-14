@@ -8,6 +8,7 @@
 #include "contracts/cyberdeck_help.h"
 
 #include "apps/shell/cyberdeck_local_shell.h"
+#include "apps/shell/cyberdeck_shell_help.h"
 #include "apps/shell/cyberdeck_shell_utils.h"
 #include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
@@ -187,6 +188,21 @@ void test_catalog_is_complete_and_unique()
         CHECK(exact_count == 1);
         CHECK(usage_count == 1);
     }
+
+    for (std::size_t index = 0; index < cyberdeck_shell_help::kCatalog.size(); ++index) {
+        const auto &item = cyberdeck_shell_help::kCatalog[index];
+        const std::string rendered = cyberdeck_shell_help::format_entry(item);
+        CHECK_EQ(rendered, expected_lines[index] + "\n");
+        CHECK(cyberdeck_shell_help::formatted_entry_size(item) == rendered.size());
+    }
+}
+
+void test_app_entry_format_and_size()
+{
+    constexpr std::string_view command = "editor-tool";
+    const std::string rendered = cyberdeck_shell_help::format_app_entry(command);
+    CHECK_EQ(rendered, "editor-tool - start compiled application [app]\n");
+    CHECK(rendered.size() == command.size() + cyberdeck_shell_help::kAppEntrySuffix.size());
 }
 
 void test_local_command_help_uses_catalog_lines(temporary_root &root)
@@ -235,6 +251,7 @@ int main()
 
     test_help_parity(root);
     test_catalog_is_complete_and_unique();
+    test_app_entry_format_and_size();
     test_local_command_help_uses_catalog_lines(root);
 
     if (s_failures == 0) {

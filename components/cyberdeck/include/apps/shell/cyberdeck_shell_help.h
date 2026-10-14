@@ -7,6 +7,10 @@
 
 namespace cyberdeck_shell_help {
 
+inline constexpr std::string_view kEntrySeparator = " - ";
+inline constexpr std::string_view kTerminalTag = " [terminal]";
+inline constexpr std::string_view kAppEntrySuffix = " - start compiled application [app]\n";
+
 // The catalog is the only ordered source for help rows.  Keeping the table
 // header-only makes it usable by host-only shell consumers without bringing
 // LVGL, ESP-IDF, or UI state into the formatter.
@@ -15,6 +19,12 @@ struct entry {
     std::string_view usage;
     std::string_view description;
 };
+
+inline constexpr std::size_t formatted_entry_size(const entry &item)
+{
+    return item.usage.size() + kEntrySeparator.size() + item.description.size() +
+           kTerminalTag.size() + 1;
+}
 
 inline constexpr std::array<entry, 18> kCatalog = {{
     {"help", "help", "show this help"},
@@ -40,11 +50,21 @@ inline constexpr std::array<entry, 18> kCatalog = {{
 inline std::string format_entry(const entry &item)
 {
     std::string result;
-    result.reserve(item.usage.size() + item.description.size() + 4);
+    result.reserve(formatted_entry_size(item));
     result.append(item.usage.data(), item.usage.size());
-    result += " - ";
+    result.append(kEntrySeparator.data(), kEntrySeparator.size());
     result.append(item.description.data(), item.description.size());
+    result.append(kTerminalTag.data(), kTerminalTag.size());
     result.push_back('\n');
+    return result;
+}
+
+inline std::string format_app_entry(std::string_view command)
+{
+    std::string result;
+    result.reserve(command.size() + kAppEntrySuffix.size());
+    result.append(command.data(), command.size());
+    result.append(kAppEntrySuffix.data(), kAppEntrySuffix.size());
     return result;
 }
 
@@ -52,7 +72,7 @@ inline std::string text()
 {
     std::size_t capacity = 0;
     for (const entry &item : kCatalog) {
-        capacity += item.usage.size() + item.description.size() + 4;
+        capacity += formatted_entry_size(item);
     }
 
     std::string result;

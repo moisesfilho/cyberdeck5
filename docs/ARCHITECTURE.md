@@ -497,8 +497,11 @@ comandos e callbacks GAP. Usa NimBLE VHCI (`CONFIG_BT_NIMBLE_ENABLED=y`,
   `bluetooth paired` para `CYBERDECK_CMD_BLUETOOTH_SEARCH` e
   `CYBERDECK_CMD_BLUETOOTH_PAIRED`; o verbo nu e operando extra sao
   `CYBERDECK_CMD_UNKNOWN`.
-- `cyberdeck_shell_help.h`: catalogo unico com 16 entradas, linha
-  `bluetooth [search|paired]` entre `battery` e `ssh`.
+- `cyberdeck_shell_help.h`: catalogo unico legado com 18 entradas `[terminal]`;
+  `bluetooth [search|paired]` e a 7a entrada, entre `battery` (6) e `app` (8).
+  `help` acrescenta ao final os comandos unicos dos manifests de apps registrados
+  como `[app]` (por exemplo, `edit`/`demo` quando registrados), sem alterar a
+  ordem do catalogo legado.
 - `cyberdeck_ui.cpp`: roteia `Up`/`Down`/`Enter`/`Escape` conforme o predicado
   `cyberdeck_ble::state_machine::owns_input()`, consome acoes
   derivadas e as encaminha ao `ble_mgr` via fila, processa eventos BLE em
