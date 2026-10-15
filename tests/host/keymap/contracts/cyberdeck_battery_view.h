@@ -12,8 +12,9 @@
  *
  *   unavailable / unknown      -> hidden, no glyph, no percentage
  *   absent                     -> visible, external glyph, no percentage
- *   charging (state or signal) -> visible, charge glyph, percentage
- *   battery / external         -> visible, battery glyph, percentage
+ *   present + current below -tolerance -> visible, charge glyph, percentage
+ *   present + current within/above tolerance -> visible, battery glyph, percentage
+ *   charging state / CHG_STAT signal alone never selects the charge glyph
  *
  * The level is never encoded in the glyph: the numeric percentage rendered
  * beside it is the only source of level (REQ-BAT-UI-005 / AC-BAT-UI-006).
@@ -51,6 +52,7 @@ struct input {
     cyberdeck_battery_protection::charge_signal signal{
         cyberdeck_battery_protection::charge_signal::unknown};
     bool available{false};
+    std::int32_t current_ma{0};
     std::int32_t percentage{0};
 };
 

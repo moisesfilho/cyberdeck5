@@ -27,6 +27,10 @@ Traceability:
   REQ-BAT-UI-004 -> this contract (UI applies the view, no business rule)
   REQ-BAT-UI-005 -> this contract + test_battery_view.cpp
   REQ-BAT-UI-006 -> this contract (glyph table is not level-based)
+  REQ-BAT-ICON-001 / AC-BAT-ICON-01 -> test_battery_view.cpp (CHG_STAT/state
+      may remain charging for protection while the glyph follows INA current)
+  REQ-BAT-ICON-001 / AC-BAT-ICON-02 -> test_battery_view.cpp (real negative
+      current beyond tolerance, external, absent and unavailable presentations)
 """
 import re
 import sys
@@ -57,6 +61,9 @@ TRACEABILITY = (
     "AC-BAT-UI-004 -> test_battery_view.cpp (total state/signal matrix)",
     "AC-BAT-UI-005 -> test_battery_view_contract.py (icon, percentage, bold overlay labels; 30/40/30 grid)",
     "AC-BAT-UI-006 -> test_battery_view.cpp (absent has no percentage/level glyph)",
+    "REQ-BAT-ICON-001 / AC-BAT-ICON-01 -> test_battery_view.cpp (visual glyph uses INA current; CHG_STAT and protection state remain intact)",
+    "REQ-BAT-ICON-001 / AC-BAT-ICON-02 -> test_battery_view.cpp (real charge, external, absent and unavailable)",
+    "TEST-BAT-ICON-01..06 -> test_battery_view.cpp + test_battery_protection.cpp",
 )
 
 # Anything that would make the view non-pure or give it a second owner of the
@@ -249,6 +256,11 @@ def check_test_suite_wiring(makefile: str, codemap: str) -> None:
     require(CONTRACT_HDR.exists(),
             "the test-owned view contract header must exist")
     require(VIEW_TEST.exists(), "test_battery_view.cpp must exist")
+    view_test = VIEW_TEST.read_text(encoding="utf-8")
+    for scenario in ("TEST-01", "TEST-02", "TEST-03", "TEST-04",
+                     "TEST-05", "TEST-06"):
+        require(scenario in view_test,
+                f"{scenario} must have linked behavioral assertions")
 
     for requirement in ("REQ-BAT-UI-001", "REQ-BAT-UI-002", "REQ-BAT-UI-003",
                         "REQ-BAT-UI-004", "REQ-BAT-UI-005"):

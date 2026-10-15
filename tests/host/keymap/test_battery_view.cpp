@@ -73,12 +73,14 @@ constexpr std::size_t kStateCount = sizeof(kStates) / sizeof(kStates[0]);
 constexpr std::size_t kSignalCount = sizeof(kSignals) / sizeof(kSignals[0]);
 
 view::input make_input(battery_state value, charge_signal signal,
-                       bool available, std::int32_t percentage)
+                       bool available, std::int32_t percentage,
+                       std::int32_t current_ma = 0)
 {
     view::input out{};
     out.state = value;
     out.signal = signal;
     out.available = available;
+    out.current_ma = current_ma;
     out.percentage = percentage;
     return out;
 }
@@ -301,15 +303,15 @@ void test_battery_present_without_charging()
              0);
 }
 
-/* (c): charging, either by resolved state or by the raw charger signal, uses
- * the charge glyph together with the percentage. */
+/* The charge glyph follows the policy's resolved current classification,
+ * never CHG_STAT by itself. */
 void test_charging_shows_charge_glyph_with_percentage()
 {
     for (std::int32_t percentage = 0; percentage <= 100; percentage += 50) {
         /* Charging by state, with the pin unreadable. */
         const view::presentation by_state = view::resolve(
             make_input(battery_state::charging, charge_signal::unknown, true,
-                       percentage));
+                       percentage, -16));
         ++checks;
         if (!by_state.visible || !by_state.show_percentage ||
             by_state.glyph != power_glyph::charging ||
@@ -320,28 +322,28 @@ void test_charging_shows_charge_glyph_with_percentage()
                         static_cast<int>(percentage));
         }
 
-        /* Charging by the raw pin while the resolved state is a pack. */
+        /* A low pin is informational; it cannot establish real charging. */
         const view::presentation by_signal = view::resolve(
             make_input(battery_state::battery, charge_signal::charging, true,
                        percentage));
         ++checks;
         if (!by_signal.visible || !by_signal.show_percentage ||
-            by_signal.glyph != power_glyph::charging ||
+            by_signal.glyph != power_glyph::battery ||
             by_signal.percentage != percentage) {
             ++failures;
-            std::printf("FAIL %s:%d: battery/charging at %d%% must be charge "
-                        "glyph with percentage\n", __FILE__, __LINE__,
+            std::printf("FAIL %s:%d: battery/CHG_STAT-low at %d%% must not "
+                        "show charge glyph\n", __FILE__, __LINE__,
                         static_cast<int>(percentage));
         }
 
-        /* Charging by the raw pin while the resolved state is external. */
+        /* A conflicting raw pin cannot override external state. */
         const view::presentation external_by_signal = view::resolve(
             make_input(battery_state::external, charge_signal::charging, true,
                        percentage));
         ++checks;
         if (!external_by_signal.visible ||
             !external_by_signal.show_percentage ||
-            external_by_signal.glyph != power_glyph::charging ||
+            external_by_signal.glyph != power_glyph::battery ||
             external_by_signal.percentage != percentage) {
             ++failures;
             std::printf("FAIL %s:%d: external/charging at %d%% must be charge "
@@ -376,61 +378,55 @@ void test_external_with_pack_present_has_no_charge_glyph()
     }
 }
 
-/* AC-BAT-UI-004 (mapeamento total): every state x signal combination with an
- * available measurement is asserted against the approved table, and no
- * combination may fall through to a visible state without a semantic glyph. */
+/* REQ-BAT-ICON-001/002: every state x signal x current class is tested. An
+ * explicit current-case table is the glyph oracle; state/signal remain policy
+ * evidence and are independent from the visual charge decision. */
 void test_total_state_signal_matrix()
 {
+    struct current_case {
+        std::int32_t milliamps;
+        power_glyph glyph;
+    };
+    const current_case current_cases[] = {
+        {cyberdeck_battery_protection::current_uncertainty_ma + 1,
+         power_glyph::battery},
+        {0, power_glyph::battery},
+        {cyberdeck_battery_protection::current_uncertainty_ma,
+         power_glyph::battery},
+        {-cyberdeck_battery_protection::current_uncertainty_ma,
+         power_glyph::battery},
+        {-cyberdeck_battery_protection::current_uncertainty_ma - 1,
+         power_glyph::charging},
+    };
+
     for (std::size_t i = 0; i < kStateCount; ++i) {
         for (std::size_t j = 0; j < kSignalCount; ++j) {
-            const view::presentation shown = view::resolve(
-                make_input(kStates[i], kSignals[j], true, 42));
-
             const bool expect_absent = kStates[i] == battery_state::absent;
             const bool expect_hidden = kStates[i] == battery_state::unknown;
-            const bool expect_charge =
-                kStates[i] == battery_state::charging ||
-                (kStates[i] != battery_state::absent &&
-                 kSignals[j] == charge_signal::charging);
+            for (const current_case &current : current_cases) {
+                const view::input input = make_input(
+                    kStates[i], kSignals[j], true, 42, current.milliamps);
+                const view::presentation shown = view::resolve(input);
+                power_glyph expected = current.glyph;
+                if (expect_absent) {
+                    expected = power_glyph::external;
+                } else if (expect_hidden) {
+                    expected = power_glyph::none;
+                }
 
-            power_glyph expected = power_glyph::battery;
-            if (expect_absent) {
-                expected = power_glyph::external;
-            } else if (expect_charge) {
-                expected = power_glyph::charging;
+                CHECK(shown.visible == !expect_hidden);
+                CHECK(shown.show_percentage ==
+                      (!expect_hidden && !expect_absent));
+                CHECK_EQ(shown.percentage,
+                         (!expect_hidden && !expect_absent) ? 42 : 0);
+                CHECK_GLYPH(shown.glyph, expected);
+
+                const view::presentation again = view::resolve(input);
+                CHECK(again.visible == shown.visible);
+                CHECK(again.show_percentage == shown.show_percentage);
+                CHECK(again.percentage == shown.percentage);
+                CHECK(again.glyph == shown.glyph);
             }
-
-            ++checks;
-            const bool ok_visible =
-                expect_hidden ? !shown.visible : shown.visible;
-            const bool ok_percentage =
-                expect_hidden ? (!shown.show_percentage && shown.percentage == 0)
-                              : (expect_absent ? (!shown.show_percentage &&
-                                                  shown.percentage == 0)
-                                               : (shown.show_percentage &&
-                                                  shown.percentage == 42));
-            const bool ok_glyph =
-                expect_hidden ? shown.glyph == power_glyph::none
-                              : shown.glyph == expected;
-            if (!ok_visible || !ok_percentage || !ok_glyph) {
-                ++failures;
-                std::printf("FAIL %s:%d: %s/%s resolved to visible=%d "
-                            "show_percentage=%d percentage=%d glyph=%s\n",
-                            __FILE__, __LINE__, state_label(kStates[i]),
-                            signal_name(kSignals[j]),
-                            shown.visible ? 1 : 0,
-                            shown.show_percentage ? 1 : 0,
-                            static_cast<int>(shown.percentage),
-                            glyph_name(shown.glyph));
-            }
-
-            /* The mapping must be a pure function of the input. */
-            const view::presentation again = view::resolve(
-                make_input(kStates[i], kSignals[j], true, 42));
-            CHECK(again.visible == shown.visible);
-            CHECK(again.show_percentage == shown.show_percentage);
-            CHECK(again.percentage == shown.percentage);
-            CHECK(again.glyph == shown.glyph);
         }
     }
 }
@@ -593,6 +589,194 @@ void test_absent_precedence_over_stuck_low_chg_stat()
     CHECK_GLYPH(charge_shown.glyph, power_glyph::charging);
 }
 
+/* REQ-BAT-ICON-001/002; TEST-BAT-ICON-01..06. Exercise the production policy
+ * and presentation seam together so the glyph oracle uses real snapshots. */
+void test_icon_tracks_current_and_preserves_other_projections()
+{
+    auto observe = [](state &policy, bool ina_valid, bool chg_valid,
+                      bool raw_low, std::int32_t voltage,
+                      std::int32_t current, std::int32_t percentage) {
+        return policy.observe(sample(ina_valid, chg_valid, raw_low, voltage,
+                                     current, percentage));
+    };
+
+    /* TEST-01: pin-low is not charge evidence. */
+    /* TEST-02: positive, zero, and both uncertainty boundaries remain battery
+     * glyphs; current below the negative threshold is covered below. */
+    const std::int32_t non_charging_currents[] = {16, 0, 15, -15};
+    for (const std::int32_t current : non_charging_currents) {
+        state policy;
+        const auto value = observe(policy, true, true, true, 7500, current, 63);
+        CHECK(value.available);
+        CHECK(value.state == battery_state::charging);
+        CHECK(value.charge == charge_signal::charging);
+        CHECK_EQ(value.current_ma, current);
+        CHECK_EQ(value.bus_voltage_mv, 7500);
+        CHECK_EQ(value.percentage, 63);
+        const auto shown = view::resolve(view::from_snapshot(value));
+        CHECK(shown.visible);
+        CHECK(shown.show_percentage);
+        CHECK_EQ(shown.percentage, 63);
+        CHECK_GLYPH(shown.glyph, power_glyph::battery);
+        CHECK(value.protection_enabled);
+        CHECK(!value.protection_active);
+        CHECK(value.charger_enabled);
+    }
+
+    /* TEST-01: policy state and CHG_STAT remain charging evidence for
+     * protection, while positive INA current controls the visual glyph. */
+    state conflict_policy;
+    const auto prior_charge = observe(conflict_policy, true, true, true,
+                                      7500, -30, 62);
+    CHECK(prior_charge.state == battery_state::charging);
+    const auto discharged = observe(conflict_policy, true, true, true,
+                                     7500, 20, 61);
+    CHECK(discharged.state == battery_state::charging);
+    CHECK(discharged.charge == charge_signal::charging);
+    CHECK_EQ(discharged.current_ma, 20);
+    const auto discharged_view = view::resolve(view::from_snapshot(discharged));
+    CHECK(discharged_view.visible);
+    CHECK(discharged_view.show_percentage);
+    CHECK_EQ(discharged_view.percentage, 61);
+    CHECK_GLYPH(discharged_view.glyph, power_glyph::battery);
+    CHECK(discharged.charger_enabled == prior_charge.charger_enabled);
+    CHECK(discharged.protection_active == prior_charge.protection_active);
+
+    state protected_policy;
+    const auto protected_charge = observe(protected_policy, true, true, true,
+                                          8250, -20, 95);
+    CHECK(protected_charge.state == battery_state::charging);
+    CHECK(protected_charge.protection_active);
+    CHECK(!protected_charge.charger_enabled);
+    const auto protected_noncharging = observe(protected_policy, true, true,
+                                              true, 8250, 20, 95);
+    CHECK(protected_noncharging.state == battery_state::charging);
+    CHECK(protected_noncharging.charge == charge_signal::charging);
+    CHECK(protected_noncharging.protection_active);
+    CHECK(!protected_noncharging.charger_enabled);
+    const auto protected_view = view::resolve(
+        view::from_snapshot(protected_noncharging));
+    CHECK_GLYPH(protected_view.glyph, power_glyph::battery);
+
+    /* TEST-03: real negative current beyond tolerance wins even if CHG_STAT is
+     * high or unreadable. */
+    for (int pin_case = 0; pin_case < 2; ++pin_case) {
+        state policy;
+        const bool chg_valid = pin_case != 0;
+        const auto value = observe(policy, true, chg_valid, false,
+                                   7500, -16, 77);
+        CHECK(value.state == battery_state::charging);
+        CHECK(value.available);
+        CHECK(value.charge == (chg_valid ? charge_signal::not_charging
+                                         : charge_signal::unknown));
+        CHECK_EQ(value.current_ma, -16);
+        CHECK_EQ(value.percentage, 77);
+        const auto shown = view::resolve(view::from_snapshot(value));
+        CHECK(shown.visible);
+        CHECK(shown.show_percentage);
+        CHECK_EQ(shown.percentage, 77);
+        CHECK_GLYPH(shown.glyph, power_glyph::charging);
+    }
+
+    /* TEST-04: absent wins over conflicting pin/current; confirmed external
+     * with zero current retains percentage but never shows charge glyph. */
+    state absent_policy;
+    const auto absent_sample = sample(true, true, true, 8400, -120, 88);
+    feed(absent_policy, absent_sample,
+         cyberdeck_battery_protection::state_vote_count - 1);
+    const auto absent = absent_policy.observe(absent_sample);
+    CHECK(absent.state == battery_state::absent);
+    CHECK(absent.charge == charge_signal::charging);
+    CHECK(absent.charger_enabled);
+    CHECK(!absent.protection_active);
+    const auto absent_view = view::resolve(view::from_snapshot(absent));
+    CHECK(absent_view.visible);
+    CHECK(!absent_view.show_percentage);
+    CHECK_EQ(absent_view.percentage, 0);
+    CHECK_GLYPH(absent_view.glyph, power_glyph::external);
+
+    state external_policy;
+    const auto external_sample = sample(true, true, false, 7900, 0, 52);
+    feed(external_policy, external_sample,
+         cyberdeck_battery_protection::state_vote_count - 1);
+    const auto external = external_policy.observe(external_sample);
+    CHECK(external.state == battery_state::external);
+    CHECK(external.charger_enabled);
+    CHECK(!external.protection_active);
+    const auto external_view = view::resolve(view::from_snapshot(external));
+    CHECK(external_view.visible);
+    CHECK(external_view.show_percentage);
+    CHECK_EQ(external_view.percentage, 52);
+    CHECK_GLYPH(external_view.glyph, power_glyph::battery);
+
+    /* TEST-05: INA failure hides presentation without changing safe policy
+     * fields; invalid CHG_STAT with valid INA still publishes current sample. */
+    state failed_policy;
+    const auto safe = observe(failed_policy, true, true, false, 8250, -20, 95);
+    CHECK(safe.protection_active);
+    CHECK(!safe.charger_enabled);
+    const auto failed = observe(failed_policy, false, true, true, 0, 0, 0);
+    CHECK(!failed.available);
+    CHECK(failed.state == safe.state);
+    CHECK_EQ(failed.current_ma, safe.current_ma);
+    CHECK_EQ(failed.bus_voltage_mv, safe.bus_voltage_mv);
+    CHECK_EQ(failed.percentage, safe.percentage);
+    CHECK(failed.protection_enabled == safe.protection_enabled);
+    CHECK(failed.protection_active == safe.protection_active);
+    CHECK(failed.charger_enabled == safe.charger_enabled);
+    const auto failed_view = view::resolve(view::from_snapshot(failed));
+    CHECK(!failed_view.visible);
+    CHECK(!failed_view.show_percentage);
+    CHECK_EQ(failed_view.percentage, 0);
+    CHECK_GLYPH(failed_view.glyph, power_glyph::none);
+
+    state invalid_pin_policy;
+    const auto invalid_pin = observe(invalid_pin_policy, true, false, false,
+                                     7500, 25, 46);
+    CHECK(invalid_pin.available);
+    CHECK(invalid_pin.state == battery_state::battery);
+    CHECK(invalid_pin.charge == charge_signal::unknown);
+    CHECK_EQ(invalid_pin.current_ma, 25);
+    CHECK_EQ(invalid_pin.bus_voltage_mv, 7500);
+    CHECK_EQ(invalid_pin.percentage, 46);
+    const auto invalid_pin_view = view::resolve(view::from_snapshot(invalid_pin));
+    CHECK(invalid_pin_view.visible);
+    CHECK(invalid_pin_view.show_percentage);
+    CHECK_EQ(invalid_pin_view.percentage, 46);
+    CHECK_GLYPH(invalid_pin_view.glyph, power_glyph::battery);
+
+    /* TEST-06: policy state/signal/current cross-product. Policy classification
+     * and the visual current-based glyph are asserted independently. */
+    const std::int32_t currents[] = {25, 0, -25};
+    for (const charge_signal signal : kSignals) {
+        for (const std::int32_t current : currents) {
+            state policy;
+            const bool low = signal == charge_signal::charging;
+            const bool chg_valid = signal != charge_signal::unknown;
+            const auto value = observe(policy, true, chg_valid, low,
+                                       7500, current, 34);
+            const battery_state policy_state =
+                (signal == charge_signal::charging || current < -15)
+                    ? battery_state::charging : battery_state::battery;
+            CHECK(value.state == policy_state);
+            CHECK(value.charge == signal);
+            CHECK(value.available);
+            CHECK_EQ(value.current_ma, current);
+            CHECK_EQ(value.percentage, 34);
+            const auto shown = view::resolve(view::from_snapshot(value));
+            CHECK(shown.visible);
+            CHECK(shown.show_percentage);
+            CHECK_EQ(shown.percentage, 34);
+            CHECK_GLYPH(shown.glyph,
+                        current < -15 ? power_glyph::charging
+                                      : power_glyph::battery);
+            CHECK(value.protection_enabled);
+            CHECK(!value.protection_active);
+            CHECK(value.charger_enabled);
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -608,6 +792,7 @@ int main()
     test_glyph_is_never_chosen_from_the_percentage();
     test_valid_ina_with_invalid_chg_stat_keeps_indicator_visible();
     test_absent_precedence_over_stuck_low_chg_stat();
+    test_icon_tracks_current_and_preserves_other_projections();
 
     std::printf("battery view pure contract: %d checks, %d failures\n",
                 checks, failures);

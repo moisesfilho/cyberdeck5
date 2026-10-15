@@ -172,9 +172,16 @@ void test_state_classification_and_vote_boundaries()
     CHECK_EQ(battery.percentage, 70);
     CHECK_EQ(battery.bus_voltage_mv, 7500);
 
+    /* Policy/protection contract: CHG_STAT low still classifies the policy
+     * snapshot as charging even at zero current. The separate presentation
+     * contract (test_battery_view.cpp) must still render a battery glyph. */
     const auto charging_from_pin = value.observe(sample(true, true, true, 8000, 0, 50));
     CHECK(charging_from_pin.state == battery_state::charging);
     CHECK(charging_from_pin.available);
+    CHECK(charging_from_pin.charge == charge_signal::charging);
+    CHECK_EQ(charging_from_pin.current_ma, 0);
+    CHECK(charging_from_pin.charger_enabled);
+    CHECK(!charging_from_pin.protection_active);
 
     /* Exactly +15 mA is inside the uncertainty band; +16 is discharge. */
     const auto boundary_current = value.observe(sample(true, true, false, 7500, 15, 50));
@@ -432,14 +439,15 @@ void test_absent_precedence_over_stuck_low_chg_stat()
     state value;
     const observation stuck_low_charging = sample(true, true, true, 8400, 0, 50);
 
-    /* Boundary of the guarantee: below absent_voltage_mv there is no absence
-     * evidence, so a stuck-low pin is still honored as charging.  REQ-BAT-UI-002
-     * only requires the absence precedence, not a rejection of a readable
-     * charger answer. */
+    /* Policy contract: below the absence threshold, CHG_STAT low continues to
+     * classify the protection snapshot as charging. The icon's independent
+     * INA-current decision is covered by test_battery_view.cpp. */
     feed(value, sample(true, true, true, 7800, 0, 50), 8);
     CHECK(value.snapshot().state == battery_state::charging);
     CHECK(value.snapshot().charge == charge_signal::charging);
     CHECK(value.snapshot().state != battery_state::absent);
+    CHECK(value.snapshot().charger_enabled);
+    CHECK(!value.snapshot().protection_active);
 
     /* Fewer than the approved votes must not publish the absence. */
     state absent_value;

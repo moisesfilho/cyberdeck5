@@ -14,7 +14,7 @@ namespace cyberdeck_battery_view {
  */
 enum class power_glyph {
     none,     /* nothing observable about the power source */
-    charging, /* the charger reports charging and a pack is present */
+    charging, /* INA current confirms charging beyond the uncertainty threshold */
     battery,  /* a pack is present, discharging or on external power */
     external, /* no pack in the bay, the bus is powered externally */
 };
@@ -24,9 +24,9 @@ inline constexpr std::int32_t max_percentage = 100;
 
 /*
  * Everything the header needs to know about the power source.  The inputs are
- * exactly the observable evidence: the resolved state, the raw charger signal
- * and the measurement availability/percentage.  No other input can change the
- * presentation.
+ * includes policy state/signal for availability and absence precedence, plus
+ * INA current for the visual charging decision. Policy state/signal continue to
+ * inform battery protection and CHG_EN but do not select the glyph.
  */
 struct input {
     cyberdeck_battery_protection::battery_state state{
@@ -34,6 +34,7 @@ struct input {
     cyberdeck_battery_protection::charge_signal signal{
         cyberdeck_battery_protection::charge_signal::unknown};
     bool available{false};
+    std::int32_t current_ma{0};
     std::int32_t percentage{0};
 };
 
@@ -51,13 +52,14 @@ std::int32_t clamp_percentage(std::int32_t percentage);
 input from_snapshot(const cyberdeck_battery_protection::snapshot &value);
 
 /*
- * Total mapping from state/signal/availability/percentage to what the header
- * renders.  Absence and an unresolved state are decided before the charger
- * signal, so a stuck-low or unreadable CHG_STAT can never fabricate a pack:
+ * Total mapping from policy state, INA current, availability and percentage to
+ * what the header renders. Policy state/CHG_STAT remain unchanged for battery
+ * protection and CHG_EN; only the visual glyph uses INA current below
+ * -current_uncertainty_ma. Absence and unresolved state take precedence:
  *
  *   unavailable / unknown      -> hidden, no glyph, no percentage
  *   absent                     -> visible external glyph, no percentage
- *   charging (state or signal) -> visible charge glyph + percentage
+ *   current_ma < -current_uncertainty_ma -> visible charge glyph + percentage
  *   battery / external         -> visible battery glyph + percentage
  *
  * There is no dependency on ESP-IDF, FreeRTOS, LVGL, I2C, NVS or the BSP.

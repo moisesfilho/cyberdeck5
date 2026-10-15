@@ -19,6 +19,7 @@ input from_snapshot(const cyberdeck_battery_protection::snapshot &value)
     out.state = value.state;
     out.signal = value.charge;
     out.available = value.available;
+    out.current_ma = value.current_ma;
     out.percentage = value.percentage;
     return out;
 }
@@ -45,9 +46,7 @@ presentation resolve(const input &value)
     out.percentage = clamp_percentage(value.percentage);
     out.show_percentage = true;
 
-    const bool charging =
-        value.state == cyberdeck_battery_protection::battery_state::charging ||
-        value.signal == cyberdeck_battery_protection::charge_signal::charging;
+    const bool charging = value.current_ma < -cyberdeck_battery_protection::current_uncertainty_ma;
     out.glyph = charging ? power_glyph::charging : power_glyph::battery;
     return out;
 }
