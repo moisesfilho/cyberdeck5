@@ -45,6 +45,8 @@ idf_component_register(
          "src/apps/runtime/cyberdeck_window_manager.cpp"
          "src/apps/editor/cyberdeck_editor_model.cpp"
          "src/apps/editor/cyberdeck_editor_app.cpp"
+         "src/apps/network/cyberdeck_netdiag_core.cpp"
+         "src/apps/network/cyberdeck_netdiag_dns.cpp"
          "src/platform/display/cyberdeck_editor_view.cpp"
         "src/apps/demo/cyberdeck_demo_app.cpp"
           "src/apps/system/cyberdeck_system_apps.cpp"
@@ -99,6 +101,7 @@ idf_component_register(
         lvgl
         m5stack_tab5
         esp_wifi
+        lwip
         esp_netif
         esp_event
         esp_driver_gpio

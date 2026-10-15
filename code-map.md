@@ -553,6 +553,34 @@ pelo comando `wifi` e pela auditoria local.
 Lifecycle diagnostics: `cyberdeck_app_runtime.cpp` preserves the bounded last
 error restored for each application, exposes it as `last_error` in `app info`,
 and emits structured bounded logger events for start, stop, failure and timeout.
+Runtime dispatch and lifecycle inspection APIs (`execute_line`, `state`,
+`failure_reason`) are owner-thread-only; workers use copied grants and revalidate
+through the mutex-protected `grant::allows()`/`valid()` APIs.
+
+### Diagnóstico explícito de rede (implementação faseada/inativa)
+
+- `components/cyberdeck/include/apps/network/cyberdeck_netdiag_core.h` e
+  `src/apps/network/cyberdeck_netdiag_core.cpp` implementam parser/controller
+  puros bounded: destinos/portas explícitos, request de tamanho fixo, estados/erros
+  tipados, geração monotônica, cancelamento lógico, rejeição de stale token,
+  single-flight e rate-limit, com erros tipados para relógio regressivo e comandos
+  de controle não admitidos. `backend.submit=false` produz `backend_unavailable`,
+  libera o slot e não consome rate window. `backend` é seam de enqueue/cancel; callbacks
+  devem ser serializados pelo owner antes de `complete`.
+- `cyberdeck_netdiag_dns.{h,cpp}` é adapter de produção compilado no componente: um
+  slot singleton bounded, chamada explícita por `tcpip_callback`, DNS lwIP async,
+  resultado tipado IPv4/IPv6/falha, publicação sob portMUX, consumo via poll e
+  cancelamento lógico com quarentena até callback/trampoline. `ERR_OK` fornece
+  endereço diretamente para literal/cache hit e somente `ERR_INPROGRESS` aguarda
+  callback. Host com label final vazio (ponto final) é rejeitado para manter
+  paridade com o parser core. O contrato exatamente uma vez da callback lwIP é assumido;
+  timeout wall-clock não é prometido e callback ausente pode reter slot até reboot.
+- O app e seu header não estão presentes nem integrados; netdiag permanece
+  indisponível até a integração completa dos adapters conformes. Este snapshot
+  intermediário não deve ser flashado.
+- `docs/01-network-diagnostics-plan.pt-BR.md` define REQ-ND-01..06, AC-ND-01..05,
+  TEST-ND-01..08 e fases; `docs/NETDIAG.md` registra core+DNS compilados sem wiring.
+  O tester ainda deve validar os TUs reais por shim e atualizar sua própria matriz.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
@@ -580,6 +608,7 @@ and emits structured bounded logger events for start, stop, failure and timeout.
 | `tests/host/keymap/test_shell_app_contract.py` | contrato estrutural da Fase 7 | Protege as fronteiras de ownership que o binário host nao alcanca: `cyberdeck.shell` registrado pela aplicacao real (sem `start_shell`/`stop_shell`/`service_application s_shell`), manifesto com tipo/dependencia/`owns_console`, hooks de lifecycle reais, UI sem sessao propria e sem recompor marker/linha, `attach_console` antes do dispatcher de teclado, `detach_console` no teardown, ordem `app` antes da reserva legada e da lista de comandos declarados, switch legado intacto na sessao, reserva derivada do catalogo de ajuda, SSH como `session_mode` derivado de `ssh_phase()`, ausencia de LVGL/ESP-IDF na aplicacao e registro no CMake. |
 | `tests/host/keymap/test_lvgl_shell_lifecycle_contract.py` | TEST-LVGL-01/02 | Contrato estrutural do handoff shell/LVGL: `start` sem render direto, primeiro prompt marcado para o timer LVGL, callback cat via `lv_async_call` com wake explícito bounded, rollback quando o agendamento falha, stop/join antes da liberação, geração consumida/incrementada e callback tardio rejeitado por `closing`/geração; teardown da UI quiesce o worker antes de desprender o console. Executar isoladamente por `make test_lvgl_shell_lifecycle_contract`. |
 | `tests/host/keymap/test_app_runtime.cpp` + `tests/host/keymap/Makefile` | `test_app_runtime` | Testa registro duplicado, manifesto expandido, `app info` com API/tipo/capacidades/stack/fila/comandos, hooks explícitos `init`/`teardown`, listagem, lifecycle, dispatch, lazy-start de comandos foreground, rejeição sem auto-start para service/background, limites de estado e passthrough de comandos desconhecidos. Cobre a regressão de lifecycle descoberta no dispositivo: `slow_app`/`slow_dependent_app` provam que um hook de start que excede o orçamento mas retorna sucesso permanece `running` e não bloqueia dependentes (orçamento é diagnóstico, não estado), enquanto `failing_app`/`failing_dependent_app` confirmam que falha real continua fail-closed e nomeia a dependência ausente. O Makefile compila o teste host diretamente com a implementação real do runtime. |
+| `tests/host/keymap/grant_traceability.md` + `tests/host/keymap/test_app_runtime.cpp` | REQ/AC-GRANT-01..05 → TEST-GRANT-01..08 | Matriz de rastreabilidade dos grants para o teste comportamental do runtime, cobrindo revogação, lifecycle, restart, snapshots concorrentes e negação default. |
 | `tests/host/keymap/test_runtime_sdk.cpp` + `tests/host/keymap/Makefile` | `test_runtime_sdk` | Teste host determinístico mínimo dos três TUs SDK anteriormente ausentes no guard: logger tipado com limites/rejeição de campos sensíveis, storage bounded-read fail-closed e catálogo derivado de manifestos com preservação dos comandos legados. Liga as implementações reais com `-O0 --coverage`, sem produção, hardware ou TEST-TIME. |
 | `tests/host/keymap/test_os_transformation_backlog_contract.py` + `os_transformation_traceability.md` + `Makefile` | REQ/AC-SDK-01, LOG-01, CMD-01, REPLY-01, BOOT-01, DOC-01 | Contratos host-only, determinísticos e pré-implementação para `storage.bounded_read` sem VFS/handles, logger bounded sem segredos, catálogo/manifesto/dispatch preservando legados, output/SSH sem framing universal, migração declarativa parcial do boot e rastreabilidade. Os cenários não usam hardware nem fornecem implementação fake; o alvo `test_os_transformation_backlog_contract` deve permanecer RED para lacunas de implementação. |
 | `tests/host/keymap/test_resource_sd_quota_contract.py` + `os_transformation_traceability.md` + `Makefile` | REQ/AC-RES-01, SD-01, QUOTA-01, GUARD-01, TRACE-01 | Contratos host-only para catálogo readonly bounded de assets compilados, pacote SD somente metadata/version/checksum de dados/assets com falha fechada, quotas bounded revogáveis, guardrails de event bus/reply universal/loader dinâmico e matriz restrita ao escopo aprovado. Sem hardware, instalação ou execução de código; o alvo é isolado e RED enquanto os contratos de produção estiverem ausentes. |

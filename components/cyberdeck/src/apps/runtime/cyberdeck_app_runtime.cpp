@@ -129,6 +129,10 @@ bool grant::valid() const {
     return runtime_ != nullptr && runtime_->grant_is_valid(index_, generation_, resource_mask_);
 }
 
+grant application::app_grant() const {
+    return runtime_ == nullptr ? grant{} : runtime_->application_grant(*this);
+}
+
 bool grant::allows(resource value) const {
     return valid() && (resource_mask_ & resource_bit(value)) != 0;
 }
@@ -179,6 +183,7 @@ bool runtime::register_application(application &app) {
         return false;
     app.set_logger(logger_);
     app.set_sd_io(sd_io_);
+    app.runtime_ = this;
     applications_[count_] = &app;
     states_[count_] = app_state::registered;
     failures_[count_].clear();
@@ -275,7 +280,10 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     if (states_[index] == app_state::running)
         return true;
     if (visiting[index]) {
-        states_[index] = app_state::failed;
+        {
+            std::lock_guard<std::mutex> lock(grant_mutex_);
+            states_[index] = app_state::failed;
+        }
         failures_[index] = "dependency cycle";
         log_lifecycle(index, "failure", "dependency_cycle");
         return false;
@@ -284,7 +292,10 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     const manifest &item = applications_[index]->get_manifest();
     if (item.dependency_count > item.dependencies.size()) {
         failures_[index] = "invalid dependency declaration";
-        states_[index] = app_state::failed;
+        {
+            std::lock_guard<std::mutex> lock(grant_mutex_);
+            states_[index] = app_state::failed;
+        }
         log_lifecycle(index, "failure", "invalid_dependency");
         visiting[index] = false;
         return false;
@@ -294,30 +305,42 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
         if (dependency == k_not_found || !start_index(dependency, visiting)) {
             failures_[index] = "dependency unavailable: ";
             failures_[index] += item.dependencies[dep];
-            states_[index] = app_state::failed;
+            {
+                std::lock_guard<std::mutex> lock(grant_mutex_);
+                states_[index] = app_state::failed;
+            }
             log_lifecycle(index, "failure", "dependency_unavailable");
             visiting[index] = false;
             return false;
         }
     }
     visiting[index] = false;
-    states_[index] = app_state::starting;
+    {
+        std::lock_guard<std::mutex> lock(grant_mutex_);
+        states_[index] = app_state::starting;
+    }
     if (!quotas_.reserve(index, quota_for(item))) {
-        states_[index] = app_state::failed;
+        {
+            std::lock_guard<std::mutex> lock(grant_mutex_);
+            states_[index] = app_state::failed;
+        }
         failures_[index] = "quota reservation failed";
         log_lifecycle(index, "failure", "quota_reserve_failed");
         return false;
     }
-    ++grant_generations_[index];
-    if (grant_generations_[index] == 0)
-        ++grant_generations_[index];
     grant application_grant{};
-    application_grant.runtime_ = this;
-    application_grant.index_ = index;
-    application_grant.generation_ = grant_generations_[index];
-    application_grant.resource_mask_ = grant_masks_[index];
-    application_grant.owner_ = item.id;
-    applications_[index]->grant_ = application_grant;
+    {
+        std::lock_guard<std::mutex> lock(grant_mutex_);
+        ++grant_generations_[index];
+        if (grant_generations_[index] == 0)
+            ++grant_generations_[index];
+        application_grant.runtime_ = this;
+        application_grant.index_ = index;
+        application_grant.generation_ = grant_generations_[index];
+        application_grant.resource_mask_ = grant_masks_[index];
+        application_grant.owner_ = item.id;
+        applications_[index]->grant_ = application_grant;
+    }
     log_lifecycle(index, "start", "begin");
     const auto started = std::chrono::steady_clock::now();
     const bool initialized = applications_[index]->init();
@@ -325,24 +348,33 @@ bool runtime::start_index(std::size_t index, std::array<bool, k_max_applications
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     if (!initialized) {
-        applications_[index]->grant_ = {};
+        {
+            std::lock_guard<std::mutex> lock(grant_mutex_);
+            applications_[index]->grant_ = {};
+            ++grant_generations_[index];
+            states_[index] = app_state::failed;
+        }
         quotas_.revoke(index);
-        ++grant_generations_[index];
-        states_[index] = app_state::failed;
         failures_[index] = "init hook failed";
         log_lifecycle(index, "failure", "init_hook_failed");
         return false;
     }
     if (!started_ok) {
-        applications_[index]->grant_ = {};
+        {
+            std::lock_guard<std::mutex> lock(grant_mutex_);
+            applications_[index]->grant_ = {};
+            ++grant_generations_[index];
+            states_[index] = app_state::failed;
+        }
         quotas_.revoke(index);
-        ++grant_generations_[index];
-        states_[index] = app_state::failed;
         failures_[index] = "start hook failed";
         log_lifecycle(index, "failure", "start_hook_failed");
         return false;
     }
-    states_[index] = app_state::running;
+    {
+        std::lock_guard<std::mutex> lock(grant_mutex_);
+        states_[index] = app_state::running;
+    }
     if (elapsed > item.lifecycle_timeout_ms) {
         /* The hook returned success, so the observable state is running. The
          * budget is checked only after return: synchronous hooks cannot be
@@ -397,12 +429,15 @@ bool runtime::stop_index(std::size_t index) {
                 return false;
         }
     }
-    states_[index] = app_state::stopping;
     /* Revoke before teardown so callbacks that outlive the hook cannot use a
      * resource.  The generation check also invalidates copied facades. */
-    applications_[index]->grant_ = {};
+    {
+        std::lock_guard<std::mutex> lock(grant_mutex_);
+        states_[index] = app_state::stopping;
+        applications_[index]->grant_ = {};
+        ++grant_generations_[index];
+    }
     quotas_.revoke(index);
-    ++grant_generations_[index];
     log_lifecycle(index, "stop", "begin");
     const auto started = std::chrono::steady_clock::now();
     const bool stopped = applications_[index]->teardown();
@@ -412,7 +447,10 @@ bool runtime::stop_index(std::size_t index) {
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     if (!stopped) {
-        states_[index] = app_state::failed;
+        {
+            std::lock_guard<std::mutex> lock(grant_mutex_);
+            states_[index] = app_state::failed;
+        }
         failures_[index] = "stop hook failed";
         log_lifecycle(index, "failure", "stop_hook_failed");
         return false;
@@ -420,7 +458,10 @@ bool runtime::stop_index(std::size_t index) {
     /* A successful stop, including one that exceeded the budget, leaves the
      * application stopped. The timeout is post-return diagnostics only; any
      * effective bound must be enforced by the service's cooperative join. */
-    states_[index] = app_state::registered;
+    {
+        std::lock_guard<std::mutex> lock(grant_mutex_);
+        states_[index] = app_state::registered;
+    }
     if (elapsed > applications_[index]->get_manifest().lifecycle_timeout_ms) {
         failures_[index] = "stop hook timeout";
         log_lifecycle(index, "timeout", "stop_hook");
@@ -462,6 +503,7 @@ bool runtime::resources(std::string_view id, std::array<std::string_view, k_max_
 }
 
 grant runtime::app_grant(std::string_view id) const {
+    std::lock_guard<std::mutex> lock(grant_mutex_);
     const std::size_t index = index_of(id);
     if (index == k_not_found || (states_[index] != app_state::starting && states_[index] != app_state::running))
         return {};
@@ -475,9 +517,16 @@ grant runtime::app_grant(std::string_view id) const {
 }
 
 bool runtime::grant_is_valid(std::size_t index, std::uint64_t generation, std::uint16_t mask) const {
+    std::lock_guard<std::mutex> lock(grant_mutex_);
     return index < count_ && generation != 0 && generation == grant_generations_[index] &&
            (states_[index] == app_state::starting || states_[index] == app_state::running) &&
            mask == grant_masks_[index];
+}
+
+grant runtime::application_grant(const application &app) const {
+    std::lock_guard<std::mutex> lock(grant_mutex_);
+    const std::size_t index = index_of(app.get_manifest().id);
+    return index == k_not_found || applications_[index] != &app ? grant{} : app.grant_;
 }
 
 void runtime::log_lifecycle(std::size_t index, const char *event, const char *outcome) const {

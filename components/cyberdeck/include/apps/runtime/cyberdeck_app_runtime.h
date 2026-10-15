@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -121,18 +122,21 @@ public:
     logger *app_logger() const { return logger_; }
     void set_sd_io(cyberdeck_sd_io::coordinator *value) { sd_io_ = value; }
     cyberdeck_sd_io::coordinator *app_sd_io() const { return sd_io_; }
-    const grant &app_grant() const { return grant_; }
+    grant app_grant() const;
 
 private:
     friend class runtime;
     logger *logger_ = nullptr;
     cyberdeck_sd_io::coordinator *sd_io_ = nullptr;
+    runtime *runtime_ = nullptr;
     grant grant_{};
 };
 
 class runtime {
 public:
     bool register_application(application &app);
+    /* Runtime dispatch and lifecycle inspection are owner-thread-only. Workers
+     * must use a copied grant and revalidate it with grant::allows()/valid(). */
     result execute_line(std::string_view line);
     bool start_application(std::string_view id);
     bool stop_application(std::string_view id);
@@ -152,6 +156,7 @@ public:
      * dependency cascades to dependents first, so the console owner can be
      * reached without naming it. */
     bool stops_console_owner(std::string_view id) const;
+    /* These lifecycle snapshots are owner-thread-only, not worker APIs. */
     app_state state(std::string_view id) const;
     std::string_view failure_reason(std::string_view id) const;
     /* Restores bounded diagnostics before a new lifecycle attempt. */
@@ -165,6 +170,7 @@ public:
 
 private:
     friend class grant;
+    friend class application;
     std::array<application *, k_max_applications> applications_{};
     std::array<app_state, k_max_applications> states_{};
     std::array<std::string, k_max_applications> failures_{};
@@ -173,6 +179,7 @@ private:
     cyberdeck_sd_io::coordinator *sd_io_ = nullptr;
     std::array<std::uint64_t, k_max_applications> grant_generations_{};
     std::array<std::uint16_t, k_max_applications> grant_masks_{};
+    mutable std::mutex grant_mutex_;
     quota quotas_{};
 
     bool start_index(std::size_t index, std::array<bool, k_max_applications> &visiting);
@@ -180,6 +187,7 @@ private:
     std::size_t index_of(std::string_view id) const;
     bool grant_is_valid(std::size_t index, std::uint64_t generation,
                         std::uint16_t mask) const;
+    grant application_grant(const application &app) const;
     void log_lifecycle(std::size_t index, const char *event, const char *outcome) const;
     /* Bounded transitive search over the dependent tree of `index`. */
     bool cascade_stops_console(std::size_t index,

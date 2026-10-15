@@ -54,6 +54,7 @@ LAT04_CONTRACT := test_lat04_contract.py
 SSH_OUTPUT_GAP_TEST := test_ssh_output_gap.py
 EDIT_LINE_SRC    := ../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp
 NET_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/networking/cyberdeck_net_coordinator.cpp
+NETDIAG_CORE_SRC := ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_core.cpp
 ECHO_GUARD_SRC   := ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_echo_guard.cpp
 LINE_COMPOSER_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp
 CLOCK_SRC        := ../../../components/cyberdeck/src/platform/display/cyberdeck_clock.cpp
@@ -175,7 +176,7 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_event_log_runtime test_event_log_shim test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync test_sd_io_coordinator $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_event_log_runtime test_event_log_shim test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync test_sd_io_coordinator test_netdiag_runtime_bin test_netdiag_dns_bin $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
 test_editor_model: test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp ../../../components/cyberdeck/include/apps/editor/cyberdeck_editor_model.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp -o $@
@@ -228,6 +229,48 @@ test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9
 test_sd_io_coordinator: $(SD_IO_COORDINATOR_TEST) $(SD_IO_COORDINATOR_SRC) $(SD_IO_COORDINATOR_HDR) sd_io_traceability.md
 	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include $(SD_IO_COORDINATOR_TEST) $(SD_IO_COORDINATOR_SRC) -o test_sd_io_coordinator
 	./test_sd_io_coordinator
+
+.PHONY: test_netdiag_runtime
+test_netdiag_runtime: test_netdiag_runtime_bin
+	./test_netdiag_runtime_bin
+
+test_netdiag_runtime_bin: test_netdiag_runtime.cpp $(NETDIAG_CORE_SRC) \
+		../../../components/cyberdeck/include/apps/network/cyberdeck_netdiag_core.h netdiag_traceability.md grant_traceability.md
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -I../../../components/cyberdeck/include \
+		test_netdiag_runtime.cpp $(NETDIAG_CORE_SRC) -o $@
+
+.PHONY: test_netdiag_runtime_asan
+test_netdiag_runtime_asan: test_netdiag_runtime.cpp $(NETDIAG_CORE_SRC) \
+		../../../components/cyberdeck/include/apps/network/cyberdeck_netdiag_core.h netdiag_traceability.md grant_traceability.md
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+		-I../../../components/cyberdeck/include test_netdiag_runtime.cpp $(NETDIAG_CORE_SRC) -o test_netdiag_runtime_asan
+	./test_netdiag_runtime_asan
+
+.PHONY: test_netdiag_dns
+test_netdiag_dns: test_netdiag_dns_bin
+	./test_netdiag_dns_bin
+
+test_netdiag_dns_bin: test_netdiag_dns.cpp netdiag_dns_shim/freertos/FreeRTOS.h \
+		netdiag_dns_shim/freertos/portmacro.h netdiag_dns_shim/lwip/err.h \
+		netdiag_dns_shim/lwip/ip_addr.h netdiag_dns_shim/lwip/tcpip.h \
+		netdiag_dns_shim/lwip/dns.h netdiag_traceability.md \
+		../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp \
+		../../../components/cyberdeck/include/apps/network/cyberdeck_netdiag_dns.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -g -fsanitize=address,undefined -pthread \
+		-I./netdiag_dns_shim -I../../../components/cyberdeck/include test_netdiag_dns.cpp \
+		../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp -o $@
+
+.PHONY: test_netdiag_dns_tsan
+test_netdiag_dns_tsan: test_netdiag_dns.cpp netdiag_dns_shim/freertos/FreeRTOS.h \
+		netdiag_dns_shim/freertos/portmacro.h netdiag_traceability.md \
+		netdiag_dns_shim/lwip/err.h netdiag_dns_shim/lwip/ip_addr.h \
+		netdiag_dns_shim/lwip/tcpip.h netdiag_dns_shim/lwip/dns.h \
+		../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp \
+		../../../components/cyberdeck/include/apps/network/cyberdeck_netdiag_dns.h
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g -fsanitize=thread -fno-omit-frame-pointer -pthread \
+		-I./netdiag_dns_shim -I../../../components/cyberdeck/include test_netdiag_dns.cpp \
+		../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp -o $@
+	./test_netdiag_dns_tsan
 
 .PHONY: test_sd_io_integration_contract
 test_sd_io_integration_contract: test_sd_io_integration_contract.py sd_io_traceability.md Makefile
@@ -494,9 +537,17 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) \
 		$(BLE_STATE_SRC) -o test_shell_session
 
 test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_app_runtime.cpp \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) grant_traceability.md
+	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include test_app_runtime.cpp \
 		$(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) -o test_app_runtime
+
+.PHONY: test_app_runtime_tsan
+test_app_runtime_tsan: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) grant_traceability.md
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g -fsanitize=thread -fno-omit-frame-pointer -pthread \
+		-I../../../components/cyberdeck/include test_app_runtime.cpp $(APP_RUNTIME_SRC) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) -o test_app_runtime_tsan
+	./test_app_runtime_tsan
 
 test_runtime_sdk: test_runtime_sdk.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
@@ -1011,6 +1062,8 @@ test_poweroff: test_poweroff.cpp ../../../components/cyberdeck/src/platform/powe
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include test_poweroff.cpp ../../../components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp -Wl,--wrap=write -Wl,--wrap=fsync -Wl,--wrap=close -o $@
 
 test: $(BINS)
+	@./test_netdiag_runtime_bin
+	@./test_netdiag_dns_bin
 	@./test_poweroff
 	@./test_cat_worker_runtime
 	@./test_known_hosts_file
@@ -1252,4 +1305,4 @@ test: $(BINS)
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
 	@$(MAKE) --no-print-directory imu_sensor_contract
 clean:
-	rm -f $(BINS) $(CAT_RUNTIME_OBJS) test_battery_protection ./*.gcda ./*.gcno ./*.gcov
+	rm -f $(BINS) test_app_runtime_tsan test_netdiag_runtime_asan test_netdiag_dns_tsan $(CAT_RUNTIME_OBJS) test_battery_protection ./*.gcda ./*.gcno ./*.gcov

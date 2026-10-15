@@ -38,6 +38,13 @@ jobs:
           clang-format --dry-run --Werror \
             components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h \
             components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp
+          clang-format --dry-run --Werror \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_core.h \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_core.cpp \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_dns.h \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp \
+            tests/host/keymap/test_netdiag_runtime.cpp \
+            tests/host/keymap/test_netdiag_dns.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.
@@ -47,7 +54,9 @@ jobs:
           cppcheck --enable=warning,performance,portability \
             --error-exitcode=1 --suppress=missingIncludeSystem \
             components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_*.cpp \
-            components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
+            components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_core.cpp \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp
           bandit -r tools -ll
       - name: Host aggregate and coverage
         id: host-coverage
@@ -77,6 +86,18 @@ jobs:
             --root ../../.. \
             --source-root ../../../components/cyberdeck/src \
             --gcovr-json "$RUNNER_TEMP/cyberdeck-coverage.json"
+      - name: App grant concurrency test (ThreadSanitizer)
+        id: app-grant-tsan
+        working-directory: tests/host/keymap
+        run: make test_app_runtime_tsan
+      - name: Netdiag DNS callback concurrency test (ThreadSanitizer)
+        id: netdiag-dns-tsan
+        working-directory: tests/host/keymap
+        run: make test_netdiag_dns_tsan
+      - name: Netdiag runtime memory-safety test (ASan/UBSan)
+        id: netdiag-runtime-asan
+        working-directory: tests/host/keymap
+        run: make test_netdiag_runtime_asan
       - uses: espressif/install-esp-idf-action@8fc05d1470d5591417e7a3707a1f2bec178db4ae # branch v1 tip (immutable commit)
         with:
           version: v5.5.5
@@ -93,6 +114,9 @@ jobs:
             echo '| --- | --- |'
             echo '| ESP-IDF 5.5.5 build | ${{ steps.firmware-build.outcome }} |'
             echo '| Host aggregate and coverage | ${{ steps.host-coverage.outcome }} |'
+            echo '| App grant ThreadSanitizer | ${{ steps.app-grant-tsan.outcome }} |'
+            echo '| Netdiag DNS ThreadSanitizer | ${{ steps.netdiag-dns-tsan.outcome }} |'
+            echo '| Netdiag runtime ASan/UBSan | ${{ steps.netdiag-runtime-asan.outcome }} |'
             echo '| Global host C++ coverage | line >=80%; functions >=94%; branches >=59% |'
             echo '| Coverage scope | fail-closed gcovr JSON guard; explicit hardware allowlist only |'
           } >> "$GITHUB_STEP_SUMMARY"
