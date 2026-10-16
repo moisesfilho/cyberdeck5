@@ -201,6 +201,109 @@ ip: <valor>
 |----|------|--------------------|-----------|-----|
 | A4 | Depois de A2, executar `wifi audit save` e aguardar a resposta do worker | O comando exibe `wifi audit save requested`; apos a publicacao duravel, exibe uma unica vez `wifi audit saved: /sdcard/wifi-audit/wifi-audit-YYYYMMDD-HHMMSS.txt`. O nome usa data e hora GMT-3, fica dentro de `/sdcard/wifi-audit/` e nao substitui um arquivo existente. Se a transacao falhar, o terminal mostra `wifi audit save failed` e nenhum caminho de sucesso |  |  |
 
+### 5.2. Levantamento Wi-Fi passivo (`wifi survey`)
+
+Este cenário exige o Tab5 real: host tests não exercitam coexistência do rádio,
+callbacks ESP-IDF, worker de scan nem leitura FatFs. Antes de começar, registre
+`sys.info` (firmware/commit, chip, heap e uptime), `wifi.status`, horário e
+porta. Confirme visualmente/por `term.dump` se o dispositivo está associado e
+se há sessão SSH disponível para observar impacto no link. Mantenha o monitor
+serial ativo durante todo o cenário e execute `sys.info` novamente ao final.
+
+`wifi survey` não associa a redes: inicia scans passivos da interface local.
+Pode degradar temporariamente o link existente, inclusive SSH. Uma sessão ativa
+recusa outro survey e bloqueia `wifi search`; `wifi survey cancel` cancela sem
+desconectar a rede. A duração configurável é 10–120 s (default 30 s), não
+persistida. O primeiro scan é imediato; no máximo seis scans, espaçados por
+`max(5 s, ceil(duração/6))`. Cada callback fornece no máximo 16 APs e a sessão
+retém até 32 redes únicas acumuladas. Portanto, resultado vazio/limitado não
+prova ausência de outras redes; o impacto no link é um risco inerente do scan.
+
+Comandos exatos no shell local (via teclado ou `ui.type`; após cada `ui.type`,
+use `term.dump` para validar o efeito):
+
+```bash
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 sys.info
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 wifi.status
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.type "wifi survey duration 30"
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.type "wifi survey"
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump
+```
+
+Repita a execução em dois estados: (1) Wi-Fi ligado, sem associação, e
+(2) associado com IP, idealmente com SSH ativo para monitorar a conexão. Em
+ambos, confirmar `wifi survey started; passive scans may briefly degrade Wi-Fi
+and SSH`, observar `wifi survey: sampling`/amostras durante a execução e, ao
+concluir, `wifi survey: complete` com APs e estatísticas (canal, segurança,
+RSSI e samples/min/avg/max). Sob associação, registrar cada perda/recuperação
+de IP e eventual desconexão SSH no log/resultado; não atribuir ao survey sem
+evidência temporal. Verificar que não houve associação iniciada pelo survey.
+Use `wifi survey duration 10` para exercício curto e valide também rejeição de
+`wifi survey duration 9` e `wifi survey duration 121` (mensagem esperada:
+`wifi survey duration: expected 10..120 seconds`).
+
+| ID | Ação | Resultado esperado | Pass/Fail | Obs |
+|---|---|---|---|---|
+| S1 | Capturar fingerprint e rodar `wifi survey` sem associação | Inicia; não associa; resultado termina como `complete` dentro da duração configurada, sem crash/reboot |  |  |
+| S2 | Repetir associado com IP e SSH ativo; observar `sys.info`, `wifi.status`, terminal e monitor | Survey permanece passivo; registrar impacto/degradação real do link e retorno ao estado anterior, sem reboot |  |  |
+| S3 | Durante `sampling`, executar `wifi survey` e `wifi search` | Segundo survey recusado; busca interativa informa `wifi survey is active; cancel it before scanning interactively` |  |  |
+| S4 | Durante `sampling`, executar `wifi survey cancel`; aguardar e observar callbacks | Mostra `wifi survey cancelled; late scan results will be discarded`; callback/resultado stale não altera sessão cancelada nem publica conclusão posterior |  |  |
+| S5 | Testar duração 10, default 30, limite 120 e inválidos 9/121 | Durações válidas aceitas; inválidas rejeitadas; intervalo/scans observados compatíveis com os limites documentados |  |  |
+| S6 | Survey concluído; executar export masked, confirmar e ler o arquivo pela TUI | Só após confirmação explícita grava em `/sdcard/wifi-survey/`; SSID/BSSID mascarados; readback contém formato/versão e dados da sessão |  |  |
+| S7 | Nova sessão concluída; pedir export unmasked e confirmar explicitamente unmasked; ler arquivo | Identificadores só aparecem após os dois comandos explícitos; documentar que o arquivo contém dados identificáveis |  |  |
+| S8 | Expirar confirmação de export (aguardar >30 s) antes do confirm; repetir após confirmação válida | Confirmação expirada é recusada; confirmação válida gera `wifi survey saved: /sdcard/wifi-survey/...`; falha não pode emitir caminho de sucesso |  |  |
+| S9 | Comparar tamanho/conteúdo/estado e `sys.info` antes/depois | Arquivo não vazio e <=8192 bytes; quantidade de APs <=32; masked sem SSID/BSSID identificáveis; `sys.info` sem reboot e uptime crescente |  |  |
+
+Exportação é opcional e sempre exige confirmação, válida por 30 s. Padrão:
+
+```bash
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.type "wifi survey export"
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.type "wifi survey export confirm"
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump
+```
+
+Para exportar SSID/BSSID sem máscara, somente se autorizado e após revisar a
+exposição, use exatamente `wifi survey export unmasked`, confira o aviso de
+identificadores e então `wifi survey export confirm unmasked`. Nunca use
+`confirm unmasked` sem a solicitação anterior e consentimento explícito. O
+terminal deve emitir `wifi survey saved: /sdcard/wifi-survey/<nome>` apenas após
+persistência bem-sucedida; falha esperada é `wifi survey export failed`.
+
+Para readback, use o comando local `cat` (a raiz virtual do shell é `/`; o
+caminho físico `/sdcard` não é alias no shell): obtenha o caminho exato da
+mensagem `saved`, converta `/sdcard/wifi-survey/...` em
+`/wifi-survey/...`, e leia via ponte:
+
+```bash
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.type "cat /wifi-survey/<nome-exato>"
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump
+```
+
+Confira `version=1`, `format=cyberdeck-wifi-survey`, duração, contagem de scans
+e redes, conteúdo e mascaramento pelo readback via `cat`. `term.dump` retorna no
+máximo 3000 bytes e, quando truncado, corta pela esquerda (`truncated:true`);
+portanto, valide conteúdo completo e masking em survey/arquivo pequeno que caiba
+integralmente. Se `truncated:true`, o readback integral e a conferência completa
+de masking são inconclusivos: não presuma que vários `term.dump` revelem partes
+complementares nem que um export máximo de 8192 bytes possa ser lido de uma vez.
+`screen.dump` pode registrar visualmente o trecho atualmente renderizado, mas não
+substitui a verificação integral do arquivo. Mantenha a verificação do arquivo
+exportado (caminho exato e tamanho, além do `cat` quando couber). O export é
+bounded a 8192 bytes, usa nome GMT-3 sem overwrite e transação FatFs com rollback;
+não promete atomicidade POSIX. Falta de caminho de sucesso, readback divergente,
+dado identificável no modo masked, tamanho excedido, resultado stale
+pós-cancelamento, associação não solicitada, reboot ou queda de uptime é FAIL.
+Registrar respostas JSON/`term.dump`, logs, caminho/tamanho, estado de Wi-Fi/SSH
+e fingerprints.
+
+Limitações/riscos: impacto de rádio é dependente do ambiente e requer validação
+física; cada scan limita observações a 16 APs e a sessão a 32 APs únicos; scans
+repetidos podem perder amostras por concorrência/ambiente. Export unmasked grava
+identificadores locais e exige opt-in explícito. Não executar como prova apenas
+por aceitação de `ui.type`: validar resultado, readback e uptime.
+
 ## 7. screen.shot / screen.dump
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
