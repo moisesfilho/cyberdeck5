@@ -546,8 +546,10 @@ destrói recursos potencialmente usados.
       Os commits `dbe3a94` (`38916411814`) e `8e41338` (tentativa 2 de
       `38918012957`) passaram no Quality Gate remoto; commits posteriores
       ainda dependem de CI no novo estado. `netdiag_traceability.md` registra
-      a validação Serial-JTAG direcionada no Tab5 (status, DNS, TCP, HTTPS 200,
-      rate limit e cancelamento), sem alegar captura de tráfego/405/TLS negativo.
+       a validação Serial-JTAG direcionada no Tab5 (status, DNS, TCP, HTTPS 200,
+       405 final, `/head` funcional, redirect rejeitado, rate limit e
+       cancelamento); os testes de certificado inválido terminaram em timeout,
+       sem prova de validação TLS negativa ou captura de tráfego.
     Metadata de headers não possui limite rígido garantido.
     `cyberdeck_netdiag_app.{h,cpp}` compõe o controller real com os três adapters
    e um worker por token. O comando conserva `app_grant()` opaco para revalidar

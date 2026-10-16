@@ -59,16 +59,34 @@ via `ui.type`; every observation below was verified in `term.dump`:
   `netdiag https http://example.com` returned usage without starting an operation.
 - A second explicit HTTPS request followed by `netdiag cancel` produced
   `state=cancelled operation=https duration_ms=191 error=cancelled`.
+- In a second live session with the same flashed firmware, a HEAD to
+  `https://httpbingo.org/status/405` completed with `http_status=405` (1849 ms).
+  The `/head` endpoint completed with `http_status=200` (1755 ms), whereas the
+  host's GET to the same endpoint returned 405. This distinguishes the method
+  functionally, but it is not a packet capture.
+- `https://httpbingo.org/redirect-to?url=/get&status_code=302` ended in
+  `state=failed error=https_failed` (1791 ms); it did not publish a followed
+  response. The host confirmed that endpoint's HEAD returns 302.
+- `https://expired.badssl.com/` and `https://self-signed.badssl.com/` both ended
+  in `state=failed error=timeout` after ~5055 ms. The host rejected their
+  certificates, but **the device result does not prove certificate rejection**.
+  On-device DNS for `self-signed.badssl.com` completed in 2 ms (104.154.89.105)
+  and TCP to port 443 completed in 278 ms, narrowing the inconclusive behavior
+  to the HTTPS stage. `sys.info` afterward reported continuous uptime, no safe
+  mode and `fw_version=8e41338`.
 
 This is a targeted live-network smoke test, not a packet capture. The host
-harnesses establish HEAD/405/no-GET logic, but the device test did not verify
-405, certificate rejection, wire-level method, or all teardown races. A failed
+harnesses establish HEAD/405/no-GET logic; the device functionally distinguished
+HEAD from GET and observed a final 405, but did not prove certificate rejection,
+wire-level method, or all teardown races. A failed
 parallel invocation of two CLI processes on the same port yielded a transport
 error; repeating `term.dump` and `sys.info` sequentially succeeded.
 
 Remaining TEST-ND-07/acceptance gaps: harnesses use deterministic scheduler and
 API shims, not the ESP-IDF runtime, live sockets, DNS, TLS, or an HTTP server.
-Other endpoint behaviors, TLS certificate rejection and wire-level method
-remain unverified on the device. The tested restart path covers the worker
+TLS certificate rejection, a packet-level method capture, and the full serial
+bridge validation procedure remain unverified on the device. Do not close the
+feature branch on the strength of the negative-TLS timeouts alone. The tested
+restart path covers the worker
 timeout/reap quarantine; it does not establish exhaustive races for every
 platform task/runtime failure path. Header metadata has no guaranteed hard cap.

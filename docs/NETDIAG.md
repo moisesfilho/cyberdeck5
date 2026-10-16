@@ -47,8 +47,13 @@ HEAD HTTPS para `https://example.com` retornou HTTP 200; cancelamento durante
 HTTPS resultou em `state=cancelled`; URL `http://` e admissão antes de 30 s
 foram rejeitadas. `term.dump` confirmou os efeitos e `sys.info` mostrou uptime
 contínuo, sem safe mode. Esse teste direcionado não é captura de tráfego nem
-comprova em rede o método HEAD, HTTP 405, validação de certificado negativo ou
-todas as corridas de teardown. Qualquer commit posterior requer CI no novo
+comprova por pacotes todas as propriedades. Uma segunda rodada no mesmo Tab5
+confirmou HTTP 405 final, `/head` com 200 (GET retorna 405 no host) e falha sem
+seguir redirect 302. Certificados expirado e autoassinado falharam por timeout
+após aproximadamente 5 s; DNS e TCP do alvo autoassinado passaram, mas o
+timeout **não comprova** rejeição de certificado. A validação TLS negativa e
+todas as corridas de teardown continuam pendentes. Qualquer commit posterior
+requer CI no novo
 estado. O GCC/gcov 15.2 local mede branches diferentemente (57,4% no mesmo
 agregado).
 Sem comandos automáticos, scans,

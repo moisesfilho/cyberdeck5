@@ -135,4 +135,10 @@ status, DNS, TCP e HTTPS 200 para `example.com`, recusa de URL HTTP, rate limit
 e cancelamento HTTPS. `sys.info` confirmou versão, uptime contínuo e ausência
 de safe mode. Trata-se de validação dirigida, não de captura de tráfego nem de
 teste de HTTP 405/TLS negativo ou do roteiro serial completo. Qualquer commit
-posterior exige CI no novo estado antes da conclusão e aceite humano.
+posterior exige CI no novo estado antes da conclusão e aceite humano. Uma
+segunda rodada Serial-JTAG no mesmo firmware confirmou 405 final e `/head`
+com HTTP 200 (GET retornou 405 no host), além de falha sem seguir redirect 302.
+Os testes com certificado expirado e autoassinado terminaram em timeout após
+aproximadamente 5 s; DNS e TCP para o alvo autoassinado funcionaram. Isso
+mostra falha fechada, mas **não demonstra rejeição do certificado** nem encerra
+a validação TLS negativa.
