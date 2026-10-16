@@ -39,8 +39,17 @@ O controller, os adapters e a app estão integrados e cobertos por testes host
 com shims nas fronteiras externas. Isso não prova conectividade, TLS ou
 comportamento no Tab5. O agregado local com GCC/gcov 13.4 passou os gates
 (86,5% linhas, 94,9% funções, 59,3% branches); o Quality Gate do código no
-commit `dbe3a94` passou (run `38916411814`). A validação Serial-JTAG ainda
-está pendente; qualquer commit posterior requer CI no novo estado. O GCC/gcov
-15.2 local mede branches diferentemente (57,4% no mesmo agregado).
+commit `8e41338` passou na segunda tentativa do run `38918012957` (a primeira
+falhou em uma asserção do teste de sincronização de horário). No Tab5, firmware
+`8e41338` gravado com hash verificado em `/dev/ttyACM0`: `netdiag status`
+mostrou interface, gateway, DNS e RSSI; DNS e TCP para `example.com` concluíram;
+HEAD HTTPS para `https://example.com` retornou HTTP 200; cancelamento durante
+HTTPS resultou em `state=cancelled`; URL `http://` e admissão antes de 30 s
+foram rejeitadas. `term.dump` confirmou os efeitos e `sys.info` mostrou uptime
+contínuo, sem safe mode. Esse teste direcionado não é captura de tráfego nem
+comprova em rede o método HEAD, HTTP 405, validação de certificado negativo ou
+todas as corridas de teardown. Qualquer commit posterior requer CI no novo
+estado. O GCC/gcov 15.2 local mede branches diferentemente (57,4% no mesmo
+agregado).
 Sem comandos automáticos, scans,
 ICMP/ping, exportação ou tráfego implícito.

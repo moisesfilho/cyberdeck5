@@ -127,8 +127,12 @@ gates gcovr passaram (86,5% linhas, 94,9% funções, 59,2% branches; mínimo de
 branches 59%). O GCC/gcov 15.2 do host ainda mede 57,4% de branches com o
 mesmo agregado: os resultados não são intercambiáveis entre toolchains.
 
-O Quality Gate remoto do commit de código `dbe3a94` passou (run `38916411814`),
-incluindo suíte, cobertura, TSan e build. Isso não é aceitação de hardware:
-testes Serial-JTAG em dispositivo, inclusive HTTPS/TLS, permanecem pendentes.
-Qualquer commit documental posterior exige CI no novo estado antes de concluir
-a revisão; confirmar configuração e resultado efetivo no Tab5 antes do aceite.
+O Quality Gate remoto passou no commit `dbe3a94` (run `38916411814`) e no
+commit `8e41338` (segunda tentativa do run `38918012957`); a primeira tentativa
+do segundo run falhou em uma asserção de `test_time_sync`, fora do escopo netdiag.
+O firmware `8e41338` foi gravado em `/dev/ttyACM0` e validado via `term.dump`:
+status, DNS, TCP e HTTPS 200 para `example.com`, recusa de URL HTTP, rate limit
+e cancelamento HTTPS. `sys.info` confirmou versão, uptime contínuo e ausência
+de safe mode. Trata-se de validação dirigida, não de captura de tráfego nem de
+teste de HTTP 405/TLS negativo ou do roteiro serial completo. Qualquer commit
+posterior exige CI no novo estado antes da conclusão e aceite humano.

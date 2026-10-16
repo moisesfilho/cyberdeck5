@@ -543,9 +543,11 @@ destrói recursos potencialmente usados.
     comprova falha quando falta o TU da app. O agregado executa o app harness
      antes de gcovr/guard. Com GCC/gcov 13.4 local, o agregado passa o mínimo
      de 59% branches (59,3%); o toolchain 15.2 mede branches de modo diferente.
-     O commit `dbe3a94` passou no Quality Gate remoto (`38916411814`);
-     commits posteriores ainda dependem de CI no novo estado. TEST-ND-08
-     não substitui a validação física.
+      Os commits `dbe3a94` (`38916411814`) e `8e41338` (tentativa 2 de
+      `38918012957`) passaram no Quality Gate remoto; commits posteriores
+      ainda dependem de CI no novo estado. `netdiag_traceability.md` registra
+      a validação Serial-JTAG direcionada no Tab5 (status, DNS, TCP, HTTPS 200,
+      rate limit e cancelamento), sem alegar captura de tráfego/405/TLS negativo.
     Metadata de headers não possui limite rígido garantido.
     `cyberdeck_netdiag_app.{h,cpp}` compõe o controller real com os três adapters
    e um worker por token. O comando conserva `app_grant()` opaco para revalidar
@@ -891,8 +893,10 @@ monotônicos impedem callbacks atrasados de alterar uma tentativa nova.
    obrigatórios cobertos (não allowlist), e `test_coverage_scope_guard.py`
    rejeita ausência do TU da app; o agregado com GCC/gcov 13.4 local passou
    o gate gcovr (86,5% linhas, 94,9% funções e 59,3% branches). TEST-ND-08
-   passou no Quality Gate do commit `dbe3a94` (run `38916411814`); commits
-   posteriores exigem novo gate. Não implementa ICMP/ping nem scan.
+   passou no Quality Gate dos commits `dbe3a94` (`38916411814`) e `8e41338`
+   (`38918012957`, tentativa 2); commits posteriores exigem novo gate. O teste
+   físico dirigido está registrado em `netdiag_traceability.md`. Não implementa
+   ICMP/ping nem scan.
 
 ### Bluetooth LE no ESP32-C6 hospedado (REQ-BLE-001..014)
 

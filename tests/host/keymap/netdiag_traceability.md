@@ -9,7 +9,7 @@
 | REQ-ND-05 / AC-ND-05 HTTP 405 final/no GET fallback | TEST-ND-05 `test_netdiag_https_adapter`, `test_netdiag_app` | Exactly one HEAD; redirect disabled, no GET fallback, final 405 preserved; perform/TLS errors fail closed |
 | REQ-ND-06 / AC-ND-06 grant/cancel/stale-safe publication | TEST-ND-06 controller and `test_netdiag_app` | Controller cancellation/stale-token rejection; app stop revokes copied grant before worker completion and revoked worker cannot enter DNS adapter |
 | REQ-ND-07 / AC-ND-07 app/runtime/adapters lifecycle integration | TEST-ND-07 `test_netdiag_app` | Real app, controller, runtime, DNS/TCP/HTTPS adapters linked: dependency registration/start, SSH command coexistence, status, invalid input, operation dispatch, concurrent admission, completion/result, cancellation, worker-create failure, stop timeout, grant revocation, cleanup and restart quarantine. Current focused rerun: PASS, 47 checks. |
-| REQ-ND-08 / AC-ND-08 actual TU coverage and fail-closed guard | TEST-ND-08 `test_coverage_scope_guard.py` and CI-equivalent aggregate | App and all four controller/adapter TUs are required covered, never allowlisted; the counterfactual missing-app fixture fails. Focused tests contribute real TU coverage to the aggregate. With GCC/gcov 13.4: 86.5% lines, 94.9% functions, 59.3% branches (thresholds 80/94/59). Quality Gate run `38916411814` passed for commit `dbe3a94`; any later commit requires a new run. |
+| REQ-ND-08 / AC-ND-08 actual TU coverage and fail-closed guard | TEST-ND-08 `test_coverage_scope_guard.py` and CI-equivalent aggregate | App and all four controller/adapter TUs are required covered, never allowlisted; the counterfactual missing-app fixture fails. Focused tests contribute real TU coverage to the aggregate. With GCC/gcov 13.4: 86.5% lines, 94.9% functions, 59.3% branches (thresholds 80/94/59). Quality Gate passed for `dbe3a94` (`38916411814`) and `8e41338` (run `38918012957`, attempt 2); later commits require a new run. |
 
 ## TEST-ND-07 timeout quarantine regression
 
@@ -39,12 +39,36 @@ app TU fails. The aggregate runs the app and focused controller/adapter targets
 with `--coverage` before gcovr, so the JSON includes their executed production
 paths. GCC/gcov 13.4 passes the local aggregate gate (59.3% branches); GCC/gcov
 15.2 reports a different branch count (57.4% on the previous snapshot), so the
-two toolchains are not interchangeable. The remote gate passed for `dbe3a94`
-(run `38916411814`); this does not validate any later commit or the device.
+two toolchains are not interchangeable. The remote gate passed for `8e41338`
+(run `38918012957`, attempt 2). Attempt 1 failed in `test_time_sync.cpp:494`
+before coverage due to an asynchronous event assertion; no netdiag test failed.
+
+## Targeted device validation (2026-10-16, `/dev/ttyACM0`)
+
+Flashed `8e41338` using `idf.py flash`, hash verified; `sys.info` returned
+`fw_version=8e41338`, `idf_version=v5.5.5`, `chip=esp32p4`, no safe mode, and
+continuous uptime through the scenarios. The Serial-JTAG CLI accepted commands
+via `ui.type`; every observation below was verified in `term.dump`:
+
+- `netdiag status` returned `interface=WIFI_STA_DEF`, IP, gateway, DNS and RSSI;
+  initial `netdiag result` returned `state=idle`.
+- `netdiag dns example.com` completed in 14 ms with IPv4 `172.66.147.243`.
+- Immediate `netdiag tcp example.com 443` was rejected by rate limiting;
+  after 30 seconds the same explicit command completed in 59 ms with IPv4.
+- `netdiag https https://example.com` completed in 1210 ms with HTTP 200.
+  `netdiag https http://example.com` returned usage without starting an operation.
+- A second explicit HTTPS request followed by `netdiag cancel` produced
+  `state=cancelled operation=https duration_ms=191 error=cancelled`.
+
+This is a targeted live-network smoke test, not a packet capture. The host
+harnesses establish HEAD/405/no-GET logic, but the device test did not verify
+405, certificate rejection, wire-level method, or all teardown races. A failed
+parallel invocation of two CLI processes on the same port yielded a transport
+error; repeating `term.dump` and `sys.info` sequentially succeeded.
 
 Remaining TEST-ND-07/acceptance gaps: harnesses use deterministic scheduler and
 API shims, not the ESP-IDF runtime, live sockets, DNS, TLS, or an HTTP server.
-Hardware network behavior, TLS certificate validation and real endpoint behavior
-remain manual/device validation. The tested restart path covers the worker
+Other endpoint behaviors, TLS certificate rejection and wire-level method
+remain unverified on the device. The tested restart path covers the worker
 timeout/reap quarantine; it does not establish exhaustive races for every
 platform task/runtime failure path. Header metadata has no guaranteed hard cap.
