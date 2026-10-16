@@ -36,6 +36,50 @@ jobs:
           clang-format --dry-run --Werror \
             components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
           clang-format --dry-run --Werror \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_app.h \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_controller.h \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_dns_adapter.h \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_https_adapter.h \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_tcp_adapter.h \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_controller.cpp \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns_adapter.cpp \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_https_adapter.cpp \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp_adapter.cpp
+          clang-format --dry-run --Werror \
+            tests/host/keymap/test_netdiag_app.cpp \
+            tests/host/keymap/test_netdiag_controller.cpp \
+            tests/host/keymap/test_netdiag_dns_adapter.cpp \
+            tests/host/keymap/test_netdiag_https_adapter.cpp \
+            tests/host/keymap/test_netdiag_tcp_adapter.cpp \
+            tests/host/keymap/netdiag_app_shim/esp_timer.h \
+            tests/host/keymap/netdiag_app_shim/esp_netif.h \
+            tests/host/keymap/netdiag_app_shim/esp_wifi.h \
+            tests/host/keymap/netdiag_app_shim/apps/wifi/wifi_mgr.h \
+            tests/host/keymap/netdiag_app_shim/freertos/FreeRTOS.h \
+            tests/host/keymap/netdiag_app_shim/freertos/idf_additions.h \
+            tests/host/keymap/netdiag_app_shim/freertos/semphr.h \
+            tests/host/keymap/netdiag_app_shim/freertos/task.h \
+            tests/host/keymap/netdiag_app_shim/lwip/dns.h \
+            tests/host/keymap/netdiag_app_shim/lwip/inet.h \
+            tests/host/keymap/netdiag_app_shim/lwip/ip4_addr.h \
+            tests/host/keymap/netdiag_app_shim/lwip/ip_addr.h \
+            tests/host/keymap/netdiag_app_shim/lwip/tcpip.h \
+            tests/host/keymap/netdiag_dns_shim/esp_timer.h \
+            tests/host/keymap/netdiag_dns_shim/freertos/FreeRTOS.h \
+            tests/host/keymap/netdiag_dns_shim/freertos/task.h \
+            tests/host/keymap/netdiag_dns_shim/lwip/dns.h \
+            tests/host/keymap/netdiag_dns_shim/lwip/ip4_addr.h \
+            tests/host/keymap/netdiag_dns_shim/lwip/ip_addr.h \
+            tests/host/keymap/netdiag_dns_shim/lwip/tcpip.h \
+            tests/host/keymap/netdiag_https_shim/esp_crt_bundle.h \
+            tests/host/keymap/netdiag_https_shim/esp_http_client.h \
+            tests/host/keymap/netdiag_https_shim/esp_timer.h \
+            tests/host/keymap/netdiag_https_shim/freertos/task.h \
+            tests/host/keymap/netdiag_tcp_shim/esp_timer.h \
+            tests/host/keymap/netdiag_tcp_shim/lwip/inet.h \
+            tests/host/keymap/netdiag_tcp_shim/lwip/sockets.h
+          clang-format --dry-run --Werror \
             components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h \
             components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp
           # F is the repository's deterministic Python syntax/import-format
@@ -77,6 +121,10 @@ jobs:
             --root ../../.. \
             --source-root ../../../components/cyberdeck/src \
             --gcovr-json "$RUNNER_TEMP/cyberdeck-coverage.json"
+      - name: App grant concurrency test (ThreadSanitizer)
+        id: app-grant-tsan
+        working-directory: tests/host/keymap
+        run: make test_app_runtime_tsan
       - uses: espressif/install-esp-idf-action@8fc05d1470d5591417e7a3707a1f2bec178db4ae # branch v1 tip (immutable commit)
         with:
           version: v5.5.5
@@ -93,6 +141,7 @@ jobs:
             echo '| --- | --- |'
             echo '| ESP-IDF 5.5.5 build | ${{ steps.firmware-build.outcome }} |'
             echo '| Host aggregate and coverage | ${{ steps.host-coverage.outcome }} |'
+            echo '| App grant ThreadSanitizer | ${{ steps.app-grant-tsan.outcome }} |'
             echo '| Global host C++ coverage | line >=80%; functions >=94%; branches >=59% |'
             echo '| Coverage scope | fail-closed gcovr JSON guard; explicit hardware allowlist only |'
           } >> "$GITHUB_STEP_SUMMARY"
