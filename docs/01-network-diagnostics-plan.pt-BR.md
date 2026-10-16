@@ -52,8 +52,10 @@ Serial-JTAG passam.
   callback e quarentena enquanto o callback não chegar.
 - **REQ-ND-04**: conexão TCP somente ao host/porta admitidos, timeout explícito e
   cancelamento lógico sem destruir recurso ainda usado.
-- **REQ-ND-05**: HTTPS assíncrono sequencial, CA/hostname/SNI/Host válidos, redirects
-  desligados e corpo limitado/descartado.
+- **REQ-ND-05**: HTTPS HEAD assíncrono sequencial, CA/hostname/SNI/Host válidos,
+  redirects desligados e sem fallback GET (405 é status HTTP final). Não há corpo
+  de aplicação; ESP-IDF 5.5.5 acumula metadados de response headers sem hard cap
+  configurável, risco residual explicitamente aceito.
 - **REQ-ND-06**: grants/lifecycle/stale-result/rate-limit e privacidade fail-closed,
   sem regressões em SSH e nos demais serviços.
 - **AC-ND-01..05**: respectivamente UI não bloqueante; somente destino explícito;
@@ -67,9 +69,10 @@ e integração/build/dispositivo), ainda pendentes conforme a fase.
 
 ## Entrega faseada e contrato do core
 
-Fase atual: `cyberdeck_netdiag_core.{h,cpp}` e o adapter real
-`cyberdeck_netdiag_dns.{h,cpp}` são compilados na produção, mas não conectados a app,
-shell, boot ou worker; nenhuma consulta DNS ocorre sem chamada explícita ao adapter.
+Estado atual: `cyberdeck_netdiag_core.{h,cpp}` e adapters DNS/TCP/HTTPS estão
+implementados; o app foreground está registrado e compõe worker, grant e adapters.
+O app não inicia no boot: somente acionamento explícito pode iniciar sua lifecycle
+e produzir tráfego. Não há validação física nem aprovação final da integração.
 O core é host-linkable e limita parsing, geração, single-flight, rate-limit e resultados
 tipados. `backend.submit` é uma admissão de trabalho: se retornar falso, o resultado
 terminal é `backend_unavailable`, `in_flight` é liberado e o intervalo não é consumido.
@@ -90,12 +93,42 @@ garantia wall-clock. O contrato lwIP pressupõe callback exatamente uma vez para
 consulta aceita; callback duplicado após consumo não é detectável com segurança após
 reuso do slot.
 
-O app síncrono anterior e seu header foram removidos; não há protótipo de app
-presente ou integrado nesta fase. **Netdiag está indisponível/inativo nesta etapa;
-este worktree intermediário não deve ser flashado nem liberado.** Próximas fases:
-tester valida core e adapter DNS reais; revisão;
-integração TCP/HTTPS async com TLS/CA/SNI/Host; revisão final; somente então substituir
-o app WIP, registrar/ativar o recurso e validar todos os requisitos aprovados.
+O protótipo síncrono anterior foi removido. A integração de `cyberdeck.netdiag`
+registra o app foreground sob demanda, worker proprietário, grant de rede,
+comandos explícitos e adapters DNS/TCP/HTTPS. Registro não inicia a app nem gera
+tráfego; apenas o comando explícito inicia sua lifecycle. A integração ainda não
+tem evidência comportamental que execute conjuntamente o app real, runtime/grants
+e adapters reais; TEST-ND-07 permanece pendente e TEST-ND-08 é apenas estrutural.
+
+### Progresso e evidências (15/out/2026)
+
+- **DNS / TEST-ND-01..03:** core e adapter DNS foram implementados, revisados e
+  testados; commit `8ff2748cb170288000605de66181297748cac29f` (DNS) tem Quality
+  Gate remoto verde, run `38823591023`. Sem validação física no Tab5.
+- **TCP e HTTPS / TEST-ND-04..06:** adapters implementados e integrados localmente.
+  Evidência reportada no snapshot de revisão local: testes host TCP (51 checks) e
+  HTTPS (45 checks), ambos ASan/UBSan; TCP também passou TSan. Suíte local,
+  build e coverage foram reportados como aprovados nesse snapshot. Isso não é
+  aprovação final: revisão está `review_incomplete`, pois o CI remoto deste delta
+  não foi executado. A integração HTTPS é HEAD-only, não faz fallback GET, e 405
+  é resultado HTTP final tipado. Continua aceito o risco de acumulação de headers
+  sem hard cap no ESP-IDF 5.5.5. TCP usa stack de 8192 bytes, ainda exigindo
+  evidência no alvo; a fidelidade de critical sections do TSan host é limitada.
+- **App / TEST-ND-07..08:** app registrado e implementado com worker de 8192 bytes,
+  adapters delegados e grant assíncrono; TEST-ND-08 cobre apenas estrutura (20
+  checks). TEST-ND-07, integração comportamental do app real com runtime/grants e
+  adapters reais, não está demonstrado. Tentativas de harness não fecharam por
+  shims ausentes de esp_netif, esp_wifi e filas/tasks FreeRTOS; não interpretar
+  isso como teste aprovado nem como app não registrado.
+- **Gates pendentes:** criar/rodar evidência robusta para TEST-ND-07; executar no
+  estado final a suíte completa, sanitizers, coverage e build; obter revisão
+  completa e CI remoto verde no commit final exato; depois realizar cenários
+  Serial-JTAG no dispositivo e obter aceitação humana. Nenhum flash foi feito.
+  O delta TCP/HTTPS/app ainda não foi commitado nem enviado.
+- **Riscos mantidos:** operação é explícita, sem tráfego implícito; cancelamento é
+  cooperativo/lógico. DNS sem callback pode reter o slot até reboot. Confirmação
+  de stack TCP 8192 no alvo e validação de comportamento no dispositivo continuam
+  pendentes. Nenhum estado acima autoriza declarar o recurso concluído/liberado.
 
 ## Riscos
 
@@ -162,7 +195,9 @@ cancelamento lógico imediato para a UI. O DNS usa um único contexto estático
 scheduler/tcpip. HTTPS deve ser async, com polling sequencial sem chamadas
 concorrentes ao handle; cleanup somente após `perform()` sair. Conectar ao IP
 resolvido sem perder SNI/validação TLS do hostname original nem o header `Host`;
-certificado/hostname validado, redirects desligados e corpo limitado/descartado.
+  certificado/hostname validado, redirects desligados e HEAD sem fallback GET.
+  Não há corpo de aplicação. O risco de metadados de headers acumulados sem hard
+  cap no ESP-IDF 5.5.5 foi aceito; não declarar limite total de response.
 
 Esta aprovação aceita expressamente as limitações e o risco alto, não substitui
 os requisitos de segurança nem valida a implementação. Antes de declarar o

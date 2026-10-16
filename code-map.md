@@ -557,7 +557,7 @@ Runtime dispatch and lifecycle inspection APIs (`execute_line`, `state`,
 `failure_reason`) are owner-thread-only; workers use copied grants and revalidate
 through the mutex-protected `grant::allows()`/`valid()` APIs.
 
-### Diagnóstico explícito de rede (implementação faseada/inativa)
+### Diagnóstico explícito de rede (integração local; gates pendentes)
 
 - `components/cyberdeck/include/apps/network/cyberdeck_netdiag_core.h` e
   `src/apps/network/cyberdeck_netdiag_core.cpp` implementam parser/controller
@@ -575,12 +575,41 @@ through the mutex-protected `grant::allows()`/`valid()` APIs.
   callback. Host com label final vazio (ponto final) é rejeitado para manter
   paridade com o parser core. O contrato exatamente uma vez da callback lwIP é assumido;
   timeout wall-clock não é prometido e callback ausente pode reter slot até reboot.
-- O app e seu header não estão presentes nem integrados; netdiag permanece
-  indisponível até a integração completa dos adapters conformes. Este snapshot
-  intermediário não deve ser flashado.
+- `cyberdeck_netdiag_tcp.{h,cpp}` implementa slot singleton `start/poll/cancel`
+  para endpoint IP numérico + porta: worker FreeRTOS, socket nonblocking, select
+  de 3000 ms e SO_ERROR. `poll` segue pending durante cancelamento enquanto o
+  worker opera; após fechar uma vez o socket, o worker libera autonomamente o
+  slot cancelado e o token fica unknown, sem polling para reclaim nem publicação
+  stale. Não resolve nomes nem executa ICMP; IPv6 numérico interno não altera a
+  rejeição de literais IPv6 na interface de usuário.
+- `cyberdeck_netdiag_https.{h,cpp}` implementa slot async singleton usando
+  `esp_http_client_perform` uma chamada sequencial por poll; HTTPS HEAD somente,
+  redirect desabilitado explicitamente via `disable_auto_redirect=true`,
+  conecta ao IP numérico, mantém hostname original para common_name/validação e
+  Host, usa CA bundle e desliga redirects. Evento HTTP_ERROR captura erros TLS
+  do handle esp-tls para distingui-los de falha de transporte. 405 é status final sem GET fallback;
+  retém somente status/duração/erro. Aceite explícito: IDF 5.5.5 não fornece hard
+  cap nesta integração para metadados acumulados de response headers; não alegar
+  limite total de resposta. Cancelamento limpa handle apenas entre chamadas
+   `perform` já retornadas.
+ - `components/cyberdeck/include/apps/network/cyberdeck_netdiag_app.h` e
+   `src/apps/network/cyberdeck_netdiag_app.cpp` implementam o app foreground
+   demand-started: registry/help declara `netdiag`, mas boot não inicia a app nem
+   produz tráfego. O worker único serializa parser/controller/adapters, utiliza
+   grant `network` copiado e o revalida em trabalho/poll/publicação; fila limitada
+   a um, resultado tipado sem destino, e stop cooperativo retém contexto/recursos
+   se o join exceder 25 s. `status` lê STA/IP/gateway/DNS/RSSI sob comando explícito;
+   `dns`, `tcp`, `https`, `result` e `cancel` mantêm semântica explícita. O worker
+   TCP usa 8192 bytes (aumento conservador de 4096; stack high-water/hardware ainda
+   não medidos). `src/apps/system/cyberdeck_system_apps.cpp` registra a instância
+   com dependências event_log/Wi-Fi e sem incluí-la no start-all automático.
+ - `docs/01-network-diagnostics-plan.pt-BR.md` define REQ-ND-01..06 e AC-ND-01..05;
+   `docs/NETDIAG.md` documenta comandos, privacidade, cancelamento e risco aceito
+   de metadados HTTP sem hard cap no IDF 5.5.5. TEST-ND-07/08, review/CI remoto e
+   validação física seguem pendentes; não tratar o build como aprovação final.
 - `docs/01-network-diagnostics-plan.pt-BR.md` define REQ-ND-01..06, AC-ND-01..05,
-  TEST-ND-01..08 e fases; `docs/NETDIAG.md` registra core+DNS compilados sem wiring.
-  O tester ainda deve validar os TUs reais por shim e atualizar sua própria matriz.
+  TEST-ND-01..08 e fases; `docs/NETDIAG.md` registra core/DNS/TCP/HTTPS compilados
+  sem wiring. O tester ainda deve validar os TUs reais e atualizar sua própria matriz.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |

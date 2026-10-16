@@ -176,7 +176,7 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_event_log_runtime test_event_log_shim test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync test_sd_io_coordinator test_netdiag_runtime_bin test_netdiag_dns_bin $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_event_log_runtime test_event_log_shim test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync test_sd_io_coordinator test_netdiag_runtime_bin test_netdiag_dns_bin test_netdiag_tcp_bin test_netdiag_https_bin $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 
 test_editor_model: test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp ../../../components/cyberdeck/include/apps/editor/cyberdeck_editor_model.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp -o $@
@@ -231,6 +231,12 @@ test_sd_io_coordinator: $(SD_IO_COORDINATOR_TEST) $(SD_IO_COORDINATOR_SRC) $(SD_
 	./test_sd_io_coordinator
 
 .PHONY: test_netdiag_runtime
+.PHONY: test_netdiag_app_contract
+test_netdiag_app_contract: test_netdiag_app_contract.py netdiag_traceability.md \
+		../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp \
+		../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp
+	$(PYTHON) test_netdiag_app_contract.py
+
 test_netdiag_runtime: test_netdiag_runtime_bin
 	./test_netdiag_runtime_bin
 
@@ -271,6 +277,32 @@ test_netdiag_dns_tsan: test_netdiag_dns.cpp netdiag_dns_shim/freertos/FreeRTOS.h
 		-I./netdiag_dns_shim -I../../../components/cyberdeck/include test_netdiag_dns.cpp \
 		../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp -o $@
 	./test_netdiag_dns_tsan
+
+NETDIAG_TCP_SRC := ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp.cpp
+NETDIAG_HTTPS_SRC := ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_https.cpp
+NETDIAG_TCP_HDR := ../../../components/cyberdeck/include/apps/network/cyberdeck_netdiag_tcp.h
+NETDIAG_HTTPS_HDR := ../../../components/cyberdeck/include/apps/network/cyberdeck_netdiag_https.h
+NETDIAG_ADAPTER_SHIM := netdiag_adapter_shim
+NETDIAG_ADAPTER_SHIMS := $(shell find $(NETDIAG_ADAPTER_SHIM) -type f)
+
+.PHONY: test_netdiag_tcp test_netdiag_https test_netdiag_tcp_asan test_netdiag_https_asan test_netdiag_tcp_tsan
+test_netdiag_tcp: test_netdiag_tcp_bin
+	./test_netdiag_tcp_bin
+test_netdiag_tcp_asan: test_netdiag_tcp.cpp $(NETDIAG_TCP_SRC) $(NETDIAG_TCP_HDR) $(NETDIAG_ADAPTER_SHIMS)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g -pthread -fsanitize=address,undefined -fno-omit-frame-pointer -I$(NETDIAG_ADAPTER_SHIM) -I../../../components/cyberdeck/include test_netdiag_tcp.cpp $(NETDIAG_TCP_SRC) -Wl,--wrap=socket -Wl,--wrap=fcntl -Wl,--wrap=connect -Wl,--wrap=select -Wl,--wrap=getsockopt -Wl,--wrap=close -o test_netdiag_tcp_asan
+	./test_netdiag_tcp_asan
+test_netdiag_tcp_tsan: test_netdiag_tcp.cpp $(NETDIAG_TCP_SRC) $(NETDIAG_TCP_HDR) $(NETDIAG_ADAPTER_SHIMS)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g -pthread -fsanitize=thread -fno-omit-frame-pointer -I$(NETDIAG_ADAPTER_SHIM) -I../../../components/cyberdeck/include test_netdiag_tcp.cpp $(NETDIAG_TCP_SRC) -Wl,--wrap=socket -Wl,--wrap=fcntl -Wl,--wrap=connect -Wl,--wrap=select -Wl,--wrap=getsockopt -Wl,--wrap=close -o test_netdiag_tcp_tsan
+	./test_netdiag_tcp_tsan
+test_netdiag_tcp_bin: test_netdiag_tcp.cpp $(NETDIAG_TCP_SRC) $(NETDIAG_TCP_HDR) $(NETDIAG_ADAPTER_SHIMS) netdiag_traceability.md
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I$(NETDIAG_ADAPTER_SHIM) -I../../../components/cyberdeck/include test_netdiag_tcp.cpp $(NETDIAG_TCP_SRC) -Wl,--wrap=socket -Wl,--wrap=fcntl -Wl,--wrap=connect -Wl,--wrap=select -Wl,--wrap=getsockopt -Wl,--wrap=close -o $@
+test_netdiag_https: test_netdiag_https_bin
+	./test_netdiag_https_bin
+test_netdiag_https_asan: test_netdiag_https.cpp $(NETDIAG_HTTPS_SRC) $(NETDIAG_HTTPS_HDR) $(NETDIAG_ADAPTER_SHIMS)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -I$(NETDIAG_ADAPTER_SHIM) -I../../../components/cyberdeck/include test_netdiag_https.cpp $(NETDIAG_HTTPS_SRC) -o test_netdiag_https_asan
+	./test_netdiag_https_asan
+test_netdiag_https_bin: test_netdiag_https.cpp $(NETDIAG_HTTPS_SRC) $(NETDIAG_HTTPS_HDR) $(NETDIAG_ADAPTER_SHIMS) netdiag_traceability.md
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -I$(NETDIAG_ADAPTER_SHIM) -I../../../components/cyberdeck/include test_netdiag_https.cpp $(NETDIAG_HTTPS_SRC) -o $@
 
 .PHONY: test_sd_io_integration_contract
 test_sd_io_integration_contract: test_sd_io_integration_contract.py sd_io_traceability.md Makefile
@@ -1064,6 +1096,8 @@ test_poweroff: test_poweroff.cpp ../../../components/cyberdeck/src/platform/powe
 test: $(BINS)
 	@./test_netdiag_runtime_bin
 	@./test_netdiag_dns_bin
+	@./test_netdiag_tcp_bin
+	@./test_netdiag_https_bin
 	@./test_poweroff
 	@./test_cat_worker_runtime
 	@./test_known_hosts_file
@@ -1305,4 +1339,4 @@ test: $(BINS)
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
 	@$(MAKE) --no-print-directory imu_sensor_contract
 clean:
-	rm -f $(BINS) test_app_runtime_tsan test_netdiag_runtime_asan test_netdiag_dns_tsan $(CAT_RUNTIME_OBJS) test_battery_protection ./*.gcda ./*.gcno ./*.gcov
+	rm -f $(BINS) test_app_runtime_tsan test_netdiag_runtime_asan test_netdiag_dns_tsan test_netdiag_tcp_tsan test_netdiag_tcp_asan test_netdiag_https_asan $(CAT_RUNTIME_OBJS) test_battery_protection ./*.gcda ./*.gcno ./*.gcov

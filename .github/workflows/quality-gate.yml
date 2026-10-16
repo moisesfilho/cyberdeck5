@@ -43,20 +43,32 @@ jobs:
             components/cyberdeck/src/apps/network/cyberdeck_netdiag_core.cpp \
             components/cyberdeck/include/apps/network/cyberdeck_netdiag_dns.h \
             components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_tcp.h \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp.cpp \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_https.h \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_https.cpp \
             tests/host/keymap/test_netdiag_runtime.cpp \
-            tests/host/keymap/test_netdiag_dns.cpp
+            tests/host/keymap/test_netdiag_dns.cpp \
+            tests/host/keymap/test_netdiag_tcp.cpp \
+            tests/host/keymap/test_netdiag_https.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.
           ruff check --select F tools
       - name: Lint, smells, and security
         run: |
-          cppcheck --enable=warning,performance,portability \
+          cppcheck --language=c++ --enable=warning,performance,portability \
             --error-exitcode=1 --suppress=missingIncludeSystem \
             components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_*.cpp \
             components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp \
             components/cyberdeck/src/apps/network/cyberdeck_netdiag_core.cpp \
-            components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns.cpp \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_tcp.h \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp.cpp \
+            components/cyberdeck/include/apps/network/cyberdeck_netdiag_https.h \
+            components/cyberdeck/src/apps/network/cyberdeck_netdiag_https.cpp \
+            tests/host/keymap/test_netdiag_tcp.cpp \
+            tests/host/keymap/test_netdiag_https.cpp
           bandit -r tools -ll
       - name: Host aggregate and coverage
         id: host-coverage
@@ -94,10 +106,18 @@ jobs:
         id: netdiag-dns-tsan
         working-directory: tests/host/keymap
         run: make test_netdiag_dns_tsan
+      - name: Netdiag TCP worker concurrency test (ThreadSanitizer)
+        id: netdiag-tcp-tsan
+        working-directory: tests/host/keymap
+        run: make test_netdiag_tcp_tsan
       - name: Netdiag runtime memory-safety test (ASan/UBSan)
         id: netdiag-runtime-asan
         working-directory: tests/host/keymap
         run: make test_netdiag_runtime_asan
+      - name: Netdiag TCP/HTTPS adapter tests (ASan/UBSan)
+        id: netdiag-adapters-asan
+        working-directory: tests/host/keymap
+        run: make test_netdiag_tcp test_netdiag_https test_netdiag_tcp_asan test_netdiag_https_asan
       - uses: espressif/install-esp-idf-action@8fc05d1470d5591417e7a3707a1f2bec178db4ae # branch v1 tip (immutable commit)
         with:
           version: v5.5.5
@@ -116,7 +136,9 @@ jobs:
             echo '| Host aggregate and coverage | ${{ steps.host-coverage.outcome }} |'
             echo '| App grant ThreadSanitizer | ${{ steps.app-grant-tsan.outcome }} |'
             echo '| Netdiag DNS ThreadSanitizer | ${{ steps.netdiag-dns-tsan.outcome }} |'
+            echo '| Netdiag TCP ThreadSanitizer | ${{ steps.netdiag-tcp-tsan.outcome }} |'
             echo '| Netdiag runtime ASan/UBSan | ${{ steps.netdiag-runtime-asan.outcome }} |'
+            echo '| Netdiag TCP/HTTPS adapters ASan/UBSan | ${{ steps.netdiag-adapters-asan.outcome }} |'
             echo '| Global host C++ coverage | line >=80%; functions >=94%; branches >=59% |'
             echo '| Coverage scope | fail-closed gcovr JSON guard; explicit hardware allowlist only |'
           } >> "$GITHUB_STEP_SUMMARY"
