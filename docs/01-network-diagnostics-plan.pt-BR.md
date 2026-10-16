@@ -127,6 +127,8 @@ gates gcovr passaram (86,5% linhas, 94,9% funções, 59,2% branches; mínimo de
 branches 59%). O GCC/gcov 15.2 do host ainda mede 57,4% de branches com o
 mesmo agregado: os resultados não são intercambiáveis entre toolchains.
 
-Esta evidência não é aprovação: CI remota do estado atual e testes Serial-JTAG
-em dispositivo permanecem pendentes. Sem flash nem validação de TLS real nesta
-etapa; confirmar configuração e resultado efetivo no Tab5 antes do aceite.
+O Quality Gate remoto do commit de código `dbe3a94` passou (run `38916411814`),
+incluindo suíte, cobertura, TSan e build. Isso não é aceitação de hardware:
+testes Serial-JTAG em dispositivo, inclusive HTTPS/TLS, permanecem pendentes.
+Qualquer commit documental posterior exige CI no novo estado antes de concluir
+a revisão; confirmar configuração e resultado efetivo no Tab5 antes do aceite.

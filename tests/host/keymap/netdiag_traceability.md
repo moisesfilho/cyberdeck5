@@ -9,7 +9,7 @@
 | REQ-ND-05 / AC-ND-05 HTTP 405 final/no GET fallback | TEST-ND-05 `test_netdiag_https_adapter`, `test_netdiag_app` | Exactly one HEAD; redirect disabled, no GET fallback, final 405 preserved; perform/TLS errors fail closed |
 | REQ-ND-06 / AC-ND-06 grant/cancel/stale-safe publication | TEST-ND-06 controller and `test_netdiag_app` | Controller cancellation/stale-token rejection; app stop revokes copied grant before worker completion and revoked worker cannot enter DNS adapter |
 | REQ-ND-07 / AC-ND-07 app/runtime/adapters lifecycle integration | TEST-ND-07 `test_netdiag_app` | Real app, controller, runtime, DNS/TCP/HTTPS adapters linked: dependency registration/start, SSH command coexistence, status, invalid input, operation dispatch, concurrent admission, completion/result, cancellation, worker-create failure, stop timeout, grant revocation, cleanup and restart quarantine. Current focused rerun: PASS, 47 checks. |
-| REQ-ND-08 / AC-ND-08 actual TU coverage and fail-closed guard | TEST-ND-08 `test_coverage_scope_guard.py` and CI-equivalent aggregate | App and all four controller/adapter TUs are required covered, never allowlisted; the counterfactual missing-app fixture fails. Focused tests contribute real TU coverage to the aggregate. With GCC/gcov 13.4: 86.5% lines, 94.9% functions, 59.3% branches (thresholds 80/94/59); CI remoto do estado atual permanece pendente. |
+| REQ-ND-08 / AC-ND-08 actual TU coverage and fail-closed guard | TEST-ND-08 `test_coverage_scope_guard.py` and CI-equivalent aggregate | App and all four controller/adapter TUs are required covered, never allowlisted; the counterfactual missing-app fixture fails. Focused tests contribute real TU coverage to the aggregate. With GCC/gcov 13.4: 86.5% lines, 94.9% functions, 59.3% branches (thresholds 80/94/59). Quality Gate run `38916411814` passed for commit `dbe3a94`; any later commit requires a new run. |
 
 ## TEST-ND-07 timeout quarantine regression
 
@@ -39,8 +39,8 @@ app TU fails. The aggregate runs the app and focused controller/adapter targets
 with `--coverage` before gcovr, so the JSON includes their executed production
 paths. GCC/gcov 13.4 passes the local aggregate gate (59.3% branches); GCC/gcov
 15.2 reports a different branch count (57.4% on the previous snapshot), so the
-two toolchains are not interchangeable. Remote CI on the exact current state
-remains pending; the local scope-guard pass does not replace that gate.
+two toolchains are not interchangeable. The remote gate passed for `dbe3a94`
+(run `38916411814`); this does not validate any later commit or the device.
 
 Remaining TEST-ND-07/acceptance gaps: harnesses use deterministic scheduler and
 API shims, not the ESP-IDF runtime, live sockets, DNS, TLS, or an HTTP server.

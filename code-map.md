@@ -543,7 +543,9 @@ destrói recursos potencialmente usados.
     comprova falha quando falta o TU da app. O agregado executa o app harness
      antes de gcovr/guard. Com GCC/gcov 13.4 local, o agregado passa o mínimo
      de 59% branches (59,3%); o toolchain 15.2 mede branches de modo diferente.
-     TEST-ND-08 ainda depende do resultado CI no estado exato.
+     O commit `dbe3a94` passou no Quality Gate remoto (`38916411814`);
+     commits posteriores ainda dependem de CI no novo estado. TEST-ND-08
+     não substitui a validação física.
     Metadata de headers não possui limite rígido garantido.
     `cyberdeck_netdiag_app.{h,cpp}` compõe o controller real com os três adapters
    e um worker por token. O comando conserva `app_grant()` opaco para revalidar
@@ -889,7 +891,8 @@ monotônicos impedem callbacks atrasados de alterar uma tentativa nova.
    obrigatórios cobertos (não allowlist), e `test_coverage_scope_guard.py`
    rejeita ausência do TU da app; o agregado com GCC/gcov 13.4 local passou
    o gate gcovr (86,5% linhas, 94,9% funções e 59,3% branches). TEST-ND-08
-   ainda aguarda CI no estado exato. Não implementa ICMP/ping nem scan.
+   passou no Quality Gate do commit `dbe3a94` (run `38916411814`); commits
+   posteriores exigem novo gate. Não implementa ICMP/ping nem scan.
 
 ### Bluetooth LE no ESP32-C6 hospedado (REQ-BLE-001..014)
 

@@ -12,8 +12,8 @@ O app compilado `cyberdeck.netdiag` aceita somente comandos explícitos no shell
 - `netdiag result` consulta o último resultado tipado; `netdiag cancel` solicita
   cancelamento cooperativo.
 
-Há um item ativo, host limitado a 253 bytes, URL a 512 bytes e intervalo mínimo de 30 segundos
-entre inícios. A app depende dos serviços `cyberdeck.event_log` e
+Há um item ativo, host limitado a 253 bytes, URL a 512 bytes e intervalo mínimo
+de 30 segundos entre inícios. A app depende dos serviços `cyberdeck.event_log` e
 `cyberdeck.wifi` e retém somente o grant `network`. Sem ping/ICMP, scan,
 fallback HTTP, exportação, redirects, enumeração, conteúdo de resposta ou
 logging de destino/credenciais.
@@ -37,7 +37,10 @@ resposta; esse risco foi aceito, sem promessa de limite de memória.
 
 O controller, os adapters e a app estão integrados e cobertos por testes host
 com shims nas fronteiras externas. Isso não prova conectividade, TLS ou
-comportamento no Tab5. A aprovação permanece pendente: a cobertura agregada de
-branches ainda está abaixo do gate de 59%, a CI remota do estado atual não foi
-executada e não houve validação Serial-JTAG. Sem comandos automáticos, scans,
+comportamento no Tab5. O agregado local com GCC/gcov 13.4 passou os gates
+(86,5% linhas, 94,9% funções, 59,3% branches); o Quality Gate do código no
+commit `dbe3a94` passou (run `38916411814`). A validação Serial-JTAG ainda
+está pendente; qualquer commit posterior requer CI no novo estado. O GCC/gcov
+15.2 local mede branches diferentemente (57,4% no mesmo agregado).
+Sem comandos automáticos, scans,
 ICMP/ping, exportação ou tráfego implícito.
