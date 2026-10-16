@@ -59,6 +59,17 @@ FORBIDDEN_ALLOWLIST = {
     "components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp",
 }
 
+# The app and adapters are exercised by host harnesses linking their real TUs.
+# Keep them explicitly required so a lost test target cannot be hidden by a
+# coincidental change to source discovery or allowlisting.
+REQUIRED_COVERED = {
+    "components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp",
+    "components/cyberdeck/src/apps/network/cyberdeck_netdiag_controller.cpp",
+    "components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns_adapter.cpp",
+    "components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp_adapter.cpp",
+    "components/cyberdeck/src/apps/network/cyberdeck_netdiag_https_adapter.cpp",
+}
+
 
 def relative_source(path: str, root: Path) -> str:
     candidate = Path(path)
@@ -113,15 +124,16 @@ def main() -> int:
         return 1
 
     missing = production - covered - set(ALLOWLIST)
+    missing_required = REQUIRED_COVERED - covered
     allowlisted_and_covered = set(ALLOWLIST) & covered
     if allowlisted_and_covered:
         print("coverage scope error: allowlisted TUs are covered and must be removed from allowlist:", file=sys.stderr)
         for path in sorted(allowlisted_and_covered):
             print(f"  {path}: {ALLOWLIST[path]}", file=sys.stderr)
         return 1
-    if missing:
+    if missing or missing_required:
         print("coverage scope error: production TUs missing from gcovr JSON:", file=sys.stderr)
-        for path in sorted(missing):
+        for path in sorted(missing | missing_required):
             print(f"  {path}", file=sys.stderr)
         return 1
 

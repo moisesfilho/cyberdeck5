@@ -67,6 +67,14 @@ REQUIRED_FORBIDDEN = frozenset({
 DEMO_APP = "components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp"
 EDITOR_VIEW = "components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp"
 ELIGIBLE = "components/cyberdeck/src/apps/pure.cpp"
+NETDIAG_APP = "components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp"
+REQUIRED_COVERED = frozenset({
+    NETDIAG_APP,
+    "components/cyberdeck/src/apps/network/cyberdeck_netdiag_controller.cpp",
+    "components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns_adapter.cpp",
+    "components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp_adapter.cpp",
+    "components/cyberdeck/src/apps/network/cyberdeck_netdiag_https_adapter.cpp",
+})
 
 
 def run(root: Path, source_root: Path, report: Path) -> int:
@@ -132,8 +140,12 @@ def make_fixture(tmp: Path, allowlist) -> tuple[Path, Path, Path]:
         path.write_text("int adapter() { return 0; }\n")
     (source / "apps").mkdir(exist_ok=True)
     (source / "apps/pure.cpp").write_text("int f() { return 1; }\n")
+    for item in REQUIRED_COVERED:
+        path = root / item
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("int required() { return 0; }\n")
     report = root / "coverage.json"
-    write_report(report, [ELIGIBLE])
+    write_report(report, [ELIGIBLE, *sorted(REQUIRED_COVERED)])
     return root, source, report
 
 
@@ -207,13 +219,31 @@ def test_editor_view_is_host_covered_and_not_allowlisted() -> None:
     assert "$(EDITOR_VIEW_SRC)" in makefile
 
 
+def test_netdiag_app_is_required_covered_and_not_allowlisted() -> None:
+    """TEST-COV-ND-01: real app TU must be present in coverage, not allowlisted."""
+    assert (ROOT / NETDIAG_APP).is_file()
+    assert NETDIAG_APP not in ALLOWLIST
+    assert NETDIAG_APP not in FORBIDDEN_ALLOWLIST
+    assert NETDIAG_APP in production_sources(ROOT, SOURCE_ROOT)
+    with tempfile.TemporaryDirectory() as tmp:
+        root, source, report = make_fixture(Path(tmp), REVIEWED_ALLOWLIST)
+        app = root / NETDIAG_APP
+        app.parent.mkdir(parents=True, exist_ok=True)
+        app.write_text("int netdiag_app() { return 0; }\\n")
+        write_report(report, [ELIGIBLE, *(REQUIRED_COVERED - {NETDIAG_APP})])
+        code, output = run_guard(root, source, report, REVIEWED_ALLOWLIST)
+        assert code == 1, f"missing app TU must fail coverage guard: {output}"
+        assert "production TUs missing from gcovr JSON" in output, output
+        assert NETDIAG_APP in output, output
+
+
 # --- TEST-COV-006..010: fail-closed counterfactuals over temporary fixtures ----
 
 def test_allowlisted_and_covered_is_rejected() -> None:
     """TEST-COV-006: covering one of the 4 new adapters fails closed."""
     with tempfile.TemporaryDirectory() as tmp:
         root, source, report = make_fixture(Path(tmp), REVIEWED_ALLOWLIST)
-        write_report(report, [ELIGIBLE, *sorted(NEWLY_ALLOWLISTED)])
+        write_report(report, [ELIGIBLE, *sorted(NEWLY_ALLOWLISTED), *sorted(REQUIRED_COVERED)])
         code, output = run_guard(root, source, report, REVIEWED_ALLOWLIST)
         assert code == 1, f"a covered allowlisted TU must fail closed, got {code}"
         assert "allowlisted TUs are covered and must be removed from allowlist" in output, output
@@ -256,7 +286,7 @@ def test_demo_app_is_a_required_covered_tu() -> None:
         demo = root / DEMO_APP
         demo.parent.mkdir(parents=True, exist_ok=True)
         demo.write_text("int demo_app() { return 0; }\n")
-        write_report(report, [ELIGIBLE, DEMO_APP])
+        write_report(report, [ELIGIBLE, DEMO_APP, *sorted(REQUIRED_COVERED)])
         code, output = run_guard(root, source, report, REVIEWED_ALLOWLIST)
         assert code == 0, f"a covered demo app must pass the guard, got {code}: {output}"
 
@@ -270,7 +300,7 @@ def test_allowlisting_the_covered_demo_app_is_rejected() -> None:
         demo.write_text("int demo_app() { return 0; }\n")
         broken = dict(REVIEWED_ALLOWLIST)
         broken[DEMO_APP] = "host-linkable demo application"
-        write_report(report, [ELIGIBLE, DEMO_APP])
+        write_report(report, [ELIGIBLE, DEMO_APP, *sorted(REQUIRED_COVERED)])
         code, output = run_guard(root, source, report, broken)
         assert code == 1, f"allowlisting a covered TU must fail closed, got {code}"
         assert "allowlisted TUs are covered and must be removed from allowlist" in output, output
@@ -284,6 +314,7 @@ def allowlist_membership_scenarios() -> None:
     test_forbidden_allowlist_keeps_its_members()
     test_demo_app_is_not_allowlisted()
     test_editor_view_is_host_covered_and_not_allowlisted()
+    test_netdiag_app_is_required_covered_and_not_allowlisted()
 
 
 def allowlist_counterfactual_scenarios() -> None:
@@ -306,13 +337,17 @@ def main() -> None:
         required = "components/cyberdeck/src/apps/pure.cpp"
         (source / "features").mkdir(exist_ok=True)
         (source / "apps/pure.cpp").write_text("int f() { return 1; }\n")
+        for item in REQUIRED_COVERED:
+            path = root / item
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("int required() { return 0; }\n")
         report = root / "coverage.json"
 
         def check(files, expected):
             report.write_text(json.dumps({"files": [{"file": f} for f in files]}))
             assert run(root, source, report) == expected
 
-        check([required], 0)
+        check([required, *sorted(REQUIRED_COVERED)], 0)
         check([], 1)                         # missing TU
         check(["/outside/not-production.cpp"], 1)  # outside source
         report.write_text("not-json")

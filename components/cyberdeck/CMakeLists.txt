@@ -44,7 +44,12 @@ idf_component_register(
         "src/apps/runtime/cyberdeck_app_facades.cpp"
          "src/apps/runtime/cyberdeck_window_manager.cpp"
          "src/apps/editor/cyberdeck_editor_model.cpp"
-         "src/apps/editor/cyberdeck_editor_app.cpp"
+        "src/apps/editor/cyberdeck_editor_app.cpp"
+           "src/apps/network/cyberdeck_netdiag_app.cpp"
+            "src/apps/network/cyberdeck_netdiag_controller.cpp"
+            "src/apps/network/cyberdeck_netdiag_dns_adapter.cpp"
+             "src/apps/network/cyberdeck_netdiag_tcp_adapter.cpp"
+             "src/apps/network/cyberdeck_netdiag_https_adapter.cpp"
          "src/platform/display/cyberdeck_editor_view.cpp"
         "src/apps/demo/cyberdeck_demo_app.cpp"
           "src/apps/system/cyberdeck_system_apps.cpp"
@@ -116,6 +121,7 @@ idf_component_register(
          esp_http_server
          esp_http_client
          esp-tls
+         lwip
          json
         bt
         esp_hosted

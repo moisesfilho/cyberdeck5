@@ -1,5 +1,28 @@
 # cyberdeck5 Code Map
 
+## Planos de aplicativos e recursos futuros
+
+Os planos numerados em `docs/` organizam a evolução proposta sem representar
+funcionalidade já implementada. A ordem é intencional: diagnóstico de rede,
+levantamento Wi-Fi, player, inspeção BLE, IA e então recursos transversais.
+
+| Plano | Escopo |
+| --- | --- |
+| `docs/01-network-diagnostics-plan.pt-BR.md` | Plano de diagnóstico ativo limitado; registra a decisão DNS/TCP/HTTPS, os limites de timeout/cancelamento e os gates pendentes. `docs/NETDIAG.md` descreve os comandos e o estado da implementação. |
+| `docs/02-wifi-survey-plan.pt-BR.md` | Levantamento passivo de APs e tendências de sinal. |
+| `docs/03-audio-player-plan.pt-BR.md` | Player local no SD via codec/saída de áudio Tab5. |
+| `docs/04-ble-inspector-plan.pt-BR.md` | Inventário BLE e inspeção GATT explícita, sem coleta de segredos. |
+| `docs/05-lan-ai-assistant-plan.pt-BR.md` | Assistente de texto via servidor de IA confiável na LAN. |
+| `docs/06-investigation-notebook-plan.pt-BR.md` | Sessões locais de notas e relatórios sanitizados. |
+| `docs/07-environment-comparison-plan.pt-BR.md` | Comparação consentida de inventários e medições salvos. |
+| `docs/08-guided-diagnostics-plan.pt-BR.md` | Fluxos determinísticos de diagnóstico por camadas. |
+| `docs/09-voice-notes-plan.pt-BR.md` | Gravação e reprodução local de notas de voz. |
+| `docs/10-mission-profiles-plan.pt-BR.md` | Perfis de escopo, limites e retenção por contexto de uso. |
+
+Os planos consideram o runtime atual de aplicativos compilados, as portas e
+grants do SDK, os serviços existentes de Wi-Fi/BLE/SD e os testes host. Eles
+devem ser revisitados contra o código vigente antes de cada implementação.
+
 ## Plano de poweroff
 
 - Testes reais em 13/out/2026: após correções de stack PSRAM e autoexclusão BLE,
@@ -463,6 +486,84 @@ destrói recursos potencialmente usados.
 
 ### UI e terminal
 
+### Diagnóstico de rede (controller, adapters e app)
+
+- `components/cyberdeck/include/apps/network/cyberdeck_netdiag_controller.h` e
+  `src/apps/network/cyberdeck_netdiag_controller.cpp` definem o controller puro
+  de orquestração `cyberdeck_netdiag::controller`: discriminant seleciona uma
+   operação explícita DNS/TCP/HTTPS, valida apenas seus campos (inclusive URL
+   HTTPS somente com autoridade, sem caminho) e despacha somente
+  essa operação (TCP pode resolver o host como requisito interno; HTTPS não
+  inicia DNS/TCP explícitos). Mantém token, admissão/rate limit, cancelamento
+  lógico, grant revalidado por etapa, deadline por operação e publicação stale-safe.
+  As portas de DNS/TCP/HTTPS/clock
+  são injetadas. `cyberdeck_netdiag_dns_adapter.{h,cpp}` implementa a porta
+  `resolve_ipv4` com uma única slot estática; submissão e resolução ocorrem no
+  tcpip_thread, resultado inline/assíncrono é suportado, e timeout deixa a slot
+  ocupada até callback tardio (ou reboot), sem liberar contexto ainda referenciado.
+  O adapter aceita apenas IPv4 e não inicia operação HTTP/TCP. O
+  `cyberdeck_netdiag_tcp_adapter.{h,cpp}` implementa `tcp_connect` com IPv4
+  explícito, socket TCP não bloqueante, deadline monotônico, espera writable em
+  fatias bounded, validação de `SO_ERROR` e fechamento local do descritor em
+   todos os caminhos proprietários; não envia payload nem inicia HTTP/TLS. Ambos
+   são usados pela integração runtime/app. REQ-ND-01..08.
+   `tests/host/keymap/test_netdiag_controller.cpp` liga o TU real com portas
+   determinísticas e ASan/UBSan para admissão, validação, rate limit, estágios,
+   falhas, grant, cancelamento e snapshot; TEST-ND-01..04 verificam
+   dispatch isolado por operação, sem tráfego de etapas implícitas.
+   `test_netdiag_dns_adapter.cpp` liga o TU real do DNS
+  com shims determinísticos apenas para tcpip/DNS/FreeRTOS/clock; cobre resultado
+  inline/cache/async, callback inválido, enqueue failure, slot ocupado, timeout,
+  retenção do contexto e callback tardio/race no limite via alvo focado
+   `make test_netdiag_dns_adapter`, também executado no agregado.
+   `test_netdiag_tcp_adapter.cpp` liga o TU real do adapter TCP e shima somente
+   socket/fcntl/select/getsockopt/close/clock; cobre conexão imediata e
+   não bloqueante, recusa, SO_ERROR, deadline, falhas de select, entrada inválida
+    e ownership de close. Não prova rede real nem integração runtime.
+    `cyberdeck_netdiag_https_adapter.{h,cpp}` implementa `https_head` com
+    `esp_http_client` assíncrono sequencial; após cada `ESP_ERR_HTTP_EAGAIN`,
+    cede uma vez ao scheduler via `vTaskDelay(1)` antes do próximo `perform`,
+    sem chamadas concorrentes no mesmo handle. Mantém HEAD sem payload, CRT bundle,
+   redirecionamento desabilitado, rejeição de corpo e deadline monotônico; não
+   cancela concorrente nem faz fallback GET. Metadata de headers do ESP-IDF
+    não tem limite rígido garantido. O adapter está integrado ao app e ao harness
+     host. Os alvos focados de controller/DNS/TCP/HTTPS compilam os TUs reais com
+     `--coverage` além de ASan/UBSan, para que os caminhos exercitados integrem
+     o mesmo relatório gcovr do agregado. `test_netdiag_https_adapter.cpp` liga
+     o TU real com shims determinísticos
+    somente para HTTP-client/CRT-bundle/clock/FreeRTOS delay; cobre HEAD, URL/hostname,
+    EAGAIN e delay único entre retries, EAGAIN para sucesso/deadline sem perform
+    concorrente, redirect, 405 sem GET, body reject, erros e cleanup sob ASan/UBSan.
+    `netdiag_traceability.md` rastreia TEST-ND-04/05 e registra os limites de
+    cobertura/aceitação. `test_netdiag_app` executa harness comportamental real
+    da app/runtime/controller/adapters (47 checks), incluindo timeout/reap e
+    quarentena de restart; ainda não prova integração de rede/TLS real nem todos
+    os caminhos de falha do runtime de plataforma. Scope guard exige app e os
+    quatro TUs controller/adapters cobertos, sem allowlist; fixture negativa
+    comprova falha quando falta o TU da app. O agregado executa o app harness
+     antes de gcovr/guard. Com GCC/gcov 13.4 local, o agregado passa o mínimo
+     de 59% branches (59,3%); o toolchain 15.2 mede branches de modo diferente.
+      Os commits `dbe3a94` (`38916411814`) e `8e41338` (tentativa 2 de
+      `38918012957`) passaram no Quality Gate remoto; commits posteriores
+      ainda dependem de CI no novo estado. `netdiag_traceability.md` registra
+       a validação Serial-JTAG direcionada no Tab5 (status, DNS, TCP, HTTPS 200,
+       405 final, `/head` funcional, redirect rejeitado, rate limit e
+       cancelamento); uma captura serial posterior confirmou `Failed to verify
+       certificate`/falha de handshake TLS e `https_failed` para certificado
+       autoassinado. O certificado expirado continua inconclusivo (timeout);
+       não houve captura de pacotes nem prova de todas as corridas de teardown.
+    Metadata de headers não possui limite rígido garantido.
+    `cyberdeck_netdiag_app.{h,cpp}` compõe o controller real com os três adapters
+   e um worker por token. O comando conserva `app_grant()` opaco para revalidar
+   autorização em cada etapa; o construtor aceita `application_platform` para
+   substituir clock/adapters/task/wait sem duplicar a lógica de aplicação.
+    Stop cancela logicamente e aguarda com timeout; timeout mantém worker,
+    controller e contexto vivos, e bloqueia start/restart/operações até completion.
+    Completion só libera o handle via `wait_worker` (join/reap) uma vez; stop
+    pendente é finalizado antes de novo start, sem reset/restart inseguro.
+    Registro permanece em `cyberdeck_system_apps.cpp`; manifest e comando
+    `netdiag` são preservados.
+
 | Arquivo | Simbolos/funcao | Papel |
 | --- | --- | --- |
 | `tests/host/keymap/test_shell_session.cpp` + `tests/host/keymap/shim/esp_err.h`, `shim/esp_wifi_types.h`, `shim/freertos/FreeRTOS.h` | harness comportamental da sessão | Testa `handle_key`/`execute_line`/insercao de texto com um `host` falso: edicao e historico, comandos locais, portas de tela/Wi-Fi/bateria/log/SSH, tokens de conexao, passe com varios newlines, buffer de passkey e `help` dinamico via runtime real (eco `/$ help`, saida completa exata e ordenacao legacy/app, tags, manifests registrados incluindo lifecycle parado, omissao sem command, deduplicacao, precedencia legacy e ordem deterministica). Os shims sao minimos e nao espelham logica de producao. |
@@ -562,7 +663,8 @@ and emits structured bounded logger events for start, stop, failure and timeout.
 | `components/cyberdeck/include/apps/runtime/cyberdeck_app_storage.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp` | `storage_facade::bounded_read`, `read_result` | API SDK pública de leitura com buffer pertencente ao chamador, EOF/erro explícitos e limite de 12288 bytes; usa internamente a operação `cat` já confinada, sem expor detalhes de filesystem. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_app_logger.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_logger.cpp` | `logger::event`, `logger::write` | Porta SDK com níveis tipados, tag/payload de tamanho fixo e rejeição de campos sensíveis; o adaptador `event_log_logger` preserva o lifecycle e o backend persistente existente. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_command_catalog.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_command_catalog.cpp` | `command_catalog::build`, `dispatch` | Catálogo bounded derivado dos manifestos compilados; dispatch retorna nulo para comandos legados, preservando o parser do shell. O runtime encaminha o token declarado, inclusive `edit`, preserva os argumentos de `edit <arquivo>` e inicia de forma lazy/idempotente o app `foreground` antes do execute pelo caminho normal de dependências, grants e lifecycle; falha de start rejeita o comando, enquanto apps `service` não são auto-iniciados. |
-| `components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp` | `resource`, `grant`, `runtime::app_grant`, `runtime::inspect_sd_package`, `resource_from_name` | Autoridade bounded de grants: valida recursos declarados no manifesto (desconhecidos/duplicados/overflow recusados), reserva quotas fixas de resources/grants no registro e em cada start, valida assets compilados sem bloquear catálogo vazio, separa capabilities metadados, cria geração por ciclo `running` e revoga quota/grants antes e depois do teardown (inclusive em falha de init/start); restart re-reserva a mesma quota sem alterar o contrato dos grants. Limite de 16 aplicações preservado. A fronteira SD expõe somente validação de metadata/data e nunca instalação ou execução. |
+| `components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp` | `resource`, `grant`, `runtime::app_grant`, `application::app_grant`, `runtime::inspect_sd_package`, `resource_from_name` | Autoridade bounded de grants: valida recursos declarados no manifesto (desconhecidos/duplicados/overflow recusados), reserva quotas fixas de resources/grants no registro e em cada start, valida assets compilados sem bloquear catálogo vazio, separa capabilities metadados, cria geração por ciclo e revoga geração/grant antes do teardown. Mutex curto serializa valid/allows, publicação/cópia do grant da aplicação e as transições de estado observadas por grants; não é mantido durante hooks, logging ou quota operations. Falhas de init/start invalidam sob o mesmo lock; restart recebe geração nova. TEST-GRANT-01..08 planejados pelo tester cobrem linearização, falhas, cópias e concorrência/TSan. Limite de 16 aplicações preservado. A fronteira SD expõe somente validação de metadata/data e nunca instalação ou execução. |
+| `tests/host/keymap/grant_traceability.md` | `REQ/AC-GRANT-01..05` → `TEST-GRANT-01..08` | Matriz de rastreabilidade da validação isolada de grants, incluindo cenários comportamentais e execução ThreadSanitizer. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_resource_catalog.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp` | `resource_catalog`, `compiled_resources`, `asset_metadata`, `verify_asset` | Catálogo readonly de até 16 assets compilados, com metadados estáticos, lookup por índice/ID, checksum e ausência fail-closed. O registro dos system apps faz diagnóstico bounded e não bloqueia boot quando o catálogo está vazio; não possui mutação, backend de escrita ou caminho de código executável. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_sd_package.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp` | `sd_package`, `sd_package_metadata`, `sd_package_view` | Validador host-testável de pacote SD somente para dados/assets: `format_version` compatível, versão, nome, tamanho máximo de 12288 bytes e checksum FNV-1a. Ausente, corrompido ou incompatível é rejeitado; o módulo não instala nem interpreta conteúdo e o system-app registry apenas diagnostica a ausência opcional. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_app_quota.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp` | `quota_limits`, `quota_usage`, `quota` | Quotas explícitas e fixas para resources/grants, stack, fila, bounded read, logger, output e lifecycle. O runtime reserva resources/grants por manifesto no registro e em cada ciclo de start; `revoke()` é chamado em arrays de 16 aplicações antes e depois do teardown, incluindo falhas de init/start, com geração monotônica para invalidar ciclos anteriores. |
@@ -763,6 +865,42 @@ permanece validacao de hardware pela ponte Serial-JTAG.
 O callback de `GOT_IP` somente publica snapshot. Trabalho pesado, SNTP,
 persistencia e notificacao da UI ocorrem no contexto apropriado. Tokens
 monotônicos impedem callbacks atrasados de alterar uma tentativa nova.
+
+## Diagnóstico explícito de rede
+
+- `components/cyberdeck/include/apps/network/cyberdeck_netdiag_app.h` e
+  `src/apps/network/cyberdeck_netdiag_app.cpp` implementam a app compilada
+  `cyberdeck.netdiag`. É demand-started pelo comando shell `netdiag`, depende
+  de event log/Wi-Fi e exige grant `network`; usa worker único, alvos bounded,
+  resultado consultável/cancelamento e status local da interface STA. `cancel`
+  e `result` são atendidos antes da verificação de worker ocupado: cancelamento
+  publica imediatamente o estado lógico no controller, sem tocar nos recursos
+  que o worker ainda possui; novas operações seguem bloqueadas até completion/reap.
+  Stop timeout
+  mantém worker/grant/controller vivos e recusa operações e restart até
+  `wait_worker` confirmar completion; o handle é reaped uma única vez e stop
+  pendente é finalizado antes da próxima inicialização.
+- `cyberdeck_netdiag_controller.{h,cpp}` é o controller puro compilado no host
+  pelo `test_netdiag_controller`; seu discriminant escolhe uma ação explícita:
+  DNS isolado, TCP (DNS interno para conectar seguido de TCP) ou HTTPS sem
+  chamadas DNS/TCP separadas. `netdiag_traceability.md` registra os cenários
+   focados. `test_netdiag_app.cpp` liga os TUs reais da app, controller,
+   runtime, adapters DNS/TCP/HTTPS e dependências com shims externos; cobre
+     grant ausente/revogado, dispatch, concorrência, resultados, cancelamento,
+     coexistência do comando SSH, falha de criação, boundary de rate limit,
+     callback DNS tardio e quarentena em timeout/reap. O scheduler host é
+     determinístico e não executa rede real; HTTP/TLS é simulado, portanto não
+      prova conectividade nem TEST-ND-08. O timeout/restart regression exige
+      recusa até completion/reap; o cancelamento lógico permanece visível ao
+      poll de resultado e não libera recursos do worker.
+   `tools/coverage_scope_guard.py` classifica app/controller/adapters como
+   obrigatórios cobertos (não allowlist), e `test_coverage_scope_guard.py`
+   rejeita ausência do TU da app; o agregado com GCC/gcov 13.4 local passou
+   o gate gcovr (86,5% linhas, 94,9% funções e 59,3% branches). TEST-ND-08
+   passou no Quality Gate dos commits `dbe3a94` (`38916411814`) e `8e41338`
+   (`38918012957`, tentativa 2); commits posteriores exigem novo gate. O teste
+   físico dirigido está registrado em `netdiag_traceability.md`. Não implementa
+   ICMP/ping nem scan.
 
 ### Bluetooth LE no ESP32-C6 hospedado (REQ-BLE-001..014)
 
