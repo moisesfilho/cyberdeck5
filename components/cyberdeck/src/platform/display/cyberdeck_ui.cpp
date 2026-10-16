@@ -43,6 +43,7 @@
 #include "freertos/task.h"
 #include "esp_timer.h"
 #include <atomic>
+#include <cerrno>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -1102,17 +1103,35 @@ struct survey_export_job {
     std::uint64_t token{0};
     char path[64]{};
     std::string payload{};
+    SemaphoreHandle_t start_gate{nullptr};
 };
 
 void wifi_survey_export_worker(void *argument)
 {
     std::unique_ptr<survey_export_job> job(static_cast<survey_export_job *>(argument));
-    const bool ok = job && cyberdeck_wifi_audit::persist_document(
+    if (job == nullptr) {
+        ESP_LOGW("cyberdeck_ui", "wifi survey export worker: stage=missing_job");
+        s_wifi_survey_export_result.ok = false;
+        s_wifi_survey_export_done.store(true, std::memory_order_release);
+        vTaskDelete(nullptr);
+        return;
+    }
+    (void)xSemaphoreTake(job->start_gate, portMAX_DELAY);
+    vSemaphoreDelete(job->start_gate);
+    job->start_gate = nullptr;
+    ESP_LOGI("cyberdeck_ui", "wifi survey export worker: stage=started");
+    errno = 0;
+    const bool ok = cyberdeck_wifi_audit::persist_document(
         job->path, job->token, job->payload,
         cyberdeck_wifi_audit_persistence::destination_policy::survey);
+    const int persistence_errno = errno;
     s_wifi_survey_export_result.ok = ok;
     if (job != nullptr && ok) std::snprintf(s_wifi_survey_export_result.path,
                                             sizeof(s_wifi_survey_export_result.path), "%s", job->path);
+    if (ok) ESP_LOGI("cyberdeck_ui", "wifi survey export worker: stage=completed outcome=published");
+    else ESP_LOGW("cyberdeck_ui",
+                  "wifi survey export worker: stage=persist_document outcome=failed errno=%d",
+                  persistence_errno);
     s_wifi_survey_export_done.store(true, std::memory_order_release);
     vTaskDelete(nullptr);
 }
@@ -1889,39 +1908,75 @@ bool shell_session_host::wifi_survey_cancel() {
 bool shell_session_host::wifi_survey_export(bool confirm, bool masked) {
     const std::uint64_t now = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
     if (!confirm) {
-        if (s_wifi_survey.active() || !s_wifi_survey.finished()) return false;
+        if (s_wifi_survey.active() || !s_wifi_survey.finished()) {
+            ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=survey_active_or_unfinished");
+            return false;
+        }
         s_wifi_survey_confirmation_pending = true;
         s_wifi_survey_confirmation_masked = masked;
         s_wifi_survey_confirmation_deadline_ms = now + 30000;
         return true;
     }
-    if (!s_wifi_survey_confirmation_pending || masked != s_wifi_survey_confirmation_masked ||
-        now > s_wifi_survey_confirmation_deadline_ms || s_wifi_survey.active()) {
+    if (!s_wifi_survey_confirmation_pending) {
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=pending_absent");
+        return false;
+    }
+    if (now > s_wifi_survey_confirmation_deadline_ms) {
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=pending_expired");
+        s_wifi_survey_confirmation_pending = false;
+        return false;
+    }
+    if (masked != s_wifi_survey_confirmation_masked) {
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=mode_mismatch");
+        s_wifi_survey_confirmation_pending = false;
+        return false;
+    }
+    if (s_wifi_survey.active()) {
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=survey_active");
         s_wifi_survey_confirmation_pending = false;
         return false;
     }
     s_wifi_survey_confirmation_pending = false;
     const std::string payload = s_wifi_survey.export_text(masked);
     const std::string path = wifi_survey_save_path();
-    if (payload.empty() || path.empty()) return false;
+    if (payload.empty() || path.empty()) {
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=%s",
+                 payload.empty() ? "payload_empty" : "path_empty");
+        return false;
+    }
     bool expected = false;
-    if (!s_wifi_survey_export_busy.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return false;
+    if (!s_wifi_survey_export_busy.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=busy");
+        return false;
+    }
     auto *job = new (std::nothrow) survey_export_job{};
     if (job == nullptr) {
         s_wifi_survey_export_busy.store(false, std::memory_order_release);
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=job_allocation_failed");
         return false;
     }
     job->token = ++s_wifi_survey_export_token;
     if (job->token == 0) job->token = ++s_wifi_survey_export_token;
     std::snprintf(job->path, sizeof(job->path), "%s", path.c_str());
     job->payload = payload;
+    job->start_gate = xSemaphoreCreateBinary();
+    if (job->start_gate == nullptr) {
+        delete job;
+        s_wifi_survey_export_busy.store(false, std::memory_order_release);
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=start_gate_creation_failed");
+        return false;
+    }
     s_wifi_survey_export_result = {};
     s_wifi_survey_export_done.store(false, std::memory_order_release);
     if (xTaskCreate(wifi_survey_export_worker, "wifi_survey_io", 8192, job, 4, nullptr) != pdPASS) {
+        vSemaphoreDelete(job->start_gate);
         delete job;
         s_wifi_survey_export_busy.store(false, std::memory_order_release);
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=create_task_failed");
         return false;
     }
+    ESP_LOGI("cyberdeck_ui", "wifi survey export accepted: mode=%s", masked ? "masked" : "unmasked");
+    (void)xSemaphoreGive(job->start_gate);
     return true;
 }
 std::string shell_session_host::wifi_survey_render() const {

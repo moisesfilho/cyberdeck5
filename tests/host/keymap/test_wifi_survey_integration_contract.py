@@ -106,8 +106,57 @@ require("Timeout aguardando callback survey" in else_branch,
 require(all(token not in else_branch for token in
             ("vQueueDelete(s_wifi_survey_scan_queue)",
              "vSemaphoreDelete(s_wifi_survey_context_mutex)",
-             "vSemaphoreDelete(s_wifi_survey_callback_done)")),
+         "vSemaphoreDelete(s_wifi_survey_callback_done)")),
         "timeout quarantine preserves survey queue, mutex, and completion semaphore")
+
+export_start = UI.find("bool shell_session_host::wifi_survey_export(bool confirm, bool masked)")
+export_end = UI.find("std::string shell_session_host::wifi_survey_render()", export_start)
+export = UI[export_start:export_end] if export_start >= 0 and export_end > export_start else ""
+worker_start = UI.find("void wifi_survey_export_worker(void *argument)")
+worker_end = UI.find("void process_wifi_survey(lv_timer_t *)", worker_start)
+worker = UI[worker_start:worker_end] if worker_start >= 0 and worker_end > worker_start else ""
+require("xSemaphoreCreateBinary()" in export and
+        export.index("xTaskCreate(wifi_survey_export_worker") < export.index("wifi survey export accepted:") <
+        export.index("xSemaphoreGive(job->start_gate)"),
+        "worker is gated until accepted is logged, then released")
+require("xSemaphoreTake(job->start_gate, portMAX_DELAY)" in worker and
+        worker.index("xSemaphoreTake(job->start_gate, portMAX_DELAY)") <
+        worker.index("stage=started"),
+        "worker cannot log started before consuming the acceptance gate")
+create_failure_start = export.find('if (xTaskCreate(wifi_survey_export_worker')
+create_failure = export[create_failure_start:] if create_failure_start >= 0 else ""
+require('reason=create_task_failed' in create_failure and
+        'vSemaphoreDelete(job->start_gate)' in create_failure and
+        create_failure.index('vSemaphoreDelete(job->start_gate)') < create_failure.index('delete job;') <
+        create_failure.index('s_wifi_survey_export_busy.store(false') and
+        create_failure.index('reason=create_task_failed') > create_failure.index('s_wifi_survey_export_busy.store(false'),
+        "task creation failure reports a distinct reason and releases gate/job/busy")
+gate_failure_start = export.find('if (job->start_gate == nullptr)')
+gate_failure_end = export.find('s_wifi_survey_export_result = {}', gate_failure_start)
+gate_failure = export[gate_failure_start:gate_failure_end] if gate_failure_start >= 0 and gate_failure_end > gate_failure_start else ""
+require('reason=start_gate_creation_failed' in gate_failure and
+        gate_failure.index('delete job;') < gate_failure.index('s_wifi_survey_export_busy.store(false') <
+        gate_failure.index('reason=start_gate_creation_failed'),
+        "gate creation failure reports a distinct reason and releases job/busy")
+require('persist_document(' in worker and
+        worker.index('persist_document(') < worker.index('stage=completed outcome=published') <
+        worker.rindex('s_wifi_survey_export_done.store(true'),
+        "success completion/ACK signal follows successful persistence publication")
+published_line = next((line.strip() for line in worker.splitlines()
+                       if 'stage=completed outcome=published' in line), '')
+completion_start = UI.find('void process_wifi_survey(lv_timer_t *)')
+completion_end = UI.find('void ', completion_start + len('void process_wifi_survey(lv_timer_t *)'))
+completion = UI[completion_start:completion_end] if completion_start >= 0 and completion_end > completion_start else ""
+require(published_line.startswith('if (ok) ESP_LOGI') and
+        'append_line(std::string("wifi survey saved: ")' in completion and
+        completion.index('if (s_wifi_survey_export_result.ok)') <
+        completion.index('append_line(std::string("wifi survey saved: ")'),
+        "saved ACK is conditional on persistence reporting published success")
+export_log_lines = [line for line in export.splitlines() if 'ESP_LOG' in line]
+worker_log_lines = [line for line in worker.splitlines() if 'ESP_LOG' in line]
+require(all(not re.search(r'payload|ssid|bssid|job->path|path\.c_str', line, re.I)
+            for line in export_log_lines + worker_log_lines),
+        "export diagnostic logs do not include SSID, BSSID, payload, or destination")
 
 for passed, description in checks:
     if not passed:
