@@ -24,6 +24,7 @@ idf_component_register(
         "src/platform/display/cyberdeck_wifi_indicator.cpp"
         "src/platform/display/cyberdeck_wifi_icon.cpp"
         "src/apps/wifi/cyberdeck_wifi_menu.cpp"
+        "src/apps/wifi/cyberdeck_wifi_survey.cpp"
         "src/apps/wifi/cyberdeck_wifi_state_machine.cpp"
         "src/platform/display/cyberdeck_clock.cpp"
         "src/platform/display/cyberdeck_screen_protection.cpp"

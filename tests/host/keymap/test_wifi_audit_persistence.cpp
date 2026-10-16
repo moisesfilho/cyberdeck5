@@ -50,6 +50,8 @@ int checks = 0;
 
 constexpr std::string_view destination =
     "/sdcard/wifi-audit/wifi-audit-20260924-000405.txt";
+constexpr std::string_view survey_destination =
+    "/sdcard/wifi-survey/wifi-survey-20261016-120000.txt";
 constexpr std::string_view temporary_suffix = ".tmp";
 constexpr std::string_view backup_suffix = ".bak";
 
@@ -163,6 +165,16 @@ public:
     }
 
     void fail_open() { set_flag(&fail_open_); }
+    void fail_unlink(std::string_view path)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        unlink_failures_.insert(copy_string(path));
+    }
+    void fail_inspect(std::string_view path)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        inspect_errors_.insert(copy_string(path));
+    }
     void fail_write() { set_flag(&fail_write_); }
     void fail_fsync() { set_flag(&fail_fsync_); }
     void fail_close() { set_flag(&fail_close_); }
@@ -233,6 +245,7 @@ public:
         const std::string name = copy_string(path);
         std::lock_guard<std::mutex> lock(mutex_);
         trace_.record("inspect:" + name);
+        if (inspect_errors_.find(name) != inspect_errors_.end()) return artifact_state::error;
         if (race_armed_ && name == destination && ++race_destination_inspects_ == 2) {
             files_[name] = race_content_;
             special_.erase(name);
@@ -328,6 +341,7 @@ public:
         const std::string name = copy_string(path);
         std::lock_guard<std::mutex> lock(mutex_);
         trace_.record("unlink:" + name);
+        if (unlink_failures_.find(name) != unlink_failures_.end()) return -1;
         const auto found = files_.find(name);
         if (found == files_.end()) return -1;
         files_.erase(found);
@@ -345,6 +359,8 @@ private:
     mutable std::mutex mutex_;
     std::map<std::string, std::string> files_;
     std::set<std::string> special_;
+    std::set<std::string> inspect_errors_;
+    std::set<std::string> unlink_failures_;
     std::map<int, std::string> descriptors_;
     std::map<std::string, int> rename_failures_;
     int next_fd_ = 1;
@@ -489,6 +505,204 @@ void test_success_publishes_exact_content_before_ack()
     CHECK(!worker.drain(no_more));
 }
 
+void test_survey_policy_uses_its_confined_root_and_payload_limit()
+{
+    event_trace trace;
+    memory_file_ops files(trace);
+    scripted_sink sink(trace);
+    audit_persistence worker(files, sink);
+    const std::string payload = "version=1\nformat=cyberdeck-wifi-survey\n";
+    CHECK(worker.initialize());
+    CHECK(worker.enqueue(730, survey_destination, payload, destination_policy::survey) ==
+          submit_status::accepted);
+    CHECK(worker.pump_one());
+    const completion result = sink.delivered_at(0);
+    CHECK(result.ok && result.path == survey_destination && result.data == payload);
+    std::string on_disk;
+    CHECK(files.get(survey_destination, on_disk) && on_disk == payload);
+    CHECK(!files.exists(destination));
+    CHECK(trace.contains(rename_event(
+        "/sdcard/wifi-survey/.wifi-survey-20261016-120000.txt.tmp",
+        survey_destination)));
+    CHECK(worker.enqueue(731, destination, payload, destination_policy::survey) ==
+          submit_status::rejected_invalid);
+    CHECK(worker.enqueue(732, survey_destination, std::string(max_survey_payload + 1, 'x'),
+                         destination_policy::survey) == submit_status::rejected_invalid);
+
+    event_trace limit_trace;
+    memory_file_ops limit_files(limit_trace);
+    scripted_sink limit_sink(limit_trace);
+    audit_persistence limit_worker(limit_files, limit_sink);
+    const std::string maximum_payload(max_survey_payload, 'v');
+    CHECK(limit_worker.initialize());
+    CHECK(limit_worker.enqueue(735, survey_destination, maximum_payload,
+                               destination_policy::survey) == submit_status::accepted);
+    CHECK(limit_worker.pump_one());
+    CHECK(limit_sink.delivered_at(0).ok);
+    CHECK(limit_sink.delivered_at(0).bytes == max_survey_payload);
+    CHECK(limit_files.get(survey_destination, on_disk) && on_disk == maximum_payload);
+
+    event_trace failure_trace;
+    memory_file_ops failure_files(failure_trace);
+    scripted_sink failure_sink(failure_trace);
+    audit_persistence failure_worker(failure_files, failure_sink);
+    failure_files.fail_write();
+    CHECK(failure_worker.initialize());
+    CHECK(failure_worker.enqueue(736, survey_destination, payload, destination_policy::survey) ==
+          submit_status::accepted);
+    CHECK(failure_worker.pump_one());
+    check_failure(failure_sink.delivered_at(0), persistence_error::write_failed);
+    CHECK(!failure_files.exists(survey_destination));
+    CHECK(failure_files.exists("/sdcard/wifi-survey/.wifi-survey-20261016-120000.txt.tmp"));
+
+    event_trace audit_trace;
+    memory_file_ops audit_files(audit_trace);
+    scripted_sink audit_sink(audit_trace);
+    audit_persistence audit_worker(audit_files, audit_sink);
+    CHECK(audit_worker.initialize());
+    CHECK(audit_worker.enqueue(733, destination, real_audit_payload(), destination_policy::audit) ==
+          submit_status::accepted);
+    CHECK(audit_worker.pump_one());
+    check_success(audit_sink.delivered_at(0), 733, real_audit_payload());
+    CHECK(audit_worker.enqueue(734, survey_destination, payload, destination_policy::audit) ==
+          submit_status::rejected_invalid);
+}
+
+void test_audit_policy_limit_and_unknown_policy_fail_closed()
+{
+    event_trace trace;
+    memory_file_ops files(trace);
+    scripted_sink sink(trace);
+    audit_persistence worker(files, sink);
+    CHECK(worker.initialize());
+    const std::string audit_maximum(max_payload, 'a');
+    CHECK(worker.enqueue(737, destination, audit_maximum, destination_policy::audit) ==
+          submit_status::accepted);
+    CHECK(worker.pump_one());
+    CHECK(sink.delivered_at(0).ok && sink.delivered_at(0).bytes == max_payload);
+
+    const std::string audit_oversize(max_payload + 1, 'b');
+    CHECK(worker.enqueue(738, destination, audit_oversize, destination_policy::audit) ==
+          submit_status::rejected_invalid);
+    const auto unknown = static_cast<destination_policy>(0xff);
+    CHECK(worker.enqueue(739, destination, "must-not-persist\n", unknown) ==
+          submit_status::rejected_invalid);
+    CHECK(worker.enqueue(740, survey_destination, "must-not-persist\n", unknown) ==
+          submit_status::rejected_invalid);
+    CHECK(files.write_calls() == 1);
+    CHECK(!files.exists("/sdcard/wifi-audit/.wifi-audit-20260924-000405.txt.tmp"));
+    CHECK(!files.exists("/sdcard/wifi-survey/.wifi-survey-20261016-120000.txt.tmp"));
+}
+
+void test_destination_policy_rejects_malformed_timestamp_names()
+{
+    event_trace trace;
+    memory_file_ops files(trace);
+    scripted_sink sink(trace);
+    audit_persistence worker(files, sink);
+    CHECK(worker.initialize());
+    const std::string malformed_date =
+        "/sdcard/wifi-survey/wifi-survey-2026101x-120000.txt";
+    const std::string malformed_suffix =
+        "/sdcard/wifi-survey/wifi-survey-20261016-120000.bin";
+    const std::string nested_name =
+        "/sdcard/wifi-survey/wifi-survey-20261016-120000.txt/extra";
+    const std::string control_name =
+        "/sdcard/wifi-survey/wifi-survey-20261016-120000.\ntxt";
+    const std::string slash_in_name =
+        "/sdcard/wifi-survey/wifi-survey-20261016-12/0000.txt";
+    const std::string backslash_in_name =
+        "/sdcard/wifi-survey/wifi-survey-20261016-120000\\.txt";
+    const std::string wrong_root =
+        "/tmp/wifi-survey/wifi-survey-20261016-120000.txt";
+    const std::string wrong_policy_root =
+        "/sdcard/wifi-audit/wifi-audit-20261016-120000.txt";
+    const std::string oversized_path(4096, 'x');
+    const auto rejected = [&](std::string_view path, destination_policy policy) {
+        CHECK(worker.enqueue(741, path, "bounded survey data\n", policy) ==
+              submit_status::rejected_invalid);
+    };
+    rejected({}, destination_policy::survey);
+    rejected(oversized_path, destination_policy::survey);
+    rejected(wrong_root, destination_policy::survey);
+    rejected(wrong_policy_root, destination_policy::survey);
+    rejected(malformed_date, destination_policy::survey);
+    rejected(malformed_suffix, destination_policy::survey);
+    rejected(nested_name, destination_policy::survey);
+    rejected(control_name, destination_policy::survey);
+    rejected(slash_in_name, destination_policy::survey);
+    rejected(backslash_in_name, destination_policy::survey);
+    CHECK(files.write_calls() == 0);
+    CHECK(files.rename_calls() == 0);
+    CHECK(sink.attempted_count() == 0);
+}
+
+void test_non_regular_recovery_artifacts_fail_closed()
+{
+    const std::string payload = "must not replace ambiguous filesystem entry\n";
+    const auto exercise_other = [&](std::string_view special_path,
+                                    bool race_live_destination) {
+        event_trace trace;
+        memory_file_ops files(trace);
+        scripted_sink sink(trace);
+        audit_persistence worker(files, sink);
+        if (race_live_destination) files.inject_destination_race("known destination\n");
+        files.make_special(special_path);
+        CHECK(worker.initialize());
+        CHECK(worker.enqueue(742, destination, payload) == submit_status::accepted);
+        CHECK(worker.pump_one());
+        check_failure(first_result(worker, sink), persistence_error::recovery_failed);
+        CHECK(!trace.contains("open:" + copy_string(temporary)));
+        CHECK(files.write_calls() == 0);
+    };
+
+    exercise_other(destination, false);
+    exercise_other(temporary, false);
+    exercise_other(backup, false);
+    exercise_other(backup, true);
+    exercise_other(temporary, true);
+}
+
+void test_inspection_errors_fail_closed_without_mutation()
+{
+    for (const std::string *path : {&temporary, &backup}) {
+        event_trace trace;
+        memory_file_ops files(trace);
+        scripted_sink sink(trace);
+        audit_persistence worker(files, sink);
+        files.fail_inspect(*path);
+        CHECK(worker.initialize());
+        CHECK(worker.enqueue(743, destination, real_audit_payload()) == submit_status::accepted);
+        CHECK(worker.pump_one());
+        check_failure(sink.delivered_at(0), persistence_error::recovery_failed);
+        CHECK(files.write_calls() == 0);
+        CHECK(files.rename_calls() == 0);
+        CHECK(!files.exists(destination));
+    }
+}
+
+void test_stale_sidecar_unlink_failure_blocks_new_transaction()
+{
+    event_trace trace;
+    memory_file_ops files(trace);
+    scripted_sink sink(trace);
+    audit_persistence worker(files, sink);
+    const std::string old_content = "proven-live-destination\n";
+    files.inject_destination_race(old_content);
+    files.put(backup, "stale-backup\n");
+    files.fail_unlink(backup);
+
+    CHECK(worker.initialize());
+    CHECK(worker.enqueue(744, destination, real_audit_payload()) == submit_status::accepted);
+    CHECK(worker.pump_one());
+    check_failure(sink.delivered_at(0), persistence_error::recovery_failed);
+    std::string saved;
+    CHECK(files.get(destination, saved) && saved == old_content);
+    CHECK(files.get(backup, saved) && saved == "stale-backup\n");
+    CHECK(files.write_calls() == 0);
+    CHECK(!trace.contains("open:" + copy_string(temporary)));
+}
+
 void test_existing_destination_uses_backup_then_publishes()
 {
     event_trace trace;
@@ -528,11 +742,14 @@ void test_existing_destination_uses_backup_then_publishes()
     CHECK(restore_old < trace.index("publish"));
 }
 
-enum class io_failure { write, fsync, close, rename };
+enum class io_failure { open, write, fsync, close, rename };
 
 void configure_io_failure(memory_file_ops &files, io_failure failure)
 {
     switch (failure) {
+    case io_failure::open:
+        files.fail_open();
+        break;
     case io_failure::write:
         files.fail_write();
         break;
@@ -551,6 +768,7 @@ void configure_io_failure(memory_file_ops &files, io_failure failure)
 persistence_error expected_error(io_failure failure)
 {
     switch (failure) {
+    case io_failure::open: return persistence_error::open_failed;
     case io_failure::write: return persistence_error::write_failed;
     case io_failure::fsync: return persistence_error::fsync_failed;
     case io_failure::close: return persistence_error::close_failed;
@@ -584,14 +802,22 @@ void run_io_failure_case(io_failure failure, bool existing_destination)
         CHECK(on_disk == old_content);
     } else {
         CHECK(!files.exists(destination));
-        // With no old destination there is no proof that a partial candidate
-        // is complete; it must remain available for recovery, never vanish.
-        CHECK(files.exists(temporary));
+        if (failure == io_failure::open) {
+            CHECK(!files.exists(temporary));
+        } else {
+            // With no old destination there is no proof that a partial
+            // candidate is complete; preserve it for recovery.
+            CHECK(files.exists(temporary));
+        }
     }
     CHECK(!result.ok);
-    if (failure != io_failure::rename) {
+    if (failure != io_failure::rename && failure != io_failure::open) {
         CHECK(!trace.contains(rename_event(temporary, destination)));
         CHECK(files.close_calls() == 1);
+    }
+    if (failure == io_failure::open) {
+        CHECK(files.close_calls() == 0);
+        CHECK(!files.exists(temporary));
     }
     if (failure == io_failure::fsync || failure == io_failure::close) {
         CHECK(files.fsync_calls() == 1);
@@ -602,6 +828,8 @@ void run_io_failure_case(io_failure failure, bool existing_destination)
 
 void test_all_io_failures_are_reported_without_success_ack()
 {
+    run_io_failure_case(io_failure::open, false);
+    run_io_failure_case(io_failure::open, true);
     run_io_failure_case(io_failure::write, false);
     run_io_failure_case(io_failure::fsync, false);
     run_io_failure_case(io_failure::close, false);
@@ -1036,6 +1264,12 @@ void test_concurrent_teardown_with_pump_enqueue_and_drain()
 int main()
 {
     test_success_publishes_exact_content_before_ack();
+    test_survey_policy_uses_its_confined_root_and_payload_limit();
+    test_audit_policy_limit_and_unknown_policy_fail_closed();
+    test_destination_policy_rejects_malformed_timestamp_names();
+    test_non_regular_recovery_artifacts_fail_closed();
+    test_inspection_errors_fail_closed_without_mutation();
+    test_stale_sidecar_unlink_failure_blocks_new_transaction();
     test_existing_destination_uses_backup_then_publishes();
     test_all_io_failures_are_reported_without_success_ack();
     test_recovery_restores_backup_and_discards_only_proven_stale_tmp();

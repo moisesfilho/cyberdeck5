@@ -92,6 +92,16 @@ struct fake_host final : cyberdeck_shell_session::host {
     std::string audit_save_path;
     int audit_begin_calls = 0;
     std::string audit_saved_path;
+    bool survey_active = false;
+    bool survey_start_result = true;
+    bool survey_cancel_result = true;
+    bool survey_export_result = true;
+    std::uint32_t survey_duration = 0;
+    int survey_starts = 0;
+    int survey_cancels = 0;
+    int survey_exports = 0;
+    bool survey_export_confirmed = false;
+    bool survey_export_masked = true;
 
     /* Wi-Fi service. */
     std::string connected_ssid;
@@ -199,6 +209,21 @@ struct fake_host final : cyberdeck_shell_session::host {
     {
         audit_saved_path = path;
         return !path.empty();
+    }
+    bool wifi_survey_active() const override { return survey_active; }
+    bool wifi_survey_start(std::uint32_t duration) override
+    {
+        ++survey_starts;
+        survey_duration = duration;
+        return survey_start_result;
+    }
+    bool wifi_survey_cancel() override { ++survey_cancels; return survey_cancel_result; }
+    bool wifi_survey_export(bool confirm, bool masked) override
+    {
+        ++survey_exports;
+        survey_export_confirmed = confirm;
+        survey_export_masked = masked;
+        return survey_export_result;
     }
 
     esp_err_t wifi_connect(const char *ssid, const char *password) override
@@ -330,6 +355,101 @@ void submit(session &s, const std::string &text)
 
 int main()
 {
+    {
+        fake_host h;
+        session s(h);
+        submit(s, "wifi survey");
+        check(h.survey_starts == 1 && h.survey_duration == 30,
+              "survey command starts one passive session at default duration");
+        check(h.output.find("passive scans may briefly degrade Wi-Fi and SSH") != std::string::npos,
+              "survey warns about connectivity impact");
+        submit(s, "wifi survey duration 10");
+        submit(s, "wifi survey");
+        check(h.survey_duration == 10, "configured duration is used for next session");
+        submit(s, "wifi survey duration 120");
+        submit(s, "wifi survey");
+        check(h.survey_duration == 120, "maximum configured duration is accepted");
+        submit(s, "wifi survey duration 9");
+        submit(s, "wifi survey duration 121");
+        check(h.survey_duration == 120 && h.output.find("expected 10..120 seconds") != std::string::npos,
+              "out-of-range duration is rejected without replacing setting");
+        submit(s, "wifi survey duration abc");
+        submit(s, "wifi survey duration 10x");
+        check(h.survey_duration == 120 &&
+              h.output.find("wifi survey duration: expected 10..120 seconds") != std::string::npos,
+              "nonnumeric and trailing-character durations are rejected");
+        submit(s, "wifi survey cancel");
+        check(h.survey_cancels == 1, "survey cancellation is dispatched");
+    }
+    {
+        fake_host h;
+        h.enabled = false;
+        session s(h);
+        submit(s, "wifi survey");
+        check(h.survey_starts == 0 && h.output.find("wifi: disabled") != std::string::npos,
+              "disabled Wi-Fi refuses survey before requesting a session");
+    }
+    {
+        fake_host h;
+        h.survey_start_result = false;
+        session s(h);
+        submit(s, "wifi survey");
+        check(h.survey_starts == 1 && h.output.find("start refused") != std::string::npos,
+              "concurrent/unavailable session start reports refusal");
+    }
+    {
+        fake_host h;
+        h.survey_cancel_result = false;
+        session s(h);
+        submit(s, "wifi survey cancel");
+        check(h.survey_cancels == 1 && h.output.find("wifi survey is not active") != std::string::npos,
+              "cancel failure reports inactive session");
+    }
+    {
+        fake_host h;
+        session s(h);
+        submit(s, "wifi survey export");
+        check(h.survey_exports == 1 && !h.survey_export_confirmed && h.survey_export_masked,
+              "export command only stages default-masked confirmation");
+        submit(s, "wifi survey export confirm");
+        check(h.survey_exports == 2 && h.survey_export_confirmed && h.survey_export_masked,
+              "masked export requires explicit confirmation");
+        submit(s, "wifi survey export unmasked");
+        check(!h.survey_export_confirmed && !h.survey_export_masked,
+              "unmasked export requires separate explicit confirmation");
+        submit(s, "wifi survey export confirm unmasked");
+        check(h.survey_export_confirmed && !h.survey_export_masked,
+              "unmasked export is an explicit opt-in confirmation");
+    }
+    {
+        fake_host h;
+        h.survey_export_result = false;
+        session s(h);
+        submit(s, "wifi survey export");
+        check(h.output.find("wifi survey export unavailable") != std::string::npos &&
+              !h.survey_export_confirmed && h.survey_export_masked,
+              "masked export staging failure is reported and does not claim confirmation");
+        submit(s, "wifi survey export unmasked");
+        check(h.output.find("wifi survey export unavailable") != std::string::npos &&
+              !h.survey_export_masked,
+              "unmasked export staging failure remains explicit opt-in only");
+        submit(s, "wifi survey export confirm");
+        check(h.output.find("wifi survey export confirmation unavailable or expired") != std::string::npos &&
+              h.survey_export_confirmed && h.survey_export_masked,
+              "masked confirmation failure reports unavailable or expired");
+        submit(s, "wifi survey export confirm unmasked");
+        check(h.survey_export_confirmed && !h.survey_export_masked &&
+              h.output.find("wifi survey export confirmation unavailable or expired") != std::string::npos,
+              "unmasked confirmation failure reports unavailable or expired");
+    }
+    {
+        fake_host h;
+        h.survey_active = true;
+        session s(h);
+        submit(s, "wifi search");
+        check(!h.scan_started && h.output.find("cancel it before scanning interactively") != std::string::npos,
+              "interactive scan is refused during survey session");
+    }
     for (const std::string answer : {"Y", "yes", " y", "y ", "", "pwd"}) {
         fake_host h;
         session s(h);

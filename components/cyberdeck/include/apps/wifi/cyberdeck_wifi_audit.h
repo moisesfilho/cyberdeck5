@@ -5,7 +5,14 @@
 #include <string>
 #include <string_view>
 
+#include "apps/wifi/cyberdeck_wifi_audit_persistence.h"
+
 namespace cyberdeck_wifi_audit {
+
+bool persist_document(std::string_view path,
+                     std::uint64_t token,
+                     std::string_view data,
+                     cyberdeck_wifi_audit_persistence::destination_policy policy);
 
 inline constexpr std::size_t snapshot_capacity = 8;
 // The path-sized value also bounds the fixed filename destination.  Hardware

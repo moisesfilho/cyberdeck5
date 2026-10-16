@@ -8,6 +8,7 @@
 namespace cyberdeck_wifi_audit_persistence {
 
 inline constexpr std::size_t max_payload = 2048;
+inline constexpr std::size_t max_survey_payload = 8192;
 inline constexpr std::size_t queue_capacity = 1;
 
 enum class artifact_state { missing, regular, other, error };
@@ -30,6 +31,10 @@ enum class submit_status {
     rejected_not_initialized,
     rejected_queue_full
 };
+
+/* Closed path allowlist: audit owns /sdcard/wifi-audit; survey owns
+ * /sdcard/wifi-survey. No caller-provided root/path policy is supported. */
+enum class destination_policy { audit, survey };
 
 struct completion {
     bool ok{false};
@@ -84,7 +89,8 @@ public:
 
     submit_status enqueue(std::uint64_t token,
                           std::string_view path,
-                          std::string_view data);
+                          std::string_view data,
+                          destination_policy policy = destination_policy::audit);
 
     /* Retorna true quando um item foi retirado, mesmo em caso de falha. */
     bool pump_one();

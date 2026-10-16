@@ -9,7 +9,7 @@ namespace cyberdeck_help_test {
 // test-only and is never a second production help implementation.
 inline constexpr std::string_view kUnifiedHelpText =
     "help - show this help [terminal]\n"
-    "wifi [search|saved|audit] - show status, manage Wi-Fi, or audit [terminal]\n"
+    "wifi [search|saved|audit|survey] - manage Wi-Fi, passively survey networks, and explicitly export results [terminal]\n"
     "log [lines <1-64>] - show recent events [terminal]\n"
     "clear - clear the terminal [terminal]\n"
     "screen [on|off|timeout <0-1440>] - control screen protection [terminal]\n"

@@ -12,6 +12,10 @@ bool wifi_enabled() { return wifi_mgr_is_enabled(); }
 std::uint64_t wifi_current_token() { return wifi_mgr_connection_token(); }
 bool wifi_status(wifi_status_t *out) { return wifi_mgr_get_status(out) == ESP_OK; }
 esp_err_t wifi_scan(wifi_scan_cb_t callback, void *context) { return wifi_mgr_scan(callback, context); }
+esp_err_t wifi_scan_passive(wifi_scan_cb_t callback, void *context)
+{
+    return wifi_mgr_scan_passive(callback, context);
+}
 bool wifi_cancel_scan(wifi_scan_cb_t callback, void *context)
 {
     return wifi_mgr_cancel_scan(callback, context);

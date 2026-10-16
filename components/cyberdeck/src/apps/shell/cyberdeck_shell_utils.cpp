@@ -304,6 +304,21 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
         cmd.type = CYBERDECK_CMD_WIFI_AUDIT;
     } else if (command == "wifi audit save") {
         cmd.type = CYBERDECK_CMD_WIFI_AUDIT_SAVE;
+    } else if (command == "wifi survey") {
+        cmd.type = CYBERDECK_CMD_WIFI_SURVEY;
+    } else if (command == "wifi survey cancel") {
+        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_CANCEL;
+    } else if (command == "wifi survey export") {
+        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_EXPORT;
+    } else if (command == "wifi survey export unmasked") {
+        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_EXPORT_UNMASKED;
+    } else if (command == "wifi survey export confirm") {
+        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_EXPORT_CONFIRM;
+    } else if (command == "wifi survey export confirm unmasked") {
+        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_EXPORT_CONFIRM_UNMASKED;
+    } else if (command.rfind("wifi survey duration ", 0) == 0) {
+        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_DURATION;
+        cmd.args = command.substr(sizeof("wifi survey duration ") - 1);
     } else if (command == "log") {
         cmd.type = CYBERDECK_CMD_LOG;
     } else if (command.rfind("log", 0) == 0 &&
@@ -374,7 +389,7 @@ constexpr bool help_catalog_descriptions_match_contract()
 {
     const auto &catalog = cyberdeck_shell_help::kCatalog;
     return catalog[0].description == "show this help" &&
-           catalog[1].description == "show status, manage Wi-Fi, or audit" &&
+            catalog[1].description == "manage Wi-Fi, passively survey networks, and explicitly export results" &&
            catalog[2].description == "show recent events" &&
            catalog[3].description == "clear the terminal" &&
            catalog[4].description == "control screen protection" &&

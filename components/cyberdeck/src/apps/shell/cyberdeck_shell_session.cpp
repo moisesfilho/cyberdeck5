@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -442,6 +443,10 @@ void session::execute_line(bool line_already_sent)
         break;
     }
     case CYBERDECK_CMD_WIFI_SEARCH: {
+        if (host_.wifi_survey_active()) {
+            host_.append_output_line("wifi survey is active; cancel it before scanning interactively\n");
+            break;
+        }
         if (!host_.wifi_enabled()) {
             host_.append_output_line("wifi: disabled\n");
             break;
@@ -470,6 +475,57 @@ void session::execute_line(bool line_already_sent)
         }
         break;
     }
+    case CYBERDECK_CMD_WIFI_SURVEY: {
+        if (!host_.wifi_enabled()) {
+            host_.append_output_line("wifi: disabled\n");
+            break;
+        }
+        if (host_.wifi_survey_start(wifi_survey_duration_seconds_)) {
+            host_.append_output_line("wifi survey started; passive scans may briefly degrade Wi-Fi and SSH\n");
+        } else {
+            host_.append_output_line("wifi survey start refused (another scan/session may be active)\n");
+        }
+        break;
+    }
+    case CYBERDECK_CMD_WIFI_SURVEY_DURATION: {
+        char *end = nullptr;
+        const unsigned long value = std::strtoul(cmd.args.c_str(), &end, 10);
+        if (cmd.args.empty() || end == cmd.args.c_str() || *end != '\0' ||
+            value < cyberdeck_wifi_survey::min_duration_seconds ||
+            value > cyberdeck_wifi_survey::max_duration_seconds) {
+            host_.append_output_line("wifi survey duration: expected 10..120 seconds\n");
+            break;
+        }
+        wifi_survey_duration_seconds_ = static_cast<std::uint32_t>(value);
+        char message[64];
+        std::snprintf(message, sizeof(message), "wifi survey duration set to %lu seconds\n", value);
+        host_.append_output_line(message);
+        break;
+    }
+    case CYBERDECK_CMD_WIFI_SURVEY_CANCEL:
+        host_.append_output_line(host_.wifi_survey_cancel() ?
+            "wifi survey cancelled; late scan results will be discarded\n" : "wifi survey is not active\n");
+        break;
+    case CYBERDECK_CMD_WIFI_SURVEY_EXPORT:
+        host_.append_output_line(host_.wifi_survey_export(false, true) ?
+            "wifi survey export pending; run 'wifi survey export confirm' to save masked identifiers\n" :
+            "wifi survey export unavailable\n");
+        break;
+    case CYBERDECK_CMD_WIFI_SURVEY_EXPORT_UNMASKED:
+        host_.append_output_line(host_.wifi_survey_export(false, false) ?
+            "wifi survey export pending with identifying SSID/BSSID; run 'wifi survey export confirm unmasked' to save\n" :
+            "wifi survey export unavailable\n");
+        break;
+    case CYBERDECK_CMD_WIFI_SURVEY_EXPORT_CONFIRM:
+        host_.append_output_line(host_.wifi_survey_export(true, true) ?
+            "wifi survey export confirmed; SSID and BSSID are masked\n" :
+            "wifi survey export confirmation unavailable or expired\n");
+        break;
+    case CYBERDECK_CMD_WIFI_SURVEY_EXPORT_CONFIRM_UNMASKED:
+        host_.append_output_line(host_.wifi_survey_export(true, false) ?
+            "wifi survey export confirmed with identifying SSID/BSSID\n" :
+            "wifi survey export confirmation unavailable or expired\n");
+        break;
     case CYBERDECK_CMD_BATTERY_PROTECTION_ON: { // "battery protection on"
         if (host_.battery_protection_set_enabled(true)) {
             host_.append_output_line("battery protection enabled\n");

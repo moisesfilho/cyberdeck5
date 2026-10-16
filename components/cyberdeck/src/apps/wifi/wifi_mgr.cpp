@@ -1167,7 +1167,8 @@ esp_err_t wifi_mgr_forget(const char *ssid)
     return ESP_OK;
 }
 
-esp_err_t wifi_mgr_scan(wifi_scan_cb_t cb, void *ctx)
+static esp_err_t wifi_mgr_scan_impl(wifi_scan_cb_t cb, void *ctx,
+                                    const wifi_scan_config_t *scan_config)
 {
     if (s_scan_mutex == NULL) {
         s_scan_mutex = xSemaphoreCreateMutex();
@@ -1193,7 +1194,7 @@ esp_err_t wifi_mgr_scan(wifi_scan_cb_t cb, void *ctx)
     s_pending_scan_generation = s_scan_generation;
     s_pending_scan_cb = NULL;
     s_pending_scan_cb_ctx = NULL;
-    esp_err_t err = esp_wifi_scan_start(NULL, false);
+    esp_err_t err = esp_wifi_scan_start(scan_config, false);
     if (err != ESP_OK) {
         s_scan_cb = NULL;
         s_scan_cb_ctx = NULL;
@@ -1201,6 +1202,20 @@ esp_err_t wifi_mgr_scan(wifi_scan_cb_t cb, void *ctx)
     }
     scan_state_unlock();
     return err;
+}
+
+esp_err_t wifi_mgr_scan(wifi_scan_cb_t cb, void *ctx)
+{
+    return wifi_mgr_scan_impl(cb, ctx, NULL);
+}
+
+esp_err_t wifi_mgr_scan_passive(wifi_scan_cb_t cb, void *ctx)
+{
+    wifi_scan_config_t survey_config{};
+    survey_config.scan_type = WIFI_SCAN_TYPE_PASSIVE;
+    survey_config.scan_time.passive = WIFI_PASSIVE_SCAN_DEFAULT_TIME;
+    survey_config.show_hidden = true;
+    return wifi_mgr_scan_impl(cb, ctx, &survey_config);
 }
 
 bool wifi_mgr_cancel_scan(wifi_scan_cb_t cb, void *ctx)

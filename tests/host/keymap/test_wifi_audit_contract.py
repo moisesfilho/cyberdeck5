@@ -192,12 +192,16 @@ def main() -> int:
             "overflow_export_ready = true;" in failure_handoff,
             "failed export delivery must remain owned until drain releases the guard")
 
-    success_start = export_branch.index("if (export_file(item.path, item.token, data))")
+    audit_export_call = (
+        "if (export_file(item.path, item.token, data, "
+        "wifi_audit_persistence::destination_policy::audit))"
+    )
+    success_start = export_branch.index(audit_export_call)
     require("out.ok = false;" in export_branch[:success_start] and
             "out.bytes = 0;" in export_branch[:success_start],
             "failed firmware export must retain an empty, unsuccessful result")
     require_before(export_branch,
-                   "if (export_file(item.path, item.token, data))",
+                   audit_export_call,
                    "std::memcpy(out.data, data.data(), data.size())",
                    "firmware payload copy must be gated by successful persistence")
     require("std::memcpy(out.data, data.data(), data.size())" not in
@@ -372,7 +376,7 @@ def main() -> int:
     require_before(transaction, "recover_stale_artifacts(operations",
                    "write_all(operations",
                    "stale recovery must precede any new candidate write")
-    require("if (!make_transaction_paths(request.path, paths) ||" in transaction,
+    require("if (!make_transaction_paths(request.path, request.policy, paths) ||" in transaction,
             "transaction must validate the destination and sidecar paths")
     require("!recover_stale_artifacts(operations, request.path, paths)" in transaction and
             "return failed(persistence_error::recovery_failed);" in transaction,
@@ -415,8 +419,14 @@ def main() -> int:
             "existing-destination path must move backup, publish candidate, and support rollback")
     require_before(existing, backup_move, candidate_publish,
                    "old destination must be moved to .bak before candidate publication")
-    require_before(existing, candidate_publish, "operations.unlink(paths.backup)",
-                   "backup cleanup must follow successful candidate publication")
+    require_before(existing, candidate_publish,
+                   "operations.rename(request.path, paths.temporary)",
+                   "a raced destination must roll back the just-published candidate")
+    require_before(existing, "operations.rename(request.path, paths.temporary)",
+                   "operations.rename(paths.backup, request.path)",
+                   "no-clobber rollback must restore the previous destination")
+    require("return failed(persistence_error::invalid_request);" in existing,
+            "a destination appearing during recovery must fail closed after rollback")
     rollback_success = block_after(existing, rollback_publish)
     require("discard_candidate_if_safe(operations, request.path, paths.temporary)" in rollback_success,
             "successful rollback must discard only a candidate proven unsafe")
@@ -567,12 +577,15 @@ def main() -> int:
     # The task publishes its result, then waits for the caller's release token.
     # Only the task may destroy the request; the caller must not free memory
     # that a timed-out VFS call can still be using.
+    transaction_call = (
+        "request->transaction(request->path, request->token, request->data, request->policy)"
+    )
     require("request->transaction != nullptr" in backend_task and
-            "request->transaction(request->path, request->token, request->data)" in backend_task,
+            transaction_call in backend_task,
             "wifi_audit_io must invoke the injected transaction on the owned request")
     require_before(
         backend_task,
-        "request->transaction(request->path, request->token, request->data)",
+        transaction_call,
         "request->result.store(ok, std::memory_order_release);",
         "the result must be published only after the injected transaction returns")
     require_before(

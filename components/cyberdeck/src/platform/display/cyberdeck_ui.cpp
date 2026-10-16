@@ -17,6 +17,7 @@
 #include "apps/system/cyberdeck_service_ports.h"
 #include "apps/wifi/cyberdeck_wifi_audit.h"
 #include "apps/wifi/cyberdeck_wifi_menu.h"
+#include "apps/wifi/cyberdeck_wifi_survey.h"
 #include "apps/wifi/cyberdeck_wifi_state_machine.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
@@ -39,6 +40,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
 #include <atomic>
 #include <cctype>
 #include <cstdint>
@@ -46,6 +49,7 @@
 #include <cstring>
 #include <ctime>
 #include <limits>
+#include <memory>
 #include <new>
 #include <string>
 #include <vector>
@@ -79,6 +83,7 @@ lv_timer_t *s_wifi_scan_timer = nullptr;
 lv_timer_t *s_ble_timer = nullptr;
 lv_timer_t *s_ssh_timer = nullptr;
 lv_timer_t *s_wifi_audit_timer = nullptr;
+lv_timer_t *s_wifi_survey_timer = nullptr;
 lv_timer_t *s_battery_timer = nullptr;
 lv_timer_t *s_terminal_output_timer = nullptr;
 cyberdeck_terminal_scrollback::model s_scrollback;
@@ -106,6 +111,15 @@ cyberdeck_wifi::state_machine s_wifi_model;
 cyberdeck_wifi_audit::audit_controller s_wifi_audit;
 std::uint64_t s_wifi_audit_reported_token = 0;
 cyberdeck_wifi_audit::state s_wifi_audit_reported_state = cyberdeck_wifi_audit::state::unavailable;
+cyberdeck_wifi_survey::session s_wifi_survey;
+bool s_wifi_survey_confirmation_pending = false;
+bool s_wifi_survey_confirmation_masked = true;
+std::uint64_t s_wifi_survey_confirmation_deadline_ms = 0;
+std::uint32_t s_wifi_survey_export_token = 0;
+std::atomic<bool> s_wifi_survey_export_busy{false};
+std::atomic<bool> s_wifi_survey_export_done{false};
+struct survey_export_result { bool ok{false}; char path[64]{}; };
+survey_export_result s_wifi_survey_export_result{};
 struct wifi_state_update {
     wifi_status_t status;
     bool enabled;
@@ -118,6 +132,22 @@ struct wifi_scan_result {
     wifi_ap_record_t aps[WIFI_SCAN_MAX_APS];
 };
 QueueHandle_t s_wifi_scan_queue = nullptr;
+struct wifi_survey_scan_result {
+    cyberdeck_wifi_survey::scan_request request;
+    std::size_t count{0};
+    cyberdeck_wifi_survey::observation items[WIFI_SCAN_MAX_APS]{};
+};
+QueueHandle_t s_wifi_survey_scan_queue = nullptr;
+SemaphoreHandle_t s_wifi_survey_context_mutex = nullptr;
+SemaphoreHandle_t s_wifi_survey_callback_done = nullptr;
+std::uint64_t s_wifi_survey_next_callback_sequence = 0;
+std::atomic<std::uint64_t> s_wifi_survey_active_callback_sequence{0};
+std::atomic<std::uint64_t> s_wifi_survey_completed_callback_sequence{0};
+struct wifi_survey_scan_context {
+    cyberdeck_wifi_survey::scan_request request;
+    std::uint64_t callback_sequence;
+};
+wifi_survey_scan_context *s_wifi_survey_scan_context = nullptr;
 SemaphoreHandle_t s_wifi_scan_context_mutex = nullptr;
 cyberdeck_keyboard_dispatch::dispatcher s_keyboard_dispatch;
 QueueHandle_t s_ble_event_queue = nullptr;
@@ -192,6 +222,11 @@ struct shell_session_host final : public cyberdeck_shell_session::host {
     std::string build_wifi_audit_save_path() override;
     void wifi_audit_begin() override;
     bool wifi_audit_save(const std::string &path) override;
+    bool wifi_survey_active() const override;
+    bool wifi_survey_start(std::uint32_t duration_seconds) override;
+    bool wifi_survey_cancel() override;
+    bool wifi_survey_export(bool confirm, bool masked) override;
+    std::string wifi_survey_render() const override;
     esp_err_t wifi_connect(const char *ssid, const char *password) override;
     esp_err_t wifi_cancel_connection() override;
     void wifi_forget(const char *ssid) override;
@@ -492,10 +527,15 @@ void process_ble_events(lv_timer_t *) {
     }
 }
 
+bool cancel_wifi_survey_scan(bool wait_for_callback = false);
+void drain_wifi_survey_scan_results();
+
 void destroy_ui_resource_handles() {
     /* Quiesce producers before deleting their LVGL callback targets. */
     s_keyboard_dispatch.stop();
     cyberdeck_cat_worker_teardown();
+    s_wifi_survey.clear();
+    const bool survey_scan_quiet = cancel_wifi_survey_scan(true);
     cyberdeck_apps::service_ports::wifi_set_state_callback(nullptr, nullptr);
     if (s_clock_timer != nullptr) {
         lv_timer_del(s_clock_timer);
@@ -520,6 +560,10 @@ void destroy_ui_resource_handles() {
     if (s_wifi_audit_timer != nullptr) {
         lv_timer_del(s_wifi_audit_timer);
         s_wifi_audit_timer = nullptr;
+    }
+    if (s_wifi_survey_timer != nullptr) {
+        lv_timer_del(s_wifi_survey_timer);
+        s_wifi_survey_timer = nullptr;
     }
     if (s_battery_timer != nullptr) {
         lv_timer_del(s_battery_timer);
@@ -577,6 +621,23 @@ void destroy_ui_resource_handles() {
     if (s_wifi_scan_queue != nullptr) {
         vQueueDelete(s_wifi_scan_queue);
         s_wifi_scan_queue = nullptr;
+    }
+    if (survey_scan_quiet) {
+        drain_wifi_survey_scan_results();
+        if (s_wifi_survey_scan_queue != nullptr) {
+            vQueueDelete(s_wifi_survey_scan_queue);
+            s_wifi_survey_scan_queue = nullptr;
+        }
+        if (s_wifi_survey_context_mutex != nullptr) {
+            vSemaphoreDelete(s_wifi_survey_context_mutex);
+            s_wifi_survey_context_mutex = nullptr;
+        }
+        if (s_wifi_survey_callback_done != nullptr) {
+            vSemaphoreDelete(s_wifi_survey_callback_done);
+            s_wifi_survey_callback_done = nullptr;
+        }
+    } else {
+        ESP_LOGE("cyberdeck_ui", "Timeout aguardando callback survey; fila e mutex mantidos em quarentena");
     }
     if (s_wifi_state_queue != nullptr) {
         vQueueDelete(s_wifi_state_queue);
@@ -929,6 +990,191 @@ void process_wifi_scan(lv_timer_t *) {
     delete result;
 }
 
+void on_wifi_survey_scan_done(const wifi_ap_record_t *aps, int count, void *ctx)
+{
+    auto *scan = static_cast<wifi_survey_scan_context *>(ctx);
+    if (scan == nullptr) return;
+    s_wifi_survey_active_callback_sequence.store(scan->callback_sequence, std::memory_order_release);
+    wifi_survey_scan_result *result = new (std::nothrow) wifi_survey_scan_result{};
+    if (result != nullptr) {
+        result->request = scan->request;
+        const int bounded = aps == nullptr || count <= 0 ? 0 :
+            (count > WIFI_SCAN_MAX_APS ? WIFI_SCAN_MAX_APS : count);
+        for (int i = 0; i < bounded; ++i) {
+            auto &item = result->items[result->count++];
+            std::size_t ssid_size = 0;
+            while (ssid_size < sizeof(aps[i].ssid) && aps[i].ssid[ssid_size] != '\0') ++ssid_size;
+            item.ssid_known = ssid_size != 0;
+            for (std::size_t j = 0; j < ssid_size && j + 1 < sizeof(item.ssid); ++j) {
+                const unsigned char byte = aps[i].ssid[j];
+                item.ssid[j] = byte >= 0x20 && byte <= 0x7e && byte != '|' ? static_cast<char>(byte) : '?';
+            }
+            item.ssid[std::min(ssid_size, sizeof(item.ssid) - 1)] = '\0';
+            std::snprintf(item.bssid, sizeof(item.bssid), "%02x:%02x:%02x:%02x:%02x:%02x",
+                          static_cast<unsigned>(aps[i].bssid[0]), static_cast<unsigned>(aps[i].bssid[1]),
+                          static_cast<unsigned>(aps[i].bssid[2]), static_cast<unsigned>(aps[i].bssid[3]),
+                          static_cast<unsigned>(aps[i].bssid[4]), static_cast<unsigned>(aps[i].bssid[5]));
+            item.channel = aps[i].primary;
+            item.security = static_cast<std::uint8_t>(aps[i].authmode);
+            item.rssi = aps[i].rssi;
+        }
+        if (s_wifi_survey_scan_queue == nullptr ||
+            xQueueSend(s_wifi_survey_scan_queue, &result, 0) != pdTRUE) {
+            delete result;
+        }
+    }
+    const std::uint64_t completed_sequence = scan->callback_sequence;
+    if (s_wifi_survey_context_mutex != nullptr &&
+        xSemaphoreTake(s_wifi_survey_context_mutex, portMAX_DELAY) == pdTRUE) {
+        if (s_wifi_survey_scan_context == scan) s_wifi_survey_scan_context = nullptr;
+        xSemaphoreGive(s_wifi_survey_context_mutex);
+    }
+    delete scan;
+    s_wifi_survey_completed_callback_sequence.store(completed_sequence, std::memory_order_release);
+    if (s_wifi_survey_callback_done != nullptr) (void)xSemaphoreGive(s_wifi_survey_callback_done);
+    s_wifi_survey_active_callback_sequence.store(0, std::memory_order_release);
+}
+
+bool wait_wifi_survey_callback(std::uint64_t sequence)
+{
+    if (sequence == 0) return true;
+    if (s_wifi_survey_callback_done == nullptr) return false;
+    const TickType_t started = xTaskGetTickCount();
+    const TickType_t budget = pdMS_TO_TICKS(1000);
+    for (;;) {
+        const TickType_t elapsed = xTaskGetTickCount() - started;
+        if (elapsed >= budget) return false;
+        const TickType_t remaining = budget - elapsed;
+        if (xSemaphoreTake(s_wifi_survey_callback_done, remaining) != pdTRUE) return false;
+        if (s_wifi_survey_completed_callback_sequence.load(std::memory_order_acquire) == sequence)
+            return true;
+    }
+}
+
+void drain_wifi_survey_scan_results()
+{
+    if (s_wifi_survey_scan_queue == nullptr) return;
+    wifi_survey_scan_result *result = nullptr;
+    while (xQueueReceive(s_wifi_survey_scan_queue, &result, 0) == pdTRUE) {
+        delete result;
+        result = nullptr;
+    }
+}
+
+bool cancel_wifi_survey_scan(bool wait_for_callback)
+{
+    wifi_survey_scan_context *scan = nullptr;
+    std::uint64_t sequence = 0;
+    if (s_wifi_survey_context_mutex != nullptr &&
+        xSemaphoreTake(s_wifi_survey_context_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        scan = s_wifi_survey_scan_context;
+        if (scan != nullptr) sequence = scan->callback_sequence;
+        xSemaphoreGive(s_wifi_survey_context_mutex);
+    } else if (s_wifi_survey_context_mutex != nullptr) {
+        return false;
+    }
+
+    if (scan == nullptr) {
+        const std::uint64_t active_sequence =
+            s_wifi_survey_active_callback_sequence.load(std::memory_order_acquire);
+        return active_sequence == 0 ||
+               (wait_for_callback && wait_wifi_survey_callback(active_sequence));
+    }
+
+    const bool callback_owned = cyberdeck_apps::service_ports::wifi_cancel_scan(on_wifi_survey_scan_done, scan);
+    bool caller_owns = false;
+    if (xSemaphoreTake(s_wifi_survey_context_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) return false;
+    if (s_wifi_survey_scan_context == scan && !callback_owned) {
+        s_wifi_survey_scan_context = nullptr;
+        caller_owns = true;
+    }
+    xSemaphoreGive(s_wifi_survey_context_mutex);
+    if (caller_owns) delete scan;
+    if (callback_owned) return wait_for_callback && wait_wifi_survey_callback(sequence);
+
+    const std::uint64_t active_sequence =
+        s_wifi_survey_active_callback_sequence.load(std::memory_order_acquire);
+    return active_sequence == 0 ||
+           (wait_for_callback && wait_wifi_survey_callback(active_sequence));
+}
+
+struct survey_export_job {
+    std::uint64_t token{0};
+    char path[64]{};
+    std::string payload{};
+};
+
+void wifi_survey_export_worker(void *argument)
+{
+    std::unique_ptr<survey_export_job> job(static_cast<survey_export_job *>(argument));
+    const bool ok = job && cyberdeck_wifi_audit::persist_document(
+        job->path, job->token, job->payload,
+        cyberdeck_wifi_audit_persistence::destination_policy::survey);
+    s_wifi_survey_export_result.ok = ok;
+    if (job != nullptr && ok) std::snprintf(s_wifi_survey_export_result.path,
+                                            sizeof(s_wifi_survey_export_result.path), "%s", job->path);
+    s_wifi_survey_export_done.store(true, std::memory_order_release);
+    vTaskDelete(nullptr);
+}
+
+void process_wifi_survey(lv_timer_t *)
+{
+    if (s_wifi_survey_export_done.exchange(false, std::memory_order_acq_rel)) {
+        if (s_wifi_survey_export_result.ok) {
+            append_line(std::string("wifi survey saved: ") + s_wifi_survey_export_result.path + "\n");
+        } else {
+            append_line("wifi survey export failed\n");
+        }
+        s_wifi_survey_export_result = {};
+        s_wifi_survey_export_busy.store(false, std::memory_order_release);
+        render_terminal();
+    }
+
+    if (s_wifi_survey_scan_queue != nullptr) {
+        wifi_survey_scan_result *result = nullptr;
+        if (xQueueReceive(s_wifi_survey_scan_queue, &result, 0) == pdTRUE && result != nullptr) {
+            if (s_wifi_survey.complete_scan(result->request, result->items, result->count,
+                                            static_cast<std::uint64_t>(esp_timer_get_time() / 1000))) {
+                render_terminal();
+            }
+            delete result;
+        }
+    }
+
+    const std::uint64_t now_ms = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
+    if (s_wifi_survey.expire(now_ms)) {
+        cancel_wifi_survey_scan();
+        append_line(s_wifi_survey.render());
+        render_terminal();
+    }
+    if (!s_wifi_survey.active()) return;
+
+    const auto request = s_wifi_survey.due_scan(now_ms);
+    if (request.session_token == 0) return;
+    std::uint64_t callback_sequence = ++s_wifi_survey_next_callback_sequence;
+    if (callback_sequence == 0) callback_sequence = ++s_wifi_survey_next_callback_sequence;
+    auto *context = new (std::nothrow) wifi_survey_scan_context{request, callback_sequence};
+    if (context == nullptr || s_wifi_survey_context_mutex == nullptr ||
+        s_wifi_survey_scan_queue == nullptr || s_wifi_survey_callback_done == nullptr) {
+        delete context;
+        s_wifi_survey.fail_scan(request);
+        append_line("wifi survey scan unavailable\n");
+        return;
+    }
+    (void)xSemaphoreTake(s_wifi_survey_context_mutex, portMAX_DELAY);
+    s_wifi_survey_scan_context = context;
+    xSemaphoreGive(s_wifi_survey_context_mutex);
+    const esp_err_t error = cyberdeck_apps::service_ports::wifi_scan_passive(on_wifi_survey_scan_done, context);
+    if (error != ESP_OK) {
+        (void)xSemaphoreTake(s_wifi_survey_context_mutex, portMAX_DELAY);
+        if (s_wifi_survey_scan_context == context) s_wifi_survey_scan_context = nullptr;
+        xSemaphoreGive(s_wifi_survey_context_mutex);
+        delete context;
+        s_wifi_survey.fail_scan(request);
+        append_line("wifi survey scan could not start\n");
+    }
+}
+
 std::string wifi_audit_save_path() {
     constexpr char kTimeFormat[] = "%H%M%S";
     const time_t now = time(nullptr);
@@ -967,6 +1213,25 @@ std::string wifi_audit_save_path() {
         return {};
     }
     return std::string("/sdcard/wifi-audit/") + filename;
+}
+
+std::string wifi_survey_save_path()
+{
+    const time_t now = time(nullptr);
+    if (now < static_cast<time_t>(1577836800)) return {};
+    struct tm utc{};
+    if (gmtime_r(&now, &utc) == nullptr) return {};
+    const cyberdeck_clock_time_t utc_time = {static_cast<int16_t>(utc.tm_year + 1900),
+        static_cast<uint8_t>(utc.tm_mon + 1), static_cast<uint8_t>(utc.tm_mday),
+        static_cast<uint8_t>(utc.tm_hour), static_cast<uint8_t>(utc.tm_min)};
+    cyberdeck_clock_time_t local{};
+    if (!cyberdeck_clock_from_utc(&utc_time, CYBERDECK_CLOCK_GMT_MINUS_3_OFFSET_MIN, &local)) return {};
+    char path[64]{};
+    const int written = std::snprintf(path, sizeof(path),
+        "/sdcard/wifi-survey/wifi-survey-%04d%02u%02u-%02u%02u%02u.txt",
+        static_cast<int>(local.year), static_cast<unsigned>(local.month), static_cast<unsigned>(local.day),
+        static_cast<unsigned>(local.hour), static_cast<unsigned>(local.minute), static_cast<unsigned>(utc.tm_sec));
+    return written > 0 && static_cast<std::size_t>(written) < sizeof(path) ? std::string(path) : std::string{};
 }
 
 void process_wifi_audit(lv_timer_t *) {
@@ -1077,6 +1342,7 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view, 
             output += "Press ENTER again to forget, ESC to keep.\n";
         }
     }
+    if (s_wifi_survey.active()) output += s_wifi_survey.render();
     if (ble_list_is_visible())
         output += s_ble_model.devices().render();
     const cyberdeck_ble::screen ble_screen = s_ble_model.current_screen();
@@ -1591,6 +1857,76 @@ void shell_session_host::wifi_audit_begin() {
 bool shell_session_host::wifi_audit_save(const std::string &path) {
     return s_wifi_audit.enqueue_save(s_wifi_audit.snapshot_view().token, path);
 }
+bool shell_session_host::wifi_survey_active() const {
+    return s_wifi_survey.active();
+}
+bool shell_session_host::wifi_survey_start(std::uint32_t duration_seconds) {
+    if (!wifi_enabled() || s_wifi_survey.active() || s_wifi_ui_state != cyberdeck_shell_session::wifi_ui_state_t::IDLE ||
+        s_wifi_survey_scan_queue == nullptr || s_wifi_survey_context_mutex == nullptr ||
+        s_wifi_survey_callback_done == nullptr) return false;
+    (void)xSemaphoreTake(s_wifi_survey_context_mutex, portMAX_DELAY);
+    bool scan_busy = s_wifi_survey_scan_context != nullptr;
+    xSemaphoreGive(s_wifi_survey_context_mutex);
+    if (s_wifi_scan_context_mutex != nullptr &&
+        xSemaphoreTake(s_wifi_scan_context_mutex, portMAX_DELAY) == pdTRUE) {
+        scan_busy = scan_busy || s_wifi_scan_context != nullptr;
+        xSemaphoreGive(s_wifi_scan_context_mutex);
+    }
+    if (scan_busy || !s_wifi_survey.start(duration_seconds,
+            static_cast<std::uint64_t>(esp_timer_get_time() / 1000))) return false;
+    s_wifi_survey_confirmation_pending = false;
+    render_terminal();
+    return true;
+}
+bool shell_session_host::wifi_survey_cancel() {
+    if (!s_wifi_survey.cancel()) return false;
+    s_wifi_survey_confirmation_pending = false;
+    cancel_wifi_survey_scan();
+    append_line(s_wifi_survey.render());
+    render_terminal();
+    return true;
+}
+bool shell_session_host::wifi_survey_export(bool confirm, bool masked) {
+    const std::uint64_t now = static_cast<std::uint64_t>(esp_timer_get_time() / 1000);
+    if (!confirm) {
+        if (s_wifi_survey.active() || !s_wifi_survey.finished()) return false;
+        s_wifi_survey_confirmation_pending = true;
+        s_wifi_survey_confirmation_masked = masked;
+        s_wifi_survey_confirmation_deadline_ms = now + 30000;
+        return true;
+    }
+    if (!s_wifi_survey_confirmation_pending || masked != s_wifi_survey_confirmation_masked ||
+        now > s_wifi_survey_confirmation_deadline_ms || s_wifi_survey.active()) {
+        s_wifi_survey_confirmation_pending = false;
+        return false;
+    }
+    s_wifi_survey_confirmation_pending = false;
+    const std::string payload = s_wifi_survey.export_text(masked);
+    const std::string path = wifi_survey_save_path();
+    if (payload.empty() || path.empty()) return false;
+    bool expected = false;
+    if (!s_wifi_survey_export_busy.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return false;
+    auto *job = new (std::nothrow) survey_export_job{};
+    if (job == nullptr) {
+        s_wifi_survey_export_busy.store(false, std::memory_order_release);
+        return false;
+    }
+    job->token = ++s_wifi_survey_export_token;
+    if (job->token == 0) job->token = ++s_wifi_survey_export_token;
+    std::snprintf(job->path, sizeof(job->path), "%s", path.c_str());
+    job->payload = payload;
+    s_wifi_survey_export_result = {};
+    s_wifi_survey_export_done.store(false, std::memory_order_release);
+    if (xTaskCreate(wifi_survey_export_worker, "wifi_survey_io", 8192, job, 4, nullptr) != pdPASS) {
+        delete job;
+        s_wifi_survey_export_busy.store(false, std::memory_order_release);
+        return false;
+    }
+    return true;
+}
+std::string shell_session_host::wifi_survey_render() const {
+    return s_wifi_survey.active() ? s_wifi_survey.render() : std::string{};
+}
 void shell_session_host::set_ssh_visible(bool visible) {
     show_ssh(visible);
 }
@@ -1780,7 +2116,12 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
      * discard it without allowing it to starve the newer result. */
     s_wifi_scan_queue = xQueueCreate(2, sizeof(wifi_scan_result *));
     s_wifi_scan_context_mutex = xSemaphoreCreateMutex();
-    if (s_wifi_scan_queue == nullptr || s_wifi_scan_context_mutex == nullptr) {
+    if (s_wifi_survey_scan_queue == nullptr) s_wifi_survey_scan_queue = xQueueCreate(2, sizeof(wifi_survey_scan_result *));
+    if (s_wifi_survey_context_mutex == nullptr) s_wifi_survey_context_mutex = xSemaphoreCreateMutex();
+    if (s_wifi_survey_callback_done == nullptr) s_wifi_survey_callback_done = xSemaphoreCreateBinary();
+    if (s_wifi_scan_queue == nullptr || s_wifi_scan_context_mutex == nullptr ||
+        s_wifi_survey_scan_queue == nullptr || s_wifi_survey_context_mutex == nullptr ||
+        s_wifi_survey_callback_done == nullptr) {
         destroy_ui_resource_handles();
         return ESP_ERR_NO_MEM;
     }
@@ -1831,10 +2172,12 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     s_ble_timer = lv_timer_create(process_ble_events, 100, nullptr);
     s_ssh_timer = lv_timer_create(process_ssh_events, 100, nullptr);
     s_wifi_audit_timer = lv_timer_create(process_wifi_audit, 100, nullptr);
+    s_wifi_survey_timer = lv_timer_create(process_wifi_survey, 100, nullptr);
     s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
     s_terminal_output_timer = lv_timer_create(process_terminal_output, 100, nullptr);
     if (s_clock_timer == nullptr || s_wifi_state_timer == nullptr || s_wifi_scan_timer == nullptr ||
         s_ble_timer == nullptr || s_ssh_timer == nullptr || s_wifi_audit_timer == nullptr ||
+        s_wifi_survey_timer == nullptr ||
         s_battery_timer == nullptr || s_terminal_output_timer == nullptr) {
         destroy_ui_resource_handles();
         return ESP_ERR_NO_MEM;
@@ -1876,7 +2219,7 @@ extern "C" void cyberdeck_keyboard_input(const char *text, size_t length, uint8_
 extern "C" bool cyberdeck_ui_poweroff_freeze(uint32_t timeout_ms) {
     if (!bsp_display_lock(pdMS_TO_TICKS(timeout_ms))) return false;
     for (auto *timer : {s_clock_timer, s_wifi_state_timer, s_wifi_scan_timer, s_ble_timer,
-                        s_ssh_timer, s_wifi_audit_timer, s_battery_timer, s_terminal_output_timer}) {
+                        s_ssh_timer, s_wifi_audit_timer, s_wifi_survey_timer, s_battery_timer, s_terminal_output_timer}) {
         if (timer != nullptr) lv_timer_pause(timer);
     }
     s_keyboard_dispatch.stop();

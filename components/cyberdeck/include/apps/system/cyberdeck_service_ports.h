@@ -18,6 +18,7 @@ bool wifi_enabled();
 std::uint64_t wifi_current_token();
 bool wifi_status(wifi_status_t *out);
 esp_err_t wifi_scan(wifi_scan_cb_t callback, void *context);
+esp_err_t wifi_scan_passive(wifi_scan_cb_t callback, void *context);
 bool wifi_cancel_scan(wifi_scan_cb_t callback, void *context);
 void wifi_set_state_callback(wifi_state_cb_t callback, void *context);
 

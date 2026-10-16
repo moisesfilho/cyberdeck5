@@ -29,6 +29,8 @@
 namespace cyberdeck_wifi_audit {
 namespace {
 
+namespace wifi_audit_persistence = cyberdeck_wifi_audit_persistence;
+
 void copy_field(char *dst, std::string_view src)
 {
     const std::size_t n = std::min(src.size(), field_capacity - 1);
@@ -45,31 +47,23 @@ bool digit(char value)
     return value >= '0' && value <= '9';
 }
 
-bool safe_save_name(std::string_view name)
+bool safe_path(std::string_view path, cyberdeck_wifi_audit_persistence::destination_policy policy)
 {
-    // wifi-audit-YYYYMMDD-HHMMSS.txt
-    if (name.size() != 30 || name.substr(0, 11) != "wifi-audit-" ||
-        name[19] != '-' || name.substr(26) != ".txt") {
-        return false;
-    }
-    for (std::size_t i = 0; i < 8; ++i) {
-        if (!digit(name[11 + i])) return false;
-    }
-    for (std::size_t i = 0; i < 6; ++i) {
-        if (!digit(name[20 + i])) return false;
-    }
-    return name.find("..") == std::string_view::npos;
-}
-
-bool safe_path(std::string_view path)
-{
-    constexpr std::string_view directory = "/sdcard/wifi-audit/";
+    if (policy != cyberdeck_wifi_audit_persistence::destination_policy::audit &&
+        policy != cyberdeck_wifi_audit_persistence::destination_policy::survey) return false;
+    const std::string_view directory = policy == cyberdeck_wifi_audit_persistence::destination_policy::survey
+        ? "/sdcard/wifi-survey/" : "/sdcard/wifi-audit/";
+    const std::string_view prefix = policy == cyberdeck_wifi_audit_persistence::destination_policy::survey
+        ? "wifi-survey-" : "wifi-audit-";
     if (path.size() <= directory.size() || path.size() >= field_capacity ||
         path.substr(0, directory.size()) != directory) {
         return false;
     }
     const std::string_view name = path.substr(directory.size());
-    if (!safe_save_name(name)) return false;
+    if (name.size() != prefix.size() + 19 || name.substr(0, prefix.size()) != prefix ||
+        name[prefix.size() + 8] != '-' || name.substr(name.size() - 4) != ".txt") return false;
+    for (std::size_t i = 0; i < 8; ++i) if (!digit(name[prefix.size() + i])) return false;
+    for (std::size_t i = 0; i < 6; ++i) if (!digit(name[prefix.size() + 9 + i])) return false;
     for (const unsigned char byte : path) {
         if (byte < 0x20 || byte == 0x7f) return false;
     }
@@ -132,8 +126,6 @@ std::string safe_export(const snapshot &value)
 }
 
 #if CYBERDECK_AUDIT_FIRMWARE
-namespace wifi_audit_persistence = cyberdeck_wifi_audit_persistence;
-
 class firmware_file_ops final : public wifi_audit_persistence::file_ops {
 public:
     wifi_audit_persistence::    artifact_state inspect(std::string_view path) override
@@ -162,7 +154,7 @@ public:
             directory.pop_back();
         }
         if (directory.empty() || directory[0] != '/' ||
-            directory != "/sdcard/wifi-audit") return;
+            (directory != "/sdcard/wifi-audit" && directory != "/sdcard/wifi-survey")) return;
         if (::mkdir(directory.c_str(), 0700) != 0 && errno != EEXIST) {
             // The subsequent descriptor creation is the authoritative failure
             // check; do not replace a failed directory operation with a path
@@ -220,7 +212,8 @@ public:
 
 bool export_file_via_persistence(const char *path,
                                  std::uint64_t token,
-                                 const std::string &data)
+                                 const std::string &data,
+                                 wifi_audit_persistence::destination_policy policy)
 {
     auto lease = cyberdeck_sd_io::acquire_global(cyberdeck_sd_io::access::write);
     if (!lease) {
@@ -228,7 +221,11 @@ bool export_file_via_persistence(const char *path,
         return false;
     }
     if (path == nullptr || token == 0 || data.empty() ||
-        data.size() > wifi_audit_persistence::max_payload) {
+        (policy != wifi_audit_persistence::destination_policy::audit &&
+         policy != wifi_audit_persistence::destination_policy::survey) ||
+        data.size() > (policy == wifi_audit_persistence::destination_policy::survey
+            ? wifi_audit_persistence::max_survey_payload
+            : wifi_audit_persistence::max_payload)) {
         return false;
     }
 
@@ -236,7 +233,7 @@ bool export_file_via_persistence(const char *path,
     completion_bridge_sink sink;
     wifi_audit_persistence::audit_persistence persistence(operations, sink);
     if (!persistence.initialize() ||
-        persistence.enqueue(token, path, data) !=
+        persistence.enqueue(token, path, data, policy) !=
             wifi_audit_persistence::submit_status::accepted ||
         !persistence.pump_one()) {
         cyberdeck_sd_io::record_global_persistence_failure();
@@ -273,7 +270,9 @@ struct export_backend_request {
     std::uint64_t token{0};
     char path[field_capacity]{};
     std::string data{};
-    bool (*transaction)(const char *, std::uint64_t, const std::string &){nullptr};
+    bool (*transaction)(const char *, std::uint64_t, const std::string &,
+                        wifi_audit_persistence::destination_policy){nullptr};
+    wifi_audit_persistence::destination_policy policy{wifi_audit_persistence::destination_policy::audit};
     SemaphoreHandle_t completed{nullptr};
     SemaphoreHandle_t release{nullptr};
     std::atomic<bool> result{false};
@@ -298,8 +297,9 @@ void export_backend_task(void *arg)
     bool ok = false;
     if (request->transaction != nullptr && request->path[0] != '\0' &&
         !request->data.empty() &&
-        request->data.size() <= wifi_audit_persistence::max_payload) {
-        ok = request->transaction(request->path, request->token, request->data);
+        request->data.size() <= (request->policy == wifi_audit_persistence::destination_policy::survey
+            ? wifi_audit_persistence::max_survey_payload : wifi_audit_persistence::max_payload)) {
+        ok = request->transaction(request->path, request->token, request->data, request->policy);
     }
 
     request->result.store(ok, std::memory_order_release);
@@ -319,10 +319,13 @@ void export_backend_task(void *arg)
 
 constexpr std::size_t worker_stack_size = 6144;
 
-bool export_file(const char *path, std::uint64_t token, const std::string &data)
+bool export_file(const char *path, std::uint64_t token, const std::string &data,
+                 wifi_audit_persistence::destination_policy policy)
 {
     if (path == nullptr || token == 0 || data.empty() ||
-        data.size() > wifi_audit_persistence::max_payload || !safe_path(path)) {
+        data.size() > (policy == wifi_audit_persistence::destination_policy::survey
+            ? wifi_audit_persistence::max_survey_payload : wifi_audit_persistence::max_payload) ||
+        !safe_path(path, policy)) {
         return false;
     }
 
@@ -341,6 +344,7 @@ bool export_file(const char *path, std::uint64_t token, const std::string &data)
     copy_field(request->path, path);
     request->data.assign(data.data(), data.size());
     request->transaction = &export_file_via_persistence;
+    request->policy = policy;
     request->completed = xSemaphoreCreateBinary();
     request->release = xSemaphoreCreateBinary();
     if (request->data.size() != data.size() || request->completed == nullptr ||
@@ -368,6 +372,28 @@ bool export_file(const char *path, std::uint64_t token, const std::string &data)
     (void)xSemaphoreGive(request->release);
     return completed && ok;
 }
+#endif
+}
+
+bool persist_document(std::string_view path, std::uint64_t token, std::string_view data,
+                      wifi_audit_persistence::destination_policy policy)
+{
+#if CYBERDECK_AUDIT_FIRMWARE
+    if (policy != wifi_audit_persistence::destination_policy::audit &&
+        policy != wifi_audit_persistence::destination_policy::survey) return false;
+    const std::size_t limit = policy == wifi_audit_persistence::destination_policy::survey
+        ? wifi_audit_persistence::max_survey_payload : wifi_audit_persistence::max_payload;
+    if (path.size() >= field_capacity || data.empty() || data.size() > limit ||
+        !safe_path(path, policy)) return false;
+    const std::string path_copy(path.data(), path.size());
+    const std::string data_copy(data.data(), data.size());
+    return export_file(path_copy.c_str(), token, data_copy, policy);
+#else
+    (void)path;
+    (void)token;
+    (void)data;
+    (void)policy;
+    return false;
 #endif
 }
 
@@ -532,11 +558,11 @@ struct audit_controller::implementation {
                 std::memset(out.data, 0, sizeof(out.data));
                 copy_field(out.path, item.path);
                 const std::string data = safe_export(export_snapshot);
-                if (safe_path(item.path) && !data.empty() && data.size() < export_capacity) {
+                if (safe_path(item.path, wifi_audit_persistence::destination_policy::audit) && !data.empty() && data.size() < export_capacity) {
                     // export_result is heap-owned by the controller.  Copy the
                     // bounded payload only after the file has been persisted;
                     // the queue then owns a self-contained success contract.
-                    if (export_file(item.path, item.token, data)) {
+                    if (export_file(item.path, item.token, data, wifi_audit_persistence::destination_policy::audit)) {
                         std::memcpy(out.data, data.data(), data.size());
                         out.data[data.size()] = '\0';
                         out.bytes = data.size();
@@ -797,7 +823,7 @@ bool audit_controller::enqueue_save(std::uint64_t t, std::string_view path)
     s.enter();
 #endif
     if (!s.live || s.status != state::ready || t == 0 || t != s.token ||
-        s.export_in_flight || !safe_path(path)) {
+        s.export_in_flight || !safe_path(path, wifi_audit_persistence::destination_policy::audit)) {
 #if CYBERDECK_AUDIT_FIRMWARE
         s.leave();
 #endif

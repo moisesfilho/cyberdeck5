@@ -147,7 +147,7 @@ void test_help_catalog_documents_bluetooth_exactly_once()
     CHECK_STR(cyberdeck_command_help_text("Bluetooth"), "");
 
     /* The existing catalog rows are preserved: bluetooth is additive. */
-    for (const char *existing : {"help - show this help", "wifi [search|saved|audit]",
+    for (const char *existing : {"help - show this help", "wifi [search|saved|audit|survey]",
                                  "log [lines <1-64>] - show recent events", "clear - clear the terminal",
                                  "screen [on|off|timeout <0-1440>]",
                                  "battery [protection on|off|status]",

@@ -28,7 +28,7 @@ inline constexpr std::size_t formatted_entry_size(const entry &item)
 
 inline constexpr std::array<entry, 18> kCatalog = {{
     {"help", "help", "show this help"},
-    {"wifi", "wifi [search|saved|audit]", "show status, manage Wi-Fi, or audit"},
+    {"wifi", "wifi [search|saved|audit|survey]", "manage Wi-Fi, passively survey networks, and explicitly export results"},
     {"log", "log [lines <1-64>]", "show recent events"},
     {"clear", "clear", "clear the terminal"},
     {"screen", "screen [on|off|timeout <0-1440>]", "control screen protection"},

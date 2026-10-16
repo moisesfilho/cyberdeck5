@@ -62,3 +62,41 @@ preservado e, se o rollback falhar, `.tmp` e `.bak` são mantidos para
 recuperação. Não há ACK de sucesso sem publicação. O guard single-shot é
 liberado somente no drain do resultado (inclusive falha), rejeição da fila ou
 teardown, e tokens monotônicos descartam trabalho obsoleto.
+
+## Levantamento passivo de redes próximas
+
+`wifi survey` inicia uma única sessão em RAM (30 s por padrão). Configure a
+duração antes da sessão com `wifi survey duration <10-120>`; a escolha não é
+persistida. O primeiro scan é imediato. Os seguintes são sequenciais, com
+intervalo efetivo `max(5 s, ceil(duração/6))`, e no máximo seis scans. Assim,
+uma sessão padrão amostra em 0/5/10/15/20/25 s; o limite de intervalo de 5 s
+também distribui até seis amostras em sessões longas. `wifi survey cancel`
+invalida a sessão; callbacks/resultados tardios são descartados. Uma sessão
+ativa recusa outra sessão e bloqueia `wifi search` até terminar/cancelar.
+
+Cada scan é explicitamente passivo (sem probes) via `wifi_mgr_scan_passive`,
+mantendo o limite existente de 16 registros por scan. A sessão agrega até 32
+redes únicas por BSSID, mantém as 32 mais fortes observadas, ordena por RSSI
+decrescente e desempata por BSSID. BSSID ausente usa SSID+canal como chave; SSID
+oculto, BSSID/canal/segurança desconhecidos aparecem explicitamente. Segurança
+usa os valores `wifi_auth_mode_t` do ESP-IDF 5.5; valores futuros/desconhecidos
+são apresentados como `unknown`. Tendências count/min/avg/max são calculadas em
+RAM por rede somente para a sessão; `avg` é média inteira truncada em direção a
+zero. Nada é retido entre boots.
+
+O scan pode degradar temporariamente o link Wi-Fi existente, inclusive uma
+sessão SSH; o comando avisa antes de iniciar. Não associa, envia payload nem
+inicia probes dirigidos. O cancelamento não desconecta a rede.
+
+`wifi survey export` prepara uma confirmação separada, válida por 30 s;
+`wifi survey export confirm` grava em `/sdcard/wifi-survey/`. SSID e BSSID são
+mascarados por padrão. Para exportar identificadores, use
+`wifi survey export unmasked` e confirme com
+`wifi survey export confirm unmasked`; o segundo comando explicita a exposição.
+O arquivo versionado é limitado a 8192 bytes, contém a sessão e estatísticas,
+e usa nome timestamp GMT-3 sem substituir um destino existente. A política
+enum `survey` do seam `cyberdeck_wifi_audit_persistence` aceita exclusivamente
+esse diretório/nome; ambas as políticas compartilham validação confinada,
+transação, lease/fence WRITE, sidecars temporários/backup e rollback FatFS. O
+contrato não promete atomicidade POSIX. Falha de write/fsync/close/rename ou
+rollback nunca é reportada como exportação bem-sucedida.

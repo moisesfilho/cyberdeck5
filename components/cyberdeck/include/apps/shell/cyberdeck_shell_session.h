@@ -15,6 +15,7 @@
 #include "apps/shell/cyberdeck_ssh_line_composer.h"
 #include "apps/wifi/cyberdeck_wifi_menu.h"
 #include "apps/wifi/cyberdeck_wifi_state_machine.h"
+#include "apps/wifi/cyberdeck_wifi_survey.h"
 #include "apps/wifi/wifi_mgr.h"
 #include "apps/wifi/wifi_storage.h"
 #include "platform/sensors/battery_protection.h"
@@ -94,6 +95,11 @@ struct host {
      * stays linkable on the host without its worker and ESP-IDF dependencies. */
     virtual void wifi_audit_begin() = 0;
     virtual bool wifi_audit_save(const std::string &path) = 0;
+    virtual bool wifi_survey_active() const { return false; }
+    virtual bool wifi_survey_start(std::uint32_t) { return false; }
+    virtual bool wifi_survey_cancel() { return false; }
+    virtual bool wifi_survey_export(bool, bool) { return false; }
+    virtual std::string wifi_survey_render() const { return {}; }
 
     /* Wi-Fi service port.  Tokens are owned by the session; the manager's
      * current token is read back through the host. */
@@ -212,6 +218,7 @@ private:
     std::size_t log_lines_;
     bool poweroff_confirmation_ = false;
     bool poweroff_requested_ = false;
+    std::uint32_t wifi_survey_duration_seconds_ = cyberdeck_wifi_survey::default_duration_seconds;
 };
 
 } // namespace cyberdeck_shell_session

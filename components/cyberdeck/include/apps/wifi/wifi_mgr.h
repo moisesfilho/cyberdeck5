@@ -48,6 +48,8 @@ esp_err_t wifi_mgr_connect(const char *ssid, const char *password);
 
 /* Dispara um scan; chama cb com os APs encontrados (copia valida ate o retorno) */
 esp_err_t wifi_mgr_scan(wifi_scan_cb_t cb, void *ctx);
+/* Passive receive-only scan used by the bounded survey feature. */
+esp_err_t wifi_mgr_scan_passive(wifi_scan_cb_t cb, void *ctx);
 
 /* Cancela o scan identificado pelo callback. Retorna true quando o callback
  * ja foi destacado e ainda possui o contexto; nesse caso o chamador nao pode

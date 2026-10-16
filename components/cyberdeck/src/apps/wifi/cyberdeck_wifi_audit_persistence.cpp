@@ -10,6 +10,7 @@ namespace cyberdeck_wifi_audit_persistence {
 namespace {
 
 constexpr std::string_view canonical_directory = "/sdcard/wifi-audit/";
+constexpr std::string_view survey_directory = "/sdcard/wifi-survey/";
 constexpr std::string_view sdcard_prefix = "/sdcard/";
 constexpr std::size_t max_path_bytes = 512;
 
@@ -27,6 +28,7 @@ struct queued_request {
     std::uint64_t token{0};
     std::string path{};
     std::string data{};
+    destination_policy policy{destination_policy::audit};
 };
 
 struct transaction_paths {
@@ -39,31 +41,38 @@ bool digit(char value)
     return value >= '0' && value <= '9';
 }
 
-bool valid_save_name(std::string_view name)
+bool supported_policy(destination_policy policy)
 {
-    if (name.size() != 30 || name.substr(0, 11) != "wifi-audit-" ||
-        name[19] != '-' || name.substr(26) != ".txt") {
+    return policy == destination_policy::audit || policy == destination_policy::survey;
+}
+
+bool valid_save_name(std::string_view name, destination_policy policy)
+{
+    const std::string_view prefix = policy == destination_policy::survey ? "wifi-survey-" : "wifi-audit-";
+    if (name.size() != prefix.size() + 19 || name.substr(0, prefix.size()) != prefix ||
+        name[prefix.size() + 8] != '-' || name.substr(name.size() - 4) != ".txt") {
         return false;
     }
     for (std::size_t i = 0; i < 8; ++i) {
-        if (!digit(name[11 + i])) return false;
+        if (!digit(name[prefix.size() + i])) return false;
     }
     for (std::size_t i = 0; i < 6; ++i) {
-        if (!digit(name[20 + i])) return false;
+        if (!digit(name[prefix.size() + 9 + i])) return false;
     }
     return name.find("..") == std::string_view::npos;
 }
 
-bool valid_path(std::string_view path)
+bool valid_path(std::string_view path, destination_policy policy)
 {
+    const std::string_view directory = policy == destination_policy::survey ? survey_directory : canonical_directory;
     if (path.empty() || path.size() >= max_path_bytes ||
         path.substr(0, sdcard_prefix.size()) != sdcard_prefix ||
-        path.substr(0, canonical_directory.size()) != canonical_directory) {
+        path.substr(0, directory.size()) != directory) {
         return false;
     }
 
-    const std::string_view name = path.substr(canonical_directory.size());
-    if (!valid_save_name(name) ||
+    const std::string_view name = path.substr(directory.size());
+    if (!valid_save_name(name, policy) ||
         name.find('/') != std::string_view::npos ||
         name.find('\\') != std::string_view::npos ||
         name.find("..") != std::string_view::npos ||
@@ -78,9 +87,10 @@ bool valid_path(std::string_view path)
 }
 
 bool make_transaction_paths(std::string_view destination,
+                            destination_policy policy,
                             transaction_paths &paths)
 {
-    if (!valid_path(destination)) return false;
+    if (!valid_path(destination, policy)) return false;
 
     const std::size_t slash = destination.rfind('/');
     if (slash == std::string_view::npos) return false;
@@ -105,11 +115,11 @@ bool make_transaction_paths(std::string_view destination,
     return paths.temporary.size() < max_path_bytes && paths.backup.size() < max_path_bytes;
 }
 
-bool valid_request_path(std::string_view path)
+bool valid_request_path(std::string_view path, destination_policy policy)
 {
-    if (!valid_path(path)) return false;
+    if (!supported_policy(policy) || !valid_path(path, policy)) return false;
     transaction_paths paths{};
-    return make_transaction_paths(path, paths);
+    return make_transaction_paths(path, policy, paths);
 }
 
 std::string copy_view(std::string_view value)
@@ -215,19 +225,15 @@ completion run_transaction(file_ops &operations, const queued_request &request)
         parent_directory.pop_back();
     }
     operations.ensure_directory(parent_directory);
-    const bool no_clobber =
-        request.path.substr(0, canonical_directory.size()) == canonical_directory;
-    if (no_clobber) {
-        const artifact_state initial_destination = operations.inspect(request.path);
-        if (initial_destination == artifact_state::regular) {
-            return failed(persistence_error::invalid_request);
-        }
-        if (initial_destination == artifact_state::error ||
-            initial_destination == artifact_state::other) {
-            return failed(persistence_error::recovery_failed);
-        }
+    const artifact_state initial_destination = operations.inspect(request.path);
+    if (initial_destination == artifact_state::regular) {
+        return failed(persistence_error::invalid_request);
     }
-    if (!make_transaction_paths(request.path, paths) ||
+    if (initial_destination == artifact_state::error ||
+        initial_destination == artifact_state::other) {
+        return failed(persistence_error::recovery_failed);
+    }
+    if (!make_transaction_paths(request.path, request.policy, paths) ||
         !recover_stale_artifacts(operations, request.path, paths)) {
         return failed(persistence_error::recovery_failed);
     }
@@ -282,21 +288,14 @@ completion run_transaction(file_ops &operations, const queued_request &request)
         }
 
         if (operations.rename(paths.temporary, request.path) == 0) {
-            if (no_clobber) {
-                // A destination appeared after the initial no-clobber check.
-                // Put the candidate back in its sidecar and restore the live
-                // file instead of replacing it.
-                if (operations.rename(request.path, paths.temporary) != 0 ||
-                    operations.rename(paths.backup, request.path) != 0) {
-                    return failed(persistence_error::rollback_failed);
-                }
-                (void)operations.unlink(paths.temporary);
-                return failed(persistence_error::invalid_request);
+            // A destination appeared after the initial no-clobber check (or a
+            // recoverable backup was restored). Restore it instead of replacing.
+            if (operations.rename(request.path, paths.temporary) != 0 ||
+                operations.rename(paths.backup, request.path) != 0) {
+                return failed(persistence_error::rollback_failed);
             }
-            // Publication is complete.  A leftover backup is recoverable on
-            // the next attempt and must not turn a valid publication into a
-            // failed ACK.
-            (void)operations.unlink(paths.backup);
+            (void)operations.unlink(paths.temporary);
+            return failed(persistence_error::invalid_request);
         } else if (operations.rename(paths.backup, request.path) == 0) {
             // The old destination is back.  Only now is the failed candidate
             // safe to discard.
@@ -402,14 +401,16 @@ bool audit_persistence::initialized() const
 
 submit_status audit_persistence::enqueue(std::uint64_t token,
                                          std::string_view path,
-                                         std::string_view data)
+                                         std::string_view data,
+                                         destination_policy policy)
 {
     if (impl_ == nullptr) return submit_status::rejected_not_initialized;
     if (!impl_->initialized.load(std::memory_order_acquire)) {
         return submit_status::rejected_not_initialized;
     }
-    if (token == 0 || !valid_request_path(path) || data.empty() ||
-        data.size() > max_payload) {
+    const std::size_t payload_limit = policy == destination_policy::survey ? max_survey_payload : max_payload;
+    if (token == 0 || !valid_request_path(path, policy) || data.empty() ||
+        data.size() > payload_limit) {
         return submit_status::rejected_invalid;
     }
 
@@ -425,8 +426,8 @@ submit_status audit_persistence::enqueue(std::uint64_t token,
         impl_->torn_down.load(std::memory_order_acquire)) {
         return submit_status::rejected_not_initialized;
     }
-    if (token == 0 || !valid_request_path(path) || data.empty() ||
-        data.size() > max_payload) {
+    if (token == 0 || !valid_request_path(path, policy) || data.empty() ||
+        data.size() > payload_limit) {
         return submit_status::rejected_invalid;
     }
     if (impl_->active.load(std::memory_order_acquire) ||
@@ -436,7 +437,7 @@ submit_status audit_persistence::enqueue(std::uint64_t token,
 
     // Copy while holding the queue lock.  No adapter operation is allowed on
     // this path; the worker owns all file I/O in pump_one().
-    impl_->request = queued_request{token, copy_view(path), copy_view(data)};
+    impl_->request = queued_request{token, copy_view(path), copy_view(data), policy};
     impl_->has_request = true;
     impl_->active.store(true, std::memory_order_release);
     return submit_status::accepted;

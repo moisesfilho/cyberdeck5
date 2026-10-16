@@ -839,7 +839,7 @@ void test_help_text_commands_present()
         "mkdir <directory> - create a directory [terminal]",
         "rm [-r] <path> - remove a file or directory [terminal]",
         "rmdir <directory> - remove an empty directory [terminal]",
-        "wifi [search|saved|audit] - show status, manage Wi-Fi, or audit [terminal]",
+        "wifi [search|saved|audit|survey] - manage Wi-Fi, passively survey networks, and explicitly export results [terminal]",
         "log [lines <1-64>] - show recent events [terminal]",
         "clear - clear the terminal [terminal]",
         "screen [on|off|timeout <0-1440>] - control screen protection [terminal]",

@@ -35,7 +35,7 @@ CATALOG_DESCRIPTIONS = (
     "create a directory",
     "remove a file or directory",
     "remove an empty directory",
-    "show status, manage Wi-Fi, or audit",
+    "manage Wi-Fi, passively survey networks, and explicitly export results",
     "show recent events",
     "clear the terminal",
     "control screen protection",
@@ -90,6 +90,14 @@ def main() -> int:
     require("kCatalog" in shell_help and
             re.search(r"std::array\s*<\s*entry\s*,\s*18\s*>\s+kCatalog", shell_help) is not None,
             "production help header must retain the 18-entry ordered catalog")
+    require(re.search(
+        r'\{"wifi"\s*,\s*"wifi \[search\|saved\|audit\|survey\]"\s*,\s*'
+        r'"manage Wi-Fi, passively survey networks, and explicitly export results"\}',
+        shell_help) is not None,
+        "production help catalog must include the approved Wi-Fi survey syntax and description")
+    require("wifi [search|saved|audit|survey] - manage Wi-Fi, passively survey networks, and explicitly export results"
+            in help_fixture,
+            "host help fixture must include the approved Wi-Fi survey row")
     require(re.search(
         r'\{"battery"\s*,\s*"battery \[protection on\|off\|status\]"\s*,\s*'
         r'"show or control battery protection"\}', shell_help) is not None,

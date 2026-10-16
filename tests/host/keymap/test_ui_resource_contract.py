@@ -151,7 +151,7 @@ def main() -> int:
     require(cleanup.count("window_manager.deinit();") == 1,
             "duplicate teardown must have one centralized, idempotent root release")
     for timer in ("s_clock_timer", "s_wifi_state_timer", "s_wifi_scan_timer",
-                  "s_ble_timer", "s_ssh_timer", "s_wifi_audit_timer",
+                  "s_ble_timer", "s_ssh_timer", "s_wifi_audit_timer", "s_wifi_survey_timer",
                   "s_battery_timer", "s_terminal_output_timer"):
         require(re.search(rf"if\s*\(\s*{timer}\s*!=\s*nullptr\s*\)", cleanup)
                 is not None and re.search(rf"{timer}\s*=\s*nullptr\s*;", cleanup)
@@ -174,8 +174,8 @@ def main() -> int:
             "late cat results must be quiesced during UI teardown")
     require(cleanup.count("wifi_set_state_callback(nullptr, nullptr)") == 1,
             "Wi-Fi state callback must be unregistered exactly once per cleanup pass")
-    require(cleanup.count("lv_timer_del(") == 8,
-            "all eight LVGL timers must be explicitly canceled on teardown")
+    require(cleanup.count("lv_timer_del(") == 9,
+            "all nine LVGL timers, including Wi-Fi survey, must be explicitly canceled on teardown")
 
     require("s_keyboard_dispatch.start(on_keyboard_event, nullptr)" in init,
             "init must start the keyboard dispatcher")
