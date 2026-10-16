@@ -250,6 +250,31 @@ completion ACK, the timestamped file is under `/sdcard/wifi-audit/` as
 automatically, existing files are never overwritten, and the retired export
 spelling is rejected.
 
+### Network diagnostics (`cyberdeck.netdiag`)
+
+With Wi-Fi connected, run these commands in the local terminal shell (not in an
+SSH session). Each network test runs only when explicitly requested:
+
+```text
+netdiag status                         # interface, IP, gateway, DNS and RSSI
+netdiag dns example.com                # resolve an IPv4 address
+netdiag tcp example.com 443            # test a TCP connection to this port
+netdiag https https://example.com/     # send an HTTPS HEAD request
+netdiag result                         # show the current or last test result
+netdiag cancel                         # logically cancel an active test
+```
+
+`status` and `result` do not start network tests. After `dns`, `tcp` or `https`
+prints `operation started`, use `netdiag result` to inspect the stage, duration,
+error or HTTP status. Only one operation runs at a time, and new operations
+must start at least 30 seconds apart. TCP resolves the specified host before
+connecting; HTTPS uses its hostname directly and may reach a different IP.
+Cancellation is logical: a DNS query can retain its slot until a late callback
+(or reboot if none arrives). HTTPS validates TLS certificates, sends HEAD only,
+does not follow redirects or retry with GET, and reports HTTP 405 as a final
+result. There is no ping, scan, plaintext HTTP, export or automatic traffic.
+See [network diagnostics](docs/NETDIAG.md) for limits and implementation notes.
+
 ### Bluetooth LE (ESP32-C6 via ESP-Hosted)
 
 O radio BLE reside no coprocessor ESP32-C6, alcancado por `esp_hosted`

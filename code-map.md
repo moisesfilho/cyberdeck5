@@ -1,14 +1,15 @@
 # cyberdeck5 Code Map
 
-## Planos de aplicativos e recursos futuros
+## Planos de aplicativos e recursos
 
-Os planos numerados em `docs/` organizam a evolução proposta sem representar
-funcionalidade já implementada. A ordem é intencional: diagnóstico de rede,
-levantamento Wi-Fi, player, inspeção BLE, IA e então recursos transversais.
+Os planos numerados em `docs/` organizam a evolução proposta; o plano 01 foi
+finalizado no escopo aprovado de DNS/TCP/HTTPS explícitos. A ordem é
+intencional: diagnóstico de rede, levantamento Wi-Fi, player, inspeção BLE, IA
+e então recursos transversais.
 
 | Plano | Escopo |
 | --- | --- |
-| `docs/01-network-diagnostics-plan.pt-BR.md` | Plano de diagnóstico ativo limitado; registra a decisão DNS/TCP/HTTPS, os limites de timeout/cancelamento e os gates pendentes. `docs/NETDIAG.md` descreve os comandos e o estado da implementação. |
+| `docs/01-network-diagnostics-plan.pt-BR.md` | Plano finalizado para DNS/TCP/HTTPS explícitos; registra decisões, limites de timeout/cancelamento, evidência e lacunas do roteiro manual integral. `docs/NETDIAG.md` detalha o contrato; `README.md` e `README.pt-BR.md` ensinam a usar os comandos. |
 | `docs/02-wifi-survey-plan.pt-BR.md` | Levantamento passivo de APs e tendências de sinal. |
 | `docs/03-audio-player-plan.pt-BR.md` | Player local no SD via codec/saída de áudio Tab5. |
 | `docs/04-ble-inspector-plan.pt-BR.md` | Inventário BLE e inspeção GATT explícita, sem coleta de segredos. |
@@ -1508,7 +1509,7 @@ O roteiro da ponte serial esta em
 
 - `AGENTS.md`: instrucoes obrigatorias para agentes consultarem e manterem este
   mapa, incluindo a politica de busca progressiva.
-- `README.md` e `README.pt-BR.md`: recursos, uso do shell, Wi-Fi, SSH, screenshot e ponte serial.
+- `README.md` e `README.pt-BR.md`: recursos, uso do shell, Wi-Fi, SSH, comandos locais `netdiag` (status, DNS, TCP, HTTPS HEAD, resultado e cancelamento), screenshot e ponte serial.
 - `docs/ARCHITECTURE.md` e `docs/ARCHITECTURE.pt-BR.md`: principios, boot, concorrencia Wi-Fi, screenshot,
   ponte serial, bateria e UI.
 - `tests/manual/tui-shell-validation.pt-BR.md`: validacao no dispositivo.

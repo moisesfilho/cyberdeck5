@@ -225,6 +225,31 @@ esquecimento; Escape cancela a confirmação.
 
 A sessão SSH roda em uma task FreeRTOS dedicada para não bloquear a UI.
 
+### Diagnóstico de rede (`cyberdeck.netdiag`)
+
+Com o Wi-Fi conectado, execute no shell local do terminal (não dentro de uma
+sessão SSH). Cada teste de rede exige um comando explícito:
+
+```text
+netdiag status                         # interface, IP, gateway, DNS e RSSI
+netdiag dns example.com                # resolve um endereço IPv4
+netdiag tcp example.com 443            # testa conexão TCP com esta porta
+netdiag https https://example.com/     # envia uma requisição HTTPS HEAD
+netdiag result                         # consulta o resultado atual ou anterior
+netdiag cancel                         # cancela logicamente o teste ativo
+```
+
+`status` e `result` não iniciam testes de rede. Depois que `dns`, `tcp` ou
+`https` exibir `operation started`, use `netdiag result` para consultar etapa,
+duração, erro ou status HTTP. Só uma operação é executada por vez, com intervalo
+mínimo de 30 segundos entre inícios. TCP resolve o host informado antes de
+conectar; HTTPS usa o hostname diretamente e pode alcançar outro IP. O
+cancelamento é lógico: uma consulta DNS pode ocupar seu slot até o callback
+tardio (ou até reiniciar, se ele nunca ocorrer). HTTPS valida certificados TLS,
+envia apenas HEAD, não segue redirects nem tenta GET; HTTP 405 é resultado
+final. Não há ping, scan, HTTP sem TLS, exportação ou tráfego automático.
+Veja [diagnóstico de rede](docs/NETDIAG.md) para limites e detalhes técnicos.
+
 ### Bluetooth LE (ESP32-C6 via ESP-Hosted)
 
 O radio BLE reside no coprocessor ESP32-C6, alcancado por `esp_hosted`

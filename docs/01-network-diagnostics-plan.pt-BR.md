@@ -1,5 +1,13 @@
 # Plano 01 — Diagnóstico de rede
 
+**Estado: finalizado para o escopo aprovado de DNS/TCP/HTTPS explícitos.**
+Implementado e integrado à `develop`; instruções de uso em
+[`README.pt-BR.md`](../README.pt-BR.md) e [`README.md`](../README.md).
+O aceite nesta entrega usa testes host, build e validação Serial-JTAG dirigida
+no Tab5. O roteiro manual integral da ponte serial, cenário sem Wi-Fi e testes
+exaustivos de coexistência com SSH/teardown não foram executados; não são
+declarados como aprovados por este fechamento.
+
 ## Objetivo
 
 Criar `cyberdeck.netdiag` para diagnosticar conectividade de um host ou serviço
@@ -18,10 +26,10 @@ contra terceiros.
 ## Escopo
 
 1. Mostrar interface, IP, gateway, DNS e RSSI disponíveis.
-2. Executar sob demanda resolução DNS, ping/latência se suportado, conexão TCP
-   para host+porta explícitos e requisição HTTP/TLS a URL informada.
+2. Executar sob demanda resolução DNS, conexão TCP para host+porta explícitos e
+   requisição HTTPS HEAD a URL informada. Ping/ICMP não integra o escopo aprovado.
 3. Exibir etapa, duração, resultado e erro tipado sem bloquear LVGL.
-4. Permitir repetição limitada e exportação opcional de resumo sanitizado.
+4. Permitir repetição limitada. Exportação não integra o escopo aprovado.
 
 ## Não objetivos
 
@@ -116,7 +124,7 @@ usar DNS síncrono, não matar worker para simular cancelamento, nem liberar/reu
 o contexto DNS antes do callback. Semântica aprovada não autoriza varreduras,
 ICMP/ping, exportação, tráfego implícito ou comandos automáticos.
 
-### Progresso e gates pendentes (16/out/2026)
+### Entrega final e limites de validação (16/out/2026)
 
 O controller e os adapters DNS/TCP/HTTPS estão integrados à app e ao runtime.
 Os testes host executam os TUs reais com shims nas fronteiras de plataforma;
@@ -134,9 +142,8 @@ O firmware `8e41338` foi gravado em `/dev/ttyACM0` e validado via `term.dump`:
 status, DNS, TCP e HTTPS 200 para `example.com`, recusa de URL HTTP, rate limit
 e cancelamento HTTPS. `sys.info` confirmou versão, uptime contínuo e ausência
 de safe mode. Trata-se de validação dirigida, não de captura de tráfego nem de
-teste de HTTP 405/TLS negativo ou do roteiro serial completo. Qualquer commit
-posterior exige CI no novo estado antes da conclusão e aceite humano. Uma
-segunda rodada Serial-JTAG no mesmo firmware confirmou 405 final e `/head`
+execução do roteiro serial completo. Uma segunda rodada Serial-JTAG no mesmo
+firmware confirmou 405 final e `/head`
 com HTTP 200 (GET retornou 405 no host), além de falha sem seguir redirect 302.
 Os testes com certificado expirado e autoassinado terminaram em timeout após
 aproximadamente 5 s; DNS e TCP para o alvo autoassinado funcionaram. Isso
@@ -146,4 +153,7 @@ serial de uma única tentativa para o mesmo host autoassinado registrou
 e falha de handshake TLS no ESP-IDF; `netdiag result` reportou `https_failed`
 em 576 ms sem HTTP status. Rejeição de certificado autoassinado demonstrada no
 dispositivo; não houve captura de pacotes, e o caso de certificado expirado
-continua caracterizado somente por timeout.
+continua caracterizado somente por timeout. A integração em `develop`
+(`46af301`) passou no agregado host, cobertura, scope guard, TSan, análises
+estáticas e build ESP-IDF locais; não se declara execução integral do roteiro
+manual Serial-JTAG nem CI remota do commit de merge.
