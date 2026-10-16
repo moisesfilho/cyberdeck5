@@ -104,31 +104,41 @@ e adapters reais; TEST-ND-07 permanece pendente e TEST-ND-08 é apenas estrutura
 
 - **DNS / TEST-ND-01..03:** core e adapter DNS foram implementados, revisados e
   testados; commit `8ff2748cb170288000605de66181297748cac29f` (DNS) tem Quality
-  Gate remoto verde, run `38823591023`. Sem validação física no Tab5.
-- **TCP e HTTPS / TEST-ND-04..06:** adapters implementados e integrados localmente.
-  Evidência reportada no snapshot de revisão local: testes host TCP (51 checks) e
-  HTTPS (45 checks), ambos ASan/UBSan; TCP também passou TSan. Suíte local,
-  build e coverage foram reportados como aprovados nesse snapshot. Isso não é
-  aprovação final: revisão está `review_incomplete`, pois o CI remoto deste delta
-  não foi executado. A integração HTTPS é HEAD-only, não faz fallback GET, e 405
-  é resultado HTTP final tipado. Continua aceito o risco de acumulação de headers
-  sem hard cap no ESP-IDF 5.5.5. TCP usa stack de 8192 bytes, ainda exigindo
-  evidência no alvo; a fidelidade de critical sections do TSan host é limitada.
-- **App / TEST-ND-07..08:** app registrado e implementado com worker de 8192 bytes,
-  adapters delegados e grant assíncrono; TEST-ND-08 cobre apenas estrutura (20
-  checks). TEST-ND-07, integração comportamental do app real com runtime/grants e
-  adapters reais, não está demonstrado. Tentativas de harness não fecharam por
-  shims ausentes de esp_netif, esp_wifi e filas/tasks FreeRTOS; não interpretar
-  isso como teste aprovado nem como app não registrado.
-- **Gates pendentes:** criar/rodar evidência robusta para TEST-ND-07; executar no
-  estado final a suíte completa, sanitizers, coverage e build; obter revisão
-  completa e CI remoto verde no commit final exato; depois realizar cenários
-  Serial-JTAG no dispositivo e obter aceitação humana. Nenhum flash foi feito.
-  O delta TCP/HTTPS/app ainda não foi commitado nem enviado.
-- **Riscos mantidos:** operação é explícita, sem tráfego implícito; cancelamento é
-  cooperativo/lógico. DNS sem callback pode reter o slot até reboot. Confirmação
-  de stack TCP 8192 no alvo e validação de comportamento no dispositivo continuam
-  pendentes. Nenhum estado acima autoriza declarar o recurso concluído/liberado.
+  Gate remoto verde, run `38823591023`; cobertura local/host adapters reportada
+  conforme a evidência registrada para essa etapa. Sem validação física no Tab5.
+- **TCP, HTTPS e app / TEST-ND-04..06:** snapshot de integração commitado e
+  publicado na branch `feature/netdiag-dns-stage`, commit
+  `f7011f5f119ae1d2ee9f6d976b5918de68199883`. O Quality Gate desse commit,
+  run `38833874806`, falhou no step 6 (Host aggregate and coverage):
+  `coverage_scope_guard` não encontrou `cyberdeck_netdiag_app.cpp` no JSON gcovr.
+  Etapas remotas subsequentes foram skipped. Embora revisão tenha reportado
+  verdes as verificações locais (suite, build, lint e outras), isso não é
+  aprovação: a revisão está `review_incomplete` e o gate remoto falhou.
+  Um achado alto no app: `cancel_requested` permanece sticky após o primeiro
+  `netdiag cancel`, fazendo consultas DNS/TCP/HTTPS posteriores também serem
+  canceladas até stop/start. Corrigir e acrescentar regressão antes de aprovar.
+- **App / TEST-ND-07..08:** o app está registrado como comando foreground, não
+  inicia automaticamente no boot; ainda assim ficará exposto no firmware futuro,
+  portanto não fazer flash nem release antes das correções e gates. TEST-ND-07,
+  teste comportamental conjunto do app real, runtime/grants e adapters reais,
+  continua ausente. TEST-ND-08 tem 20 checks estruturais e atualmente não entra
+  no aggregate/CI; não equivale a teste comportamental nem a aprovação. O scope
+  guard deve passar com evidência de cobertura verdadeira, não com allowlist
+  cosmética. HTTPS permanece HEAD-only, sem fallback GET; 405 é resultado HTTP
+  final tipado. Mantêm-se o risco aceito de metadados de headers sem hard cap no
+  ESP-IDF 5.5.5, a exigência de confirmar no alvo a stack TCP de 8192 bytes e a
+  limitação de fidelidade das critical sections no TSan host.
+- **Gates pendentes:** criar seam/harness comportamental real para TEST-ND-07;
+  corrigir o cancelamento sticky e cobri-lo por regressão; incluir TEST-ND-08 no
+  aggregate/CI e incluir formatter/cppcheck do TU do app; obter cobertura real e
+  passar o scope guard; executar build/revisão completa e Quality Gate remoto
+  verde no estado final exato. Depois, validar via Serial-JTAG, incluindo stack
+  high-water TCP de 8192 bytes, e obter aceite humano. Nenhum flash ou teste no
+  dispositivo foi feito.
+- **Riscos mantidos:** operação explícita, sem tráfego implícito; cancelamento
+  lógico. DNS sem callback pode reter o slot até reboot. O risco de headers sem
+  hard cap permanece aceito. Nenhuma evidência acima autoriza declarar o recurso
+  concluído ou liberado.
 
 ## Riscos
 
