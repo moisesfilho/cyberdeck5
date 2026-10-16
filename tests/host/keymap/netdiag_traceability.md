@@ -68,25 +68,33 @@ via `ui.type`; every observation below was verified in `term.dump`:
   `state=failed error=https_failed` (1791 ms); it did not publish a followed
   response. The host confirmed that endpoint's HEAD returns 302.
 - `https://expired.badssl.com/` and `https://self-signed.badssl.com/` both ended
-  in `state=failed error=timeout` after ~5055 ms. The host rejected their
-  certificates, but **the device result does not prove certificate rejection**.
+  in `state=failed error=timeout` after ~5055 ms in the first run. Those results
+  alone were inconclusive about certificate rejection.
   On-device DNS for `self-signed.badssl.com` completed in 2 ms (104.154.89.105)
   and TCP to port 443 completed in 278 ms, narrowing the inconclusive behavior
-  to the HTTPS stage. `sys.info` afterward reported continuous uptime, no safe
-  mode and `fw_version=8e41338`.
+  to the HTTPS stage. In a subsequent single-port serial capture, the same
+  self-signed URL logged `esp-x509-crt-bundle: No matching trusted root
+  certificate found`, `Failed to verify certificate`, and
+  `esp-tls-mbedtls: mbedtls_ssl_handshake returned -0x3000`. The corresponding
+  `netdiag result` was `state=failed operation=https duration_ms=576
+  error=https_failed`, with no HTTP status. The host also rejected this
+  certificate. `sys.info` afterward reported continuous uptime, no safe mode
+  and `fw_version=8e41338`.
 
 This is a targeted live-network smoke test, not a packet capture. The host
 harnesses establish HEAD/405/no-GET logic; the device functionally distinguished
-HEAD from GET and observed a final 405, but did not prove certificate rejection,
-wire-level method, or all teardown races. A failed
+HEAD from GET, observed a final 405, and logged certificate verification failure
+for a self-signed endpoint. It did not capture the wire-level method or exhaust
+all teardown races. A failed
 parallel invocation of two CLI processes on the same port yielded a transport
 error; repeating `term.dump` and `sys.info` sequentially succeeded.
 
 Remaining TEST-ND-07/acceptance gaps: harnesses use deterministic scheduler and
 API shims, not the ESP-IDF runtime, live sockets, DNS, TLS, or an HTTP server.
-TLS certificate rejection, a packet-level method capture, and the full serial
-bridge validation procedure remain unverified on the device. Do not close the
-feature branch on the strength of the negative-TLS timeouts alone. The tested
+An expired certificate was not conclusively characterized, but the self-signed
+certificate rejection was demonstrated by the TLS log and typed failure. A
+packet-level method capture and the full serial bridge validation procedure
+remain outside this targeted device validation. The tested
 restart path covers the worker
 timeout/reap quarantine; it does not establish exhaustive races for every
 platform task/runtime failure path. Header metadata has no guaranteed hard cap.

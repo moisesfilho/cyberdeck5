@@ -51,8 +51,13 @@ comprova por pacotes todas as propriedades. Uma segunda rodada no mesmo Tab5
 confirmou HTTP 405 final, `/head` com 200 (GET retorna 405 no host) e falha sem
 seguir redirect 302. Certificados expirado e autoassinado falharam por timeout
 após aproximadamente 5 s; DNS e TCP do alvo autoassinado passaram, mas o
-timeout **não comprova** rejeição de certificado. A validação TLS negativa e
-todas as corridas de teardown continuam pendentes. Qualquer commit posterior
+timeout **não comprova** rejeição de certificado. Em captura serial posterior,
+o mesmo host autoassinado gerou `No matching trusted root certificate found`,
+`Failed to verify certificate` e falha no handshake TLS; `netdiag result`
+terminou em `https_failed` em 576 ms, sem HTTP status. Isso comprova rejeição
+TLS negativa para o certificado autoassinado; certificado expirado, captura de
+pacotes e todas as corridas de teardown não foram validados exaustivamente.
+Qualquer commit posterior
 requer CI no novo
 estado. O GCC/gcov 15.2 local mede branches diferentemente (57,4% no mesmo
 agregado).

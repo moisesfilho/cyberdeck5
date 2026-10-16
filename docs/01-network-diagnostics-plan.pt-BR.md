@@ -140,5 +140,10 @@ segunda rodada Serial-JTAG no mesmo firmware confirmou 405 final e `/head`
 com HTTP 200 (GET retornou 405 no host), além de falha sem seguir redirect 302.
 Os testes com certificado expirado e autoassinado terminaram em timeout após
 aproximadamente 5 s; DNS e TCP para o alvo autoassinado funcionaram. Isso
-mostra falha fechada, mas **não demonstra rejeição do certificado** nem encerra
-a validação TLS negativa.
+mostra falha fechada, mas não demonstrava rejeição do certificado. Nova captura
+serial de uma única tentativa para o mesmo host autoassinado registrou
+`No matching trusted root certificate found`, `Failed to verify certificate`
+e falha de handshake TLS no ESP-IDF; `netdiag result` reportou `https_failed`
+em 576 ms sem HTTP status. Rejeição de certificado autoassinado demonstrada no
+dispositivo; não houve captura de pacotes, e o caso de certificado expirado
+continua caracterizado somente por timeout.

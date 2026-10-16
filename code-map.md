@@ -548,8 +548,10 @@ destrói recursos potencialmente usados.
       ainda dependem de CI no novo estado. `netdiag_traceability.md` registra
        a validação Serial-JTAG direcionada no Tab5 (status, DNS, TCP, HTTPS 200,
        405 final, `/head` funcional, redirect rejeitado, rate limit e
-       cancelamento); os testes de certificado inválido terminaram em timeout,
-       sem prova de validação TLS negativa ou captura de tráfego.
+       cancelamento); uma captura serial posterior confirmou `Failed to verify
+       certificate`/falha de handshake TLS e `https_failed` para certificado
+       autoassinado. O certificado expirado continua inconclusivo (timeout);
+       não houve captura de pacotes nem prova de todas as corridas de teardown.
     Metadata de headers não possui limite rígido garantido.
     `cyberdeck_netdiag_app.{h,cpp}` compõe o controller real com os três adapters
    e um worker por token. O comando conserva `app_grant()` opaco para revalidar
