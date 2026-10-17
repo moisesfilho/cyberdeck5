@@ -41,6 +41,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include <atomic>
 #include <cerrno>
@@ -1968,11 +1969,17 @@ bool shell_session_host::wifi_survey_export(bool confirm, bool masked) {
     }
     s_wifi_survey_export_result = {};
     s_wifi_survey_export_done.store(false, std::memory_order_release);
+    const std::size_t internal_heap_free_bytes = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const std::size_t internal_heap_largest_block_bytes =
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (xTaskCreate(wifi_survey_export_worker, "wifi_survey_io", 8192, job, 4, nullptr) != pdPASS) {
         vSemaphoreDelete(job->start_gate);
         delete job;
         s_wifi_survey_export_busy.store(false, std::memory_order_release);
-        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=create_task_failed");
+        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=create_task_failed requested_stack=8192 "
+                                  "internal_free_bytes=%u internal_largest_block_bytes=%u",
+                 static_cast<unsigned>(internal_heap_free_bytes),
+                 static_cast<unsigned>(internal_heap_largest_block_bytes));
         return false;
     }
     ESP_LOGI("cyberdeck_ui", "wifi survey export accepted: mode=%s", masked ? "masked" : "unmasked");

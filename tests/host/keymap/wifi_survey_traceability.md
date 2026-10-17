@@ -23,7 +23,8 @@ contratos de wiring e compilação não provam rádio físico ou FatFS.
 | REQ-SURVEY-07 / AC-07: erro ao inspecionar artefato ou remover backup stale bloqueia mutação | TEST-PERSISTENCE-INSPECT-UNLINK: `test_wifi_audit_persistence.cpp::test_inspection_errors_fail_closed_without_mutation` e `test_stale_sidecar_unlink_failure_blocks_new_transaction` | PASS: TU transacional real; 507 checks, erro de inspeção em ambos sidecars e unlink negado preservam evidências e não iniciam escrita. |
 | B3: help catalog/golden descreve survey sem perder linhas/ordem/igualdade | TEST-HELP-GOLDEN: `test_shell_utils`, fixture `cyberdeck_help.h`, `test_help_unification`, `test_ble_command_parse` e `help_unification_contract` | PASS ciclo 5: shell utils 439, help unification 320, BLE parser 75; structural contract PASS. Golden mantém igualdade e 18 linhas. |
 | EXPORT-ORDER/FAILURE/PRIVACY: worker só começa após aceitação registrada; falhas distintas de criação limpam recursos/`busy`; logs não revelam SSID/BSSID/payload/caminho; ACK de sucesso sucede publicação | TEST-SURVEY-EXPORT-WIRING: `test_wifi_survey_integration_contract.py` verifica gate-create → task-create → accepted → give, take → started, motivos distintos e ordem de cleanup em cada falha, logs sanitizados e `persist_document` → published → completion → ACK | PASS: contrato estrutural 25/25. Não executa FreeRTOS nem prova scheduling/interleaving ou falha de alocação em runtime; a sincronização real do gate e injeção de create/gate failure continuam exigindo harness runtime/validação de plataforma. O TU de persistência comportamental cobre a publicação transacional, não a integração worker/UI no Tab5. |
-| EXPORT-RESULT/GATE-LIFETIME: persistência governa ACK; gate destruído no sucesso e rejeições sem double delete | TEST-SURVEY-EXPORT-RESULT: `test_wifi_survey_export_result_contract.py` liga o bool de `persist_document` ao resultado e notices `saved`/`failed`, e verifica destruição/ownership do gate | PASS: 9/9 asserções estruturais focadas. Não executa FreeRTOS e não prova scheduling/runtime; export failure em plataforma continua pendente. |
+| EXPORT-RESULT/GATE-LIFETIME: persistência governa ACK; gate destruído no sucesso e rejeições sem double delete | TEST-SURVEY-EXPORT-RESULT: `test_wifi_survey_export_result_contract.py` liga o bool de `persist_document` ao resultado e notices `saved`/`failed`, e verifica destruição/ownership do gate | PASS: 14/14 asserções estruturais focadas, incluindo diagnóstico. Não executa FreeRTOS e não prova scheduling/runtime; export failure em plataforma continua pendente. |
+| EXPORT-DIAGNOSTIC: snapshot de heap interno imediatamente antes de criar task; em falha, diagnóstico inclui stack solicitada e métricas, sem dados da auditoria; motivo síncrono e fluxo existentes preservados | TEST-SURVEY-EXPORT-DIAGNOSTIC: `test_wifi_survey_export_result_contract.py` verifica ordem amostragem→`xTaskCreate`, campos da mensagem de falha, privacidade e política/fluxo preexistentes | PASS: contrato estrutural verifica a implementação atual; não injeta falha FreeRTOS nem comprova valores/runtime. |
 
 ## Fechamento dos focados (cycle 5)
 
@@ -55,8 +56,8 @@ não demonstram, por si, o gate global >=59% nem fecham o déficit reportado.
 O contrato de ordering/cleanup/privacidade do export foi executado isoladamente
 com `make -C tests/host/keymap test_wifi_survey_integration_contract` (25/25);
 ele inspeciona wiring e não é evidência de sincronização FreeRTOS em runtime.
-O contrato `test_wifi_survey_export_result_contract.py` adiciona 9 asserções
-estruturais para o resultado da persistência e lifecycle do gate; não comprova
+O contrato `test_wifi_survey_export_result_contract.py` cobre resultado da
+persistência, lifecycle do gate e diagnóstico de falha de criação; não comprova
 execução FreeRTOS. A validação manual de export failure permanece pendente.
 Validação física pendente: observar com e sem associação Wi-Fi, verificar
 aviso/conectividade/SSH, cancelar durante scan e exportar masked/unmasked com
