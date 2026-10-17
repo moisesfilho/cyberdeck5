@@ -580,6 +580,7 @@ void destroy_ui_resource_handles() {
         lv_timer_del(s_terminal_output_timer);
         s_terminal_output_timer = nullptr;
     }
+    s_terminal_view.deinit();
     /* A deinit during BLE authentication must not leave the passkey resident.
      * Detaching also drops the console the shell application owns. */
     s_shell_app.detach_console();
@@ -1556,12 +1557,12 @@ void render_terminal() {
             ++cursor_byte;
         ++cursor_chars;
     }
-    visual.insert(output.size() + cursor_byte, "|");
+    const std::size_t visual_cursor_byte = output.size() + cursor_byte;
 
     RenderGuard guard;
     /* The line slots are the only visible surface.  The textarea remains an
      * input target for LVGL's keyboard and never receives visual scrollback. */
-    s_terminal_view.render(visual);
+    s_terminal_view.render(visual, visual_cursor_byte);
     lv_textarea_set_text(s_terminal, editor.c_str());
 
     /* The textarea is also the editing surface while SSH is connected.  Do

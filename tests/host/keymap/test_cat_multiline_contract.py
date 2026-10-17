@@ -64,7 +64,7 @@ def main() -> int:
             "explicit breaks may trim only LF and wraps must preserve the final byte")
     require("lv_label_set_text(s_lines[slot]" in terminal_view,
             "terminal visual must render output through label slots")
-    require("s_terminal_view.render(visual)" in ui,
+    require("s_terminal_view.render(visual, visual_cursor_byte)" in ui,
             "UI must render the composed terminal through the visual surface")
 
     # The worker must hand the complete owned string to the callback.  A C

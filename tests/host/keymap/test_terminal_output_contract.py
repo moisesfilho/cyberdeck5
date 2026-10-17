@@ -310,8 +310,8 @@ def main() -> int:
     assert "std::string output = get_rendered_output(view);" not in render
     assert "const std::string editor = view.text();" in render
     assert "std::string visual = output + editor;" in render
-    assert "visual.insert(output.size() + cursor_byte, \"|\");" in render
-    assert "s_terminal_view.render(visual);" in render
+    assert "const std::size_t visual_cursor_byte = output.size() + cursor_byte;" in render
+    assert "s_terminal_view.render(visual, visual_cursor_byte);" in render
     assert "lv_textarea_set_text(s_terminal, editor.c_str());" in render
     assert "s_terminal_view.render(output);" not in render
     assert "s_scrollback_view" not in source

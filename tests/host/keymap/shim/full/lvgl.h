@@ -15,6 +15,7 @@ struct lv_color_t { std::uint32_t value{}; };
 using lv_coord_t = int32_t;
 struct lv_font_t { int32_t line_height{16}; };
 struct lv_font_glyph_dsc_t { int32_t adv_w{}; };
+struct lv_timer_t { void (*callback)(lv_timer_t *){}; void *user_data{}; bool deleted{}; };
 struct _lv_obj_t;
 using lv_obj_t = _lv_obj_t;
 struct _lv_event_t { lv_obj_t *target{}; void *user_data{}; };
@@ -49,7 +50,8 @@ struct _lv_obj_t {
     int32_t flex_main{-1}, flex_cross{-1}, flex_track{-1};
     /* -1 means the shim never saw a background/arc color applied, so "the bar is
      * painted black" cannot pass on a default that already reads as black. */
-    std::uint32_t color{static_cast<std::uint32_t>(-1)};
+    std::uint32_t color{static_cast<std::uint32_t>(-1)}, text_color{static_cast<std::uint32_t>(-1)};
+    int32_t bg_opa{-1};
     bool ignore_layout{};
     /* LVGL 9 exposes no public getter for a style property, for the layout or
      * for the flex attributes, so the shim records what the code under test
@@ -93,7 +95,7 @@ inline int32_t lv_obj_get_width(lv_obj_t *o){return o?o->width:0;} inline int32_
 inline void lv_obj_set_x(lv_obj_t*o,int32_t v){if(o)o->x=v;} inline void lv_obj_set_y(lv_obj_t*o,int32_t v){if(o)o->y=v;}
 inline void lv_obj_set_pos(lv_obj_t*o,int32_t x,int32_t y){if(o){o->x=x;o->y=y;}}
 inline int32_t lv_font_get_line_height(const lv_font_t*f){return f?f->line_height:0;}
-inline void lv_obj_set_hidden(lv_obj_t*o,bool v){if(o)o->hidden=v;} inline bool lv_obj_has_flag(lv_obj_t*o,int){return o&&o->hidden;}
+inline void lv_obj_set_hidden(lv_obj_t*o,bool v){if(o)o->hidden=v;} inline bool lv_obj_is_hidden(const lv_obj_t*o){return o&&o->hidden;} inline bool lv_obj_has_flag(lv_obj_t*o,int){return o&&o->hidden;}
 inline void lv_obj_add_flag(lv_obj_t*, int) {}
 inline void lv_obj_clear_flag(lv_obj_t*, int) {}
 /* LVGL 9 keeps ignore_layout as a property behind a dedicated setter, because
@@ -116,12 +118,12 @@ inline int lv_obj_get_scroll_dir(const lv_obj_t*o){return o?o->scroll_dir:LV_DIR
 inline int32_t lv_shim_style_inset(int32_t style){return style<0?0:style;}
 inline int32_t lv_obj_get_content_width(const lv_obj_t*o){if(!o)return 0;return o->width-lv_shim_style_inset(o->border_width)-lv_shim_style_inset(o->pad_left)-lv_shim_style_inset(o->pad_right);}
 inline int32_t lv_obj_get_content_height(const lv_obj_t*o){if(!o)return 0;return o->height-lv_shim_style_inset(o->border_width)-lv_shim_style_inset(o->pad_top)-lv_shim_style_inset(o->pad_bottom);}
-inline void lv_obj_set_style_bg_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_text_color(lv_obj_t*,lv_color_t,int){} inline void lv_obj_set_style_border_width(lv_obj_t*o,int v,int){if(o)o->border_width=v;} inline void lv_obj_set_style_border_color(lv_obj_t*,lv_color_t,int){}
+inline void lv_obj_set_style_bg_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_text_color(lv_obj_t*o,lv_color_t c,int){if(o)o->text_color=c.value;} inline void lv_obj_set_style_border_width(lv_obj_t*o,int v,int){if(o)o->border_width=v;} inline void lv_obj_set_style_border_color(lv_obj_t*,lv_color_t,int){}
 /* `lv_obj_set_style_pad_all()` sets the four sides only, exactly as LVGL 9 does
  * (it delegates to the per-side setters and leaves pad_row/pad_column alone). */
 inline void lv_obj_set_style_pad_all(lv_obj_t*o,int v,int){if(o){o->pad_left=o->pad_right=o->pad_top=o->pad_bottom=v;}}
-inline void lv_obj_set_style_pad_column(lv_obj_t*o,int v,int){if(o)o->pad_column=v;} inline void lv_obj_set_style_pad_row(lv_obj_t*o,int v,int){if(o)o->pad_row=v;} inline void lv_obj_set_style_pad_left(lv_obj_t*o,int v,int){if(o)o->pad_left=v;} inline void lv_obj_set_style_pad_right(lv_obj_t*o,int v,int){if(o)o->pad_right=v;} inline void lv_obj_set_style_pad_top(lv_obj_t*o,int v,int){if(o)o->pad_top=v;} inline void lv_obj_set_style_pad_bottom(lv_obj_t*o,int v,int){if(o)o->pad_bottom=v;} inline void lv_obj_set_style_bg_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_radius(lv_obj_t*,int,int){}
-inline void lv_obj_set_style_text_align(lv_obj_t*o,int v,int){if(o)o->text_align=v;} inline void lv_obj_set_style_arc_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_arc_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_opa(lv_obj_t*,int,int){}
+inline void lv_obj_set_style_pad_column(lv_obj_t*o,int v,int){if(o)o->pad_column=v;} inline void lv_obj_set_style_pad_row(lv_obj_t*o,int v,int){if(o)o->pad_row=v;} inline void lv_obj_set_style_pad_left(lv_obj_t*o,int v,int){if(o)o->pad_left=v;} inline void lv_obj_set_style_pad_right(lv_obj_t*o,int v,int){if(o)o->pad_right=v;} inline void lv_obj_set_style_pad_top(lv_obj_t*o,int v,int){if(o)o->pad_top=v;} inline void lv_obj_set_style_pad_bottom(lv_obj_t*o,int v,int){if(o)o->pad_bottom=v;} inline void lv_obj_set_style_radius(lv_obj_t*,int,int){}
+inline void lv_obj_set_style_text_align(lv_obj_t*o,int v,int){if(o)o->text_align=v;} inline void lv_obj_set_style_arc_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_arc_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_bg_opa(lv_obj_t*o,int v,int){if(o)o->bg_opa=v;}
 inline void lv_obj_set_style_text_font(lv_obj_t*o,const lv_font_t*f,int){if(o)o->text_font=f;}
 inline void lv_obj_update_layout(lv_obj_t*){} inline void lv_obj_align(lv_obj_t*,int,int,int){} inline void lv_obj_add_state(lv_obj_t*,int){}
 inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline void lv_label_set_long_mode(lv_obj_t*o,int v){if(o)o->long_mode=v;}
@@ -171,6 +173,11 @@ inline bool lv_font_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t *gl
                                     : std::max<int32_t>(1, font->line_height);
     return true;
 }
+inline std::vector<lv_timer_t *> &lv_shim_timers(){static std::vector<lv_timer_t *> timers; return timers;}
+inline lv_timer_t *lv_timer_create(void (*callback)(lv_timer_t *),std::uint32_t,void *user_data){auto *timer=new lv_timer_t{callback,user_data,false};lv_shim_timers().push_back(timer);return timer;}
+inline void lv_timer_del(lv_timer_t *timer){if(timer)timer->deleted=true;}
+inline void *lv_timer_get_user_data(lv_timer_t *timer){return timer?timer->user_data:nullptr;}
+inline void lv_shim_fire_timer(lv_timer_t *timer){if(timer&&!timer->deleted&&timer->callback)timer->callback(timer);}
 inline int32_t lv_shim_text_width(const lv_font_t *font, const std::string &text)
 {
     int32_t width = 0;

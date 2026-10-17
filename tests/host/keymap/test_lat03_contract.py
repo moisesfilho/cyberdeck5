@@ -41,7 +41,7 @@ def main():
     render_end = UI.index("void append_output(const char *data, size_t len, bool repaint) {",
                           render_start)
     render = UI[render_start:render_end]
-    require("s_terminal_view.render(visual);" in render,
+    require("s_terminal_view.render(visual, visual_cursor_byte);" in render,
             "bounded viewport is not rendered by the continuous surface")
     require("s_scrollback.viewport(viewport)" in UI,
             "bounded viewport is not selected from scrollback")

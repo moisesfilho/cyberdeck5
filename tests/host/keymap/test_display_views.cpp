@@ -38,12 +38,27 @@ static std::string last_visible_text(const cyberdeck_terminal_view::view &termin
 }
 
 static std::vector<std::string> visible_line_texts(
-    const cyberdeck_terminal_view::view &terminal)
+    const cyberdeck_terminal_view::view &terminal, const lv_obj_t *cursor)
 {
     std::vector<std::string> lines;
     for (const auto *line : terminal.scrollback()->children)
-        if (!line->hidden) lines.push_back(line->text);
+        if (line != cursor && !line->hidden) lines.push_back(line->text);
     return lines;
+}
+
+static const lv_obj_t *visible_line_with_text(
+    const cyberdeck_terminal_view::view &terminal, const std::string &text)
+{
+    for (const auto *line : terminal.scrollback()->children)
+        if (!line->hidden && line->text == text) return line;
+    return nullptr;
+}
+
+static const lv_obj_t *cursor_overlay(const cyberdeck_terminal_view::view &terminal)
+{
+    for (const auto *child : terminal.scrollback()->children)
+        if (child->bg_opa == LV_OPA_COVER) return child;
+    return nullptr;
 }
 
 static void touch_swipe(cyberdeck_terminal_view::view &terminal, lv_indev_t &touch,
@@ -175,6 +190,55 @@ int main()
     assert(terminal.textarea()->scrollbar_mode == LV_SCROLLBAR_MODE_OFF);
     assert(terminal.keyboard()->scroll_dir == LV_DIR_NONE);
 
+    /* TEST-CURSOR-01/02: cursor starts visible, uses a block with inverted
+     * glyph colors, and blink toggles visibility without altering input text. */
+    const auto *cursor = cursor_overlay(terminal);
+    assert(cursor != nullptr);
+    auto *blink_timer = lv_shim_timers().back();
+    terminal.scrollback()->width = 72;
+    terminal.scrollback()->height = 120;
+    terminal.render("ABCD", 0);
+    const auto cursor_line_y = [&]() {
+        for (const auto *line : terminal.scrollback()->children)
+            if (line != cursor && !line->hidden && line->text == "ABCD") return line->y;
+        return -1;
+    };
+    assert(!cursor->hidden && cursor->text == "A");
+    assert(cursor->x == 0 && cursor->y == cursor_line_y() && cursor->width == 9);
+    assert(cursor->color == 0xF2F2F2 && cursor->text_color == 0x0A0A0A);
+    assert(cursor->bg_opa == LV_OPA_COVER);
+    terminal.toggle_cursor();
+    assert(cursor->hidden);
+    terminal.toggle_cursor();
+    assert(!cursor->hidden);
+    lv_shim_fire_timer(blink_timer);
+    assert(cursor->hidden);
+    lv_shim_fire_timer(blink_timer);
+    assert(!cursor->hidden && terminal.textarea()->text.empty());
+
+    /* TEST-CURSOR-03: cursor follows cyberdeck_font advance at start, within a
+     * line, and after UTF-8 glyphs; reflow uses codepoint boundaries. */
+    terminal.render("ABCD", 2);
+    assert(cursor->x == 18 && cursor->y == cursor_line_y());
+    terminal.render("ABCD", 4);
+    assert(cursor->x == 36 && cursor->y == cursor_line_y() && cursor->text == " ");
+    terminal.render("ABCDE\xC3\xA9" "Z", 5);
+    assert(cursor->text == u8"é" && cursor->x == 0 && cursor->y == 72);
+    terminal.render("ABCDE\xC3\xA9" "Z", 7);
+    assert(cursor->text == "Z" && cursor->x == 18 && cursor->y == 72);
+    terminal.render("AB\nCD", 3);
+    assert(cursor->text == "C" && cursor->x == 0 && cursor->y == 72);
+
+    /* TEST-CURSOR-04: end-of-line at the right margin wraps to the next row;
+     * an out-of-range cursor is hidden and cannot leave stale overlay visible. */
+    terminal.scrollback()->width = 60;
+    terminal.render("ABCDE", 4);
+    assert(cursor->x == 0 && cursor->y == 72);
+    terminal.render("ABCDE", 99);
+    assert(cursor->hidden);
+    terminal.render("input", std::string::npos);
+    assert(cursor->hidden);
+
     /* TEST-TERM-ROT-01/04: both portrait and landscape geometries reflow a
      * long unbroken word and UTF-8 without exposing a clipped line. */
     terminal.scrollback()->width = 72;
@@ -198,7 +262,7 @@ int main()
     terminal.scrollback()->width = 72;
     terminal.scrollback()->height = 130;
     terminal.render("ABCDE\xC3\xA9" "FG\nHIJ\nKLMNOP");
-    const std::vector<std::string> wrapped_lines = visible_line_texts(terminal);
+    const std::vector<std::string> wrapped_lines = visible_line_texts(terminal, cursor);
     const std::vector<std::string> expected_wrapped_lines{
         "ABCDE", "\xC3\xA9" "FG", "HIJ", "KLMNO", "P"};
     assert(wrapped_lines.size() == expected_wrapped_lines.size());
@@ -263,24 +327,54 @@ int main()
     terminal.render(transcript);
     lv_indev_t touch{};
     touch_swipe(terminal, touch, -120, 120);
-    std::vector<std::string> oldest = visible_line_texts(terminal);
+    std::vector<std::string> oldest = visible_line_texts(terminal, cursor);
     assert(oldest.size() == 2);
     assert(oldest[0] == "zero" && oldest[1] == "one");
     touch_swipe(terminal, touch, -120, 120);
-    assert(visible_line_texts(terminal) == oldest);
+    assert(visible_line_texts(terminal, cursor) == oldest);
     touch_swipe(terminal, touch, 120, -120);
-    const std::vector<std::string> newest = visible_line_texts(terminal);
+    const std::vector<std::string> newest = visible_line_texts(terminal, cursor);
     assert(newest.size() == 2);
     assert(newest[0] == "eight" && newest[1] == "nine");
     touch_swipe(terminal, touch, 120, -120);
-    assert(visible_line_texts(terminal) == newest);
+    assert(visible_line_texts(terminal, cursor) == newest);
 
+    /* TEST-CURSOR-05 / REQ-LAT04-08: scrolling away hides the editing cursor, blink ticks
+     * cannot resurrect it over historical output, and returning to bottom
+     * restores the saved byte position on the current editor line. */
+    const std::string editable_transcript = transcript + "\ninput";
+    terminal.render(editable_transcript, editable_transcript.size());
+    const auto editing_lines = visible_line_texts(terminal, cursor);
+    assert(editing_lines.back() == "input");
+    const auto *editing_line = static_cast<const lv_obj_t *>(nullptr);
+    for (const auto *line : terminal.scrollback()->children)
+        if (line != cursor && !line->hidden && line->text == "input") editing_line = line;
+    assert(editing_line != nullptr);
+    assert(editing_line->text_font == &cyberdeck_font);
+    assert(cursor->text_font == &cyberdeck_font);
+    assert(!cursor->hidden && cursor->x == 45 && cursor->y == editing_line->y);
+    touch_swipe(terminal, touch, -120, 120);
+    assert(cursor->hidden);
+    for (const auto *child : terminal.scrollback()->children)
+        if (!child->hidden) assert(child->bg_opa != LV_OPA_COVER);
+    lv_shim_fire_timer(blink_timer);
+    lv_shim_fire_timer(blink_timer);
+    assert(cursor->hidden);
+    assert(visible_line_with_text(terminal, "input") == nullptr);
+    touch_swipe(terminal, touch, 120, -120);
+    const auto restored_lines = visible_line_texts(terminal, cursor);
+    assert(restored_lines.size() == 2 && restored_lines.back() == "input");
+    const auto *restored_editing_line = visible_line_with_text(terminal, "input");
+    assert(restored_editing_line != nullptr && restored_editing_line != cursor);
+    assert(restored_editing_line->text_font == &cyberdeck_font);
+    assert(!cursor->hidden && cursor->x == 45 &&
+           cursor->y == restored_editing_line->y);
     /* TEST-TERM-SCROLL-02/03: UTF-8 remains intact in the navigable window,
      * while the input target stays hidden and the visible prompt surface is
      * unaffected by touch navigation. */
     terminal.render("prompt: \xC3\xA9\neditor: \xE7\x8C\xAB\nend");
     touch_swipe(terminal, touch, -120, 120);
-    const std::vector<std::string> utf8_window = visible_line_texts(terminal);
+    const std::vector<std::string> utf8_window = visible_line_texts(terminal, cursor);
     assert(utf8_window.size() == 2);
     assert(utf8_window[0] == "prompt: \xC3\xA9");
     assert(utf8_window[1] == "editor: \xE7\x8C\xAB");
@@ -298,6 +392,11 @@ int main()
     /* TEST-TERM-SCROLL-04: this visual window is deliberately not the source
      * of term.dump; its complete-output contract is tested independently. */
     assert(terminal.textarea()->text.empty());
+    const bool cursor_hidden_before_deinit = cursor->hidden;
+    terminal.deinit();
+    assert(blink_timer->deleted);
+    lv_shim_fire_timer(blink_timer);
+    assert(cursor->hidden == cursor_hidden_before_deinit);
     cyberdeck_terminal_view::view no_callbacks;
     assert(no_callbacks.create(&screen, &content, 0, {}));
     /* TEST-EDIT-HOST-01: compile and exercise the real editor view TU. */

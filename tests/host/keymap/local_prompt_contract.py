@@ -215,9 +215,9 @@ def preservation_contract(source: str, session: str, console: str) -> None:
             "const std::string editor = view.text();" in render and
             "static_cast<unsigned char>(editor[cursor_byte])" in render,
             "cursor placement must remain UTF-8/codepoint aware")
-    require("visual.insert(output.size() + cursor_byte, \"|\");" in render and
+    require("s_terminal_view.render(visual, visual_cursor_byte);" in render and
             "cursor_chars < view.cursor_chars()" in render,
-            "cursor must be inserted at the model codepoint position after scrollback")
+            "cursor byte position must be passed to the terminal view after scrollback")
     require(re.search(
         r"if\s*\(\s*view\.cursor_bytes\s*<\s*view\.line_start\s*\)\s*view\.cursor_bytes\s*=\s*view\.line_start\s*;",
         console,

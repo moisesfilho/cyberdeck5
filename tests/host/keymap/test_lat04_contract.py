@@ -21,6 +21,23 @@ def main():
             "touch-only scroll gesture harness is missing")
     require("terminal.textarea()->text.empty()" in display_test,
             "prompt/editor input target is not asserted independently")
+    for marker in ("cursor_overlay(terminal)",
+                   "visible_line_with_text(terminal, \"input\")",
+                   "restored_editing_line != cursor",
+                   "cursor->y == restored_editing_line->y",
+                   "lv_shim_fire_timer(blink_timer)",
+                   "cursor->hidden == cursor_hidden_before_deinit"):
+        require(marker in display_test,
+                f"missing independent cursor regression oracle: {marker}")
+
+    # The cursor is a separately styled overlay in the real view, uses the
+    # shared font metrics, and blink is gated by viewport visibility.
+    require("lv_obj_set_style_text_font(s_cursor, &cyberdeck_font, 0)" in VIEW,
+            "cursor overlay no longer uses cyberdeck_font")
+    require("if (s_cursor == nullptr || !s_cursor_in_viewport) return;" in VIEW,
+            "blink may expose a cursor outside the viewport")
+    require("lv_timer_del(s_cursor_timer)" in VIEW,
+            "view teardown no longer deletes the blink timer")
 
     # TEST-LAT04-01/02/03: fixed reusable slots, bounded at 64, and one
     # continuous surface.  The behavioral test also checks short/long output.
@@ -30,7 +47,7 @@ def main():
             "render path is not bounded")
     require("lv_obj_set_hidden(s_terminal, true)" in VIEW,
             "textarea is a visible duplicate")
-    require("s_terminal_view.render(visual)" in UI,
+    require("s_terminal_view.render(visual, visual_cursor_byte)" in UI,
             "UI does not render through the continuous surface")
     require("lv_textarea_set_text(s_terminal, editor.c_str())" in UI,
             "hidden textarea is not synchronized with editor state")

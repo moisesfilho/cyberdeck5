@@ -25,6 +25,9 @@ public:
     lv_obj_t *keyboard() const { return s_keyboard; }
     std::size_t viewport_capacity() const;
     void render(const std::string &text);
+    void render(const std::string &text, std::size_t cursor_byte);
+    void toggle_cursor();
+    void deinit();
     void begin_touch();
     void scroll_from_touch();
     lv_event_cb_t geometry_callback() const { return s_geometry_changed; }
@@ -41,10 +44,15 @@ private:
     std::size_t s_scroll_offset = 0;
     std::size_t s_previous_line_total = 0;
     std::size_t s_max_length = 0;
+    std::size_t s_cursor_byte = std::string::npos;
     lv_coord_t s_touch_start_y = 0;
     bool s_touch_active = false;
     std::string s_rendered_text;
     lv_event_cb_t s_geometry_changed = nullptr;
+    lv_obj_t *s_cursor = nullptr;
+    lv_timer_t *s_cursor_timer = nullptr;
+    bool s_cursor_visible = false;
+    bool s_cursor_in_viewport = false;
 };
 
 } // namespace cyberdeck_terminal_view
