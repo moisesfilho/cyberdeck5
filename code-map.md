@@ -398,6 +398,10 @@ visual. O roteiro executavel detalhado fica em
 
 ## Boot do terminal
 
+Falha na criação do worker de exportação Wi-Fi em `cyberdeck_ui.cpp` registra
+somente no caminho de falha o stack solicitado e snapshots de heap MALLOC_CAP_8BIT
+e INTERNAL|8BIT (free/largest), amostrados imediatamente antes de `xTaskCreate`.
+
 `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` limpa o scrollback
 durante a inicialização sem acrescentar banner; o prompt e as demais saídas
 continuam sendo renderizados pelos fluxos existentes.

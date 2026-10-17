@@ -1969,6 +1969,8 @@ bool shell_session_host::wifi_survey_export(bool confirm, bool masked) {
     }
     s_wifi_survey_export_result = {};
     s_wifi_survey_export_done.store(false, std::memory_order_release);
+    const std::size_t heap_8bit_free_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const std::size_t heap_8bit_largest_block_bytes = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     const std::size_t internal_heap_free_bytes = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     const std::size_t internal_heap_largest_block_bytes =
         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -1976,8 +1978,11 @@ bool shell_session_host::wifi_survey_export(bool confirm, bool masked) {
         vSemaphoreDelete(job->start_gate);
         delete job;
         s_wifi_survey_export_busy.store(false, std::memory_order_release);
-        ESP_LOGW("cyberdeck_ui", "wifi survey export rejected: reason=create_task_failed requested_stack=8192 "
-                                  "internal_free_bytes=%u internal_largest_block_bytes=%u",
+        ESP_LOGW("cyberdeck_ui",
+                 "wifi survey export rejected: reason=create_task_failed requested_stack=8192 "
+                 "heap_8bit_free_bytes=%u heap_8bit_largest_block_bytes=%u "
+                 "internal_free_bytes=%u internal_largest_block_bytes=%u",
+                 static_cast<unsigned>(heap_8bit_free_bytes), static_cast<unsigned>(heap_8bit_largest_block_bytes),
                  static_cast<unsigned>(internal_heap_free_bytes),
                  static_cast<unsigned>(internal_heap_largest_block_bytes));
         return false;
