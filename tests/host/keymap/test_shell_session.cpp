@@ -433,6 +433,8 @@ int main()
         check(h.output.find("wifi survey export unavailable") != std::string::npos &&
               !h.survey_export_masked,
               "unmasked export staging failure remains explicit opt-in only");
+        check(h.output.find("wifi survey export pending") == std::string::npos,
+              "rejected busy export is not falsely reported as pending");
         submit(s, "wifi survey export confirm");
         check(h.output.find("wifi survey export confirmation unavailable or expired") != std::string::npos &&
               h.survey_export_confirmed && h.survey_export_masked,

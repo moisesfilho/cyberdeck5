@@ -9,7 +9,7 @@ contratos de wiring e compilação não provam rádio físico ou FatFS.
 | --- | --- | --- |
 | REQ-SURVEY-01 / AC-01: sessão única; segunda inicialização recusada | TEST-SURVEY-SESSION: `test_wifi_survey.cpp::test_duration_and_single_session_boundaries`; início repetido enquanto ativa | PASS: sessão real rejeita segundo início sem trocar token/duração. Exclusão concorrente entre chamadas UI depende do seam/integração. |
 | REQ-SURVEY-02 / AC-02: default 30s; faixa 10–120s; scans sequenciais, intervalo mínimo 5s e máximo 6 | TEST-SURVEY-TIMING: 9/10/30/120/121s; relógio antes/no intervalo; 0/1/6/7 scans, durações 10/30/120 | PASS: modelo real; `test_shell_session` verifica default e rejeição 9/121; cadência com relógio controlado, sem sleep. 10s permite 2 scans pela duração; 30/120s permitem até 6. |
-| REQ-SURVEY-02/07 / AC-02/07: teardown aguarda callback bounded; timeout preserva recursos em quarentena; drain/delete somente após completion | TEST-SURVEY-LIFECYCLE: `test_wifi_survey_integration_contract.py` verifica espera sequenciada/bounded, branch quiet drain→queue/mutex/semaphore delete e branch timeout sem delete | PASS: contrato estrutural atual 25/25 no UI real. Verifica ambas as saídas e ordem, mas não injeta timeout/atraso FreeRTOS em runtime host. |
+| REQ-SURVEY-02/07 / AC-02/07: teardown aguarda callback bounded; timeout preserva recursos em quarentena; drain/delete somente após completion | TEST-SURVEY-LIFECYCLE: `test_wifi_survey_integration_contract.py` verifica espera sequenciada/bounded, branch quiet drain→queue/mutex/semaphore delete e branch timeout sem delete | PASS: contrato estrutural atual 34/34 no UI real. Verifica ambas as saídas e ordem, mas não injeta timeout/atraso FreeRTOS em runtime host. |
 | REQ-SURVEY-03 / AC-03: até 32 redes únicas, ordenação RSSI, hidden/unknown e duplicatas | TEST-SURVEY-RESULTS/BOUNDS: 0/1/32/33, duplicata BSSID mantém sinal mais forte, ordenação, hidden SSID e channel/security/BSSID desconhecidos | PASS no modelo: acumula 32 entre dois lotes de 16 e substitui ao inserir 33ª. Manager limita cada scan a `WIFI_SCAN_MAX_APS=16`; modelo sozinho não prova descoberta real de 32 APs no dispositivo nem que um único scan entregue >16. |
 | REQ-SURVEY-04 / AC-04: count/min/avg/max voláteis apenas na sessão | TEST-SURVEY-TREND: amostras repetidas, RSSI, desaparece/reaparece, cancel/restart limpa tabela | PASS: count/min/avg/max e reset entre sessões no modelo real; sem backend persistente no TU. |
 | REQ-SURVEY-05 / AC-05: cancelamento invalida callback e resultados stale | TEST-SURVEY-CANCEL: complete/fail stale após cancel, tokens divergentes não liberam request pendente, token antigo após nova sessão, complete no deadline | PASS: modelo real descarta stale/cancel/expiry; falhas stale não liberam nem substituem a requisição válida pendente. Corridas FreeRTOS/teardown requerem hardware. |
@@ -22,43 +22,50 @@ contratos de wiring e compilação não provam rádio físico ou FatFS.
 | REQ-SURVEY-03/04 / AC-03/04: ordenação determinística de sinais empatados e lote nulo não altera amostras | TEST-SURVEY-TIE-NULL: `test_wifi_survey.cpp::test_equal_signal_ordering_and_null_batch` verifica BSSID e canal como chaves de desempate, além de callback nulo com count positivo | PASS: TU real; 178 checks, incluindo ordem estável e preservação dos resultados. |
 | REQ-SURVEY-07 / AC-07: erro ao inspecionar artefato ou remover backup stale bloqueia mutação | TEST-PERSISTENCE-INSPECT-UNLINK: `test_wifi_audit_persistence.cpp::test_inspection_errors_fail_closed_without_mutation` e `test_stale_sidecar_unlink_failure_blocks_new_transaction` | PASS: TU transacional real; 507 checks, erro de inspeção em ambos sidecars e unlink negado preservam evidências e não iniciam escrita. |
 | B3: help catalog/golden descreve survey sem perder linhas/ordem/igualdade | TEST-HELP-GOLDEN: `test_shell_utils`, fixture `cyberdeck_help.h`, `test_help_unification`, `test_ble_command_parse` e `help_unification_contract` | PASS ciclo 5: shell utils 439, help unification 320, BLE parser 75; structural contract PASS. Golden mantém igualdade e 18 linhas. |
-| EXPORT-ORDER/FAILURE/PRIVACY: worker só começa após aceitação registrada; falhas distintas de criação limpam recursos/`busy`; logs não revelam SSID/BSSID/payload/caminho; ACK de sucesso sucede publicação | TEST-SURVEY-EXPORT-WIRING: `test_wifi_survey_integration_contract.py` verifica gate-create → task-create → accepted → give, take → started, motivos distintos e ordem de cleanup em cada falha, logs sanitizados e `persist_document` → published → completion → ACK | PASS: contrato estrutural 25/25. Não executa FreeRTOS nem prova scheduling/interleaving ou falha de alocação em runtime; a sincronização real do gate e injeção de create/gate failure continuam exigindo harness runtime/validação de plataforma. O TU de persistência comportamental cobre a publicação transacional, não a integração worker/UI no Tab5. |
-| EXPORT-RESULT/GATE-LIFETIME: persistência governa ACK; gate destruído no sucesso e rejeições sem double delete | TEST-SURVEY-EXPORT-RESULT: `test_wifi_survey_export_result_contract.py` liga o bool de `persist_document` ao resultado e notices `saved`/`failed`, e verifica destruição/ownership do gate | PASS: asserções estruturais focadas, incluindo diagnóstico. Não executa FreeRTOS e não prova scheduling/runtime; export failure em plataforma continua pendente. |
-| EXPORT-DIAGNOSTIC: imediatamente antes de `xTaskCreate`, captura free/largest de `MALLOC_CAP_8BIT` geral e `MALLOC_CAP_INTERNAL combined with MALLOC_CAP_8BIT`; somente `create_task_failed` emite esses snapshots e stack solicitada de 8192 bytes, com motivo tipado e sem dados sensíveis | TEST-SURVEY-EXPORT-DIAGNOSTIC: `test_wifi_survey_export_result_contract.py` verifica ordem getter→variável→placeholder/campo do log, exclusividade da falha, stack/reason e ausência de SSID/BSSID/payload/caminho | Resultado anterior: 14 checks PASS, mas reordenação dos argumentos escapava. Após vincular ordenadamente getters, variáveis, labels `%u` e argumentos: 15/15 PASS em `make -C tests/host/keymap test_wifi_survey_export_result_contract`. Contrato estrutural não injeta falha FreeRTOS nem comprova valores/runtime; não inclui caminho sensível nem payload no diagnóstico. |
+| EXPORT-CONTROLLER: confirmação obrigatória e mode-bound, expiração estrita (igualdade válida), sem replay; busy rejeita sem rearmar/substituir confirmação; falha terminal accepted e handoff stale-safe | TEST-SURVEY-EXPORT-CONTROLLER: `test_wifi_survey_export_controller.cpp` liga o TU real do controller | PASS comportamental; cobre busy request, confirmação não pendente, accepted/start/fail/published, terminal failure do token atual, token stale/replay sem liberar/reportar/ACK e ACK único. Não exercita UI nem FreeRTOS. |
+| EXPORT-APP-LIFETIME: worker/filas bounded sem referências UI sobrevivem deinit/reinit; completion fica retida até pump e token valida antes de ACK; nenhum worker/queue/gate é criado no confirm | TEST-SURVEY-EXPORT-WIRING/RESULT: os contratos verificam init lazy, ausência no cleanup, stack 8192, filas cap-1, persistência/wipe e ordem do pump | Estruturais; não executam scheduling FreeRTOS nem reinit real. Retenção/replay da fila e execução ESP_PLATFORM permanecem limites explícitos. |
+| EXPORT-OWNERSHIP/PRIVACY: payload/path transitórios e job são zerados nos limites de ownership; completion path é zerado no pump; logs não expõem dados | TEST-SURVEY-EXPORT-WIRING/RESULT verifica ordem de wipe/ownership e caminhos de rejeição | Estrutural; não prova comportamento do alocador/firmware. |
+| EXPORT-ACK/FAILURE/STALE: accepted→started→persisted→published→ACK exatamente uma vez; busy não apresenta pending falso; falhas terminais do worker entregam token bounded; pump libera controller/busy uma vez e só reporta falha do token atual | TEST-SURVEY-EXPORT-CONTROLLER, `test_shell_session.cpp`, `test_wifi_survey_integration_contract.py` e `test_wifi_survey_export_result_contract.py` | PASS comportamental no controller e shell real (rejeição `false` não imprime pending) + wiring estrutural de token de handoff nos dois caminhos terminais, `fail_admitted`, rejeição stale e ordem de release. FreeRTOS/FatFS reais não executados. |
 
-## Fechamento dos focados (cycle 5)
+## Evidência de export lifecycle atualizada (cycle 7)
 
-`test_ui_resource_contract` PASS (inclui os 9 timers); `test_wifi_audit_contract`
-PASS após alinhar goldens ao argumento explícito `destination_policy::audit` e
-à validação policy-aware de transaction paths; survey integration/lifecycle
-25/25. Binários PASS: audit 415, audit-save 160, persistence 387, survey 101,
-shell-session 261, shell-utils 439, help 320 e BLE command parse 75 checks.
-Todos foram reconstruídos com `make -B` nos alvos focados. Nenhuma suíte global
-ou métrica global de branch foi executada; o limite de coverage CI não é inferido
-destes resultados. Limites manager-per-scan=16 e survey aggregate=32 permanecem
-conforme a nota REQ-SURVEY-03 acima.
+`test_ui_resource_contract` verifica as 13 fases de init/rollback fail-closed,
+incluindo os recursos de export, preservados como app-lifetime no cleanup; os 9
+timers LVGL continuam sendo removidos. `test_wifi_survey_integration_contract`
+verifica teardown e exige que o host da UI recuse busy antes de solicitar
+confirmação; a mensagem esperada é `wifi survey export busy; confirmation remains available for retry`.
+O shell host real (269 checks) mantém regressão de rejeição sem mensagem `pending`.
+O worker publica o token admitted em falha de gate ou queue-send; o pump usa
+`fail_admitted`, libera ownership e só escreve failure para a conclusão atual.
+O controller exercita falha terminal current/stale/replay e busy sem rearmar.
+`test_wifi_survey_export_result_contract` verifica os enlaces estruturais da
+ligação confirmação→fila→worker→pump/ACK. Separadamente,
+`test_wifi_survey_export_controller` compila e exercita comportamentalmente o TU
+real do controller (não o worker/UI): missing/expired/equality,
+active/duplicate, capacidade/unavailable/rearm, accepted-start-success/failure,
+resultado stale e ACK único. Assim, o wiring não é alegado como execução do
+worker: contratos estruturais detectam alterações óbvias no fluxo da UI; a
+transição de estado do controller tem teste comportamental independente. Isso
+não executa scheduling FreeRTOS, lifecycle real/reinit, ou persistência FatFS.
+Somente os alvos focados foram executados; sem suíte global, firmware build ou
+device validation. O resultado ambiental conhecido de branch coverage global
+local é 58.06% (<59%); este trabalho não altera o gate nem reivindica aprovação.
 
 ## Execução focada
 
 ```sh
-make -C tests/host/keymap test_ui_resource_contract test_wifi_audit_contract test_ble_command_parse test_wifi_survey_integration_contract test_wifi_survey test_wifi_audit test_wifi_audit_save test_wifi_audit_persistence test_shell_session test_shell_utils test_help_unification help_unification_contract
-./tests/host/keymap/test_wifi_survey
-./tests/host/keymap/test_shell_session
-./tests/host/keymap/test_wifi_audit_persistence
+make -C tests/host/keymap test_ui_resource_contract test_wifi_survey_integration_contract test_wifi_survey_export_controller test_wifi_survey_export_result_contract
+make -C tests/host/keymap test_shell_session
 ```
 
 Executar os testes comportamentais criados/alterados, não a suíte completa.
-Nesta rodada focada, ambos binários foram reconstruídos com `--coverage` e
-executados: survey 178 checks e persistence 507 checks, 0 falhas. gcovr focado
-mediu survey 228/296 branches (77%) e persistence 280/436 (64%), total
-508/732 (69%). Os perfis globais existentes não foram reexecutados; estes casos
-não demonstram, por si, o gate global >=59% nem fecham o déficit reportado.
-O contrato de ordering/cleanup/privacidade do export foi executado isoladamente
-com `make -C tests/host/keymap test_wifi_survey_integration_contract` (25/25);
-ele inspeciona wiring e não é evidência de sincronização FreeRTOS em runtime.
-O contrato `test_wifi_survey_export_result_contract.py` cobre resultado da
-persistência, lifecycle do gate e diagnóstico de falha de criação; não comprova
-execução FreeRTOS. A validação manual de export failure permanece pendente.
+Nesta rodada: controller comportamental PASS; integração 34/34; result contract
+16/16; shell session 269 checks; UI resource contract PASS. Não foram medidos
+novos percentuais locais de cobertura; a discrepância global conhecida permanece.
+Os contratos de integração/result são guardas estruturais: não comprovam execução
+FreeRTOS, retenção real da fila através de reinit, nem persistência FatFS. O
+controller comportamental compila o TU real do controller, mas não executa o
+worker/UI. Validação device continua separada e não foi executada nesta rodada.
 Validação física pendente: observar com e sem associação Wi-Fi, verificar
 aviso/conectividade/SSH, cancelar durante scan e exportar masked/unmasked com
 confirmação explícita; ler arquivo SD e verificar conteúdo/limite e ausência de

@@ -82,6 +82,10 @@ jobs:
           clang-format --dry-run --Werror \
             components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h \
             components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp
+          clang-format --dry-run --Werror \
+            components/cyberdeck/include/apps/wifi/cyberdeck_wifi_survey_export_controller.h \
+            components/cyberdeck/src/apps/wifi/cyberdeck_wifi_survey_export_controller.cpp \
+            tests/host/keymap/test_wifi_survey_export_controller.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.

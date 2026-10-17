@@ -79,6 +79,12 @@ FAIL_CLOSED_PHASES = (
      (r"!\s*s_keyboard_dispatch\s*\.\s*start\s*\(\s*on_keyboard_event",), False),
     ("wifi state queue",
      (r"s_wifi_state_queue\s*==\s*nullptr",), True),
+    ("survey export queues",
+     (r"s_wifi_survey_export_queue\s*==\s*nullptr",
+      r"s_wifi_survey_export_results\s*==\s*nullptr"), True),
+    ("survey export worker",
+     (r"s_wifi_survey_export_task\s*==\s*nullptr",
+      r"xTaskCreate\s*\(\s*wifi_survey_export_worker"), True),
     ("wifi scan queue and scan context mutex",
      (r"s_wifi_scan_queue\s*==\s*nullptr",
       r"s_wifi_scan_context_mutex\s*==\s*nullptr"), True),
@@ -176,6 +182,20 @@ def main() -> int:
             "Wi-Fi state callback must be unregistered exactly once per cleanup pass")
     require(cleanup.count("lv_timer_del(") == 9,
             "all nine LVGL timers, including Wi-Fi survey, must be explicitly canceled on teardown")
+
+    # Survey export queues/task are deliberately process-lifetime, unlike UI
+    # handles. They must be initialized once and never reclaimed by UI teardown.
+    require("WIFI_SURVEY_EXPORT_QUEUE_CAPACITY = 1" in source and
+            "if (s_wifi_survey_export_queue == nullptr)" in init and
+            "if (s_wifi_survey_export_results == nullptr)" in init and
+            "if (s_wifi_survey_export_task == nullptr" in init,
+            "survey export worker and capacity-one queues are lazily initialized and reusable")
+    for resource in ("s_wifi_survey_export_queue", "s_wifi_survey_export_results",
+                     "s_wifi_survey_export_task"):
+        require(resource not in cleanup,
+                f"app-lifetime survey export resource {resource} must survive UI cleanup/reinit")
+    require("s_wifi_survey_export_queue == nullptr || s_wifi_survey_export_results == nullptr" in init,
+            "partial export queue initialization fails closed without destroying reusable resources")
 
     require("s_keyboard_dispatch.start(on_keyboard_event, nullptr)" in init,
             "init must start the keyboard dispatcher")

@@ -65,9 +65,15 @@ require("scan_busy || !s_wifi_survey.start(duration_seconds" in UI,
         "session start refuses when interactive scan is active")
 require("s_wifi_survey.active() || !s_wifi_survey.finished()" in UI,
         "export confirmation cannot be staged during active/unfinished survey")
-require("s_wifi_survey_confirmation_pending" in UI and
-        "s_wifi_survey_confirmation_masked" in UI and "now > s_wifi_survey_confirmation_deadline_ms" in UI,
-        "export requires matching unexpired confirmation choice")
+require("controller.request_confirmation(masked, now + 30000)" in UI and
+        "controller.confirm(masked, now)" in UI,
+        "confirmation and deadline policy are delegated to the shared controller")
+export_host = body(UI, "bool shell_session_host::wifi_survey_export(bool confirm, bool masked)")
+require("if (!controller.request_confirmation(masked, now + 30000))" in export_host and
+        "wifi survey export busy; confirmation remains available for retry" in export_host and
+        "return false" in export_host and "controller.cancel_confirmation()" not in
+        body(export_host, "if (!confirm)"),
+        "busy controller rejects shell request without rearming or altering confirmation")
 require("/sdcard/wifi-survey/wifi-survey-" in UI,
         "survey export path is fixed beneath survey directory")
 require("destination_policy::survey" in AUDIT and "destination_policy::survey" in PERSISTENCE,
@@ -112,51 +118,75 @@ require(all(token not in else_branch for token in
 export_start = UI.find("bool shell_session_host::wifi_survey_export(bool confirm, bool masked)")
 export_end = UI.find("std::string shell_session_host::wifi_survey_render()", export_start)
 export = UI[export_start:export_end] if export_start >= 0 and export_end > export_start else ""
-worker_start = UI.find("void wifi_survey_export_worker(void *argument)")
-worker_end = UI.find("void process_wifi_survey(lv_timer_t *)", worker_start)
-worker = UI[worker_start:worker_end] if worker_start >= 0 and worker_end > worker_start else ""
-require("xSemaphoreCreateBinary()" in export and
-        export.index("xTaskCreate(wifi_survey_export_worker") < export.index("wifi survey export accepted:") <
-        export.index("xSemaphoreGive(job->start_gate)"),
-        "worker is gated until accepted is logged, then released")
-require("xSemaphoreTake(job->start_gate, portMAX_DELAY)" in worker and
-        worker.index("xSemaphoreTake(job->start_gate, portMAX_DELAY)") <
-        worker.index("stage=started"),
-        "worker cannot log started before consuming the acceptance gate")
-create_failure_start = export.find('if (xTaskCreate(wifi_survey_export_worker')
-create_failure = export[create_failure_start:] if create_failure_start >= 0 else ""
-require('reason=create_task_failed' in create_failure and
-        'vSemaphoreDelete(job->start_gate)' in create_failure and
-        create_failure.index('vSemaphoreDelete(job->start_gate)') < create_failure.index('delete job;') <
-        create_failure.index('s_wifi_survey_export_busy.store(false') and
-        create_failure.index('reason=create_task_failed') > create_failure.index('s_wifi_survey_export_busy.store(false'),
-        "task creation failure reports a distinct reason and releases gate/job/busy")
-gate_failure_start = export.find('if (job->start_gate == nullptr)')
-gate_failure_end = export.find('s_wifi_survey_export_result = {}', gate_failure_start)
-gate_failure = export[gate_failure_start:gate_failure_end] if gate_failure_start >= 0 and gate_failure_end > gate_failure_start else ""
-require('reason=start_gate_creation_failed' in gate_failure and
-        gate_failure.index('delete job;') < gate_failure.index('s_wifi_survey_export_busy.store(false') <
-        gate_failure.index('reason=start_gate_creation_failed'),
-        "gate creation failure reports a distinct reason and releases job/busy")
-require('persist_document(' in worker and
-        worker.index('persist_document(') < worker.index('stage=completed outcome=published') <
-        worker.rindex('s_wifi_survey_export_done.store(true'),
-        "success completion/ACK signal follows successful persistence publication")
-published_line = next((line.strip() for line in worker.splitlines()
-                       if 'stage=completed outcome=published' in line), '')
+port_start = UI.find("class survey_export_queue_port")
+port_end = UI.find("survey_export_queue_port s_wifi_survey_export_port", port_start)
+port = UI[port_start:port_end] if port_start >= 0 and port_end > port_start else ""
+worker = body(UI, "void wifi_survey_export_worker(void *argument)")
 completion_start = UI.find('void process_wifi_survey(lv_timer_t *)')
 completion_end = UI.find('void ', completion_start + len('void process_wifi_survey(lv_timer_t *)'))
 completion = UI[completion_start:completion_end] if completion_start >= 0 and completion_end > completion_start else ""
-require(published_line.startswith('if (ok) ESP_LOGI') and
-        'append_line(std::string("wifi survey saved: ")' in completion and
-        completion.index('if (s_wifi_survey_export_result.ok)') <
+require("xTaskCreate" not in export and "xQueueCreate" not in export and
+        "xSemaphoreCreate" not in export,
+        "confirmation uses preinitialized app-lifetime worker/queues without creating resources")
+require("string_wiper payload_wiper{payload}" in export and
+        "string_wiper path_wiper{path}" in export and
+        "s_wifi_survey_export_port.clear_staged()" in export,
+        "temporary payload/path are wiped after admission, including rejected outcomes")
+require(port.count("wipe_string(job->payload)") == 2 and
+        port.count("std::fill(std::begin(job->path)") == 2 and
+        "void clear_staged()" in port and "wipe_string(path)" in port and
+        "wipe_string(payload)" in port,
+        "admission failure paths and staged port ownership wipe payload/path")
+require("wifi_survey_export_worker" not in worker and "lv_" not in worker and
+        "wifi_survey_export_controller" not in worker and "controller." not in worker,
+        "app-lifetime worker has no UI, LVGL, or controller references")
+require("s_wifi_survey_export_port.clear_staged()" in export and
+        "string_wiper payload_wiper{payload}" in export and
+        "string_wiper path_wiper{path}" in export,
+        "temporary payload/path are wiped after admission, including rejected outcomes")
+require("xSemaphoreGive(committed_job->start_gate)" in port and
+        "ESP_LOGI(\"cyberdeck_ui\", \"wifi survey export accepted\")" in port and
+        port.index("wifi survey export accepted") < port.index("xSemaphoreGive(committed_job->start_gate)"),
+        "accepted job is committed and released exactly once after acceptance")
+require("xSemaphoreTake(owned_job->start_gate, portMAX_DELAY)" in worker and
+        worker.index("xSemaphoreTake(owned_job->start_gate, portMAX_DELAY)") <
+        worker.index("stage=started"),
+        "worker cannot start persistence before accepted gate release")
+require("persist_document(" in worker and "destination_policy::survey" in worker and
+        worker.index("persist_document(") < worker.index("xQueueSend(s_wifi_survey_export_results"),
+        "worker persists before publishing a completion record")
+require("wipe_string(owned_job->payload)" in worker and
+        "std::fill(std::begin(owned_job->path)" in worker and
+        worker.index("wipe_string(owned_job->payload)") < worker.index("xQueueSend(s_wifi_survey_export_results"),
+        "worker wipes owned payload and path before publishing completion")
+require("controller.started(export_result.token)" in completion and
+        "controller.complete(export_result.token, export_result.ok)" in completion and
+        completion.index("if (controller.started(export_result.token))") <
+        completion.index("controller.complete(export_result.token, export_result.ok)"),
+        "UI pump validates token/start and rejects stale completion before controller publication")
+require('append_line(std::string("wifi survey saved: ")' in completion and
+        completion.index('outcome == cyberdeck_wifi_survey_export::completion_result::published && export_result.ok') <
         completion.index('append_line(std::string("wifi survey saved: ")'),
-        "saved ACK is conditional on persistence reporting published success")
+        "saved ACK is conditional on current-token published success")
 export_log_lines = [line for line in export.splitlines() if 'ESP_LOG' in line]
 worker_log_lines = [line for line in worker.splitlines() if 'ESP_LOG' in line]
 require(all(not re.search(r'payload|ssid|bssid|job->path|path\.c_str', line, re.I)
             for line in export_log_lines + worker_log_lines),
         "export diagnostic logs do not include SSID, BSSID, payload, or destination")
+
+init = body(UI, 'extern "C" esp_err_t cyberdeck_ui_init(')
+cleanup = body(UI, "void destroy_ui_resource_handles()")
+require("WIFI_SURVEY_EXPORT_QUEUE_CAPACITY = 1" in UI and
+        "xQueueCreate(WIFI_SURVEY_EXPORT_QUEUE_CAPACITY" in init and
+        "xTaskCreate(wifi_survey_export_worker, \"wifi_survey_io\", 8192" in init,
+        "capacity-one export queues and worker are created during UI initialization")
+require("s_wifi_survey_export_queue" not in cleanup and
+        "s_wifi_survey_export_results" not in cleanup and
+        "s_wifi_survey_export_task" not in cleanup,
+        "app-lifetime export queues/worker survive UI teardown")
+require("controller.started(export_result.token)" in completion and
+        completion.index("controller.started(export_result.token)") < completion.index("controller.complete("),
+        "retained result is token-validated only when the reinitialized UI pump consumes it")
 
 for passed, description in checks:
     if not passed:
