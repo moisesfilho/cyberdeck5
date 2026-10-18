@@ -50,12 +50,29 @@ COMMAND_NAMES = (
     "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm", "rmdir", "poweroff",
 )
 
-# Any quoted entry shaped like a catalog row would be an independent help
-# list.  Parser/dispatch literals such as "screen on" do not contain the
-# required separator and therefore do not produce false positives.
+# The catalog renders three single-line row shapes: a `<command> [terminal]`
+# header, an indented `<usage> - <description>` line, and two-space indented
+# parameter lines (`  <parameter>: <explanation>`).  A private help table may
+# also mirror the canonical `entry` initializer (`{"<command>", ...}`) across
+# several source lines.  Any of those shapes outside the canonical catalog is an
+# independent help list.
+#
+# The single-line shapes are delimited by literal spaces/tabs, never by
+# newlines, so an ordinary diagnostic string (including one that merely starts
+# with `\n` followed by spaces and `:`) cannot be mistaken for a row.  Parser
+# and dispatch literals such as "screen on" lack the ` - ` separator, the
+# `[terminal]`/`[app]` tag and the `:` parameter form, and therefore do not
+# produce false positives.  The entry-table alternative is the only one allowed
+# to span lines, which is what catches a multi-line literal list.
+_CATALOG_COMMAND_ALTERNATION = "|".join(
+    re.escape(name) for name in COMMAND_NAMES
+)
 CATALOG_LITERAL = re.compile(
-    r'"(?:' + "|".join(re.escape(name) for name in COMMAND_NAMES) +
-    r')\b[^"\n]* - [^"\n]*'
+    r'(?:"[ \t]*(?:' + _CATALOG_COMMAND_ALTERNATION + r')\b[^"\n]* - [^"\n]*'
+    r'|"[ \t]*(?:' + _CATALOG_COMMAND_ALTERNATION + r')\b[^"\n]*\[(?:terminal|app)\]'
+    r'|\{\s*"(?:' + _CATALOG_COMMAND_ALTERNATION + r')"'
+    r'|"[ \t]{2}[^"\n]*: [^"\n]*'
+    r')'
 )
 
 
@@ -85,31 +102,51 @@ def main() -> int:
         return 2
 
     # The ordered production catalog and the host fixture must carry the same
-    # approved battery and bluetooth rows.  This keeps a stale executable/fixture
-    # from being mistaken for a passing help contract after a rebuild.
+    # approved battery and bluetooth rows, with their full parameter
+    # explanation fields.  This keeps a stale executable/fixture from being
+    # mistaken for a passing help contract after a rebuild.
     require("kCatalog" in shell_help and
             re.search(r"std::array\s*<\s*entry\s*,\s*18\s*>\s+kCatalog", shell_help) is not None,
             "production help header must retain the 18-entry ordered catalog")
-    require(re.search(
-        r'\{"wifi"\s*,\s*"wifi \[search\|saved\|audit\|survey\]"\s*,\s*'
-        r'"manage Wi-Fi, passively survey networks, and explicitly export results"\}',
-        shell_help) is not None,
-        "production help catalog must include the approved Wi-Fi survey syntax and description")
-    require("wifi [search|saved|audit|survey] - manage Wi-Fi, passively survey networks, and explicitly export results"
-            in help_fixture,
+    require(
+        '{"wifi", "wifi [search|saved|audit|survey]",'
+        ' "manage Wi-Fi, passively survey networks, and explicitly export results",'
+        ' "  search: scan for networks\\n'
+        '  saved: manage saved networks\\n'
+        '  audit: inspect or export Wi-Fi audit results\\n'
+        '  survey: run a passive survey\\n"}' in shell_help,
+        "production help catalog must include the approved Wi-Fi survey syntax, "
+        "description and parameter lines")
+    wifi_tag_fixture = '"wifi [terminal]\\n"'
+    wifi_usage_fixture = ('"  wifi [search|saved|audit|survey] - manage Wi-Fi, passively '
+                          'survey networks, and explicitly export results\\n"')
+    require(wifi_tag_fixture in help_fixture and wifi_usage_fixture in help_fixture and
+            help_fixture.index(wifi_usage_fixture) > help_fixture.index(wifi_tag_fixture),
             "host help fixture must include the approved Wi-Fi survey row")
-    require(re.search(
-        r'\{"battery"\s*,\s*"battery \[protection on\|off\|status\]"\s*,\s*'
-        r'"show or control battery protection"\}', shell_help) is not None,
+    require(
+        '{"battery", "battery [protection on|off|status]",'
+        ' "show or control battery protection",'
+        ' "  protection on: enable battery protection\\n'
+        '  protection off: disable battery protection\\n'
+        '  protection status: show current protection status\\n"}' in shell_help,
         "production help catalog must contain the approved battery protection row")
-    require("battery [protection on|off|status] - show or control battery protection" in help_fixture,
+    battery_tag_fixture = '"battery [terminal]\\n"'
+    battery_usage_fixture = ('"  battery [protection on|off|status] - show or control '
+                             'battery protection\\n"')
+    require(battery_tag_fixture in help_fixture and battery_usage_fixture in help_fixture and
+            help_fixture.index(battery_usage_fixture) > help_fixture.index(battery_tag_fixture),
             "host help fixture must contain the approved battery protection row")
-    require(re.search(
-        r'\{"bluetooth"\s*,\s*"bluetooth \[search\|paired\]"\s*,\s*'
-        r'"search for or list paired Bluetooth devices"\}', shell_help) is not None,
+    require(
+        '{"bluetooth", "bluetooth [search|paired]",'
+        ' "search for or list paired Bluetooth devices",'
+        ' "  search: find nearby devices\\n'
+        '  paired: list paired devices\\n"}' in shell_help,
         "production help catalog must contain the approved bluetooth row")
-    require("bluetooth [search|paired] - search for or list paired Bluetooth devices"
-            in help_fixture,
+    bluetooth_tag_fixture = '"bluetooth [terminal]\\n"'
+    bluetooth_usage_fixture = ('"  bluetooth [search|paired] - search for or list paired '
+                               'Bluetooth devices\\n"')
+    require(bluetooth_tag_fixture in help_fixture and bluetooth_usage_fixture in help_fixture and
+            help_fixture.index(bluetooth_usage_fixture) > help_fixture.index(bluetooth_tag_fixture),
             "host help fixture must contain the approved bluetooth row")
 
     # The canonical catalog is owned by cyberdeck_shell_help.h and exposed
@@ -129,6 +166,46 @@ def main() -> int:
             ui_source.count(description) == 0 and session_source.count(description) == 0,
             f"the UI/session shell command path must not contain an independent "
             f"help entry for '{description}'",
+        )
+
+    # Deterministic controls for the strengthened pattern.  The negative set is
+    # ordinary parser/dispatch and diagnostic literals that must never look like
+    # a catalog row; the positive set covers one literal per row shape the
+    # pattern must catch, including an indented parameter row and a multi-line
+    # entry table.  Both sets are fixed strings, so the guard cannot pass
+    # vacuously and cannot regress into false positives.
+    CATALOG_LITERAL_NEGATIVE_CONTROL = (
+        '"screen on"',
+        '"screen off"',
+        '"wifi search"',
+        '"wifi saved"',
+        '"app list"',
+        '"help -h"',
+        '"help --help"',
+        '"rm -r"',
+        '"cat: operation rejected\\n"',
+        '"wifi survey export busy; confirmation remains available for retry\\n"',
+        '"\\n            : "',
+        '": "',
+    )
+    for literal in CATALOG_LITERAL_NEGATIVE_CONTROL:
+        require(
+            not CATALOG_LITERAL.search(literal),
+            f"CATALOG_LITERAL negative control matched benign literal '{literal}'",
+        )
+
+    CATALOG_LITERAL_POSITIVE_CONTROL = (
+        '"help [terminal]\\n"',
+        '"  help - show this help\\n"',
+        '"  search: scan for networks\\n"',
+        '"  [path]: destination (default home directory)\\n"',
+        '{"help", "help", "show this help", ""},',
+        '{\n    {"wifi", "wifi [search|saved|audit|survey]", "manage Wi-Fi", ""},\n}',
+    )
+    for literal in CATALOG_LITERAL_POSITIVE_CONTROL:
+        require(
+            CATALOG_LITERAL.search(literal) is not None,
+            f"CATALOG_LITERAL positive control failed to detect '{literal}'",
         )
 
     # This also catches a second table assembled with a different wording
@@ -187,9 +264,10 @@ def main() -> int:
     require("SHELL_HELP_HDR" in makefile and "cyberdeck_shell_help.h" in makefile,
             "Makefile help targets must depend on the production catalog header")
     require(re.search(
-        r"formatted_entry_size\s*\([^)]*\).*?return\s+item\.usage\.size\(\)"
-        r"\s*\+\s*kEntrySeparator\.size\(\)\s*\+\s*item\.description\.size\(\)"
-        r"\s*\+\s*kTerminalTag\.size\(\)\s*\+\s*1\s*;",
+        r"formatted_entry_size\s*\([^)]*\).*?return\s+item\.command\.size\(\)\s*\+"
+        r"\s*kTerminalTag\.size\(\)\s*\+\s*1\s*\+\s*kParameterIndent\.size\(\)\s*\+"
+        r"\s*item\.usage\.size\(\)\s*\+\s*kEntrySeparator\.size\(\)\s*\+"
+        r"\s*item\.description\.size\(\)\s*\+\s*1\s*\+\s*item\.parameters\.size\(\)\s*;",
         shell_help, flags=re.S) is not None,
         "legacy formatted size helper must account for every rendered byte and newline")
     require(re.search(
@@ -198,10 +276,14 @@ def main() -> int:
         "legacy formatter reserve must use the exact-size helper")
     require(re.search(
         r"format_app_entry\s*\([^)]*\).*?reserve\s*\(\s*command\.size\(\)\s*"
-        r"\+\s*kAppEntrySuffix\.size\(\)\s*\).*?append\(command\.data\(\),\s*command\.size\(\)\)"
-        r".*?append\(kAppEntrySuffix\.data\(\),\s*kAppEntrySuffix\.size\(\)\)",
+        r"\+\s*kAppTag\.size\(\)\s*\+\s*kParameterIndent\.size\(\)\s*\+\s*"
+        r"kAppDescription\.size\(\)\s*\+\s*2\s*\).*?append\(command\.data\(\),\s*command\.size\(\)\)"
+        r".*?append\(kAppTag\.data\(\),\s*kAppTag\.size\(\)\)"
+        r".*?push_back\('\\n'\).*?append\(kParameterIndent\.data\(\),\s*kParameterIndent\.size\(\)\)"
+        r".*?append\(kAppDescription\.data\(\),\s*kAppDescription\.size\(\)\)"
+        r".*?push_back\('\\n'\)",
         shell_help, flags=re.S) is not None,
-        "app formatter reserve must equal its rendered command plus suffix")
+        "app formatter must render hierarchical block: command + [app] header, newline, indented description, newline")
     require("capacity()" not in shell_help,
             "help size contract must not infer rendered length from string capacity")
     require("test_help_unification.cpp" in code_map,

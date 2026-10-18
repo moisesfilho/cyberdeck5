@@ -12,7 +12,8 @@ digitacao por teclado fisico e virtual, inclusive durante SSH; scroll do
 terminal apenas interno (sem scrollbar externa). Não há tela SSH separada nem
 ação de retorno.
 **Firmware:** `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp`, `src/platform/input/tab5_keyboard_keys.cpp`,
-`src/platform/input/tab5_keyboard.cpp`, `src/apps/ssh/ssh_client.cpp`, `src/apps/shell/cyberdeck_shell_utils.cpp`.
+`src/platform/input/tab5_keyboard.cpp`, `src/apps/ssh/ssh_client.cpp`, `src/apps/shell/cyberdeck_shell_utils.cpp`,
+`include/apps/shell/cyberdeck_shell_help.h` (catálogo de help do CMD1).
 **Duracao estimada:** 60-90 min por execucao.
 
 > Este plano NAO substitui codigo de producao nem altera firmware. Qualquer
@@ -83,7 +84,7 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
-| CMD1 | Digitar `help` + `Enter` | Mantém o eco normal do comando (por exemplo, `/$ help`); imprime o catálogo legado de 18 comandos com tag `[terminal]` e, para comandos de aplicações registrados, linhas dinâmicas com tag `[app]` (incluindo `edit`/`demo` quando registrados), cada uma com newline final; permanece no menu |  |  |
+| CMD1 | Digitar `help` + `Enter` e recuperar o texto com `term.dump` | Mantém o eco normal do comando (por exemplo, `/$ help`); imprime o catálogo legado de 18 comandos com tag `[terminal]` e, para comandos de aplicações registrados, linhas dinâmicas com tag `[app]` (incluindo `edit`/`demo` quando registrados), cada uma com newline final; permanece no menu. No texto do `term.dump`, confirmar a hierarquia por comando: cabeçalho `<comando> [terminal]` na coluna 0, linha de uso indentada com exatamente dois espaços logo abaixo, e cada parâmetro em linha própria indentada com a explicação após `:` (ex.: `ls [-a] [path] - list directory contents`, `[-a]: include hidden entries`, `[path]: directory to list (default current directory)`). Repetir com `help -h`, `help --help`, `help wifi` (deve falhar fechado com `usage: help`) e com o help por comando (`ls -h`, `poweroff -h`), sempre lendo o efeito em `term.dump` — aceitar `ui.type` sem confirmar o texto não valida o item |  |  |
 | CMD2 | Digitar `clear` + `Enter` | Limpa o texto de saida do terminal unificado |  |  |
 | CMD3 | Digitar `wifi` + `Enter` | Imprime `wifi: enabled connected <ip>` / `wifi: enabled disconnected` / `wifi: disabled disconnected`, ou `wifi: unavailable` se `wifi_mgr_get_status` falhar; sem crash |  |  |
 | CMD3a | Digitar `log` + `Enter` repetidamente | Imprime os eventos recentes, ou `(nenhum evento disponivel)`, sem reiniciar o dispositivo nem gerar panic |  |  |
@@ -100,6 +101,17 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 | CMD14 | Digitar `screen timeout 5` + `Enter` | Imprime `screen timeout set to 5 minutes`; proximo boot restaura o timeout; o timer reinicia com o novo valor |  |  |
 | CMD15 | Digitar `screen timeout 0` + `Enter` | Imprime `screen timeout disabled (0 minutes)`; timer desabilitado sem apagar a tela |  |  |
 | CMD16 | Digitar `screen timeout 1441` + `Enter` | Imprime `screen timeout: expected an integer from 0 to 1440`; estado inalterado |  |  |
+
+> **CMD1 (help hierárquico) permanece pendente no dispositivo.** A linha acima
+> descreve o procedimento, não uma validação física concluída: nesta rodada
+> nenhum Tab5 foi executado e nenhum `term.dump` foi coletado. A estrutura do
+> catálogo (cabeçalhos `<comando> [terminal]` na coluna 0, linha de uso e
+> parâmetros indentados com explicação após `:`, ordem canônica, unicidade e o
+> fechamento de `help wifi` com `usage: help`) tem evidência host em
+> `tests/host/keymap/test_help_unification.cpp` e
+> `tests/host/keymap/test_shell_session.cpp`, rastreada em
+> `tests/host/keymap/help_traceability.md`. Isso não substitui a confirmação por
+> `term.dump` no firmware.
 
 ## 3.2 Proteção de tela (comportamento no dispositivo)
 

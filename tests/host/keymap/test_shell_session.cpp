@@ -351,6 +351,100 @@ void submit(session &s, const std::string &text)
     s.handle_key(key::enter);
 }
 
+std::vector<std::string> split_lines(const std::string &text)
+{
+    std::vector<std::string> lines;
+    if (text.empty()) return lines;
+    std::size_t begin = 0;
+    while (begin < text.size()) {
+        const std::size_t end = text.find('\n', begin);
+        const std::size_t stop = end == std::string::npos ? text.size() : end;
+        if (stop != begin) lines.push_back(text.substr(begin, stop - begin));
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    return lines;
+}
+
+/* TEST-HELP-CAT-PINNED (REQ-HELP-01..04): the pinned legacy help contract.
+ * Entries, wording, order, [terminal] tags and every parameter explanation
+ * are acceptance evidence; an intentional wording change must update this
+ * pin, never skip the comparison. */
+const char *kLegacyHelpPinned = R"-(help [terminal]
+  help - show this help
+wifi [terminal]
+  wifi [search|saved|audit|survey] - manage Wi-Fi, passively survey networks, and explicitly export results
+  search: scan for networks
+  saved: manage saved networks
+  audit: inspect or export Wi-Fi audit results
+  survey: run a passive survey
+log [terminal]
+  log [lines <1-64>] - show recent events
+  lines <1-64>: set the number of recent events
+clear [terminal]
+  clear - clear the terminal
+screen [terminal]
+  screen [on|off|timeout <0-1440>] - control screen protection
+  on|off: enable or disable screen protection
+  timeout <0-1440>: set inactivity timeout in minutes; 0 disables it
+battery [terminal]
+  battery [protection on|off|status] - show or control battery protection
+  protection on: enable battery protection
+  protection off: disable battery protection
+  protection status: show current protection status
+bluetooth [terminal]
+  bluetooth [search|paired] - search for or list paired Bluetooth devices
+  search: find nearby devices
+  paired: list paired devices
+app [terminal]
+  app [list|info|start|stop] [id] - manage compiled-in applications
+  list: list registered applications
+  info <id>: show application details
+  start <id>: start an application
+  stop <id>: stop an application
+ssh [terminal]
+  ssh [user@]host[:port] - start an SSH session
+  [user@]: optional login name
+  host: remote host name or address
+  [:port]: optional port (default 22)
+pwd [terminal]
+  pwd - print working directory
+cd [terminal]
+  cd [path] - change working directory
+  [path]: destination (default home directory)
+ls [terminal]
+  ls [-a] [path] - list directory contents
+  [-a]: include hidden entries
+  [path]: directory to list (default current directory)
+cat [terminal]
+  cat <file> - print a regular file
+  <file>: file to display
+touch [terminal]
+  touch <file> - create an empty file
+  <file>: file to create
+mkdir [terminal]
+  mkdir <directory> - create a directory
+  <directory>: directory to create
+rm [terminal]
+  rm [-r] <path> - remove a file or directory
+  [-r]: recursively remove a directory
+  <path>: target to remove
+rmdir [terminal]
+  rmdir <directory> - remove an empty directory
+  <directory>: empty directory to remove
+poweroff [terminal]
+  poweroff - power off this device after exact y confirmation
+  Confirmation: type exactly y when prompted; any other input cancels
+)-";
+
+/* TEST-HELP-ORDER-01 (REQ-HELP-03): canonical catalog order, one row per
+ * command. */
+const char *const kLegacyOrder[] = {
+    "help",       "wifi", "log",   "clear",   "screen", "battery", "bluetooth",
+    "app",        "ssh",  "pwd",   "cd",      "ls",     "cat",     "touch",
+    "mkdir",      "rm",   "rmdir", "poweroff",
+};
+
 } // namespace
 
 int main()
@@ -588,6 +682,9 @@ int main()
               "cd echo captures the previous nested cwd");
     }
 
+    /* TEST-HELP-CAT-PINNED / TEST-HELP-HIERARCHY-01 (REQ-HELP-01/02/03/04):
+     * the session emits exactly the formatter catalog after its echo, and the
+     * formatter matches the pinned contract entry by entry. */
     {
         fake_host h;
         session s(h);
@@ -595,16 +692,77 @@ int main()
         const std::string help_echo = "/$ help\n";
         check(h.output.compare(0, help_echo.size(), help_echo) == 0,
               "help command keeps its local terminal echo");
-        check(h.output.find("help - show this help") != std::string::npos,
-              "help prints the shared catalog");
+        /* Wiring only: the session output equals the formatter catalog, so a
+         * different path cannot emit a second help list. */
         check(h.output.compare(help_echo.size(), cyberdeck_shell_help::text().size(),
                                cyberdeck_shell_help::text()) == 0,
-              "all legacy help entries remain in the canonical order and wording");
-        check(h.output.find("ls [-a] [path] - list directory contents [terminal]\n") != std::string::npos &&
-              h.output.find("cat <file> - print a regular file [terminal]\n") != std::string::npos,
-              "legacy ls and cat entries are explicitly terminal commands");
-        check(h.output.find("help - show this help [terminal]\n") != std::string::npos,
+              "help prints the shared catalog after its echo");
+        /* TEST-HELP-CAT-PINNED (REQ-HELP-01..04): full content pin. */
+        check_eq(cyberdeck_shell_help::text(), std::string(kLegacyHelpPinned),
+                 "legacy catalog content, tags, parameter explanations and order are pinned");
+        /* TEST-HELP-HIERARCHY-01 (REQ-HELP-01): command-tag header line above
+         * an indented usage-description line, per entry. */
+        check(h.output.find("ls [terminal]\n  ls [-a] [path] - list directory contents\n") != std::string::npos &&
+              h.output.find("cat [terminal]\n  cat <file> - print a regular file\n") != std::string::npos,
+              "legacy ls and cat render a tagged header over an indented usage-description line");
+        check(h.output.find("help [terminal]\n  help - show this help\n") != std::string::npos,
               "legacy help entry is tagged terminal");
+    }
+
+    /* TEST-HELP-ORDER-01, TEST-HELP-ROWS-01 (REQ-HELP-03/04): every command
+     * appears once, in canonical order, under its own [terminal] header, with
+     * two-space-indented parameter rows and no blank or ragged lines. */
+    {
+        const std::string legacy = cyberdeck_shell_help::text();
+        std::size_t position = 0;
+        for (const char *command : kLegacyOrder) {
+            const std::string header = std::string(command) + " [terminal]\n";
+            const std::size_t found = legacy.find(header, position);
+            check(found != std::string::npos,
+                  "each legacy command has a [terminal] header in canonical order");
+            position = found + 1;
+        }
+        check(legacy.find("\n\n") == std::string::npos && legacy.back() == '\n',
+              "help catalog has no blank lines and ends with a single newline");
+        for (const std::string &line : split_lines(legacy)) {
+            if (line[0] == ' ')
+                check(line.compare(0, 2, "  ") == 0 && line[2] != ' ',
+                      "every legibility row is indented by exactly kParameterIndent");
+        }
+    }
+
+    /* TEST-HELP-CMD-01 (REQ-HELP-01/02): the recorded hierarchy and parameter
+     * explanations reach all live help paths: poweroff -h/--help handled in
+     * the session, local-shell -h rows, and every help variant. */
+    {
+        fake_host h;
+        session s(h);
+        submit(s, "poweroff --help");
+        check_eq(h.output, "/$ poweroff --help\n" + cyberdeck_shell_help::command_text("poweroff"),
+                 "poweroff --help prints the pinned poweroff block");
+        check(h.poweroff_admissions == 0, "per-command help never arms poweroff confirmation");
+        h.output.clear();
+        submit(s, "poweroff -h");
+        check_eq(h.output, "/$ poweroff -h\n" + cyberdeck_shell_help::command_text("poweroff"),
+                 "poweroff -h prints the same pinned block");
+        h.output.clear();
+        submit(s, "ls -h");
+        check_eq(h.output, "/$ ls -h\n" + cyberdeck_shell_help::command_text("ls"),
+                 "local shell -h forwards the pinned ls block through the session");
+        h.output.clear();
+        submit(s, "help -h");
+        check_eq(h.output, "/$ help -h\n" + cyberdeck_shell_help::text(),
+                 "help -h prints the full catalog through the session");
+        h.output.clear();
+        submit(s, "help --help");
+        check_eq(h.output, "/$ help --help\n" + cyberdeck_shell_help::text(),
+                 "help --help prints the same full catalog");
+        /* Negative row: partial help requests fail closed with the exact usage
+         * error instead of a partial catalog. */
+        h.output.clear();
+        submit(s, "help wifi");
+        check_eq(h.output, "/$ help wifi\nusage: help\n",
+                 "help with an unknown target reports the exact usage error");
     }
 
     /* TEST-HELP-LEGACY-PARITY, RUNTIME-MANIFESTS, DISTINCTION, SAFE-MODE,
@@ -639,21 +797,28 @@ int main()
         const std::string first = h.output;
         const std::string expected_output =
             "/$ help\n" + std::string(cyberdeck_shell_help::text()) +
-            "edit - start compiled application [app]\n"
-            "demo - start compiled application [app]\n"
-            "demo-tool - start compiled application [app]\n";
+            "edit [app]\n"
+            "  start compiled application\n"
+            "demo [app]\n"
+            "  start compiled application\n"
+            "demo-tool [app]\n"
+            "  start compiled application\n";
         check_eq(first, expected_output,
                  "help echo and terminal/app entries render exactly in stable order");
-        check(first.find("edit - start compiled application [app]\n") != std::string::npos,
-              "registered editor command is present with app metadata");
-        check(first.find("demo - start compiled application [app]\n") != std::string::npos &&
-              first.find("demo-tool - start compiled application [app]\n") != std::string::npos,
-              "manifest command and declared commands are listed");
-        check(first.find("no-command - start compiled application") == std::string::npos,
+        /* TEST-HELP-APP-HIERARCHY-01 (REQ-HELP-01/02/03/04): dynamic [app]
+         * entries now render as a hierarchical block — a `<command> [app]`
+         * header at column 0 followed by the indented description line —
+         * mirroring the legacy [terminal] two-line contract. */
+        check(first.find("edit [app]\n  start compiled application\n") != std::string::npos,
+              "registered editor command renders hierarchical app block");
+        check(first.find("demo [app]\n  start compiled application\n") != std::string::npos &&
+              first.find("demo-tool [app]\n  start compiled application\n") != std::string::npos,
+              "manifest command and declared commands render hierarchical app blocks");
+        check(first.find("no-command [app]") == std::string::npos,
               "registered manifest without command is omitted");
-        check(first.find("ls - start compiled application [app]") == std::string::npos,
+        check(first.find("ls [app]") == std::string::npos,
               "legacy collision is not duplicated as an application command");
-        check(first.find("demo-tool - start compiled application [app]\n", first.find("demo-tool") + 1) == std::string::npos,
+        check(first.find("demo-tool [app]\n  start compiled application\n", first.find("demo-tool") + 1) == std::string::npos,
               "duplicate declarations produce one help row");
         check(first.find("[terminal]") != std::string::npos && first.find("[app]") != std::string::npos,
               "terminal and app entries have distinct tags");

@@ -14,8 +14,8 @@
  * shell. O teste fixa o catalogo completo, incluindo os comandos comuns e os
  * comandos locais, byte a byte (separador "-" entre comando e descricao,
  * newline final). Alem da igualdade exata, os testes fixam a estrutura
- * (18 newlines, 18 linhas nao vazias, newline final), a presenca de cada
- * comando e o determinismo entre chamadas.
+ * (65 newlines, 65 linhas nao vazias = 18 tags + 47 indentadas, newline
+ * final), a presenca de cada comando e o determinismo entre chamadas.
  */
 #include "apps/shell/cyberdeck_shell_utils.h"
 #include "contracts/cyberdeck_help.h"
@@ -789,8 +789,11 @@ void test_help_text_exact_block()
 void test_help_text_structure()
 {
     // Arrange & Act
-    // Estrutura do catalogo unificado: exatamente 18 newlines (um por linha) e
-    // 18 linhas nao vazias; o texto termina obrigatoriamente em newline.
+    // Estrutura do catalogo unificado no novo formatter: 18 blocos
+    // `<command> [terminal]`, cada um com a linha de tag, a linha
+    // `  <usage> - <description>` e as linhas de parametros opcionais
+    // indentadas; exatamente 65 linhas nao vazias (18 tags + 47 indentadas),
+    // e o texto termina obrigatoriamente em newline.
     const std::string text = cyberdeck_help_text();
 
     // Assert
@@ -803,22 +806,33 @@ void test_help_text_structure()
             ++newlines;
         }
     }
-    CHECK(newlines == 18);
+    CHECK(newlines == 65);
 
-    // Split por '\n': linhas nao vazias entre quebras. Uma linha vazia
-    // (start == i, sem caracteres) nao conta; a cauda apos o ultimo '\n'
-    // (deve ser vazia por causa do newline final) tambem nao conta.
+    // Split por '\n': linhas nao vazias entre quebras. No novo formatter toda
+    // linha e ou a tag `<command> [terminal]` do bloco ou uma linha indentada
+    // com dois espacos; nenhuma linha vazia pode ficar exposta ao terminal.
     size_t non_empty_lines = 0;
+    size_t tag_lines = 0;
+    size_t indented_lines = 0;
     size_t line_start = 0;
-    for (size_t i = 0; i < text.size(); ++i) {
-        if (text[i] == '\n') {
-            if (i > line_start) {
+    for (size_t i = 0; i <= text.size(); ++i) {
+        if (i == text.size() || text[i] == '\n') {
+            const std::string line = text.substr(line_start, i - line_start);
+            if (!line.empty()) {
                 ++non_empty_lines;
+                if (line.size() > 11 &&
+                    line.compare(line.size() - 11, 11, " [terminal]") == 0) {
+                    ++tag_lines;
+                } else if (line.compare(0, 2, "  ") == 0) {
+                    ++indented_lines;
+                }
             }
             line_start = i + 1;
         }
     }
-    CHECK(non_empty_lines == 18);
+    CHECK(non_empty_lines == 65);
+    CHECK(tag_lines == 18);
+    CHECK(indented_lines == 47);
 }
 
 void test_help_text_commands_present()
@@ -829,49 +843,67 @@ void test_help_text_commands_present()
     const std::string text = cyberdeck_help_text();
 
     // Assert
-    const char *entries[] = {
-        "help - show this help [terminal]",
-        "pwd - print working directory [terminal]",
-        "cd [path] - change working directory [terminal]",
-        "ls [-a] [path] - list directory contents [terminal]",
-        "cat <file> - print a regular file [terminal]",
-        "touch <file> - create an empty file [terminal]",
-        "mkdir <directory> - create a directory [terminal]",
-        "rm [-r] <path> - remove a file or directory [terminal]",
-        "rmdir <directory> - remove an empty directory [terminal]",
-        "wifi [search|saved|audit|survey] - manage Wi-Fi, passively survey networks, and explicitly export results [terminal]",
-        "log [lines <1-64>] - show recent events [terminal]",
-        "clear - clear the terminal [terminal]",
-        "screen [on|off|timeout <0-1440>] - control screen protection [terminal]",
-        "battery [protection on|off|status] - show or control battery protection [terminal]",
-        "bluetooth [search|paired] - search for or list paired Bluetooth devices [terminal]",
-        "app [list|info|start|stop] [id] - manage compiled-in applications [terminal]",
-        "ssh [user@]host[:port] - start an SSH session [terminal]",
-        "poweroff - power off this device after exact y confirmation [terminal]",
+    struct help_row {
+        const char *command;
+        const char *usage_line;
     };
-    for (const char *entry : entries) {
-        CHECK(text.find(entry) != std::string::npos);
-    }
+    const help_row entries[] = {
+        {"help", "  help - show this help"},
+        {"wifi", "  wifi [search|saved|audit|survey] - manage Wi-Fi, passively survey networks, and explicitly export results"},
+        {"log", "  log [lines <1-64>] - show recent events"},
+        {"clear", "  clear - clear the terminal"},
+        {"screen", "  screen [on|off|timeout <0-1440>] - control screen protection"},
+        {"battery", "  battery [protection on|off|status] - show or control battery protection"},
+        {"bluetooth", "  bluetooth [search|paired] - search for or list paired Bluetooth devices"},
+        {"app", "  app [list|info|start|stop] [id] - manage compiled-in applications"},
+        {"ssh", "  ssh [user@]host[:port] - start an SSH session"},
+        {"pwd", "  pwd - print working directory"},
+        {"cd", "  cd [path] - change working directory"},
+        {"ls", "  ls [-a] [path] - list directory contents"},
+        {"cat", "  cat <file> - print a regular file"},
+        {"touch", "  touch <file> - create an empty file"},
+        {"mkdir", "  mkdir <directory> - create a directory"},
+        {"rm", "  rm [-r] <path> - remove a file or directory"},
+        {"rmdir", "  rmdir <directory> - remove an empty directory"},
+        {"poweroff", "  poweroff - power off this device after exact y confirmation"},
+    };
 
     // Completude: a lista acima deve cobrir todas as linhas do catalogo. Sem
     // esta contagem, uma linha nova no catalogo passaria despercebida porque
     // o teste so procuraria as entradas conhecidas.
     const size_t expected_rows = sizeof(entries) / sizeof(entries[0]);
     CHECK(expected_rows == 18);
-    size_t rows_seen = 0;
-    for (const char *entry : entries) {
-        size_t position = 0;
-        while ((position = text.find(entry, position)) != std::string::npos) {
-            // A linha precisa comecar no inicio de uma linha do catalogo, para
-            // que uma entrada nao possa satisfazer outra por substring.
-            const bool at_line_start = position == 0 || text[position - 1] == '\n';
-            const bool at_line_end = (position + std::string(entry).size()) == text.size() ||
-                                     text[position + std::string(entry).size()] == '\n';
-            CHECK(at_line_start);
-            CHECK(at_line_end);
-            ++rows_seen;
-            position += std::string(entry).size();
+
+    // Ordem do catalogo aprovada: as tags `<command> [terminal]` aparecem
+    // exatamente nessa sequencia, cada uma abrindo sua propria linha.
+    std::size_t tag_scan = 0;
+    for (const help_row &entry : entries) {
+        const std::string tag = std::string(entry.command) + " [terminal]\n";
+        const std::size_t tag_position = text.find(tag, tag_scan);
+        CHECK(tag_position != std::string::npos);
+        if (tag_position != std::string::npos) {
+            CHECK(tag_position == 0 || text[tag_position - 1] == '\n');
+            tag_scan = tag_position + 1;
         }
+    }
+
+    // Usage/description vem logo apos a tag do proprio comando, indentada,
+    // aparecendo exatamente uma vez (nenhuma entrada satisfaz outra por
+    // substring) e fechando a propria linha.
+    size_t rows_seen = 0;
+    for (const help_row &entry : entries) {
+        const std::string tag = std::string(entry.command) + " [terminal]\n";
+        const std::string usage(entry.usage_line);
+        const std::size_t tag_position = text.find(tag);
+        if (tag_position == std::string::npos) {
+            CHECK(false);
+            continue;
+        }
+        const std::size_t position = tag_position + tag.size();
+        CHECK(text.compare(position, usage.size(), usage) == 0);
+        CHECK(text[position + usage.size()] == '\n');
+        CHECK(text.find(usage, position + 1) == std::string::npos);
+        ++rows_seen;
     }
     CHECK(rows_seen == expected_rows);
 }

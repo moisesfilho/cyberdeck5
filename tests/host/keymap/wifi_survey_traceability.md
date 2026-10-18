@@ -21,7 +21,7 @@ contratos de wiring e compilação não provam rádio físico ou FatFS.
 | R5: survey usa passive dwell explícito de 360 ms, sem alterar scan legacy | TEST-SURVEY-DWELL: guard de integração exige `survey_config` passive com `WIFI_PASSIVE_SCAN_DEFAULT_TIME` e verifica wrapper legacy com configuração nula | PASS: integração 13/13. ESP-IDF 5.5.5 define `WIFI_PASSIVE_SCAN_DEFAULT_TIME` como 360 ms em `esp_wifi_types_generic.h`; wiring usa essa constante apenas na configuração survey. Guard não simula rádio. |
 | REQ-SURVEY-03/04 / AC-03/04: ordenação determinística de sinais empatados e lote nulo não altera amostras | TEST-SURVEY-TIE-NULL: `test_wifi_survey.cpp::test_equal_signal_ordering_and_null_batch` verifica BSSID e canal como chaves de desempate, além de callback nulo com count positivo | PASS: TU real; 178 checks, incluindo ordem estável e preservação dos resultados. |
 | REQ-SURVEY-07 / AC-07: erro ao inspecionar artefato ou remover backup stale bloqueia mutação | TEST-PERSISTENCE-INSPECT-UNLINK: `test_wifi_audit_persistence.cpp::test_inspection_errors_fail_closed_without_mutation` e `test_stale_sidecar_unlink_failure_blocks_new_transaction` | PASS: TU transacional real; 507 checks, erro de inspeção em ambos sidecars e unlink negado preservam evidências e não iniciam escrita. |
-| B3: help catalog/golden descreve survey sem perder linhas/ordem/igualdade | TEST-HELP-GOLDEN: `test_shell_utils`, fixture `cyberdeck_help.h`, `test_help_unification`, `test_ble_command_parse` e `help_unification_contract` | PASS ciclo 5: shell utils 439, help unification 320, BLE parser 75; structural contract PASS. Golden mantém igualdade e 18 linhas. |
+| B3: help catalog/golden descreve survey sem perder linhas/ordem/igualdade | TEST-HELP-GOLDEN: `test_shell_utils`, fixture `cyberdeck_help.h`, `test_help_unification`, `test_ble_command_parse` e `help_unification_contract` | PASS (medição do snapshot atual): shell utils 477, help unification 623, BLE parser 209; structural contract PASS. Golden mantém igualdade e 65 linhas (18 tags + 47 indentadas). Contagens são do snapshot corrente, não de ciclo 5. |
 | EXPORT-CONTROLLER: confirmação obrigatória e mode-bound, expiração estrita (igualdade válida), sem replay; busy rejeita sem rearmar/substituir confirmação; falha terminal accepted e handoff stale-safe | TEST-SURVEY-EXPORT-CONTROLLER: `test_wifi_survey_export_controller.cpp` liga o TU real do controller | PASS comportamental; cobre busy request, confirmação não pendente, accepted/start/fail/published, terminal failure do token atual, token stale/replay sem liberar/reportar/ACK e ACK único. Não exercita UI nem FreeRTOS. |
 | EXPORT-APP-LIFETIME: worker/filas bounded sem referências UI sobrevivem deinit/reinit; completion fica retida até pump e token valida antes de ACK; nenhum worker/queue/gate é criado no confirm | TEST-SURVEY-EXPORT-WIRING/RESULT: os contratos verificam init lazy, ausência no cleanup, stack 8192, filas cap-1, persistência/wipe e ordem do pump | Estruturais; não executam scheduling FreeRTOS nem reinit real. Retenção/replay da fila e execução ESP_PLATFORM permanecem limites explícitos. |
 | EXPORT-OWNERSHIP/PRIVACY: payload/path transitórios e job são zerados nos limites de ownership; completion path é zerado no pump; logs não expõem dados | TEST-SURVEY-EXPORT-WIRING/RESULT verifica ordem de wipe/ownership e caminhos de rejeição | Estrutural; não prova comportamento do alocador/firmware. |
@@ -71,3 +71,21 @@ aviso/conectividade/SSH, cancelar durante scan e exportar masked/unmasked com
 confirmação explícita; ler arquivo SD e verificar conteúdo/limite e ausência de
 histórico após reboot. Capturar `sys.info` e logs antes/depois; nenhuma operação
 ativa de probe/associação deve ocorrer.
+
+## Contagens de help e rastreabilidade REQ-HELP (cycle 3)
+
+As contagens da linha B3 foram remedidas no snapshot atual executando somente os
+alvos focados (`make -C tests/host/keymap test_shell_utils test_help_unification
+test_ble_command_parse`): `test_shell_utils` 477 checks, `test_help_unification`
+623 checks e `test_ble_command_parse` 209 checks, todos PASS. O alvo
+`test_shell_utils` volta a depender apenas das dependências declaradas: o
+`@echo`/`rm -f` de debug saiu do Makefile e `Makefile` já era pré-requisito, então
+alterar o contrato/comentário continua forçando recompilação (verificado
+tocando `contracts/cyberdeck_help.h`: o alvo recompilou e passou 477 checks).
+O `test_shell_session`, que ancora TEST-HELP-HIERARCHY-01/ORDER-01/ROWS-01/CMD-01,
+reporta 342 checks no snapshot atual; a menção a 269 checks na seção do cycle 7
+acima é evidência histórica daquele ciclo.
+
+A matriz `REQ-HELP-01..04 -> TEST` fica em `help_traceability.md`. Ela registra
+evidência host (contratos comportamentais do catálogo) e não é validação física
+do help no Tab5.
