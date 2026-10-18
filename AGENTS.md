@@ -36,6 +36,18 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 - Prefira a menor alteracao correta e valide referencias e testes relacionados
   quando o trabalho estiver concluido.
 
+## Validacao de firmware no dispositivo
+
+- Como este projeto produz firmware para um dispositivo específico, valide cada
+  implementação no dispositivo de teste conectado, realizando o flash do
+  firmware compilado quando o dispositivo estiver disponível.
+- Confirme o comportamento no hardware com os testes pertinentes e registre o
+  resultado. Se o dispositivo não estiver disponível, informe que a validação
+  física permanece pendente.
+- Não faça flash automaticamente apenas para investigar um problema; o flash
+  como etapa de validação da implementação é esperado quando o dispositivo
+  estiver disponível.
+
 ## Validacao no dispositivo via Serial-JTAG
 
 O firmware possui uma ponte NDJSON na USB Serial-JTAG para testar o dispositivo
