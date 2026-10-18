@@ -15,6 +15,7 @@
 #include "apps/shell/cyberdeck_shell_utils.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 namespace {
@@ -51,6 +52,25 @@ int checks = 0;
                     actual_value.c_str()); \
     } \
 } while (0)
+
+/* Fail-fast position guard.  CHECK() alone is non-fatal, so a npos result
+ * would still reach the arithmetic/substr below it and turn a missing catalog
+ * row into a bogus comparison or an out-of-range index.  This guard records
+ * the failure, prints it and stops the run before any npos arithmetic runs. */
+std::size_t require_found(std::size_t position, const char *what, int line)
+{
+    ++checks;
+    if (position == std::string::npos) {
+        ++failures;
+        std::printf("FAIL %s:%d: required text not found: %s (position == npos)\n",
+                    __FILE__, line, what);
+        std::fflush(stdout);
+        std::exit(1);
+    }
+    return position;
+}
+
+#define REQUIRE_FOUND(position, what) require_found((position), (what), __LINE__)
 
 void test_bluetooth_search_is_routed()
 {
@@ -129,20 +149,37 @@ void test_help_catalog_documents_bluetooth_exactly_once()
     const std::string help = cyberdeck_help_text();
     const std::string row = "bluetooth [search|paired]";
 
-    std::size_t first = help.find(row);
-    CHECK(first != std::string::npos);
-    if (first != std::string::npos) {
-        CHECK(help.find(row, first + 1) == std::string::npos);
-        /* The row keeps the shared "<usage> - <description>" format. */
-        CHECK_STR(help.substr(first + row.size(), 3), " - ");
-        CHECK(first == 0 || help[first - 1] == '\n');
-        CHECK(help[first + row.size() + 3] != ' ');
-    }
+    const std::size_t first =
+        REQUIRE_FOUND(help.find(row), "catalog row 'bluetooth [search|paired]'");
+    CHECK(help.find(row, first + 1) == std::string::npos);
+    /* The usage row keeps the shared "  <usage> - <description>" format. */
+    CHECK_STR(help.substr(first + row.size(), 3), " - ");
+    /* The usage row opens its own two-space indented line, immediately
+     * below the bluetooth tag header of the new formatter. */
+    const std::string tag = "bluetooth [terminal]\n";
+    const std::size_t tag_position =
+        REQUIRE_FOUND(help.find(tag), "tag header 'bluetooth [terminal]'");
+    /* "<command> [terminal]\n" + "  " immediately precede the row. */
+    CHECK(first == tag_position + tag.size() + 2);
+    CHECK(first >= 3 && help[first - 1] == ' ' && help[first - 2] == ' ' &&
+          help[first - 3] == '\n');
+    /* The character after " - " is only indexed once its bounds are part of
+     * the same assertion, so a truncated catalog fails instead of reading
+     * past the end. */
+    const std::size_t description_start = first + row.size() + 3;
+    CHECK(description_start < help.size() && help[description_start] != ' ');
 
-    /* The command-specific help comes from the same catalog. */
+    /* The command-specific help comes from the same catalog: it is byte-equal
+     * to its contiguous block in the full text and every line ends with LF. */
     const std::string command_help = cyberdeck_command_help_text("bluetooth");
     CHECK(command_help.find(row) != std::string::npos);
-    CHECK(command_help.find('\n') == command_help.size() - 1);
+    CHECK(!command_help.empty() && command_help.back() == '\n');
+    {
+        const std::size_t block_position =
+            REQUIRE_FOUND(help.find(tag), "tag header for the pinned bluetooth block");
+        CHECK(command_help.compare(0, command_help.size(), help,
+                                   block_position, command_help.size()) == 0);
+    }
     CHECK_STR(cyberdeck_command_help_text("bluetoothx"), "");
     CHECK_STR(cyberdeck_command_help_text("Bluetooth"), "");
 
@@ -163,12 +200,35 @@ void test_help_catalog_documents_bluetooth_exactly_once()
         CHECK(help.find(existing) != std::string::npos);
     }
 
-    /* Every row ends with exactly one LF, so the terminal gains one clean line. */
+    /* Every rendered line ends with exactly one LF, so the terminal gains
+     * clean lines only: 18 command tags plus 47 indented usage/parameter
+     * lines make 65 LF-terminated lines in the catalog. */
     std::size_t lines = 0;
     for (char value : help) {
         if (value == '\n') ++lines;
     }
-    CHECK_EQ(lines, std::size_t(18));
+    CHECK_EQ(lines, std::size_t(65));
+    {
+        /* No empty internal line and every line is either a `<command>
+         * [terminal]` tag header or a two-space indented line. */
+        std::size_t line_start = 0;
+        while (line_start < help.size()) {
+            const std::size_t stop = help.find('\n', line_start);
+            if (stop == std::string::npos) {
+                /* O catalogo deve terminar em newline; falha limpa se nao. */
+                CHECK(help.back() == '\n');
+                break;
+            }
+            const std::size_t length = stop - line_start;
+            CHECK(length != 0);
+            const std::string line = help.substr(line_start, length);
+            const bool tag_line = line.size() > 11 &&
+                                  line.compare(line.size() - 11, 11, " [terminal]") == 0;
+            const bool indented_line = line.compare(0, 2, "  ") == 0;
+            CHECK(tag_line || indented_line);
+            line_start = stop + 1;
+        }
+    }
 }
 
 } // namespace

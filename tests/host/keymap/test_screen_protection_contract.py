@@ -41,7 +41,9 @@ SCREEN_HELP_DESCRIPTION = "control screen protection"
 SCREEN_HELP_LINE = f"{SCREEN_HELP_USAGE} - {SCREEN_HELP_DESCRIPTION}"
 SCREEN_CATALOG_ROW = re.compile(
     r'\{"screen"\s*,\s*"screen \[on\|off\|timeout <0-1440>\]"\s*,\s*'
-    r'"control screen protection"\}'
+    r'"control screen protection"\s*,\s*'
+    r'" {2}on\|off: enable or disable screen protection\\n'
+    r' {2}timeout <0-1440>: set inactivity timeout in minutes; 0 disables it\\n"\}'
 )
 
 

@@ -529,7 +529,7 @@ test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/pl
 # testar handle_key/execute_line/insercao de texto como comportamento.
 # Depende apenas de modulos puros ja testados (edit_line, history, modelos
 # BLE/Wi-Fi, shell_utils, local_shell, protecao de tela e bateria).
-test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) $(WIFI_SURVEY_SRC) $(WIFI_SURVEY_HDR) \
+test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) $(SHELL_HELP_HDR) $(WIFI_SURVEY_SRC) $(WIFI_SURVEY_HDR) \
 		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
 		$(SD_IO_COORDINATOR_SRC) \
 		$(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
