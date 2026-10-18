@@ -1072,6 +1072,9 @@ test_cat_worker_runtime: test_cat_worker_runtime.cpp $(CAT_WORKER_SRC) $(CAT_RUN
 test_poweroff: test_poweroff.cpp ../../../components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp ../../../components/cyberdeck/include/platform/power/cyberdeck_poweroff.h
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include test_poweroff.cpp ../../../components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp -Wl,--wrap=write -Wl,--wrap=fsync -Wl,--wrap=close -o $@
 
+test_wake_key_contract: test_wake_key_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
+	$(PYTHON) test_wake_key_contract.py
+
 test: $(BINS)
 	@./test_wifi_survey
 	@$(MAKE) --no-print-directory test_wifi_survey_integration_contract
@@ -1088,6 +1091,8 @@ test: $(BINS)
 	@./test_time_sync
 	@echo "==> Executando contrato de runtime da sincronizacao UTC (TEST-TIME-09 + TEST-TIME-STACK-01)"
 	@$(MAKE) --no-print-directory test_time_sync_contract
+	@echo "==> Executando contrato estrutural do wake-key (REQ-WAKE-KEY-01/02)"
+	@$(MAKE) --no-print-directory test_wake_key_contract
 	@echo "==> Executando testes do keymap do shell de entrada"
 	@./test_keymap
 	@echo "==> Executando testes dos utilitarios de shell e SSH"

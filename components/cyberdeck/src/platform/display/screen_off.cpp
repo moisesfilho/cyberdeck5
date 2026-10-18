@@ -320,6 +320,11 @@ extern "C" void screen_off_turn_off(void)
     hide_screen();
 }
 
+extern "C" bool screen_off_is_active(void)
+{
+    return s_active;
+}
+
 extern "C" esp_err_t screen_off_set_timeout_minutes(uint16_t minutes)
 {
     if (s_persistence_closing.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;

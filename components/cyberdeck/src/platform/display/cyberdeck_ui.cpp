@@ -715,6 +715,10 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
     /* lv_async_call invokes this on the LVGL task.  In particular, do not
      * acquire bsp_display_lock here: this callback is already in that
      * context, and some of the paths below can synchronously render. */
+    if (screen_off_is_active()) {
+        screen_off_turn_on();
+        return;
+    }
     lv_display_trigger_activity(lv_disp_get_default());
     if (s_keyboard)
         hidden(s_keyboard, true);
