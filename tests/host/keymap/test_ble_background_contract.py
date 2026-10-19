@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Structural contract for boot bond restore and background BLE reconnect."""
 
+import re
 from pathlib import Path
 
 
@@ -11,6 +12,29 @@ BG = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cp
 BG_HDR = ROOT / "components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_background.h"
 STATE = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
+
+
+# TEST-BLE-AGG-01: the migrated host layout keeps the per-target object
+# directories (test_ble_types/, test_ble_state_machine/,
+# test_ble_event_dispatch/, test_ble_store/, test_ble_command_parse/) and
+# moves the executables to the *_bin artifacts.  Every migrated binary is
+# described here once: (variable, wrapper target, executable artifact).
+# The legacy executable name is the wrapper target name without the `_bin`
+# suffix; it is now a directory of object files and must never be executed.
+MIGRATED_BLE_BINS = (
+    ("BLE_TYPES_BIN", "test_ble_types", "test_ble_types_bin"),
+    ("BLE_STATE_BIN", "test_ble_state_machine", "test_ble_state_machine_bin"),
+    ("BLE_EVENTS_BIN", "test_ble_event_dispatch", "test_ble_event_dispatch_bin"),
+    ("BLE_STORE_BIN", "test_ble_store", "test_ble_store_bin"),
+    ("BLE_COMMAND_BIN", "test_ble_command_parse", "test_ble_command_parse_bin"),
+)
+
+# TEST-BLE-AGG-03: the focused aggregate for the boot/reconnect/name
+# requirements.  It must build and run the behavioural binaries through the
+# migrated artifacts and then run both structural contracts.
+FOCUSED_AGGREGATE = "test_ble_bond_reconnect"
+FOCUSED_REQUIRED_BINS = ("BLE_STATE_BIN", "BLE_EVENTS_BIN", "BLE_STORE_BIN")
+FOCUSED_CONTRACTS = ("test_ble_background_contract", "test_ble_bond_name_contract")
 
 
 def body(source: str, signature: str) -> str:
@@ -33,6 +57,479 @@ def body(source: str, signature: str) -> str:
             if depth == 0:
                 return source[opening + 1:index]
     raise AssertionError(f"unterminated {signature}")
+
+
+def make_variable(source: str, name: str) -> str:
+    """Return the value of a Makefile `:=` variable."""
+    prefix = f"{name} :="
+    for line in source.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix):].strip()
+    raise AssertionError(f"missing Makefile variable {name}")
+
+
+def make_target(source: str, name: str) -> tuple[list[str], list[str]]:
+    """Return (prerequisites, recipe commands) of a Makefile target."""
+    lines = source.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith(f"{name}:"):
+            continue
+        prerequisites = line[len(name) + 1:].split()
+        recipe: list[str] = []
+        for follow in lines[index + 1:]:
+            # Blank and comment lines do not terminate a GNU Make recipe.
+            if follow.strip() == "" or follow.lstrip().startswith("#"):
+                continue
+            if not follow.startswith("\t"):
+                break
+            command = follow.strip()
+            if command.startswith("@"):
+                command = command[1:].strip()
+            if command:
+                recipe.append(command)
+        return prerequisites, recipe
+    raise AssertionError(f"missing Makefile target {name}")
+
+
+def phony_targets(source: str) -> set[str]:
+    """Return every target declared through a `.PHONY:` line."""
+    declared: set[str] = set()
+    for line in source.splitlines():
+        if line.startswith(".PHONY:"):
+            declared.update(line[len(".PHONY:"):].split())
+    return declared
+
+
+def make_invocations(recipe: list[str]) -> list[str]:
+    """Return the sub-targets invoked through `$(MAKE)` by a recipe."""
+    invoked: list[str] = []
+    for command in recipe:
+        if not command.startswith("$(MAKE)"):
+            continue
+        tokens = command.split()
+        if len(tokens) >= 2:
+            invoked.append(tokens[-1])
+    return invoked
+
+
+def replace_in_line(source: str, anchor: str, old: str, new: str) -> str:
+    """Replace `old` with `new` inside the single line matching `anchor`."""
+    lines = source.splitlines(keepends=True)
+    matches = [index for index, line in enumerate(lines) if anchor in line]
+    assert len(matches) == 1, f"anchor {anchor!r} matched {len(matches)} lines"
+    index = matches[0]
+    assert old in lines[index], f"{old!r} not present in the anchored line"
+    lines[index] = lines[index].replace(old, new, 1)
+    return "".join(lines)
+
+
+def remove_from_line(source: str, anchor: str, text: str) -> str:
+    """Remove `text` from the single line matching `anchor`."""
+    lines = source.splitlines(keepends=True)
+    matches = [index for index, line in enumerate(lines) if anchor in line]
+    assert len(matches) == 1, f"anchor {anchor!r} matched {len(matches)} lines"
+    index = matches[0]
+    assert text in lines[index], f"{text!r} not present in the anchored line"
+    lines[index] = lines[index].replace(text, "", 1)
+    return "".join(lines)
+
+
+def remove_from_phony(source: str, token: str) -> str:
+    """Remove `token` from every `.PHONY:` declaration that lists it."""
+    lines = source.splitlines(keepends=True)
+    hits = 0
+    for index, line in enumerate(lines):
+        if not line.startswith(".PHONY:"):
+            continue
+        tokens = line.split()
+        if token not in tokens:
+            continue
+        kept = [item for item in tokens if item != token]
+        lines[index] = " ".join(kept) + "\n"
+        hits += 1
+    assert hits >= 1, f"{token} is not declared in any .PHONY line"
+    return "".join(lines)
+
+
+def edit_target_recipe(source: str, name: str, transform) -> str:
+    """Apply `transform` to the recipe lines of the given Makefile target."""
+    lines = source.splitlines(keepends=True)
+    start = next(
+        (index for index, line in enumerate(lines) if line.startswith(f"{name}:")),
+        None,
+    )
+    assert start is not None, f"missing Makefile target {name}"
+    end = start + 1
+    while end < len(lines):
+        line = lines[end]
+        if line.strip() == "" or line.lstrip().startswith("#"):
+            end += 1
+            continue
+        if not line.startswith("\t"):
+            break
+        end += 1
+    body_lines = lines[start + 1:end]
+    return "".join(lines[:start + 1] + list(transform(body_lines)) + lines[end:])
+
+
+def replace_command(old: str, new: str):
+    """Build a recipe transform that replaces one command occurrence."""
+
+    def transform(body_lines: list[str]) -> list[str]:
+        updated: list[str] = []
+        hits = 0
+        for line in body_lines:
+            if line.strip().lstrip("@") == old:
+                updated.append(line.replace(old, new))
+                hits += 1
+            else:
+                updated.append(line)
+        assert hits == 1, f"expected exactly one {old!r} in the recipe, got {hits}"
+        return updated
+
+    return transform
+
+
+def drop_command(command: str):
+    """Build a recipe transform that removes one command occurrence."""
+
+    def transform(body_lines: list[str]) -> list[str]:
+        kept = [
+            line
+            for line in body_lines
+            if line.strip().lstrip("@") != command
+        ]
+        assert len(kept) == len(body_lines) - 1, (
+            f"expected exactly one {command!r} in the recipe"
+        )
+        return kept
+
+    return transform
+
+
+def check_makefile_layout(makefile: str) -> None:
+    """Assert the migrated host layout of the BLE binaries (TEST-BLE-AGG-01..05)."""
+
+    # TEST-BLE-AGG-01: every migrated binary has a dedicated artifact
+    # variable pointing at the *_bin executable.
+    for variable, wrapper, artifact in MIGRATED_BLE_BINS:
+        assert make_variable(makefile, variable) == artifact, (
+            f"{variable} must point at the migrated artifact {artifact}"
+        )
+
+    # TEST-BLE-AGG-02: each wrapper target resolves to the migrated artifact
+    # and runs it exactly once.  The legacy directory name is never a
+    # prerequisite and never an executed path.
+    for variable, wrapper, artifact in MIGRATED_BLE_BINS:
+        prerequisites, recipe = make_target(makefile, wrapper)
+        assert prerequisites == [f"$({variable})"], (
+            f"{wrapper} must depend only on $({variable}), got {prerequisites}"
+        )
+        assert recipe == [f"./$({variable})"], (
+            f"{wrapper} must run ./$({variable}) exactly once, got {recipe}"
+        )
+
+    # TEST-BLE-AGG-01: the migrated executables stay in the aggregate build
+    # list, and the wrappers stay declared phony (the target name now collides
+    # with the object directory).
+    bins = make_variable(makefile, "BINS")
+    for variable, wrapper, artifact in MIGRATED_BLE_BINS:
+        assert f"$({variable})" in bins, f"$({variable}) missing from BINS"
+    phony = phony_targets(makefile)
+    for variable, wrapper, artifact in MIGRATED_BLE_BINS:
+        assert wrapper in phony, f"{wrapper} missing from .PHONY"
+
+    # TEST-BLE-AGG-02: the stale object directories stay registered as legacy
+    # artifacts so `clean` removes them.
+    legacy_artifacts = make_variable(makefile, "LEGACY_TEST_ARTIFACTS").split()
+    for variable, wrapper, artifact in MIGRATED_BLE_BINS:
+        assert wrapper in legacy_artifacts, (
+            f"{wrapper} missing from LEGACY_TEST_ARTIFACTS"
+        )
+
+    # TEST-BLE-AGG-02: no recipe may execute the legacy path.  The boundary
+    # keeps `./test_ble_types_bin` (the migrated artifact) valid while
+    # rejecting `./test_ble_types` and `./test_ble_types/...`.
+    for variable, wrapper, artifact in MIGRATED_BLE_BINS:
+        pattern = rf"\./{re.escape(wrapper)}(?![_A-Za-z0-9])"
+        assert not re.search(pattern, makefile), (
+            f"no recipe may execute the legacy path ./{wrapper}"
+        )
+
+    # TEST-BLE-AGG-03: the focused aggregate depends only on migrated
+    # binaries, includes each required binary exactly once, and runs them in
+    # the same order it declares them.
+    prerequisites, recipe = make_target(makefile, FOCUSED_AGGREGATE)
+    canonical = {f"$({variable})" for variable, _, _ in MIGRATED_BLE_BINS}
+    for prereq in prerequisites:
+        assert prereq in canonical, (
+            f"{FOCUSED_AGGREGATE} has a non migrated prerequisite {prereq}"
+        )
+    for variable in FOCUSED_REQUIRED_BINS:
+        assert prerequisites.count(f"$({variable})") == 1, (
+            f"{FOCUSED_AGGREGATE} must include $({variable}) exactly once"
+        )
+    executions = [command for command in recipe if command.startswith("./")]
+    assert executions == [f"./{prereq}" for prereq in prerequisites], (
+        f"{FOCUSED_AGGREGATE} must run every migrated binary once, in order; "
+        f"got {executions}"
+    )
+    assert len(executions) == len(set(executions)), (
+        f"{FOCUSED_AGGREGATE} must not run a binary twice"
+    )
+
+    # TEST-BLE-AGG-03: the focused aggregate also runs both structural
+    # contracts, once each and in order.
+    contracts = [
+        command
+        for command in recipe
+        if command.startswith("$(MAKE)") and "test_ble_" in command
+    ]
+    assert contracts == [
+        "$(MAKE) --no-print-directory test_ble_background_contract",
+        "$(MAKE) --no-print-directory test_ble_bond_name_contract",
+    ], (
+        f"{FOCUSED_AGGREGATE} must run both structural contracts once, in "
+        f"order; got {contracts}"
+    )
+    assert FOCUSED_AGGREGATE in phony, f"{FOCUSED_AGGREGATE} missing from .PHONY"
+
+    # TEST-BLE-AGG-04: the full host gate invokes every migrated wrapper and
+    # both structural contracts exactly once, in the canonical order.  The
+    # aggregate entry points cannot be dropped or replaced by a legacy path.
+    _, test_recipe = make_target(makefile, "test")
+    invoked = make_invocations(test_recipe)
+    expected = [wrapper for _, wrapper, _ in MIGRATED_BLE_BINS] + list(FOCUSED_CONTRACTS)
+    for name in expected:
+        assert invoked.count(name) == 1, (
+            f"the host gate must invoke {name} exactly once"
+        )
+    positions = [invoked.index(name) for name in expected]
+    assert positions == sorted(positions), (
+        f"the host gate must invoke the BLE gates in order, got {positions}"
+    )
+
+
+def build_mutations() -> list[tuple[str, object]]:
+    """Isolated single-change mutations of the Makefile layout."""
+
+    def legacy_wrapper(variable: str, wrapper: str):
+        def mutate(source: str) -> str:
+            return edit_target_recipe(
+                source, wrapper, replace_command(f"./$({variable})", f"./{wrapper}")
+            )
+
+        return mutate
+
+    def legacy_gate(wrapper: str):
+        def mutate(source: str) -> str:
+            return edit_target_recipe(
+                source,
+                "test",
+                replace_command(
+                    f"$(MAKE) --no-print-directory {wrapper}", f"./{wrapper}"
+                ),
+            )
+
+        return mutate
+
+    def drop_gate(wrapper: str):
+        def mutate(source: str) -> str:
+            return edit_target_recipe(
+                source,
+                "test",
+                drop_command(f"$(MAKE) --no-print-directory {wrapper}"),
+            )
+
+        return mutate
+
+    def drop_focused(command: str):
+        def mutate(source: str) -> str:
+            return edit_target_recipe(
+                source, FOCUSED_AGGREGATE, drop_command(command)
+            )
+
+        return mutate
+
+    def duplicate_focused(command: str):
+        def mutate(source: str) -> str:
+            def transform(body_lines: list[str]) -> list[str]:
+                updated: list[str] = []
+                hits = 0
+                for line in body_lines:
+                    updated.append(line)
+                    if line.strip().lstrip("@") == command:
+                        updated.append(line)
+                        hits += 1
+                assert hits == 1, f"expected exactly one {command!r}"
+                return updated
+
+            return edit_target_recipe(source, FOCUSED_AGGREGATE, transform)
+
+        return mutate
+
+    def swap_focused(first: str, second: str):
+        def mutate(source: str) -> str:
+            def transform(body_lines: list[str]) -> list[str]:
+                updated: list[str] = []
+                for line in body_lines:
+                    stripped = line.strip().lstrip("@")
+                    if stripped == first:
+                        updated.append(line.replace(first, second))
+                    elif stripped == second:
+                        updated.append(line.replace(second, first))
+                    else:
+                        updated.append(line)
+                return updated
+
+            return edit_target_recipe(source, FOCUSED_AGGREGATE, transform)
+
+        return mutate
+
+    def legacy_variable(variable: str, artifact: str, legacy: str):
+        def mutate(source: str) -> str:
+            return replace_in_line(
+                source, f"{variable} :=", f"{variable} := {artifact}",
+                f"{variable} := {legacy}",
+            )
+
+        return mutate
+
+    mutations: list[tuple[str, object]] = []
+
+    # M10/M11: legacy executable path in the wrapper of a migrated binary.
+    mutations.append(("legacy-wrapper-types", legacy_wrapper("BLE_TYPES_BIN", "test_ble_types")))
+    mutations.append(("legacy-wrapper-command", legacy_wrapper("BLE_COMMAND_BIN", "test_ble_command_parse")))
+    mutations.append(("legacy-wrapper-state", legacy_wrapper("BLE_STATE_BIN", "test_ble_state_machine")))
+    mutations.append(("legacy-wrapper-events", legacy_wrapper("BLE_EVENTS_BIN", "test_ble_event_dispatch")))
+    mutations.append(("legacy-wrapper-store", legacy_wrapper("BLE_STORE_BIN", "test_ble_store")))
+
+    # M12: legacy executable path inside an aggregate gate.
+    mutations.append(("legacy-gate-types", legacy_gate("test_ble_types")))
+    mutations.append(("legacy-gate-command", legacy_gate("test_ble_command_parse")))
+    mutations.append(
+        (
+            "legacy-focused-aggregate",
+            lambda source: edit_target_recipe(
+                source,
+                FOCUSED_AGGREGATE,
+                replace_command("./$(BLE_STATE_BIN)", "./test_ble_state_machine"),
+            ),
+        )
+    )
+
+    # M16/M17: removal of an aggregated gate entry.
+    mutations.append(("drop-gate-types", drop_gate("test_ble_types")))
+    mutations.append(("drop-gate-command", drop_gate("test_ble_command_parse")))
+    mutations.append(("drop-gate-background-contract", drop_gate("test_ble_background_contract")))
+    mutations.append(("drop-gate-bond-name-contract", drop_gate("test_ble_bond_name_contract")))
+    mutations.append(
+        ("drop-focused-bin", drop_focused("./$(BLE_STORE_BIN)"))
+    )
+    mutations.append(
+        ("drop-focused-contract", drop_focused("$(MAKE) --no-print-directory test_ble_bond_name_contract"))
+    )
+
+    # Duplicated and reordered focused aggregate entries.
+    mutations.append(
+        ("duplicate-focused-bin", duplicate_focused("./$(BLE_STORE_BIN)"))
+    )
+    mutations.append(
+        (
+            "reorder-focused-bins",
+            swap_focused("./$(BLE_STATE_BIN)", "./$(BLE_EVENTS_BIN)"),
+        )
+    )
+    mutations.append(
+        (
+            "swap-focused-contracts",
+            swap_focused(
+                "$(MAKE) --no-print-directory test_ble_background_contract",
+                "$(MAKE) --no-print-directory test_ble_bond_name_contract",
+            ),
+        )
+    )
+
+    # Artifact variable pointing back at the legacy executable name.
+    mutations.append(
+        (
+            "legacy-variable-types",
+            legacy_variable("BLE_TYPES_BIN", "test_ble_types_bin", "test_ble_types"),
+        )
+    )
+    mutations.append(
+        (
+            "legacy-variable-command",
+            legacy_variable(
+                "BLE_COMMAND_BIN", "test_ble_command_parse_bin", "test_ble_command_parse"
+            ),
+        )
+    )
+
+    # Legacy path used as a prerequisite instead of the artifact variable.
+    mutations.append(
+        (
+            "legacy-prereq-types",
+            lambda source: replace_in_line(
+                source,
+                "test_ble_types: $(BLE_TYPES_BIN)",
+                "test_ble_types: $(BLE_TYPES_BIN)",
+                "test_ble_types: test_ble_types",
+            ),
+        )
+    )
+    mutations.append(
+        (
+            "legacy-focused-prereq",
+            lambda source: replace_in_line(
+                source,
+                "test_ble_bond_reconnect:",
+                "$(BLE_STATE_BIN)",
+                "test_ble_state_machine",
+            ),
+        )
+    )
+
+    # Dropped entries in the aggregate build list, the phony declaration and
+    # the legacy cleanup registry.
+    mutations.append(
+        (
+            "drop-bins-types",
+            lambda source: remove_from_line(
+                source, "BINS := test_shell_help", "$(BLE_TYPES_BIN) "
+            ),
+        )
+    )
+    mutations.append(
+        (
+            "drop-phony-types",
+            lambda source: remove_from_phony(source, "test_ble_types"),
+        )
+    )
+    mutations.append(
+        (
+            "drop-clean-types",
+            lambda source: remove_from_line(
+                source, "LEGACY_TEST_ARTIFACTS :=", "test_ble_types "
+            ),
+        )
+    )
+
+    return mutations
+
+
+def check_mutation_detection(makefile: str) -> int:
+    """Assert that every isolated mutation is rejected by the layout check."""
+    mutations = build_mutations()
+    for name, mutate in mutations:
+        mutated = mutate(makefile)
+        assert mutated != makefile, f"mutation {name} did not change the Makefile"
+        try:
+            check_makefile_layout(mutated)
+        except AssertionError:
+            continue
+        raise AssertionError(f"mutation {name} was not detected by the contract")
+    return len(mutations)
 
 
 def main() -> int:
@@ -266,10 +763,21 @@ def main() -> int:
     # The focused checks must be part of the aggregate host gate, not only
     # individually invokable targets.
     assert "test_ble_background_contract" in makefile
-    assert "@./test_ble_state_machine" in makefile
     assert "@$(MAKE) --no-print-directory test_ble_background_contract" in makefile
 
+    # TEST-BLE-AGG-01..04: structural contract of the migrated host layout.
+    # The five migrated binaries, the focused aggregate and the full host
+    # gate are parsed structurally (target / prerequisites / recipe) so the
+    # legacy directory paths cannot be reintroduced.
+    check_makefile_layout(makefile)
+
+    # TEST-BLE-AGG-05: the layout contract rejects every isolated mutation of
+    # the migrated layout (legacy paths, dropped/duplicated/reordered gate
+    # entries and legacy artifact variables).
+    mutations = check_mutation_detection(makefile)
+
     print("PASS: BLE boot restore/background reconnect contract")
+    print(f"PASS: migrated BLE layout contract ({len(MIGRATED_BLE_BINS)} binaries, {mutations} mutations rejected)")
     return 0
 
 

@@ -11,17 +11,63 @@ disponível.
 ## Testes host
 
 `tests/host/keymap/Makefile` mantém os alvos focados e o agregado `test`.
-`BINS` representa artefatos de build; `test` constrói essa lista e então executa
-os cenários/gates ordenadamente. Use `make -C tests/host/keymap <alvo>` para
+`BINS` representa artefatos de build; `test-build` constrói essa lista e então
+`test` executa os cenários/gates ordenadamente. Exceção: `test_event_log_shim`
+compila e executa seu binário na própria receita de build. Use
+`make -C tests/host/keymap <alvo>` para
 execução focada; para paralelizar somente a construção do agregado, passe
 `-jN` ao make (por exemplo, `make -C tests/host/keymap -j4 test`). Sem essa
 opção, a construção é serial. O Makefile não sobrescreve jobserver/jobs do
 chamador. Os cenários e gates continuam ordenados. A CI exige gcovr mínimo de
 80% de linhas, 94% de funções e 59% de branches, além do scope guard de TUs;
-alvos focados não executam esses gates globais. Para coverage, não execute
-instâncias concorrentes no mesmo diretório; `clean` remove binários e sidecars
-gcov e deve ocorrer fora de uma execução. Consulte `AGENTS.md` para os comandos
-operacionais detalhados.
+alvos focados não executam esses gates globais. Executáveis `<alvo>_bin` ficam
+na raiz de `tests/host/keymap/`. Alvos incrementais por TU armazenam objetos,
+depfiles `.o.d` e sidecars gcov em diretórios `test_<alvo>/`; alvos monolíticos
+não têm diretório por alvo e gravam sidecars gcov na raiz com nomes como
+`<alvo>_bin-<tu>.gcda`. Para coverage, não execute instâncias concorrentes no
+mesmo diretório; `clean` remove executáveis listados em `BINS`, nomes legados
+listados em `LEGACY_TEST_ARTIFACTS`, diretórios de objetos/depfiles e sidecars
+gcov da raiz (`*.gcda`, `*.gcno`, `*.gcov`). Deve ocorrer fora de uma execução.
+Consulte `AGENTS.md` para os comandos operacionais detalhados.
+
+Os oito alvos `test_save_sidecar_recovery`,
+`test_wifi_survey_export_controller`, `test_netdiag_controller`,
+`test_netdiag_tcp_adapter`, `test_event_log_runtime`,
+`test_sd_io_coordinator`, `test_battery_contract` e `test_battery_view` usam
+objetos/depfiles incrementais em diretórios isolados por alvo, com depfiles
+`.o.d` e regra vazia explícita para evitar que Make tente construir `.d.o`.
+Seus binários `_bin` pertencem a `BINS`; `test-build` compila artefatos, sem
+executar cenários nesses alvos (exceto a receita histórica de `test_event_log_shim`,
+que compila e executa no build). Os binários dependem dos objetos incrementais, das fontes
+e do `Makefile`, para mudanças transitivas de headers e receitas/flags propagarem
+até relink. Os wrappers `.PHONY` focados sempre executam o(s) cenário(s)
+após garantir o binário atual. Os cenários estão no agregado uma única vez e
+mantêm a ordem existente; `test_event_log_runtime` permanece após os quatro
+cenários inicialmente migrados. Objetos dependem explicitamente do `Makefile`
+para invalidar quando flags/receitas mudam. `clean` remove novos e antigos
+binários, diretórios de objetos/depfiles e gcov correspondente.
+
+Os alvos puros `test_ble_types`, `test_ble_state_machine`,
+`test_ble_event_dispatch`, `test_ble_store` e `test_ble_command_parse` também
+usam artefatos `_bin` e objetos/depfiles incrementais isolados por alvo. Os
+includes e flags originais são preservados (`-Icontracts`, `-Ishim` quando
+aplicável); `test-build` compila esses artefatos, enquanto wrappers `.PHONY` focados
+sempre executam o binário atual. No agregado, os cinco cenários mantêm sua ordem
+e executam uma vez cada. `clean` remove binários legados e diretórios de objetos/
+  depfiles; o padrão existente de `.gitignore` cobre esses artefatos.
+
+Os 22 alvos focados migrados nesta etapa mantêm compilação monolítica, sem
+alterar TUs, flags ou ordem: o artefato é `<alvo>_bin` e o alvo público `.PHONY`
+depende dele e sempre executa o teste. `Makefile` é pré-requisito do artefato;
+`BINS` lista os artefatos, e `clean` também remove nomes legados via
+`LEGACY_TEST_ARTIFACTS`. O conjunto inclui também os recém-migrados
+`test_netdiag_dns_adapter`, `test_netdiag_https_adapter` e `test_netdiag_app`.
+Como a receita preserva um único link, mudanças
+transitivas de headers são observadas somente pelos pré-requisitos declarados,
+como nos demais alvos monolíticos existentes; depfiles por TU ficam para etapa
+posterior. O alvo composto `test_ble_bond_reconnect` agora depende e executa os
+artefatos `_bin` de state machine, event dispatch e store, além dos dois
+contratos, sem duplicar os cenários no agregado.
 
 ## Planos de aplicativos e recursos
 
@@ -1016,6 +1062,8 @@ esta fora do escopo e e rejeitado por contrato.
 | `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` + `ble_mgr.cpp` + `cyberdeck_ble_state_machine.cpp` | `test_ble_background_contract.py`, `test_ble_state_machine.cpp::test_background_bond_reconnect_cycles_are_bounded_and_explicit` | Testes de restauração de bonds no boot e reconexao background: NVS `bonds_v2`, alvo somente do ultimo bond conectado, janelas periódicas com 10 s entre fechamentos, scan sem pareamento/sem conexao automatica, matching por endereco+`addr_type` apenas de bonds conhecidos, perda espontanea mantendo o ciclo, teto de tres tentativas por anuncio, novo anuncio reabrindo o ciclo, bloqueio apos desconexao manual ate Enter explicito e rejeicao de callbacks/token stale. A conexão automática cancela discovery antes de conectar e falhas retornam ao observador sem notice interativa. Executado isoladamente por `make -C tests/host/keymap test_ble_background_contract test_ble_state_machine`; nao acessa hardware, radio, simulador ou ponte serial. |
 | `tests/host/keymap/test_ble_background_contract.py` + `tests/host/keymap/test_ble_state_machine.cpp` | ciclo de refinamento 2 da reconexao background BLE | O contrato estrutural confirma o intervalo periodico de 10 s sem spin, rearmamento apos `SCAN_FINISHED`, isolamento/cancelamento antes de reconnect, descarte de callbacks stale, nao interferencia de scan/pair/connect manual, matching por endereco+`addr_type`, tokens e gate agregado; o teste comportamental consome exatamente tres tentativas, reabre somente por novo anuncio/ciclo do mesmo peer, preserva `addr_type` e tokens, rejeita callback stale e exige Enter para rearmar apos desconexao manual. |
 | `tests/host/keymap/test_ble_bond_name_contract.py` + alvo `test_ble_bond_reconnect` | cobertura focada de bonds/name BLE | Contrato estrutural para restaurar todos os bonds com `last_connected` como primeiro alvo, percorrer os demais em janelas de 10 s, matching por identidade/RPA + `addr_type` sem duplicar, tres tentativas por anuncio/ciclo e bloqueio manual; verifica ausencia de novo PAIR, fila/callbacks/tokens/generation bounded, sanitizacao ADV/SCAN_RSP antes/durante pairing, persistencia NVS, restauracao e exibicao em `bluetooth paired`, mantendo nome vazio como `unnamed`. O contrato individual `test_ble_bond_name_contract` também é executado pelo agregado `test`; o alvo composto `test_ble_bond_reconnect` não é invocado pelo agregado. Para execução focada, use `make -C tests/host/keymap test_ble_bond_name_contract test_ble_bond_reconnect`. |
+
+| `test_ble_background_contract.py` + `test_ble_bond_reconnect` | `TEST-BLE-AGG-01..05` | Contrato refinado do alvo composto: dependências apontam para os artefatos `_bin` dos três testes BLE, a ordem state-machine/event-dispatch/store é preservada, cada binário executa uma vez, os dois contratos seguem ao fim e o alvo continua fora do agregado principal. O alvo não executa mais diretórios/nomes legados que colidiram com diretórios de objetos dos alvos BLE incrementais. |
 
 A listagem mostra nome e tipo (`Keyboard`, `Headset`, `Mouse`, `Unknown`), em
 ingles como todas as demais strings de terminal do firmware; nome ausente vira

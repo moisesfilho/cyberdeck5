@@ -25,7 +25,12 @@ O binario `test_window_manager` liga os TUs reais (politica pura + adaptador LVG
 contra o shim host completo e cobre o comportamento.  Este contrato cobre o que
 o binario nao alcanca: a pureza dos headers, a opacidade da `view_context`, a
 confinacao do LVGL no adaptador, a ordem teardown -> deinit na UI e o wiring
-CMake/Makefile/guard de cobertura.  Nenhum corpo de producao e copiado aqui.
+CMake/Makefile/guard de cobertura.  O bloco de wiring tambem se auto-verifica
+por mutacao: cada regressao isolada do layout migrado (artefato fora do BINS,
+wrapper executando o caminho legacy, prereq da politica removido, flag de
+cobertura ou o shim completo removidos, execucao do agregado removida ou fora
+de ordem, alvo fora do .PHONY) tem de ser rejeitada.  Nenhum corpo de producao
+e copiado aqui.
 """
 
 from pathlib import Path, PurePath
@@ -49,6 +54,15 @@ CODEMAP = ROOT / "code-map.md"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 SHIM = ROOT / "tests/host/keymap/shim/full/lvgl.h"
 BEHAVIORAL_TEST = ROOT / "tests/host/keymap/test_window_manager.cpp"
+
+# The migrated host layout owns the executable of the behavioral suite in a
+# dedicated artifact target and keeps the scenario name as a phony wrapper
+# that runs the artifact.  Every wiring requirement is anchored on the target
+# that actually carries it, so renaming a target cannot silently drop a
+# requirement.
+WINDOW_ARTIFACT = "test_window_manager_bin"
+WINDOW_WRAPPER = "test_window_manager"
+WINDOW_CONTRACT = "test_window_manager_contract"
 
 # The policy is the seam an application is allowed to depend on.  Any of these
 # tokens would drag LVGL, ESP-IDF or FreeRTOS into the app-facing header.
@@ -205,6 +219,171 @@ def makefile_prerequisites(makefile: str, target: str) -> str:
             break
         prerequisites = expanded
     return prerequisites
+
+
+def makefile_target_tokens(makefile: str, target: str) -> list[str]:
+    """Return the prerequisite tokens of a Makefile target."""
+    lines = makefile.splitlines()
+    start, last = makefile_target_lines(makefile, target)
+    _, _, rest = lines[start].partition(":")
+    collected = rest.split()
+    for line in lines[start + 1:last + 1]:
+        collected.extend(line.strip().rstrip("\\").split())
+    return collected
+
+
+def makefile_recipe_commands(makefile: str, target: str) -> list[str]:
+    """Return the recipe commands of a Makefile target, without the '@' prefix."""
+    lines = makefile.splitlines()
+    _, last = makefile_target_lines(makefile, target)
+    commands: list[str] = []
+    for line in lines[last + 1:]:
+        if line.strip() == "" or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith("\t"):
+            break
+        command = line.strip()
+        if command.startswith("@"):
+            command = command[1:].strip()
+        if command:
+            commands.append(command)
+    require(commands, f"the {target} target must carry a recipe")
+    return commands
+
+
+def makefile_bins_tokens(makefile: str) -> set[str]:
+    """Return the effective token set of the aggregated BINS list."""
+    listed: set[str] = set()
+    excluded: set[str] = set()
+    for line in makefile.splitlines():
+        if line.startswith("BINS :="):
+            value = line[len("BINS :="):]
+        elif line.startswith("BINS +="):
+            value = line[len("BINS +="):]
+        else:
+            continue
+        for match in re.finditer(r"\$\(filter-out\s+([^,]*),", value):
+            excluded.update(match.group(1).split())
+        listed.update(re.sub(r"\$\([A-Za-z_][A-Za-z_0-9]*\)", " ", value).split())
+    return listed - excluded
+
+
+def makefile_phony_targets(makefile: str) -> set[str]:
+    """Return every target declared through a `.PHONY:` line."""
+    declared: set[str] = set()
+    for line in makefile.splitlines():
+        if line.startswith(".PHONY:"):
+            declared.update(line[len(".PHONY:"):].split())
+    return declared
+
+
+def edit_target_recipe(makefile: str, target: str, transform) -> str:
+    """Apply `transform` to the recipe lines of one Makefile target."""
+    lines = makefile.splitlines(keepends=True)
+    start, last = makefile_target_lines(makefile, target)
+    end = last + 1
+    while end < len(lines):
+        line = lines[end]
+        if line.strip() == "" or line.lstrip().startswith("#"):
+            end += 1
+            continue
+        if not line.startswith("\t"):
+            break
+        end += 1
+    return "".join(lines[:last + 1] + list(transform(lines[last + 1:end])) + lines[end:])
+
+
+def edit_target_prerequisites(makefile: str, target: str, transform) -> str:
+    """Apply `transform` to the prerequisite lines of one Makefile target."""
+    lines = makefile.splitlines(keepends=True)
+    start, last = makefile_target_lines(makefile, target)
+    return "".join(lines[:start] + list(transform(lines[start:last + 1])) + lines[last + 1:])
+
+
+def drop_recipe_command(makefile: str, target: str, command: str) -> str:
+    """Remove one command from the recipe of a Makefile target."""
+    def transform(body: list[str]) -> list[str]:
+        kept = [line for line in body if line.strip().lstrip("@") != command]
+        assert len(kept) == len(body) - 1, (
+            f"expected exactly one {command!r} in the {target} recipe"
+        )
+        return kept
+
+    return edit_target_recipe(makefile, target, transform)
+
+
+def swap_recipe_commands(makefile: str, target: str, first: str, second: str) -> str:
+    """Exchange the position of two commands in the recipe of a target."""
+    def transform(body: list[str]) -> list[str]:
+        updated: list[str] = []
+        hits = 0
+        for line in body:
+            stripped = line.strip().lstrip("@")
+            if stripped == first:
+                updated.append(line.replace(first, second))
+                hits += 1
+            elif stripped == second:
+                updated.append(line.replace(second, first))
+                hits += 1
+            else:
+                updated.append(line)
+        assert hits == 2, f"expected both {first!r} and {second!r} in {target}"
+        return updated
+
+    return edit_target_recipe(makefile, target, transform)
+
+
+def remove_from_phony(makefile: str, token: str) -> str:
+    """Remove `token` from every `.PHONY:` declaration that lists it."""
+    lines = makefile.splitlines(keepends=True)
+    hits = 0
+    for index, line in enumerate(lines):
+        if not line.startswith(".PHONY:"):
+            continue
+        tokens = line.split()
+        if token not in tokens:
+            continue
+        kept = [item for item in tokens if item != token]
+        lines[index] = " ".join(kept) + "\n"
+        hits += 1
+    assert hits >= 1, f"{token} is not declared in any .PHONY line"
+    return "".join(lines)
+
+
+def replace_in_recipe(makefile: str, target: str, old: str, new: str) -> str:
+    """Replace one occurrence of `old` inside the recipe of a Makefile target."""
+    def transform(body: list[str]) -> list[str]:
+        updated = []
+        hits = 0
+        for line in body:
+            if old in line:
+                updated.append(line.replace(old, new))
+                hits += 1
+            else:
+                updated.append(line)
+        assert hits == 1, (
+            f"expected exactly one {old!r} in the {target} recipe, found {hits}"
+        )
+        return updated
+
+    return edit_target_recipe(makefile, target, transform)
+
+
+def remove_token_from_bins(makefile: str, token: str) -> str:
+    """Remove `token` from every aggregated BINS declaration."""
+    lines = makefile.splitlines(keepends=True)
+    hits = 0
+    for index, line in enumerate(lines):
+        if not (line.startswith("BINS :=") or line.startswith("BINS +=")):
+            continue
+        tokens = line.split()
+        if token not in tokens:
+            continue
+        kept = [item for item in tokens if item != token]
+        lines[index] = " ".join(kept) + "\n"
+        hits += 1
+    assert hits >= 1, f"{token} is not listed in any BINS declaration"
+    return "".join(lines)
 
 
 def check_pure_policy(header: str, source: str) -> None:
@@ -827,7 +1006,15 @@ def check_wiring(component: str, guard: str, makefile: str, codemap: str) -> Non
                 f"{source} is host-covered and must stay out of the coverage "
                 "allowlist")
 
-    behavioral_prerequisites = makefile_target(makefile, "test_window_manager")
+    # The migrated host layout owns the executable in a dedicated artifact
+    # target and keeps the scenario name as a phony wrapper that runs the
+    # artifact.  Every requirement below is anchored on the target that
+    # actually owns it, so renaming a target cannot silently drop a
+    # requirement.
+    artifact = WINDOW_ARTIFACT
+    wrapper = WINDOW_WRAPPER
+
+    artifact_prerequisites = makefile_target_tokens(makefile, artifact)
     for token in ("test_window_manager.cpp", "$(WINDOW_MANAGER_SRC)",
                   "$(WINDOW_MANAGER_HDR)", "$(WINDOW_MANAGER_ADAPTER_SRC)",
                   "$(WINDOW_MANAGER_ADAPTER_HDR)", "shim/full/lvgl.h",
@@ -835,9 +1022,9 @@ def check_wiring(component: str, guard: str, makefile: str, codemap: str) -> Non
                   # real bar, so the behavioral binary must link that view.
                   "$(HEADER_VIEW_SRC)", "$(WIFI_ICON_SRC)",
                   "$(WIFI_INDICATOR_SRC)", "$(BATTERY_VIEW_SRC)"):
-        require(token in behavioral_prerequisites,
-                f"test_window_manager must declare {token} as a prerequisite")
-    behavioral_recipe = makefile_recipe(makefile, "test_window_manager")
+        require(token in artifact_prerequisites,
+                f"{artifact} must declare {token} as a prerequisite")
+    artifact_recipe = makefile_recipe(makefile, artifact)
     for token, message in (
         ("-Ishim/full", "the host build must use the full LVGL shim"),
         ("-std=c++17", "the host build must pin the C++ standard"),
@@ -851,16 +1038,30 @@ def check_wiring(component: str, guard: str, makefile: str, codemap: str) -> Non
         ("$(WIFI_INDICATOR_SRC)", "the header view dependency must be linked"),
         ("$(BATTERY_VIEW_SRC)", "the header view dependency must be linked"),
     ):
-        require(token in behavioral_recipe, f"test_window_manager must keep {message}")
-    require(re.search(r"\$\(CXX\)", behavioral_recipe) is not None,
+        require(token in artifact_recipe, f"{artifact} must keep {message}")
+    require(re.search(r"\$\(CXX\)", artifact_recipe) is not None,
             "the host build must go through the project C++ compiler")
-    require("-I../../../components/cyberdeck/include" in behavioral_recipe,
+    require("-I../../../components/cyberdeck/include" in artifact_recipe,
             "the host build must reach the production include tree")
+    require(re.search(rf"-o\s+{re.escape(artifact)}\b", artifact_recipe) is not None,
+            f"{artifact} must link its own executable")
 
-    contract_prerequisites = makefile_target(makefile, "test_window_manager_contract")
+    wrapper_prerequisites = makefile_target_tokens(makefile, wrapper)
+    require(wrapper_prerequisites == [artifact],
+            f"{wrapper} must depend only on {artifact}, got {wrapper_prerequisites}")
+    wrapper_commands = makefile_recipe_commands(makefile, wrapper)
+    require(wrapper_commands == [f"./{artifact}"],
+            f"{wrapper} must run ./{artifact} exactly once, got {wrapper_commands}")
+
+    # The legacy executable name survives only as the wrapper: no recipe may
+    # execute it, otherwise the aggregate would run a stale binary.
+    require(not re.search(rf"\./{re.escape(wrapper)}(?![_A-Za-z0-9])", makefile),
+            f"no recipe may execute the legacy path ./{wrapper}")
+
+    contract_prerequisites = makefile_target(makefile, WINDOW_CONTRACT)
     require("test_window_manager_contract.py" in contract_prerequisites,
             "the contract target must depend on this contract")
-    contract_recipe = makefile_recipe(makefile, "test_window_manager_contract")
+    contract_recipe = makefile_recipe(makefile, WINDOW_CONTRACT)
     require("$(PYTHON) test_window_manager_contract.py" in contract_recipe,
             "the contract target must run this contract with the project python")
     require(re.search(r"^PYTHON\s*\?:?=\s*python3", makefile, re.M) is not None,
@@ -868,7 +1069,7 @@ def check_wiring(component: str, guard: str, makefile: str, codemap: str) -> Non
 
     # Every file this this contract inspects must be a declared
     # prerequisite, so a stale source cannot silently invalidate the checks.
-    prerequisites = makefile_prerequisites(makefile, "test_window_manager_contract")
+    prerequisites = makefile_prerequisites(makefile, WINDOW_CONTRACT)
     for token in ("cyberdeck_window_manager.h", "cyberdeck_window_manager.cpp",
                   "cyberdeck_window_manager_adapter.h",
                   "cyberdeck_window_manager_adapter.cpp", "cyberdeck_ui.cpp",
@@ -880,21 +1081,24 @@ def check_wiring(component: str, guard: str, makefile: str, codemap: str) -> Non
         require(token in prerequisites,
                 f"the contract target must depend on {token}")
 
-    require(re.search(r"^\.PHONY:.*\btest_window_manager\b", makefile, re.M) is not None,
-            "the behavioral target must be phony")
-    require(re.search(r"^\.PHONY:.*\btest_window_manager_contract\b", makefile,
-                      re.M) is not None,
-            "the contract target must be phony")
-    require(re.search(r"^BINS\s*:=.*\btest_window_manager\b", makefile, re.M) is not None,
-            "the behavioral binary must belong to the aggregated BINS list")
-    aggregate = makefile_recipe(makefile, "test")
-    require("./test_window_manager" in aggregate,
-            "the aggregated host run must execute the behavioral binary")
-    require("test_window_manager_contract" in aggregate,
-            "the aggregated host run must execute this contract")
-    require(aggregate.index("./test_window_manager") <
-            aggregate.index("test_window_manager_contract"),
-            "the behavioral binary must run before the structural contract")
+    phony = makefile_phony_targets(makefile)
+    require(wrapper in phony, "the behavioral wrapper must be phony")
+    require(WINDOW_CONTRACT in phony, "the contract target must be phony")
+    require(artifact in makefile_bins_tokens(makefile),
+            "the behavioral artifact must belong to the aggregated BINS list")
+    aggregate_commands = makefile_recipe_commands(makefile, "test")
+    require(aggregate_commands.count(f"./{artifact}") == 1,
+            "the aggregated host run must execute the behavioral artifact exactly once")
+    contract_invocations = [command for command in aggregate_commands
+                            if command.startswith("$(MAKE)")
+                            and command.split()[-1] == WINDOW_CONTRACT]
+    require(len(contract_invocations) == 1,
+            "the aggregated host run must execute this contract exactly once")
+    if (aggregate_commands.count(f"./{artifact}") == 1
+            and len(contract_invocations) == 1):
+        require(aggregate_commands.index(f"./{artifact}")
+                < aggregate_commands.index(contract_invocations[0]),
+                "the behavioral binary must run before the structural contract")
 
     require("code-map.md" in codemap and
             all(token in codemap for token in (
@@ -913,12 +1117,73 @@ def check_wiring(component: str, guard: str, makefile: str, codemap: str) -> Non
         require(visible != 0,
                 f"the window manager test sources must be trackable despite the "
                 f"host-test ignore rule: {source}")
-    ignored = subprocess.run(
-        ["git", "check-ignore", "-q", "--no-index",
-         "tests/host/keymap/test_window_manager"],
-        cwd=str(ROOT), capture_output=True).returncode
-    require(ignored == 0,
-            "the compiled window manager host binary must stay ignored")
+    # Both the migrated artifact and the legacy executable name are build
+    # outputs: they must stay ignored, or the worktree collects binaries.
+    for artifact_path in (WINDOW_ARTIFACT, WINDOW_WRAPPER):
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index",
+             f"tests/host/keymap/{artifact_path}"],
+            cwd=str(ROOT), capture_output=True).returncode
+        require(ignored == 0,
+                f"the compiled window manager host binary must stay ignored: "
+                f"{artifact_path}")
+
+
+def check_wiring_rejections(makefile: str, component: str, guard: str,
+                            codemap: str) -> int:
+    """TEST-WM-03/06/07: the wiring check rejects isolated regressions.
+
+    A structural requirement that is never exercised against a broken input
+    can be satisfied vacuously: the check would keep passing while the layout
+    it describes is already broken.  Every mutation below removes exactly one
+    piece of the migrated host layout, and the wiring check must reject each
+    of them.
+    """
+    aggregate_contract = f"$(MAKE) --no-print-directory {WINDOW_CONTRACT}"
+    mutations = (
+        ("drop-artifact-from-bins",
+         lambda source: remove_token_from_bins(source, WINDOW_ARTIFACT)),
+        ("legacy-wrapper-recipe",
+         lambda source: replace_in_recipe(source, WINDOW_WRAPPER,
+                                          f"./{WINDOW_ARTIFACT}",
+                                          f"./{WINDOW_WRAPPER}")),
+        ("drop-policy-prerequisite",
+         lambda source: edit_target_prerequisites(
+             source, WINDOW_ARTIFACT,
+             lambda body: [line.replace("$(WINDOW_MANAGER_SRC) ", "")
+                           for line in body])),
+        ("drop-coverage-flag",
+         lambda source: replace_in_recipe(source, WINDOW_ARTIFACT,
+                                          "--coverage ", "")),
+        ("drop-full-shim-include",
+         lambda source: replace_in_recipe(source, WINDOW_ARTIFACT,
+                                          "-Ishim/full ", "")),
+        ("drop-aggregate-artifact-run",
+         lambda source: drop_recipe_command(source, "test",
+                                            f"./{WINDOW_ARTIFACT}")),
+        ("drop-aggregate-contract-run",
+         lambda source: drop_recipe_command(source, "test",
+                                            aggregate_contract)),
+        ("reorder-aggregate",
+         lambda source: swap_recipe_commands(source, "test",
+                                             f"./{WINDOW_ARTIFACT}",
+                                             aggregate_contract)),
+        ("drop-phony",
+         lambda source: remove_from_phony(source, WINDOW_WRAPPER)),
+    )
+    rejected = 0
+    for name, mutate in mutations:
+        mutated = mutate(makefile)
+        require(mutated != makefile,
+                f"mutation {name} did not change the Makefile")
+        try:
+            check_wiring(component, guard, mutated, codemap)
+        except AssertionError:
+            rejected += 1
+            continue
+        raise AssertionError(
+            f"mutation {name} was not detected by the wiring contract")
+    return rejected
 
 
 def main() -> int:
@@ -955,6 +1220,10 @@ def main() -> int:
     check_ui_teardown_before_deinit(ui)
     check_wiring(component, guard, makefile, codemap)
 
+    # TEST-WM-03/06/07: the wiring requirement must reject a broken layout,
+    # otherwise it could be satisfied by a Makefile that no longer carries it.
+    rejected_mutations = check_wiring_rejections(makefile, component, guard, codemap)
+
     # The behavioral suite must keep carrying the scenarios this contract cannot.
     behavioral = strip_comments(BEHAVIORAL_TEST.read_text(encoding="utf-8"))
     for scenario in ("TEST-WM-01", "TEST-WM-02", "TEST-WM-03", "TEST-WM-04",
@@ -977,6 +1246,8 @@ def main() -> int:
 
     print("PASS: window manager structural contract "
           "(TEST-WM-03/05/06/07, TEST-REG-8-BAR, TEST-REG-8-CHROME)")
+    print(f"PASS: TEST-WM-03/06/07 wiring contract "
+          f"({rejected_mutations} mutations rejected)")
     for path in unused_includes:
         print(f"FINDING: {path} includes lvgl.h without using it; the dead "
               "graphics dependency should be dropped (production change, out of "

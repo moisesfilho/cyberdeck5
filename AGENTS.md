@@ -42,18 +42,32 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
   `make -C tests/host/keymap <alvo>`; para o agregado completo, use
   `make -C tests/host/keymap test` (inclui os cenarios e gates registrados no
   Makefile, inclusive cobertura/scope guard e contratos).
-- O agregado constrói os binários listados em `BINS` antes de executar os
-  cenários. Sem opção de jobs, a construção é serial; para paralelizar somente
-  a construção, use `make -C tests/host/keymap -j4 test` (ou outro `-jN`
-  conforme os recursos disponíveis). O Makefile preserva o jobserver/opção do
-  chamador. A etapa de execução permanece ordenada para evitar concorrência
-  entre cenários e artefatos gcov. A CI aplica gcovr mínimo de 80% linhas,
-  94% funções e 59% branches, além do scope guard de TUs; alvos focados não
-  executam esses gates globais.
+- Os alvos migrados usam artefatos `<alvo>_bin` listados em `BINS`; os demais
+  mantêm o nome original. O alvo público `<alvo>` é `.PHONY`, depende do
+  artefato e sempre executa o cenário, mesmo
+  quando o binário já está atualizado. O build é incremental: uma segunda
+  execução de `make -C tests/host/keymap test` sem mudanças não recompila, e
+  alterações em fontes ou headers recompilam os alvos afetados. Os executáveis
+  `<alvo>_bin` ficam na raiz de `tests/host/keymap/`. Nos alvos com compilação
+  incremental por TU, os diretórios `test_<alvo>/` contêm objetos `.o`, depfiles
+  `.o.d` e sidecars gcov. Os alvos monolíticos não têm diretório por alvo: seus
+  sidecars gcov ficam na raiz, com nomes como `<alvo>_bin-<tu>.gcda`. Esses
+  artefatos são cobertos pelo `.gitignore`.
+- `-jN` paraleliza somente a construção; sem essa opção, ela é serial. O Makefile
+  preserva o jobserver/opção do chamador. A execução dos cenários permanece
+  ordenada e serial para evitar concorrência entre cenários e artefatos gcov.
+  A CI aplica gcovr mínimo de 80% linhas, 94% funções e 59% branches, além do
+  scope guard de TUs; alvos focados não executam esses gates globais.
 - Não execute alvos que escrevem cobertura concorrentemente no mesmo diretório.
   Use `make -C tests/host/keymap clean` antes de uma rodada de cobertura limpa;
-  `clean` remove binários e arquivos gcov locais. Não rode `clean` durante uma
-  execução. Para verificações incrementais, chame apenas o alvo focado necessário.
+  `clean` remove os executáveis listados em `BINS`, nomes legados listados em
+  `LEGACY_TEST_ARTIFACTS`, diretórios de objetos/depfiles dos alvos incrementais
+  e sidecars gcov na raiz (`*.gcda`, `*.gcno`, `*.gcov`). Não rode `clean` durante uma execução. Para verificações
+  incrementais, chame apenas o alvo focado necessário. Alguns alvos de receita
+  monolítica só reagem a headers transitivos declarados como pré-requisitos;
+  rastreio fino por TU via depfiles vale para os alvos já convertidos. A CI
+  executa `clean` antes, portanto os gates de cobertura não dependem desse
+  rastreio incremental.
 
 ## Validacao de firmware no dispositivo
 

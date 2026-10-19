@@ -28,6 +28,7 @@ help on the Tab5 remains a manual validation item.
 """
 
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -41,6 +42,15 @@ NETDIAG_APP = ROOT / "components/cyberdeck/src/apps/network/cyberdeck_netdiag_ap
 HELP_TEST = ROOT / "tests/host/keymap/test_shell_help.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 TRACEABILITY = ROOT / "tests/host/keymap/help_traceability.md"
+
+# The migrated host layout owns the executable of the behavioral suite in a
+# dedicated artifact target and keeps the scenario name as a phony wrapper
+# that runs the artifact.  Every wiring requirement is anchored on the target
+# that actually carries it, so a build dependency, a compile flag or an
+# aggregate entry point can never be lost by renaming a target.
+HELP_ARTIFACT = "test_shell_help_bin"
+HELP_WRAPPER = "test_shell_help"
+HELP_CONTRACT = "test_shell_help_contract"
 
 # Positional field order of `struct manifest` in cyberdeck_app_runtime.h.  The
 # literal manifests in the three application sources are aggregate
@@ -503,6 +513,321 @@ def _fixture_usage_manifest(source, function_name):
     }
 
 
+def _makefile_target_span(makefile, target):
+    """Return (lines, first, last) of a target's logical prerequisite line."""
+    lines = makefile.splitlines()
+    start = next((index for index, line in enumerate(lines)
+                  if re.match(rf"^{re.escape(target)}:", line)), None)
+    if start is None:
+        return None
+    last = start
+    while last < len(lines) and lines[last].rstrip().endswith("\\"):
+        last += 1
+    return lines, start, min(last, len(lines) - 1)
+
+
+def makefile_target_tokens(makefile, target):
+    """Return the prerequisite tokens of a Makefile target."""
+    span = _makefile_target_span(makefile, target)
+    if span is None:
+        return []
+    lines, start, last = span
+    _, _, rest = lines[start].partition(":")
+    collected = rest.split()
+    for line in lines[start + 1:last + 1]:
+        collected.extend(line.strip().rstrip("\\").split())
+    return collected
+
+
+def makefile_recipe_commands(makefile, target):
+    """Return the recipe commands of a Makefile target, without the '@' prefix."""
+    span = _makefile_target_span(makefile, target)
+    if span is None:
+        return []
+    lines, _, last = span
+    commands = []
+    for line in lines[last + 1:]:
+        if line.strip() == "" or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith("\t"):
+            break
+        command = line.strip()
+        if command.startswith("@"):
+            command = command[1:].strip()
+        if command:
+            commands.append(command)
+    return commands
+
+
+def makefile_bins_tokens(makefile):
+    """Return the effective token set of the aggregated BINS list."""
+    listed = set()
+    excluded = set()
+    for line in makefile.splitlines():
+        if line.startswith("BINS :="):
+            value = line[len("BINS :="):]
+        elif line.startswith("BINS +="):
+            value = line[len("BINS +="):]
+        else:
+            continue
+        for match in re.finditer(r"\$\(filter-out\s+([^,]*),", value):
+            excluded.update(match.group(1).split())
+        listed.update(re.sub(r"\$\([A-Za-z_][A-Za-z_0-9]*\)", " ", value).split())
+    return listed - excluded
+
+
+def makefile_phony_targets(makefile):
+    """Return every target declared through a `.PHONY:` line."""
+    declared = set()
+    for line in makefile.splitlines():
+        if line.startswith(".PHONY:"):
+            declared.update(line[len(".PHONY:"):].split())
+    return declared
+
+
+def check_wiring(makefile):
+    """TEST-HELP-WIRING-01: the help scenario stays reachable from the suite.
+
+    The build dependency, the compile/link line, the wrapper, the aggregated
+    build list and the aggregate entry point are checked on the target that
+    owns each of them, so renaming a target cannot silently drop a
+    requirement.
+    """
+    failures = []
+
+    def require(condition, message):
+        if not condition:
+            failures.append(message)
+
+    artifact_prerequisites = makefile_target_tokens(makefile, HELP_ARTIFACT)
+    require(bool(artifact_prerequisites),
+            f"Makefile must define the {HELP_ARTIFACT} artifact target")
+    for token in ("test_shell_help.cpp", "$(SESSION_SRC)", "$(SHELL_UTILS_SRC)",
+                  "$(LOCAL_SHELL_SRC)", "$(BLE_STATE_SRC)", "$(DEMO_APP_SRC)",
+                  "$(DEMO_APP_HDR)", "shim/esp_err.h", "Makefile"):
+        require(token in artifact_prerequisites,
+                f"{HELP_ARTIFACT} must declare {token} as a prerequisite")
+
+    artifact_commands = makefile_recipe_commands(makefile, HELP_ARTIFACT)
+    require(bool(artifact_commands),
+            f"{HELP_ARTIFACT} must carry the compile/link recipe")
+    artifact_recipe = "\n".join(artifact_commands)
+    for token, message in (
+        ("$(CXX)", "the host build must go through the project C++ compiler"),
+        ("$(CXXFLAGS)", "the host build must keep the project compile flags"),
+        ("-Ishim", "the host build must use the LVGL shim"),
+        ("test_shell_help.cpp", "the behavioral test must be compiled"),
+        ("$(DEMO_APP_SRC)", "the real demo application source must be compiled"),
+        ("$(BLE_STATE_SRC)", "the real BLE state machine must be linked"),
+    ):
+        require(token in artifact_recipe, f"{HELP_ARTIFACT} must keep {message}")
+    require(re.search(rf"-o\s+{re.escape(HELP_ARTIFACT)}\b", artifact_recipe) is not None,
+            f"{HELP_ARTIFACT} must link its own executable")
+
+    wrapper_prerequisites = makefile_target_tokens(makefile, HELP_WRAPPER)
+    require(wrapper_prerequisites == [HELP_ARTIFACT],
+            f"{HELP_WRAPPER} must depend only on {HELP_ARTIFACT}, "
+            f"got {wrapper_prerequisites}")
+    wrapper_commands = makefile_recipe_commands(makefile, HELP_WRAPPER)
+    require(wrapper_commands == [f"./{HELP_ARTIFACT}"],
+            f"{HELP_WRAPPER} must run ./{HELP_ARTIFACT} exactly once, "
+            f"got {wrapper_commands}")
+
+    # The legacy executable name survives only as the wrapper: no recipe may
+    # execute it, otherwise the aggregate would run a stale binary.
+    require(not re.search(rf"\./{re.escape(HELP_WRAPPER)}(?![_A-Za-z0-9])", makefile),
+            f"no recipe may execute the legacy path ./{HELP_WRAPPER}")
+
+    require(HELP_ARTIFACT in makefile_bins_tokens(makefile),
+            f"{HELP_ARTIFACT} must belong to the aggregated BINS list")
+
+    contract_prerequisites = makefile_target_tokens(makefile, HELP_CONTRACT)
+    require(bool(contract_prerequisites),
+            f"Makefile must define {HELP_CONTRACT}")
+    require("test_shell_help_contract.py" in contract_prerequisites,
+            f"{HELP_CONTRACT} must depend on its python contract")
+    contract_commands = makefile_recipe_commands(makefile, HELP_CONTRACT)
+    require(any("$(PYTHON)" in command for command in contract_commands),
+            f"{HELP_CONTRACT} must run its python contract")
+
+    aggregate_commands = makefile_recipe_commands(makefile, "test")
+    require(aggregate_commands.count(f"./{HELP_ARTIFACT}") == 1,
+            "the aggregate suite must run the help behavioral artifact exactly once")
+    contract_invocations = [command for command in aggregate_commands
+                            if command.startswith("$(MAKE)")
+                            and command.split()[-1] == HELP_CONTRACT]
+    require(len(contract_invocations) == 1,
+            "the aggregate suite must run test_shell_help_contract exactly once")
+    if (aggregate_commands.count(f"./{HELP_ARTIFACT}") == 1
+            and len(contract_invocations) == 1):
+        require(aggregate_commands.index(f"./{HELP_ARTIFACT}")
+                < aggregate_commands.index(contract_invocations[0]),
+                "the behavioral binary must run before the structural contract")
+
+    phony = makefile_phony_targets(makefile)
+    for target in (HELP_WRAPPER, HELP_CONTRACT):
+        require(target in phony, f"{target} must be declared .PHONY")
+
+    return failures
+
+
+def check_artifact_ignores():
+    """The migrated artifacts stay ignored; their sources stay trackable.
+
+    The host tree ignores every ``test_*`` path and re-admits only the source
+    extensions.  The compiled artifact and the legacy executable name are build
+    outputs and must stay ignored, while the sources must stay visible to git
+    or the suite would silently stop running this contract.
+    """
+    failures = []
+
+    def require(condition, message):
+        if not condition:
+            failures.append(message)
+
+    for source in ("test_shell_help.cpp", "test_shell_help_contract.py"):
+        visible = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", f"tests/host/keymap/{source}"],
+            cwd=str(ROOT), capture_output=True).returncode
+        require(visible != 0,
+                f"the help test sources must be trackable despite the host-test "
+                f"ignore rule: {source}")
+    for artifact_path in (HELP_ARTIFACT, HELP_WRAPPER):
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index",
+             f"tests/host/keymap/{artifact_path}"],
+            cwd=str(ROOT), capture_output=True).returncode
+        require(ignored == 0,
+                f"the compiled help host binary must stay ignored: {artifact_path}")
+    return failures
+
+
+def _replace_once(source, old, new):
+    """Replace exactly one occurrence of `old`, refusing an ambiguous edit."""
+    count = source.count(old)
+    assert count == 1, f"expected exactly one {old!r} in the Makefile, found {count}"
+    return source.replace(old, new, 1)
+
+
+def _edit_target_recipe(source, target, transform):
+    """Apply `transform` to the recipe lines of one Makefile target."""
+    lines = source.splitlines(keepends=True)
+    span = _makefile_target_span(source, target)
+    assert span is not None, f"missing Makefile target {target}"
+    _, _, last = span
+    end = last + 1
+    while end < len(lines):
+        line = lines[end]
+        if line.strip() == "" or line.lstrip().startswith("#"):
+            end += 1
+            continue
+        if not line.startswith("\t"):
+            break
+        end += 1
+    return "".join(lines[:last + 1] + list(transform(lines[last + 1:end])) + lines[end:])
+
+
+def _edit_target_prerequisites(source, target, transform):
+    """Apply `transform` to the prerequisite lines of one Makefile target."""
+    lines = source.splitlines(keepends=True)
+    span = _makefile_target_span(source, target)
+    assert span is not None, f"missing Makefile target {target}"
+    _, start, last = span
+    return "".join(lines[:start] + list(transform(lines[start:last + 1])) + lines[last + 1:])
+
+
+def _drop_recipe_command(source, target, command):
+    """Remove one command from the recipe of a Makefile target."""
+    def transform(body):
+        kept = [line for line in body if line.strip().lstrip("@") != command]
+        assert len(kept) == len(body) - 1, (
+            f"expected exactly one {command!r} in the {target} recipe"
+        )
+        return kept
+
+    return _edit_target_recipe(source, target, transform)
+
+
+def _swap_recipe_commands(source, target, first, second):
+    """Exchange the position of two commands in the recipe of a target."""
+    def transform(body):
+        updated = []
+        hits = 0
+        for line in body:
+            stripped = line.strip().lstrip("@")
+            if stripped == first:
+                updated.append(line.replace(first, second))
+                hits += 1
+            elif stripped == second:
+                updated.append(line.replace(second, first))
+                hits += 1
+            else:
+                updated.append(line)
+        assert hits == 2, f"expected both {first!r} and {second!r} in {target}"
+        return updated
+
+    return _edit_target_recipe(source, target, transform)
+
+
+def _remove_from_phony(source, token):
+    """Remove `token` from every `.PHONY:` declaration that lists it."""
+    lines = source.splitlines(keepends=True)
+    hits = 0
+    for index, line in enumerate(lines):
+        if not line.startswith(".PHONY:"):
+            continue
+        tokens = line.split()
+        if token not in tokens:
+            continue
+        kept = [item for item in tokens if item != token]
+        lines[index] = " ".join(kept) + "\n"
+        hits += 1
+    assert hits >= 1, f"{token} is not declared in any .PHONY line"
+    return "".join(lines)
+
+
+def check_wiring_mutations(makefile):
+    """TEST-HELP-WIRING-01: the wiring check rejects isolated regressions."""
+    mutations = (
+        ("drop-artifact-from-bins",
+         lambda source: _replace_once(source, f"BINS := {HELP_ARTIFACT}", "BINS := ")),
+        ("legacy-wrapper-recipe",
+         lambda source: _edit_target_recipe(
+             source, HELP_WRAPPER,
+             lambda body: [line.replace(f"./{HELP_ARTIFACT}", f"./{HELP_WRAPPER}")
+                           for line in body])),
+        ("drop-demo-app-prerequisite",
+         lambda source: _edit_target_prerequisites(
+             source, HELP_ARTIFACT,
+             lambda body: [line.replace("$(DEMO_APP_SRC) ", "") for line in body])),
+        ("drop-demo-app-link",
+         lambda source: _edit_target_recipe(
+             source, HELP_ARTIFACT,
+             lambda body: [line.replace("$(BLE_STATE_SRC) $(DEMO_APP_SRC)",
+                                        "$(BLE_STATE_SRC)") for line in body])),
+        ("drop-coverage-flag",
+         lambda source: _edit_target_recipe(
+             source, HELP_ARTIFACT,
+             lambda body: [line.replace("$(CXX) $(CXXFLAGS) -Ishim", "$(CXX) -Ishim")
+                           for line in body])),
+        ("drop-aggregate-run",
+         lambda source: _drop_recipe_command(source, "test", f"./{HELP_ARTIFACT}")),
+        ("reorder-aggregate",
+         lambda source: _swap_recipe_commands(
+             source, "test", f"./{HELP_ARTIFACT}",
+             "$(MAKE) --no-print-directory test_shell_help_contract")),
+        ("drop-phony",
+         lambda source: _remove_from_phony(source, HELP_WRAPPER)),
+    )
+    for name, mutate in mutations:
+        mutated = mutate(makefile)
+        assert mutated != makefile, f"mutation {name} did not change the Makefile"
+        assert check_wiring(mutated), (
+            f"mutation {name} was not detected by the wiring contract"
+        )
+    return len(mutations)
+
+
 def main() -> int:
     failures = []
 
@@ -678,27 +1003,14 @@ def main() -> int:
                 "test_shell_help.cpp must drive its goldens from declared metadata")
 
         # TEST-HELP-WIRING-01: both targets must stay reachable from the suite.
-        behavior_target = re.search(r"^test_shell_help:(?P<body>.*?)(?=^\S)", makefile, re.S | re.M)
-        require(behavior_target is not None, "Makefile must define test_shell_help")
-        if behavior_target is not None:
-            require("$(DEMO_APP_SRC)" in behavior_target.group("body"),
-                    "test_shell_help must link the real demo application source")
-        contract_target = re.search(r"^test_shell_help_contract:(?P<body>.*?)(?=^\S)",
-                                    makefile, re.S | re.M)
-        require(contract_target is not None, "Makefile must define test_shell_help_contract")
-        if contract_target is not None:
-            require("$(PYTHON)" in contract_target.group("body"),
-                    "test_shell_help_contract must run its python contract")
-        aggregate = re.search(r"^test:(?P<body>.*?)(?=^\S)", makefile, re.S | re.M)
-        require(aggregate is not None, "Makefile must define the aggregate test target")
-        if aggregate is not None:
-            require("./test_shell_help" in aggregate.group("body"),
-                    "the aggregate suite must run test_shell_help")
-            require("test_shell_help_contract" in aggregate.group("body"),
-                    "the aggregate suite must run test_shell_help_contract")
-        for target in ("test_shell_help", "test_shell_help_contract"):
-            require(re.search(rf"^\.PHONY:.*\b{target}\b", makefile, re.M) is not None,
-                    f"{target} must be declared .PHONY")
+        # The check is structural (target / prerequisites / recipe) and is
+        # anchored on the artifact that owns the build, so a renamed target
+        # cannot make the requirement vacuous.
+        failures.extend(check_wiring(makefile))
+
+        # TEST-HELP-WIRING-01: the migrated artifacts stay ignored by the host
+        # tree while their sources remain trackable.
+        failures.extend(check_artifact_ignores())
 
         for scenario in SCENARIOS:
             require(scenario in traceability, f"help_traceability.md must map {scenario}")
@@ -707,6 +1019,15 @@ def main() -> int:
     except ContractError as error:
         failures.append(f"unparseable source: {error}")
 
+    # TEST-HELP-WIRING-01: the wiring check must reject isolated regressions
+    # of the migrated layout, otherwise the requirements above could be
+    # satisfied vacuously.
+    mutations = 0
+    try:
+        mutations = check_wiring_mutations(makefile)
+    except AssertionError as error:
+        failures.append(f"wiring mutation check failed: {error}")
+
     if failures:
         for failure in failures:
             print(f"FAIL: {failure}")
@@ -714,6 +1035,8 @@ def main() -> int:
         return 1
 
     print(f"PASS: {' + '.join(SCENARIOS)}: real manifests, registration and fixture reconciliation OK")
+    print(f"PASS: TEST-HELP-WIRING-01 migrated wiring contract "
+          f"({mutations} mutations rejected)")
     return 0
 
 
