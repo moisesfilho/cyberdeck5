@@ -36,6 +36,25 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 - Prefira a menor alteracao correta e valide referencias e testes relacionados
   quando o trabalho estiver concluido.
 
+## Execucao dos testes host
+
+- Os alvos ficam em `tests/host/keymap/Makefile`. Para um teste focado, execute
+  `make -C tests/host/keymap <alvo>`; para o agregado completo, use
+  `make -C tests/host/keymap test` (inclui os cenarios e gates registrados no
+  Makefile, inclusive cobertura/scope guard e contratos).
+- O agregado constrói os binários listados em `BINS` antes de executar os
+  cenários. Sem opção de jobs, a construção é serial; para paralelizar somente
+  a construção, use `make -C tests/host/keymap -j4 test` (ou outro `-jN`
+  conforme os recursos disponíveis). O Makefile preserva o jobserver/opção do
+  chamador. A etapa de execução permanece ordenada para evitar concorrência
+  entre cenários e artefatos gcov. A CI aplica gcovr mínimo de 80% linhas,
+  94% funções e 59% branches, além do scope guard de TUs; alvos focados não
+  executam esses gates globais.
+- Não execute alvos que escrevem cobertura concorrentemente no mesmo diretório.
+  Use `make -C tests/host/keymap clean` antes de uma rodada de cobertura limpa;
+  `clean` remove binários e arquivos gcov locais. Não rode `clean` durante uma
+  execução. Para verificações incrementais, chame apenas o alvo focado necessário.
+
 ## Validacao de firmware no dispositivo
 
 - Como este projeto produz firmware para um dispositivo específico, valide cada

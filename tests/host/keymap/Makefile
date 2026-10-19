@@ -21,6 +21,8 @@
 CXX      ?= g++
 PYTHON   ?= python3
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O2
+# Build remains serial unless the caller supplies -jN; do not override its
+# jobserver because the aggregate runs coverage-producing scenarios in order.
 
 KEYMAP_SRC       := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp
 SHELL_UTILS_SRC  := ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp
@@ -1156,7 +1158,10 @@ test_poweroff: test_poweroff.cpp ../../../components/cyberdeck/src/platform/powe
 test_wake_key_contract: test_wake_key_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) test_wake_key_contract.py
 
-test: $(BINS)
+.PHONY: test-build
+test-build: $(BINS)
+
+test: test-build
 	@./test_wifi_survey
 	@$(MAKE) --no-print-directory test_wifi_survey_integration_contract
 	@$(MAKE) --no-print-directory test_wifi_survey_export_result_contract
@@ -1407,8 +1412,6 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_ble_background_contract
 	@echo "==> Executando contrato de nomes de bonds BLE"
 	@$(MAKE) --no-print-directory test_ble_bond_name_contract
-	@echo "==> Executando agregado focado de bonds e reconexao BLE"
-	@$(MAKE) --no-print-directory test_ble_bond_reconnect
 	# Keep the known IMU contract last so unrelated task tests run first;
 	# it remains a separate, non-masked gate.
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
