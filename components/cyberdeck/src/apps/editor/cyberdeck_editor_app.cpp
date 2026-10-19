@@ -26,7 +26,11 @@ constexpr cyberdeck_apps::manifest k_manifest{"cyberdeck.editor",
                                               8,
                                               {"edit"},
                                               1,
-                                              false};
+                                              false,
+                                              {{{"edit <path>", "path: up to 256 bytes; a missing file may be created\n"},
+                                                {"edit save", "save the current document; requires an assigned path\n"},
+                                                {"edit save as <path>", "path: 1..256 bytes; requests confirmation before saving\n"},
+                                                {"edit save as confirm", "confirm the pending save-as request\n"}}}};
 
 std::string_view trim(std::string_view value) {
     while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))

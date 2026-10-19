@@ -5,8 +5,11 @@
 #include <condition_variable>
 #include <cstdio>
 #include <functional>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -313,6 +316,66 @@ class grant_test_app final : public cyberdeck_apps::application {
     bool running_ = false;
 };
 
+/* Configurable manifest application: every registration/start invariant below
+ * is validated by the real runtime, so an invalid manifest is rejected by
+ * production validation rather than by test-only plumbing. */
+class configurable_app final : public cyberdeck_apps::application {
+  public:
+    explicit configurable_app(std::string_view id) {
+        manifest_.id = id;
+        manifest_.name = id;
+    }
+    const cyberdeck_apps::manifest &get_manifest() const override {
+        return manifest_;
+    }
+    bool init() override {
+        return init_ok;
+    }
+    bool start() override {
+        running_ = start_ok;
+        return start_ok;
+    }
+    bool stop() override {
+        running_ = false;
+        return teardown_ok;
+    }
+    bool running() const override {
+        return running_;
+    }
+    cyberdeck_apps::result execute(std::string_view, std::string_view) override {
+        return {cyberdeck_apps::result_status::handled, "ran\n"};
+    }
+
+    cyberdeck_apps::manifest manifest_{};
+    bool init_ok = true;
+    bool start_ok = true;
+    bool teardown_ok = true;
+
+  private:
+    bool running_ = false;
+};
+
+/* Logger sink used to observe lifecycle events emitted by the runtime. */
+class recording_logger final : public cyberdeck_apps::logger {
+  public:
+    std::size_t latest(std::size_t, line_callback, void *) override {
+        return 0;
+    }
+    std::vector<std::string> payloads;
+
+  protected:
+    void write_event(const event &value) override {
+        payloads.emplace_back(value.payload);
+    }
+};
+
+/* Stable ids for the registry-capacity fixture (manifest views must outlive
+ * the runtime under test). */
+constexpr const char *k_registry_full_ids[] = {
+    "full.app00", "full.app01", "full.app02", "full.app03", "full.app04", "full.app05", "full.app06", "full.app07",
+    "full.app08", "full.app09", "full.app10", "full.app11", "full.app12", "full.app13", "full.app14", "full.app15",
+};
+
 bool wait_for(std::condition_variable &cv, std::unique_lock<std::mutex> &lock, const std::function<bool()> &predicate) {
     return cv.wait_for(lock, std::chrono::seconds(3), predicate);
 }
@@ -563,6 +626,243 @@ int main() {
     reader_done.store(true, std::memory_order_release);
     reader.join();
     check(!reader_failed.load(), "concurrent grant reads remain safe and stale copies deny after stop");
+
+    // TEST-RT-VALIDATION-01..06: every invalid manifest invariant is rejected
+    // by the real registration validation and leaves the registry untouched.
+    cyberdeck_apps::runtime validation_runtime;
+    configurable_app resource_overflow("invalid.resource-overflow");
+    resource_overflow.manifest_.resource_count = cyberdeck_apps::k_max_resources + 1;
+    check(!validation_runtime.register_application(resource_overflow),
+          "resource_count above the manifest capacity is rejected");
+    check(validation_runtime.size() == 0, "resource overflow leaves the registry empty");
+
+    configurable_app resource_unknown("invalid.resource-unknown");
+    resource_unknown.manifest_.resources[0] = "not-a-resource";
+    resource_unknown.manifest_.resource_count = 1;
+    check(!validation_runtime.register_application(resource_unknown), "unknown resource name is rejected");
+    check(validation_runtime.size() == 0, "unknown resource leaves the registry empty");
+
+    configurable_app resource_duplicate("invalid.resource-duplicate");
+    resource_duplicate.manifest_.resources[0] = "display";
+    resource_duplicate.manifest_.resources[1] = "display";
+    resource_duplicate.manifest_.resource_count = 2;
+    check(!validation_runtime.register_application(resource_duplicate), "duplicated resource is rejected");
+    check(validation_runtime.size() == 0, "duplicated resource leaves the registry empty");
+
+    configurable_app command_overflow("invalid.command-overflow");
+    command_overflow.manifest_.command_count = cyberdeck_apps::k_max_commands + 1;
+    check(!validation_runtime.register_application(command_overflow),
+          "command_count above the manifest capacity is rejected");
+
+    configurable_app command_empty("invalid.command-empty");
+    command_empty.manifest_.commands[0] = "";
+    command_empty.manifest_.command_count = 1;
+    check(!validation_runtime.register_application(command_empty), "empty declared command is rejected");
+
+    configurable_app capability_overflow("invalid.capability-overflow");
+    capability_overflow.manifest_.capability_count = cyberdeck_apps::k_max_capabilities + 1;
+    check(!validation_runtime.register_application(capability_overflow),
+          "capability_count above the manifest capacity is rejected");
+    check(validation_runtime.size() == 0, "all invalid manifests leave the registry empty");
+
+    configurable_app valid_manifest("validation.valid");
+    check(validation_runtime.register_application(valid_manifest),
+          "a valid manifest still registers after the rejected ones");
+
+    // TEST-RT-REGISTRY-01: the registry is bounded at k_max_applications and
+    // rejects anything beyond it without leaking an entry.
+    cyberdeck_apps::runtime full_runtime;
+    std::vector<std::unique_ptr<configurable_app>> full_apps;
+    for (std::size_t index = 0; index < cyberdeck_apps::k_max_applications; ++index) {
+        auto app = std::make_unique<configurable_app>(k_registry_full_ids[index]);
+        check(full_runtime.register_application(*app), "registry accepts applications up to its capacity");
+        full_apps.push_back(std::move(app));
+    }
+    check(full_runtime.size() == cyberdeck_apps::k_max_applications, "registry reports its exact capacity");
+    configurable_app registry_overflow("full.overflow");
+    check(!full_runtime.register_application(registry_overflow), "a full registry rejects registration");
+    check(full_runtime.find("full.overflow") == nullptr, "rejected registration leaves no entry behind");
+    check(full_runtime.at(0) != nullptr, "at() exposes the first registration");
+    check(full_runtime.at(full_runtime.size()) == nullptr, "at() rejects the end index");
+    check(full_runtime.state("not.registered") == cyberdeck_apps::app_state::failed,
+          "unknown applications report the failed state");
+    check(!full_runtime.restart_application("not.registered"), "restart of an unknown application fails");
+    check(!full_runtime.stop_application("not.registered"), "stop of an unknown application fails");
+
+    // TEST-RT-RECOVERY-01..03: restored diagnostics are bounded and only apply
+    // to registered applications.
+    check(!full_runtime.restore_failure_reason("not.registered", "reason"),
+          "diagnostics cannot be restored for unknown ids");
+    check(!full_runtime.restore_failure_reason(k_registry_full_ids[0], ""), "empty diagnostics are rejected");
+    check(!full_runtime.restore_failure_reason(k_registry_full_ids[0], std::string(128, 'x')),
+          "diagnostics longer than 127 bytes are rejected");
+    check(full_runtime.restore_failure_reason(k_registry_full_ids[0], "restored diagnostic") &&
+              full_runtime.failure_reason(k_registry_full_ids[0]) == "restored diagnostic",
+          "bounded diagnostics round-trip through the runtime");
+
+    // TEST-RT-START-01..03: dependency declarations are validated at start
+    // time, including missing dependencies and cycles.
+    cyberdeck_apps::runtime invalid_dependency_runtime;
+    configurable_app invalid_dependency("invalid.dependency");
+    invalid_dependency.manifest_.dependency_count = cyberdeck_apps::k_max_dependencies + 1;
+    check(invalid_dependency_runtime.register_application(invalid_dependency),
+          "dependency overflow is a start-time property, not a registration error");
+    check(!invalid_dependency_runtime.start_application("invalid.dependency"),
+          "dependency_count above capacity fails the start");
+    check(invalid_dependency_runtime.failure_reason("invalid.dependency") == "invalid dependency declaration",
+          "invalid dependency declaration is reported");
+
+    cyberdeck_apps::runtime missing_dependency_runtime;
+    configurable_app missing_dependency("missing.dependency");
+    missing_dependency.manifest_.dependencies[0] = "not.registered.app";
+    missing_dependency.manifest_.dependency_count = 1;
+    check(missing_dependency_runtime.register_application(missing_dependency), "missing-dependency app registers");
+    check(!missing_dependency_runtime.start_application("missing.dependency"),
+          "starting an app whose dependency is unregistered fails");
+    check(missing_dependency_runtime.failure_reason("missing.dependency") ==
+              "dependency unavailable: not.registered.app",
+          "the unavailable dependency is named in the diagnostic");
+
+    cyberdeck_apps::runtime cycle_runtime;
+    configurable_app cycle_a("cycle.a");
+    cycle_a.manifest_.dependencies[0] = "cycle.b";
+    cycle_a.manifest_.dependency_count = 1;
+    configurable_app cycle_b("cycle.b");
+    cycle_b.manifest_.dependencies[0] = "cycle.a";
+    cycle_b.manifest_.dependency_count = 1;
+    check(cycle_runtime.register_application(cycle_a) && cycle_runtime.register_application(cycle_b),
+          "cyclic manifests register; cycles are a start-time property");
+    check(!cycle_runtime.start_application("cycle.a"), "a dependency cycle fails the start");
+    check(cycle_runtime.state("cycle.a") == cyberdeck_apps::app_state::failed &&
+              cycle_runtime.state("cycle.b") == cyberdeck_apps::app_state::failed,
+          "both sides of the cycle end up failed");
+
+    // TEST-RT-CONSOLE-01..05: the shell must never stop the console owner,
+    // directly or through its dependent chain, while the supervisor lifecycle
+    // API keeps working.
+    cyberdeck_apps::runtime console_runtime;
+    configurable_app console_base("console.base");
+    configurable_app console_cycle1("console.cycle1");
+    console_cycle1.manifest_.dependencies[0] = "console.base";
+    console_cycle1.manifest_.dependencies[1] = "console.cycle2";
+    console_cycle1.manifest_.dependency_count = 2;
+    configurable_app console_cycle2("console.cycle2");
+    console_cycle2.manifest_.dependencies[0] = "console.cycle1";
+    console_cycle2.manifest_.dependency_count = 1;
+    configurable_app console_other("console.other");
+    console_other.manifest_.dependencies[0] = "console.base";
+    console_other.manifest_.dependency_count = 1;
+    configurable_app console_owner("console.owner");
+    console_owner.manifest_.owns_console = true;
+    console_owner.manifest_.dependencies[0] = "console.base";
+    console_owner.manifest_.dependency_count = 1;
+    check(console_runtime.register_application(console_base) && console_runtime.register_application(console_cycle1) &&
+              console_runtime.register_application(console_cycle2) && console_runtime.register_application(console_other) &&
+              console_runtime.register_application(console_owner),
+          "console dependency graph registers");
+    check(console_runtime.start_application("console.other") && console_runtime.start_application("console.owner"),
+          "console graph starts through the lifecycle API");
+    check(console_runtime.stops_console_owner("console.base"),
+          "stopping a transitive dependency of the console owner is detected");
+    check(!console_runtime.stops_console_owner("console.cycle1"),
+          "a cyclic dependency chain that cannot reach the owner is not flagged");
+    check(!console_runtime.stops_console_owner("console.other"),
+          "stopping a non-console dependent is not flagged");
+    check(!console_runtime.stops_console_owner("not.registered"), "unknown ids never own the console");
+    const auto refused_console_stop = console_runtime.execute_line("app stop console.base");
+    check(refused_console_stop.status == cyberdeck_apps::result_status::rejected &&
+              refused_console_stop.output.find("stop would remove the console") != std::string::npos,
+          "the shell refuses a stop that would remove the console");
+    check(console_runtime.state("console.owner") == cyberdeck_apps::app_state::running &&
+              console_runtime.state("console.other") == cyberdeck_apps::app_state::running,
+          "the refused stop leaves the whole console graph running");
+    check(console_runtime.stop_application("console.base"),
+          "the supervisor lifecycle API still cascades the stop");
+    check(console_runtime.state("console.owner") == cyberdeck_apps::app_state::registered &&
+              console_runtime.state("console.other") == cyberdeck_apps::app_state::registered &&
+              console_runtime.state("console.base") == cyberdeck_apps::app_state::registered,
+          "the supervisor cascade stops dependents before the target");
+
+    // TEST-RT-COMMAND-01: a foreground command whose start hook fails is
+    // rejected at its dispatch boundary, never half-started.
+    cyberdeck_apps::runtime command_failure_runtime;
+    configurable_app command_failure("command.failure");
+    command_failure.manifest_.command = "cmdfail";
+    command_failure.manifest_.type = cyberdeck_apps::app_type::foreground;
+    command_failure.start_ok = false;
+    check(command_failure_runtime.register_application(command_failure), "failing command app registers");
+    const auto command_failure_result = command_failure_runtime.execute_line("cmdfail");
+    check(command_failure_result.status == cyberdeck_apps::result_status::rejected &&
+              command_failure_result.output.find("command application failed to start") != std::string::npos,
+          "a foreground command that cannot start is rejected");
+    check(command_failure_runtime.state("command.failure") == cyberdeck_apps::app_state::failed,
+          "failed command start is reported as failed");
+
+    // TEST-RT-STOP-01..02: a failing teardown is sticky and blocks restart.
+    cyberdeck_apps::runtime stop_failure_runtime;
+    configurable_app stop_failure("stop.failure");
+    stop_failure.teardown_ok = false;
+    check(stop_failure_runtime.register_application(stop_failure), "stop-failure app registers");
+    check(stop_failure_runtime.start_application("stop.failure"), "stop-failure app starts");
+    check(!stop_failure_runtime.restart_application("stop.failure"),
+          "restart cannot proceed when the stop hook fails");
+    check(stop_failure_runtime.state("stop.failure") == cyberdeck_apps::app_state::failed,
+          "failed stop hook is reported as failed");
+    check(stop_failure_runtime.failure_reason("stop.failure") == "stop hook failed",
+          "failed stop hook exposes its diagnostic");
+
+    // TEST-RT-TOKENIZER-01..07: bounded dispatch input and usage fallbacks.
+    cyberdeck_apps::runtime tokenizer_runtime;
+    check(tokenizer_runtime.execute_line(std::string(257, 'a')).status ==
+              cyberdeck_apps::result_status::not_handled,
+          "lines over 256 bytes are never dispatched");
+    std::string nine_tokens;
+    for (int index = 0; index < 9; ++index)
+        nine_tokens += "word ";
+    check(tokenizer_runtime.execute_line(nine_tokens).status == cyberdeck_apps::result_status::not_handled,
+          "more than eight tokens are never dispatched");
+    check(tokenizer_runtime.execute_line(" \t  ").status == cyberdeck_apps::result_status::not_handled,
+          "whitespace-only lines are never dispatched");
+    check(tokenizer_runtime.execute_line("app list").output == "no applications registered\n",
+          "an empty registry still answers app list");
+    check(tokenizer_runtime.execute_line("app").status == cyberdeck_apps::result_status::rejected,
+          "bare app is rejected with usage");
+    check(tokenizer_runtime.execute_line("app foo").status == cyberdeck_apps::result_status::rejected,
+          "unknown app subcommands are rejected with usage");
+    check(tokenizer_runtime.execute_line("app info").status == cyberdeck_apps::result_status::rejected,
+          "app info without an id is rejected with usage");
+
+    // TEST-RT-LOGGER-01..03 / TEST-RT-SUPPLIER-01..03: injected collaborators
+    // propagate to registered applications, lifecycle events reach the logger,
+    // and start_all/stop_all attempt every application.
+    cyberdeck_apps::runtime supervisor_runtime;
+    configurable_app supervisor_a("supervisor.a");
+    configurable_app supervisor_b("supervisor.b");
+    configurable_app supervisor_failing("supervisor.failing");
+    supervisor_failing.start_ok = false;
+    check(supervisor_runtime.register_application(supervisor_a) &&
+              supervisor_runtime.register_application(supervisor_b) &&
+              supervisor_runtime.register_application(supervisor_failing),
+          "supervisor fixture registers");
+    recording_logger lifecycle_logger;
+    cyberdeck_sd_io::coordinator sd_coordinator;
+    supervisor_runtime.set_logger(&lifecycle_logger);
+    supervisor_runtime.set_sd_io(&sd_coordinator);
+    check(supervisor_a.app_logger() == &lifecycle_logger && supervisor_b.app_logger() == &lifecycle_logger &&
+              supervisor_failing.app_logger() == &lifecycle_logger,
+          "the logger propagates to already registered applications");
+    check(supervisor_a.app_sd_io() == &sd_coordinator && supervisor_b.app_sd_io() == &sd_coordinator,
+          "the sd_io coordinator propagates to already registered applications");
+    check(supervisor_runtime.app_logger() == &lifecycle_logger, "the runtime exposes the injected logger");
+    check(!supervisor_runtime.start_all(), "start_all reports failure when one start hook fails");
+    check(supervisor_a.running() && supervisor_b.running(),
+          "start_all still attempts every application after a failure");
+    bool saw_start_event = false;
+    for (const auto &payload : lifecycle_logger.payloads)
+        saw_start_event = saw_start_event || payload.find("app=supervisor.a event=start") != std::string::npos;
+    check(saw_start_event, "start lifecycle events reach the injected logger with the app id");
+    check(supervisor_runtime.stop_all(), "stop_all stops every application it can");
+    check(!supervisor_a.running() && !supervisor_b.running(), "stop_all leaves no application running");
 
     if (failures == 0) {
         std::printf("PASS: app runtime (%d checks)\n", checks);

@@ -109,6 +109,14 @@ BATTERY_VIEW_CONTRACT := test_battery_view_contract.py
 SD_IO_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp
 SD_IO_COORDINATOR_HDR := ../../../components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h
 SD_IO_COORDINATOR_TEST := test_sd_io_coordinator.cpp
+SD_PACKAGE_HDR := ../../../components/cyberdeck/include/apps/runtime/cyberdeck_sd_package.h
+# Binary artifacts are kept distinct from the .PHONY run targets (same pattern
+# as BATTERY_*_BIN): the aggregate builds the binaries through BINS exactly
+# once and the run target executes them once, so a clean checkout cannot call a
+# missing/stale executable and `make clean` removes what the aggregate created.
+SD_PACKAGE_BIN := test_sd_package_bin
+RESOURCE_CATALOG_HDR := ../../../components/cyberdeck/include/apps/runtime/cyberdeck_resource_catalog.h
+RESOURCE_CATALOG_BIN := test_resource_catalog_bin
 BATTERY_BIN       := test_battery_contract
 SERIAL_BRIDGE_SRC := ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp
 SERIAL_BRIDGE_HDR := ../../../components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h
@@ -189,9 +197,10 @@ SCOPE_GUARD_TEST := test_coverage_scope_guard.py
 HELP_UNIFICATION_TEST := test_help_unification.cpp
 HELP_UNIFICATION_CONTRACT := help_unification_contract.py
 
-BINS := test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_event_log_runtime test_event_log_shim test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_wifi_survey test_wifi_survey_export_controller test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync test_sd_io_coordinator $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
+BINS := test_shell_help test_shell_app test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_event_log_runtime test_event_log_shim test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection test_terminal_filter test_terminal_scrollback test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_wifi_survey test_wifi_survey_export_controller test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_battery_view test_shell_session test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_demo_app test_window_manager test_recovery_policy test_time_sync test_sd_io_coordinator $(BATTERY_BIN) $(BATTERY_PROTECTION_BIN) $(BATTERY_VIEW_BIN)
 BINS += test_netdiag_controller
 BINS += test_netdiag_tcp_adapter
+BINS += $(SD_PACKAGE_BIN) $(RESOURCE_CATALOG_BIN)
 
 test_editor_model: test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp ../../../components/cyberdeck/include/apps/editor/cyberdeck_editor_model.h
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp -o $@
@@ -233,7 +242,7 @@ test_time_sync: test_time_sync.cpp $(TIME_SYNC_SRC) $(TIME_SYNC_SHIM)/cJSON.cpp 
 test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9_CAPABILITIES_TEST) Makefile
 	$(PYTHON) test_phase9_capabilities_contract.py
 
-.PHONY: all test verify clean test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
+.PHONY: all test verify clean test_shell_help test_shell_help_contract test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
 
 .PHONY: test_wifi_survey test_wifi_survey_integration_contract test_wifi_survey_export_controller test_wifi_survey_export_result_contract
 .PHONY: test_recovery_policy test_phase10_contract test_event_projection_contract test_save_sidecar_recovery
@@ -245,6 +254,34 @@ test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9
 test_sd_io_coordinator: $(SD_IO_COORDINATOR_TEST) $(SD_IO_COORDINATOR_SRC) $(SD_IO_COORDINATOR_HDR) sd_io_traceability.md
 	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include $(SD_IO_COORDINATOR_TEST) $(SD_IO_COORDINATOR_SRC) -o test_sd_io_coordinator
 	./test_sd_io_coordinator
+
+# Pure host contract for sd_package (REQ-COV-01 / AC-COV-01): FNV-1a
+# checksum reference vectors, null/empty semantics, exact media-type
+# acceptance, and independent rejection of every validate() rule — each rule
+# violated alone on an otherwise-valid package, with exact size/version
+# boundaries and checksum mismatch detection.  The real TU is linked directly.
+# The .PHONY run target only executes the BINS-built binary so the aggregate
+# runs it exactly once.
+$(SD_PACKAGE_BIN): test_sd_package.cpp $(SD_PACKAGE_SRC) $(SD_PACKAGE_HDR) sd_package_traceability.md
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_sd_package.cpp $(SD_PACKAGE_SRC) -o $@
+
+.PHONY: test_sd_package
+test_sd_package: $(SD_PACKAGE_BIN)
+	./$(SD_PACKAGE_BIN)
+
+# Behavioral host contract for resource_catalog (REQ-RES-01 / AC-RES-01): the
+# real TU is linked and exercised through its public surface — asset_checksum
+# (FNV-1a reference vectors, null/empty semantics), verify_asset (id, size and
+# null-byte rules isolated per property plus checksum accept/reject at the
+# exact 12288-byte boundary) and the compiled catalog's empty/absent
+# semantics.  No production code is altered; coverage percentages are never
+# asserted.
+$(RESOURCE_CATALOG_BIN): test_resource_catalog.cpp $(RESOURCE_CATALOG_SRC) $(RESOURCE_CATALOG_HDR) resource_catalog_traceability.md
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_resource_catalog.cpp $(RESOURCE_CATALOG_SRC) -o $@
+
+.PHONY: test_resource_catalog
+test_resource_catalog: $(RESOURCE_CATALOG_BIN)
+	./$(RESOURCE_CATALOG_BIN)
 
 .PHONY: test_netdiag_controller
 test_netdiag_controller: test_netdiag_controller.cpp $(NETDIAG_CONTROLLER_SRC) $(NETDIAG_CONTROLLER_HDR) netdiag_traceability.md Makefile
@@ -547,6 +584,50 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) $(SHELL
 		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
 		$(WIFI_STATE_MACHINE_SRC) $(WIFI_SURVEY_SRC) $(BLE_TYPES_SRC) \
 		$(BLE_STATE_SRC) -o test_shell_session
+
+# REQ-HELP-DETAILS / AC-1..AC-6 + REQ-HELP-05 (expanded): `<command> help`
+# contract for legacy terms, registered app commands and aliases without
+# execution, unknown commands, syntax rejection, general help flags, poweroff
+# isolation and normal dispatch preservation; plus the usage-metadata contract
+# (edit/demo/netdiag help reveal every declared usage/subcommand), the
+# compiled-in inventory filter (3 command-bearing / 7 commandless services /
+# shell excluded) and alias/collision resolution.  Links the same production
+# TUs as test_shell_session plus the real demo application, whose declared
+# usage metadata is exercised as-is.
+test_shell_help: test_shell_help.cpp $(SESSION_SRC) $(SESSION_HDR) $(SHELL_HELP_HDR) $(WIFI_SURVEY_SRC) $(WIFI_SURVEY_HDR) \
+		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
+		$(SD_IO_COORDINATOR_SRC) \
+		$(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
+		$(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
+		$(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) $(BATTERY_PROTECTION_SRC) \
+		$(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) $(WIFI_STATE_MACHINE_SRC) \
+		$(BLE_TYPES_SRC) $(BLE_STATE_SRC) \
+		$(DEMO_APP_SRC) $(DEMO_APP_HDR) \
+		shim/esp_err.h shim/esp_wifi_types.h shim/freertos/FreeRTOS.h
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_help.cpp \
+		$(SESSION_SRC) $(SHELL_CONSOLE_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
+		$(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
+		$(APP_RUNTIME_SRC) \
+		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
+		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
+		$(WIFI_STATE_MACHINE_SRC) $(WIFI_SURVEY_SRC) $(BLE_TYPES_SRC) \
+		$(BLE_STATE_SRC) $(DEMO_APP_SRC) -o test_shell_help
+
+# Structural companion of test_shell_help: parses the real registration array
+# and the real manifests (system apps, shell, demo, editor, netdiag) and
+# reconciles the fixtures/goldens of test_shell_help.cpp against them, so a
+# mirrored manifest or a dropped usage line fails even while the behavioral
+# golden stays independent.  Source inspection only; no firmware execution.
+test_shell_help_contract: test_shell_help_contract.py test_shell_help.cpp \
+		../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp \
+		../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h \
+		../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_app.cpp \
+		../../../components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp \
+		../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp \
+		../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp \
+		help_traceability.md Makefile
+	$(PYTHON) test_shell_help_contract.py
 
 test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
@@ -1159,6 +1240,10 @@ test: $(BINS)
 	@$(MAKE) --no-print-directory test_editor_surface_contract
 	@echo "==> Executando testes comportamentais da sessao de shell"
 	@./test_shell_session
+	@echo "==> Executando testes do contrato <command> help (REQ-HELP-DETAILS)"
+	@./test_shell_help
+	@echo "==> Executando contrato estrutural dos manifestos de help (REQ-HELP-05)"
+	@$(MAKE) --no-print-directory test_shell_help_contract
 	@echo "==> Executando testes do runtime de aplicacoes compiladas"
 	@./test_app_runtime
 	@./test_runtime_sdk
@@ -1182,6 +1267,10 @@ test: $(BINS)
 	@./test_window_manager
 	@echo "==> Executando coordenador de I/O SD (Stage 0)"
 	@./test_sd_io_coordinator
+	@echo "==> Executando testes do pacote SD puro (REQ-COV-01)"
+	@$(MAKE) --no-print-directory test_sd_package
+	@echo "==> Executando testes do catalogo de recursos compilados (REQ-RES-01)"
+	@$(MAKE) --no-print-directory test_resource_catalog
 	@echo "==> Executando contrato de integracao de I/O SD"
 	@$(MAKE) --no-print-directory test_sd_io_integration_contract
 	@$(MAKE) --no-print-directory test_window_manager_contract

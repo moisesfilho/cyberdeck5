@@ -141,6 +141,78 @@ std::string help_text(cyberdeck_apps::runtime &runtime)
     return output;
 }
 
+bool parse_detail_help_request(const std::string &line, std::string_view &command)
+{
+    const std::size_t start = line.find_first_not_of(" \t");
+    if (start == std::string::npos) return false;
+    const std::size_t command_end = line.find_first_of(" \t", start);
+    if (command_end == std::string::npos) return false;
+    const std::size_t help_start = line.find_first_not_of(" \t", command_end);
+    if (help_start == std::string::npos || line.compare(help_start, 4, "help") != 0) return false;
+    const std::size_t trailing = line.find_first_not_of(" \t", help_start + 4);
+    if (trailing != std::string::npos) return false;
+    command = std::string_view(line.data() + start, command_end - start);
+    return true;
+}
+
+std::string app_command_help(cyberdeck_apps::runtime &runtime, std::string_view command)
+{
+    for (std::size_t index = 0; index < runtime.size(); ++index) {
+        const cyberdeck_apps::application *app = runtime.at(index);
+        if (app == nullptr) continue;
+        const cyberdeck_apps::manifest &manifest = app->get_manifest();
+        const std::string_view primary_command = !manifest.command.empty()
+                                                     ? std::string_view(manifest.command)
+                                                     : manifest.command_count != 0
+                                                           ? std::string_view(manifest.commands[0])
+                                                           : std::string_view();
+        bool matches = manifest.command == command;
+        std::size_t command_index = 0;
+        for (std::size_t i = 0; !matches && i < manifest.command_count; ++i) {
+            matches = manifest.commands[i] == command;
+            if (matches) command_index = i;
+        }
+        if (!matches) continue;
+
+        std::string result(command);
+        result += " [app]\n  ";
+        result.append(manifest.name.data(), manifest.name.size());
+        result += " (";
+        result.append(manifest.id.data(), manifest.id.size());
+        result += ")";
+        if (!manifest.version.empty()) {
+            result += " version ";
+            result.append(manifest.version.data(), manifest.version.size());
+        }
+        result += '\n';
+        if (!manifest.description.empty()) {
+            result += "  ";
+            result.append(manifest.description.data(), manifest.description.size());
+            result += '\n';
+        }
+        const bool requested_primary = command_index == 0 && command == primary_command;
+        const std::size_t first_help = requested_primary ? 0 : command_index;
+        const std::size_t help_end = requested_primary
+                                         ? manifest.command_help_entries.size()
+                                         : first_help + 1;
+        for (std::size_t help_index = first_help; help_index < help_end; ++help_index) {
+            const auto &details = manifest.command_help_entries[help_index];
+            if (!details.usage.empty()) {
+                result += "  usage: ";
+                result.append(details.usage.data(), details.usage.size());
+                result += '\n';
+            }
+            if (!details.parameters.empty()) {
+                result += "  ";
+                result.append(details.parameters.data(), details.parameters.size());
+                if (result.back() != '\n') result += '\n';
+            }
+        }
+        return result;
+    }
+    return {};
+}
+
 } // namespace
 
 session::session(host &host) : host_(host), log_lines_(CONFIG_CYBERDECK_LOG_LINES) {}
@@ -360,6 +432,20 @@ void session::execute_line(bool line_already_sent)
      * legacy command, so registered application manifests are included. */
     if (help_request) {
         host_.append_output_line(help_text(host_.app_runtime()));
+        host_.render();
+        return;
+    }
+    std::string_view detail_command;
+    if (parse_detail_help_request(line, detail_command)) {
+        const std::string command(detail_command);
+        std::string details = cyberdeck_shell_help::command_text(command.c_str());
+        if (details.empty()) details = app_command_help(host_.app_runtime(), detail_command);
+        if (details.empty()) {
+            details = "help: no details available for command '";
+            details.append(detail_command.data(), detail_command.size());
+            details += "'\n";
+        }
+        host_.append_output_line(details);
         host_.render();
         return;
     }

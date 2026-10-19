@@ -21,6 +21,11 @@ constexpr std::size_t k_max_resources = 8;
 constexpr std::size_t k_max_capabilities = 8;
 constexpr std::size_t k_max_commands = 4;
 
+struct command_help {
+    std::string_view usage;
+    std::string_view parameters;
+};
+
 enum class resource : std::uint8_t {
     display, input, storage, network, ble, serial, screenshot, event_log, clock, battery,
 };
@@ -95,6 +100,9 @@ struct manifest {
      * refuse to stop the console owner from inside itself: it would remove the
      * only path that could bring it back. */
     bool owns_console = false;
+    /* Help metadata is indexed alongside commands and never participates in
+     * command dispatch. Empty metadata preserves the generic fallback. */
+    std::array<command_help, k_max_commands> command_help_entries{};
 };
 
 enum class result_status {

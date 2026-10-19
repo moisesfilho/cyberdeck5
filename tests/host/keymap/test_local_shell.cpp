@@ -738,6 +738,126 @@ void test_existing_commands_are_passthrough(fixture &f) {
     CHECK_EQ(shell.cwd(), "/");
     CHECK(std::filesystem::exists(f.root / "visible.txt"));
 }
+
+/* Every filesystem command acquires its SD lease first, so its own validation
+ * is only reachable with the shell bound to an open coordinator.  This block
+ * exercises those real error paths: operand bounds, traversal/stat failures,
+ * type checks and the root/symlink protections behind the lease. */
+void test_bound_command_error_paths(fixture &f) {
+    std::error_code error;
+    fs::create_directories(f.root / "locked-dir", error);
+    std::ofstream(f.root / "locked-dir" / "secret.txt") << "locked";
+    fs::create_directories(f.root / "touch-parent", error);
+    fs::create_directories(f.root / "tree", error);
+    fs::create_symlink(f.root / "visible.txt", f.root / "tree" / "inner-link", error);
+    CHECK(!error);
+    const fs::path bulk = f.root / "bulk-bound";
+    CHECK(fs::create_directory(bulk));
+    for (int i = 0; i < 129; ++i)
+        std::ofstream(bulk / ("entry-" + std::to_string(i)));
+
+    cyberdeck_local_shell shell(f.root.string());
+    shell.bind_sd_io(f.coordinator);
+
+    // Line and token bounds reject before any I/O is requested.
+    CHECK(shell.execute(std::string(1025, 'a')).status == cyberdeck_local_shell_status::passthrough);
+    std::string many_tokens;
+    for (int index = 0; index < 33; ++index)
+        many_tokens += "word ";
+    CHECK(shell.execute(many_tokens).status == cyberdeck_local_shell_status::passthrough);
+
+    // Operand validation happens after the lease is granted.
+    const char *missing_operand[] = {"touch", "mkdir", "rm", "rmdir", "cat"};
+    for (const char *command : missing_operand) {
+        const auto result = execute_without_exception(shell, command);
+        CHECK(result.status == cyberdeck_local_shell_status::rejected);
+        CHECK(!result.output.empty());
+    }
+
+    // cd usage validation is reachable only through the read lease.
+    const auto cd_usage = execute_without_exception(shell, "cd");
+    CHECK(cd_usage.status == cyberdeck_local_shell_status::rejected);
+    CHECK(cd_usage.output.find("usage: cd") != std::string::npos);
+
+    // cat through the shell command fails closed on open errors, and the
+    // bounded worker API distinguishes stat failures before any open.
+    const auto missing = execute_without_exception(shell, "cat does-not-exist.txt");
+    CHECK(missing.status == cyberdeck_local_shell_status::rejected);
+    CHECK(missing.output.find("secure open unavailable") != std::string::npos);
+    CHECK(missing.output.find("content") == std::string::npos);
+
+    fs::permissions(f.root / "locked-dir", fs::perms::none, error);
+    const auto bounded_stat =
+        cyberdeck_local_shell_cat_bounded(f.root.string().c_str(), "/", "cat locked-dir/secret.txt", 12288);
+    const auto stat_failure = execute_without_exception(shell, "cat locked-dir/secret.txt");
+    fs::permissions(f.root / "locked-dir", fs::perms::owner_all, error);
+    CHECK(bounded_stat.status == cyberdeck_local_shell_status::rejected);
+    CHECK(bounded_stat.output.find("cannot stat file") != std::string::npos);
+    CHECK(stat_failure.status == cyberdeck_local_shell_status::rejected);
+    CHECK(stat_failure.output.find("secure open unavailable") != std::string::npos);
+
+    CHECK(execute_without_exception(shell, "cat /dev/null").status == cyberdeck_local_shell_status::handled);
+    const auto cat_readonly = execute_without_exception(shell, "cat /apps/installed.txt");
+    CHECK(cat_readonly.status == cyberdeck_local_shell_status::rejected);
+    CHECK(cat_readonly.output.find("virtual namespace is read-only metadata") != std::string::npos);
+
+    // touch validates the target type and reports creation failures.
+    const auto touch_dir = execute_without_exception(shell, "touch visible-dir");
+    CHECK(touch_dir.status == cyberdeck_local_shell_status::rejected);
+    CHECK(touch_dir.output.find("not a file") != std::string::npos);
+    fs::permissions(f.root / "touch-parent", fs::perms::owner_read | fs::perms::owner_exec, error);
+    const auto touch_locked = execute_without_exception(shell, "touch touch-parent/blocked.txt");
+    fs::permissions(f.root / "touch-parent", fs::perms::owner_all, error);
+    CHECK(touch_locked.status == cyberdeck_local_shell_status::rejected);
+    CHECK(touch_locked.output.find("cannot create file") != std::string::npos);
+    CHECK(!fs::exists(f.root / "touch-parent" / "blocked.txt"));
+
+    // mkdir never replaces an existing file.
+    const auto mkdir_file = execute_without_exception(shell, "mkdir visible.txt");
+    CHECK(mkdir_file.status == cyberdeck_local_shell_status::rejected);
+    CHECK(mkdir_file.output.find("cannot create directory") != std::string::npos);
+
+    // rmdir distinguishes root protection, missing directories and non-empty
+    // directories, all behind the lease.
+    CHECK(execute_without_exception(shell, "rmdir /").status == cyberdeck_local_shell_status::rejected);
+    const auto rmdir_missing = execute_without_exception(shell, "rmdir does-not-exist-dir");
+    CHECK(rmdir_missing.status == cyberdeck_local_shell_status::rejected);
+    CHECK(rmdir_missing.output.find("directory is not empty") != std::string::npos);
+    const auto rmdir_full = execute_without_exception(shell, "rmdir nonempty-dir");
+    CHECK(rmdir_full.status == cyberdeck_local_shell_status::rejected);
+    CHECK(rmdir_full.output.find("directory is not empty") != std::string::npos);
+    CHECK(fs::is_directory(f.root / "nonempty-dir"));
+
+    // rm distinguishes missing paths, directories, the virtual root and trees
+    // that contain symbolic links.
+    const auto rm_missing = execute_without_exception(shell, "rm does-not-exist.txt");
+    CHECK(rm_missing.status == cyberdeck_local_shell_status::rejected);
+    CHECK(rm_missing.output.find("does not exist") != std::string::npos);
+    const auto rm_dir = execute_without_exception(shell, "rm visible-dir");
+    CHECK(rm_dir.status == cyberdeck_local_shell_status::rejected);
+    CHECK(rm_dir.output.find("is a directory") != std::string::npos);
+    CHECK(execute_without_exception(shell, "rm -r /").status == cyberdeck_local_shell_status::rejected);
+    const auto rm_link_tree = execute_without_exception(shell, "rm -r tree");
+    CHECK(rm_link_tree.status == cyberdeck_local_shell_status::rejected);
+    CHECK(rm_link_tree.output.find("symbolic links are not allowed") != std::string::npos);
+    CHECK(fs::is_directory(f.root / "tree"));
+
+    // ls reports unopenable directories and enforces the entry cap atomically.
+    const auto ls_missing = execute_without_exception(shell, "ls does-not-exist-dir");
+    CHECK(ls_missing.status == cyberdeck_local_shell_status::rejected);
+    CHECK(ls_missing.output.find("cannot open directory") != std::string::npos);
+    const auto ls_bulk = execute_without_exception(shell, "ls bulk-bound");
+    CHECK(ls_bulk.status == cyberdeck_local_shell_status::rejected);
+    CHECK(ls_bulk.output.find("too many entries") != std::string::npos);
+    CHECK(ls_bulk.output.find("entry-") == std::string::npos);
+
+    // Navigation into metadata-only namespace paths stays rejected behind the
+    // lease, without moving the cursor.
+    const auto cd_metadata = execute_without_exception(shell, "cd /apps/tools");
+    CHECK(cd_metadata.status == cyberdeck_local_shell_status::rejected);
+    CHECK(cd_metadata.output.find("cd: invalid path") != std::string::npos);
+    CHECK_EQ(shell.cwd(), "/");
+}
 } // namespace
 
 int main() {
@@ -827,6 +947,11 @@ int main() {
         fixture f;
         if (f.root.empty()) return 1;
         test_existing_commands_are_passthrough(f);
+    }
+    {
+        fixture f;
+        if (f.root.empty()) return 1;
+        test_bound_command_error_paths(f);
     }
     std::printf("%s: %d checks\n", failures == 0 ? "PASS" : "FAIL", checks);
     return failures == 0 ? 0 : 1;

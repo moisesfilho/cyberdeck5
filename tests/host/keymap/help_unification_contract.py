@@ -208,6 +208,25 @@ def main() -> int:
             f"CATALOG_LITERAL positive control failed to detect '{literal}'",
         )
 
+    # REQ-HELP-05 approved a second, manifest-driven help source in the session:
+    # `app_command_help()` renders each usage the real application manifest
+    # declares, prefixed with this exact label.  The label is not a catalog row,
+    # so it is exempted from the scan.  The exemption is pinned to exactly one
+    # occurrence, and the control below proves a private parameter row in the
+    # same path is still detected.
+    APP_USAGE_LABEL = '"  usage: "'
+    require(
+        session_source.count(APP_USAGE_LABEL) == 1,
+        "the session help path must render the manifest usage label exactly once",
+    )
+    session_help_path = session_source.replace(APP_USAGE_LABEL, '"  usage:"')
+    require(
+        CATALOG_LITERAL.search(
+            session_help_path.replace('"  usage:"', '"  search: scan for networks\\n"')
+        ) is not None,
+        "CATALOG_LITERAL must still detect a private parameter row in the session path",
+    )
+
     # This also catches a second table assembled with a different wording
     # around the same command rows, while avoiding ordinary parser literals.
     require(
@@ -216,7 +235,7 @@ def main() -> int:
     )
     require(
         not CATALOG_LITERAL.search(ui_source)
-        and not CATALOG_LITERAL.search(session_source),
+        and not CATALOG_LITERAL.search(session_help_path),
         "the UI/session shell command path contains a literal help/catalog row",
     )
 

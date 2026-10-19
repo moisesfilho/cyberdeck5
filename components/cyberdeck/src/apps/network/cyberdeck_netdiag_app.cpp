@@ -23,24 +23,31 @@ namespace {
 constexpr uint32_t k_task_stack_bytes = 12288;
 constexpr uint32_t k_stop_timeout_ms = 6000;
 
-constexpr cyberdeck_apps::manifest k_manifest{"cyberdeck.netdiag",
-                                              "Network diagnostics",
-                                              "1.0.0",
-                                              "Explicit-target connectivity diagnostics",
-                                              "",
-                                              {"cyberdeck.event_log", "cyberdeck.wifi"},
-                                              2,
-                                              {"network"},
-                                              1,
-                                              6000,
-                                              "1",
-                                              cyberdeck_apps::app_type::foreground,
-                                              {"network"},
-                                              1,
-                                              k_task_stack_bytes,
-                                              1,
-                                              {"netdiag"},
-                                              1};
+constexpr cyberdeck_apps::manifest k_manifest{
+    "cyberdeck.netdiag",
+    "Network diagnostics",
+    "1.0.0",
+    "Explicit-target connectivity diagnostics",
+    "",
+    {"cyberdeck.event_log", "cyberdeck.wifi"},
+    2,
+    {"network"},
+    1,
+    6000,
+    "1",
+    cyberdeck_apps::app_type::foreground,
+    {"network"},
+    1,
+    k_task_stack_bytes,
+    1,
+    {"netdiag"},
+    1,
+    false,
+    {{{"netdiag [status|dns <host>|tcp <host> <port>|https <https-url>|result|cancel]",
+       "status: show Wi-Fi interface status\ndns <host>: resolve an explicit host\ntcp <host> <port>: test a TCP "
+       "connection\nhttps <https-url>: issue an HTTPS HEAD request\nresult: report the current operation; cancel: "
+       "request cancellation\nhost: 1..253 ASCII letters, digits, dots, or hyphens; port: decimal 1..65535\nURL: "
+       "https, at most 512 bytes; no userinfo, fragment, whitespace, or explicit port in authority\n"}}}};
 
 uint64_t monotonic_ms(void *) {
     return static_cast<uint64_t>(esp_timer_get_time() / 1000);

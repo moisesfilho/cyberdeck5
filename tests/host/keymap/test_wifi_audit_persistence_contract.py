@@ -120,7 +120,13 @@ def main() -> int:
     require("cyberdeck_wifi_audit_persistence.h" in makefile, "Makefile must depend on production header")
     require("test_wifi_audit_persistence_contract" in makefile, "Makefile must register the structural contract")
     require("test_wifi_audit_persistence" in makefile, "Makefile must register the behavioral target")
-    require("BINS" in makefile and "test_wifi_audit_persistence" in makefile.split("BINS", 1)[1].split("\n", 1)[0],
+    # Match only real list definitions: the Makefile legitimately mentions the
+    # token "BINS" in comments (e.g. explaining the binary/.PHONY split), and a
+    # naive first-occurrence lookup greys out that line and fails even when the
+    # behavioral binary is present in every BINS assignment.
+    bins_entries = " ".join(re.findall(r"(?m)^BINS\s*(?::=|\+=)\s*(.*)$", makefile))
+    require(bins_entries, "Makefile must define the host BINS list")
+    require("test_wifi_audit_persistence" in bins_entries,
             "behavioral binary must be cleaned by the host BINS list")
     require("-pthread" in makefile, "Makefile must link -pthread for the concurrency host test")
 

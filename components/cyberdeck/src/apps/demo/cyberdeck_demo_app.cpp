@@ -10,7 +10,8 @@ constexpr manifest k_manifest{
     "Proof application for the compiled-in runtime",
     "demo",
     {}, 0, {}, 0, 1000, "1", app_type::demo,
-    {"demo"}, 1, 2048, 2, {"demo"}, 1,
+    {"demo"}, 1, 2048, 2, {"demo"}, 1, false,
+    {{{"demo", "arguments are not declared; extra arguments are currently ignored\n"}}},
 };
 
 } // namespace
