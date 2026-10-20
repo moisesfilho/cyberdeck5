@@ -9,7 +9,12 @@ write/fsync/rename, recovery, rollback, ACK, and sidecar rules at the seam that
 now owns them.
 """
 from pathlib import Path
+import importlib.util
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
@@ -97,6 +102,808 @@ def require_absent(body: str, symbols: tuple[str, ...], message: str) -> None:
 def without_comments(source: str) -> str:
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     return re.sub(r"//[^\n]*", "", source)
+
+
+# ---------------------------------------------------------------------------
+# REQ-MIG-59 (sub-lote test_wifi_audit): approved incremental build form.
+#
+# The pilot (screen protection) owns the single approved shape for the
+# migrated host targets: one real artifact named <target>_bin that depends on
+# per-TU objects, each object compiled with the original flags/includes plus a
+# generated depfile, the generated depfiles included by the Makefile,
+# "Makefile" kept as a prerequisite of every recipe, and a .PHONY wrapper that
+# executes the binary exactly once.
+#
+# This contract consumes that checker instead of duplicating it, so the
+# requirement cannot drift into two different shapes.  On top of the shared
+# form it requires the Wi-Fi-audit specific rules: the per-TU objects live in
+# test_wifi_audit/, the legacy artifact name leaves BINS and enters
+# LEGACY_TEST_ARTIFACTS, the declared dependency set of the monolithic recipe
+# is preserved, and the aggregate keeps the scenario exactly once, in the same
+# relative order, and never through the legacy binary.
+#
+# The structural checks only read the Makefile.  The depfile scenarios are
+# answered by GNU make and the real compiler inside an isolated copy of the
+# tree: they prove the generated depfiles describe the real include graph.
+# ---------------------------------------------------------------------------
+
+WIFI_AUDIT_TARGET = "test_wifi_audit"
+WIFI_AUDIT_BIN = "test_wifi_audit_bin"
+WIFI_AUDIT_TEST_SOURCE = "test_wifi_audit.cpp"
+WIFI_AUDIT_PRODUCTION_SOURCE = "cyberdeck_wifi_audit.cpp"
+WIFI_AUDIT_OBJECT_DIR = "test_wifi_audit"
+WIFI_AUDIT_COMPILE_INCLUDES = ("-I../../../components/cyberdeck/include",)
+
+# The header shared by both translation units (make-relative path).
+WIFI_AUDIT_SHARED_HEADER = (
+    "../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit.h")
+# The persistence header declared by the pre-migration monolithic recipe.
+WIFI_AUDIT_PERSISTENCE_HEADER = (
+    "../../../components/cyberdeck/include/apps/wifi/"
+    "cyberdeck_wifi_audit_persistence.h")
+# A real project header that neither translation unit includes: the negative
+# control of the invalidation probe.
+WIFI_AUDIT_CONTROL_HEADER = (
+    "../../../components/cyberdeck/include/platform/display/screen_off.h")
+
+# The dependency set declared by the pre-migration monolithic recipe, which
+# the migrated object rules must keep.
+WIFI_AUDIT_REQUIRED_HEADERS = (WIFI_AUDIT_SHARED_HEADER,
+                               WIFI_AUDIT_PERSISTENCE_HEADER)
+
+# Both translation units include the shared audit header, so both migrated
+# object rules must declare it explicitly.
+WIFI_AUDIT_EVERY_OBJECT_HEADERS = (WIFI_AUDIT_SHARED_HEADER,)
+
+# The other Wi-Fi audit scenarios of the aggregate: the audit scenario stays
+# before them, in the same relative order of the pre-migration aggregate.
+WIFI_AUDIT_MUST_PRECEDE = ("test_wifi_audit_save_bin",
+                           "test_wifi_audit_persistence_bin")
+
+# The already-migrated in-repo precedent of the approved form.  The same
+# checker must accept it, otherwise the requirement would describe a shape the
+# repository never shipped.
+BLE_PRECEDENT_TARGET = "test_ble_types"
+BLE_PRECEDENT_BIN = "test_ble_types_bin"
+BLE_PRECEDENT_TEST_SOURCE = "test_ble_types.cpp"
+BLE_PRECEDENT_PRODUCTION_SOURCE = "cyberdeck_ble_types.cpp"
+BLE_PRECEDENT_COMPILE_INCLUDES = ("-Icontracts",
+                                  "-I../../../components/cyberdeck/include")
+
+PILOT_CONTRACT = (Path(__file__).resolve().parent /
+                  "test_screen_protection_contract.py")
+
+_PILOT_SYMBOLS = ("require_incremental_form", "EXPECTED_COMPILE_INCLUDES",
+                  "_MakeModel", "_compiled_source", "_object_for",
+                  "_depfile_dependencies")
+
+
+def _load_pilot():
+    """Load the single owner of the approved incremental build form.
+
+    The pilot contract is imported read-only: this contract reuses its make
+    model and structural checker so the requirement keeps exactly one
+    definition, and it fails closed when the owner is unavailable.
+    """
+    require(PILOT_CONTRACT.exists(),
+            f"the REQ-MIG-59 pilot contract is missing: {PILOT_CONTRACT}")
+    spec = importlib.util.spec_from_file_location(
+        "cyberdeck_incremental_form_pilot", PILOT_CONTRACT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for symbol in _PILOT_SYMBOLS:
+        require(hasattr(module, symbol),
+                f"the REQ-MIG-59 pilot contract must expose {symbol!r}")
+    return module
+
+
+def require_audit_incremental_form(makefile_text: str, target: str,
+                                   binary: str, test_source: str,
+                                   production_source: str, label: str,
+                                   includes: tuple, object_dir: str,
+                                   required_headers: tuple = (),
+                                   must_precede: tuple = (),
+                                   every_object_headers: tuple = ()) -> None:
+    """Require the approved incremental form of one host test target."""
+    pilot = _load_pilot()
+    original = pilot.EXPECTED_COMPILE_INCLUDES
+    pilot.EXPECTED_COMPILE_INCLUDES = includes
+    try:
+        pilot.require_incremental_form(makefile_text, target, binary,
+                                       test_source, production_source, label)
+    finally:
+        pilot.EXPECTED_COMPILE_INCLUDES = original
+    _require_audit_specific_form(pilot, makefile_text, target, binary, label,
+                                 object_dir, test_source, production_source,
+                                 required_headers, must_precede,
+                                 every_object_headers)
+
+
+def _require_audit_specific_form(pilot, makefile_text, target, binary, label,
+                                 object_dir, test_source, production_source,
+                                 required_headers, must_precede,
+                                 every_object_headers) -> None:
+    """Require the Wi-Fi-audit specific rules of the approved form."""
+    model = pilot._MakeModel(makefile_text)
+
+    # The artifact list swaps the legacy binary name for the new one.
+    bins = model.expand(model.variables.get("BINS", "")).split()
+    require(binary in bins,
+            f"{label}: BINS must list {binary} so the aggregate builds it and "
+            f"clean removes it")
+    require(target not in bins,
+            f"{label}: BINS must not keep the legacy artifact name {target}; "
+            f"the scenario is executed by the .PHONY wrapper, not by the build")
+    legacy = model.expand(
+        model.variables.get("LEGACY_TEST_ARTIFACTS", "")).split()
+    require(target in legacy,
+            f"{label}: LEGACY_TEST_ARTIFACTS must list {target} so clean "
+            f"removes the stale monolithic binary")
+
+    # The per-TU objects live in a dedicated directory, test unit first.
+    bin_rules = model.rules_for(binary)
+    require(len(bin_rules) == 1,
+            f"{label}: exactly one rule must produce {binary}")
+    objects = [item for item in model.expand(
+        " ".join(bin_rules[0].prerequisites)).split() if item.endswith(".o")]
+    require(len(objects) == 2,
+            f"{label}: the target has exactly two translation units (test and "
+            f"production), found {objects}")
+    for obj in objects:
+        require(obj.startswith(object_dir + "/"),
+                f"{label}: the per-TU objects must live in {object_dir}/, "
+                f"found {obj}")
+    compiled = {}
+    for obj in objects:
+        obj_rules = model.rules_for(obj)
+        require(len(obj_rules) == 1,
+                f"{label}: object {obj} must have exactly one compile rule")
+        source = pilot._compiled_source(model, obj_rules[0])
+        require(source,
+                f"{label}: object {obj} must compile exactly one translation "
+                f"unit")
+        compiled[source] = obj
+    test_object = pilot._object_for(compiled, test_source)
+    production_object = pilot._object_for(compiled, production_source)
+    require(objects.index(test_object) < objects.index(production_object),
+            f"{label}: the object list must keep the test object before the "
+            f"production object ({test_object} before {production_object})")
+
+    # The declared dependency set of the pre-migration monolithic recipe is
+    # preserved: both headers stay declared by the migrated object rules, and
+    # every translation unit keeps declaring the header it really includes.
+    declared: set = set()
+    for obj in objects:
+        obj_rules = model.rules_for(obj)
+        obj_prerequisites = model.expand(
+            " ".join(obj_rules[0].prerequisites)).split()
+        declared.update(obj_prerequisites)
+        for header in every_object_headers:
+            require(header in obj_prerequisites,
+                    f"{label}: the declared dependency set must keep "
+                    f"{header} on {obj}; both translation units include it")
+    for header in required_headers:
+        require(header in declared,
+                f"{label}: the declared dependency set must keep {header}")
+
+    # The aggregate runs the scenario exactly once, in the same relative
+    # order, and never through the legacy binary.
+    aggregate_rules = model.rules_for("test")
+    require(len(aggregate_rules) == 1,
+            f"{label}: the aggregate target test must exist exactly once")
+    aggregate_raw = aggregate_rules[0].recipe_text()
+    positions: list = []
+    for match in re.finditer(r"\./\$\(([A-Za-z_][A-Za-z0-9_]*)\)",
+                              aggregate_raw):
+        # The make model only resolves the $(VAR) reference form, so the
+        # captured variable name must be expanded as a reference and not as a
+        # literal word.
+        if model.expand(f"$({match.group(1)})") == binary:
+            positions.append(match.start())
+    for match in re.finditer(
+            rf"(?<![\w./])\./{re.escape(binary)}\b", aggregate_raw):
+        positions.append(match.start())
+    for match in re.finditer(
+            rf"\$\(MAKE\)[^\n]*?\b{re.escape(target)}\b", aggregate_raw):
+        positions.append(match.start())
+    require(len(positions) == 1,
+            f"{label}: the aggregate must execute the {target} scenario exactly "
+            f"once, found {len(positions)}")
+    for other in must_precede:
+        for match in re.finditer(rf"(?<![\w./])\./{re.escape(other)}\b",
+                                 aggregate_raw):
+            require(positions[0] < match.start(),
+                    f"{label}: the aggregate must keep the relative order of "
+                    f"the Wi-Fi audit scenarios: {target} stays before "
+                    f"{other}")
+    require(not re.search(rf"(?<![\w./])\./{re.escape(target)}(?![\w])",
+                          aggregate_raw),
+            f"{label}: the aggregate must not execute the legacy binary "
+            f"{target}; the scenario runs through {binary}")
+
+
+def check_incremental_precedent(makefile_text: str) -> None:
+    """The same checker must accept the already-migrated BLE target."""
+    require_audit_incremental_form(
+        makefile_text, BLE_PRECEDENT_TARGET, BLE_PRECEDENT_BIN,
+        BLE_PRECEDENT_TEST_SOURCE, BLE_PRECEDENT_PRODUCTION_SOURCE,
+        "host Makefile (migrated precedent)", BLE_PRECEDENT_COMPILE_INCLUDES,
+        BLE_PRECEDENT_TARGET)
+
+
+# The approved rules of the target, expressed with the variable names the host
+# Makefile already declares.  Each object rule declares the headers its own
+# translation unit includes, exactly like the migrated BLE/screen targets.
+APPROVED_WIFI_AUDIT_RULES = "\n".join([
+    "test_wifi_audit/test.o: test_wifi_audit.cpp $(WIFI_AUDIT_HDR) Makefile",
+    "\t@mkdir -p $(@D)",
+    "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@",
+    "",
+    "test_wifi_audit/audit.o: $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_HDR) $(WIFI_AUDIT_PERSISTENCE_HDR) Makefile",
+    "\t@mkdir -p $(@D)",
+    "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@",
+    "",
+    "$(WIFI_AUDIT_BIN): $(WIFI_AUDIT_OBJS) Makefile",
+    "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_AUDIT_OBJS) -o $@",
+    "",
+    ".PHONY: test_wifi_audit",
+    "test_wifi_audit: $(WIFI_AUDIT_BIN)",
+    "\t@./$(WIFI_AUDIT_BIN)",
+    "",
+])
+
+# Approved form of the target, mirroring the shipped test_ble_types recipe.
+# It is the baseline of the mutation tests below: every mutation removes
+# exactly one element of this form and the checker must reject it.
+APPROVED_WIFI_AUDIT_MAKEFILE = "\n".join([
+    "CXX      ?= g++",
+    "CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O2",
+    "",
+    "WIFI_AUDIT_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit.cpp",
+    "WIFI_AUDIT_HDR := ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit.h",
+    "WIFI_AUDIT_PERSISTENCE_HDR := ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit_persistence.h",
+    "WIFI_AUDIT_BIN := test_wifi_audit_bin",
+    "WIFI_AUDIT_OBJS := test_wifi_audit/test.o test_wifi_audit/audit.o",
+    "",
+    "BINS := $(WIFI_AUDIT_BIN)",
+    "LEGACY_TEST_ARTIFACTS := test_wifi_audit",
+    "MAKE_DEPFILES := $(addsuffix .d,$(WIFI_AUDIT_OBJS))",
+    "",
+    "%.o.d: ;",
+    "-include $(MAKE_DEPFILES)",
+    "",
+    "test_wifi_audit/test.o: test_wifi_audit.cpp $(WIFI_AUDIT_HDR) Makefile",
+    "\t@mkdir -p $(@D)",
+    "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@",
+    "",
+    "test_wifi_audit/audit.o: $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_HDR) $(WIFI_AUDIT_PERSISTENCE_HDR) Makefile",
+    "\t@mkdir -p $(@D)",
+    "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@",
+    "",
+    "$(WIFI_AUDIT_BIN): $(WIFI_AUDIT_OBJS) Makefile",
+    "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_AUDIT_OBJS) -o $@",
+    "",
+    ".PHONY: test_wifi_audit",
+    "test_wifi_audit: $(WIFI_AUDIT_BIN)",
+    "\t@./$(WIFI_AUDIT_BIN)",
+    "",
+    "test-build: $(BINS)",
+    "",
+    "test: test-build",
+    "\t@./$(WIFI_AUDIT_BIN)",
+    "",
+    "clean:",
+    "\trm -f $(BINS)",
+    "\trm -rf test_wifi_audit",
+    "\trm -f $(LEGACY_TEST_ARTIFACTS)",
+    "",
+])
+
+# The pre-migration monolithic recipe, captured as the baseline of the
+# dependency set that the migration must preserve.
+MONOLITHIC_WIFI_AUDIT_RULE = (
+    "test_wifi_audit: test_wifi_audit.cpp $(WIFI_AUDIT_SRC) "
+    "../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit.h "
+    "$(WIFI_AUDIT_PERSISTENCE_HDR) Makefile\n"
+    "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include "
+    "test_wifi_audit.cpp $(WIFI_AUDIT_SRC) -o test_wifi_audit\n")
+
+
+def _mutate(text: str, old: str, new: str, label: str) -> str:
+    require(old in text,
+            f"mutation[{label}] could not be applied to the approved fixture")
+    return text.replace(old, new, 1)
+
+
+def check_mutation_detection() -> None:
+    """Removing one element of the approved form must be rejected.
+
+    Without these mutations the structural check could accept a Makefile that
+    silently lost the depfile include, one of the original flags/includes, the
+    Makefile prerequisite, the artifact list entry, the run wrapper or the
+    single aggregate execution.
+    """
+    require_audit_incremental_form(
+        APPROVED_WIFI_AUDIT_MAKEFILE, WIFI_AUDIT_TARGET, WIFI_AUDIT_BIN,
+        WIFI_AUDIT_TEST_SOURCE, WIFI_AUDIT_PRODUCTION_SOURCE,
+        "approved fixture", WIFI_AUDIT_COMPILE_INCLUDES,
+        WIFI_AUDIT_OBJECT_DIR, WIFI_AUDIT_REQUIRED_HEADERS,
+        WIFI_AUDIT_MUST_PRECEDE, WIFI_AUDIT_EVERY_OBJECT_HEADERS)
+
+    mutations = (
+        ("depfile flag removed from the test translation unit",
+         "$(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d",
+         "$(CXXFLAGS) -I../../../components/cyberdeck/include -MF $@.d",
+         "-MMD -MP"),
+        ("depfile output path removed from the test translation unit",
+         "-MMD -MP -MF $@.d", "-MMD -MP", "-MF"),
+        ("depfile include removed from the Makefile",
+         "-include $(MAKE_DEPFILES)\n", "", "-include"),
+        ("the generated depfiles dropped from the depfile list",
+         "MAKE_DEPFILES := $(addsuffix .d,$(WIFI_AUDIT_OBJS))",
+         "MAKE_DEPFILES :=", "depfile include"),
+        ("the original compile flag removed from the test translation unit",
+         "$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include",
+         "$(CXX) -I../../../components/cyberdeck/include", "$(CXXFLAGS)"),
+        ("the original include path removed from the test translation unit",
+         "$(CXXFLAGS) -I../../../components/cyberdeck/include", "$(CXXFLAGS)",
+         "original include path"),
+        ("the original compile flag removed from the production translation unit",
+         "$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@\n\n$(WIFI_AUDIT_BIN)",
+         "$(CXX) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@\n\n$(WIFI_AUDIT_BIN)",
+         "$(CXXFLAGS)"),
+        ("the Makefile prerequisite removed from the test object rule",
+         "$(WIFI_AUDIT_HDR) Makefile",
+         "$(WIFI_AUDIT_HDR)", "Makefile prerequisite"),
+        ("the Makefile prerequisite removed from the link rule",
+         "$(WIFI_AUDIT_OBJS) Makefile", "$(WIFI_AUDIT_OBJS)",
+         "Makefile prerequisite"),
+        ("the .PHONY wrapper removed", ".PHONY: test_wifi_audit\n", "", ".PHONY"),
+        ("the artifact dropped from BINS",
+         "BINS := $(WIFI_AUDIT_BIN)", "BINS :=", "BINS must list"),
+        ("the legacy artifact name kept in BINS",
+         "BINS := $(WIFI_AUDIT_BIN)",
+         "BINS := $(WIFI_AUDIT_BIN) test_wifi_audit", "legacy artifact name"),
+        ("the legacy artifact name dropped from LEGACY_TEST_ARTIFACTS",
+         "LEGACY_TEST_ARTIFACTS := test_wifi_audit",
+         "LEGACY_TEST_ARTIFACTS :=", "LEGACY_TEST_ARTIFACTS"),
+        ("the declared header dependency dropped",
+         "test_wifi_audit/test.o: test_wifi_audit.cpp $(WIFI_AUDIT_HDR) Makefile",
+         "test_wifi_audit/test.o: test_wifi_audit.cpp Makefile",
+         "declared dependency set"),
+        ("the persistence header dropped from the production object rule",
+         "test_wifi_audit/audit.o: $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_HDR) $(WIFI_AUDIT_PERSISTENCE_HDR) Makefile",
+         "test_wifi_audit/audit.o: $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_HDR) Makefile",
+         "declared dependency set"),
+        ("the binary made to depend on the source instead of the per-TU objects",
+         "$(WIFI_AUDIT_BIN): $(WIFI_AUDIT_OBJS) Makefile",
+         "$(WIFI_AUDIT_BIN): $(WIFI_AUDIT_SRC) Makefile", "per-TU objects"),
+        ("the link order reversed",
+         "WIFI_AUDIT_OBJS := test_wifi_audit/test.o test_wifi_audit/audit.o",
+         "WIFI_AUDIT_OBJS := test_wifi_audit/audit.o test_wifi_audit/test.o",
+         "link order"),
+        ("the aggregate execution duplicated",
+         "\t@./$(WIFI_AUDIT_BIN)\n\nclean:", "\t@./$(WIFI_AUDIT_BIN)\n\t@./$(WIFI_AUDIT_BIN)\n\nclean:",
+         "exactly once"),
+        ("the aggregate execution removed",
+         "\t@./$(WIFI_AUDIT_BIN)\n\nclean:", "\nclean:", "exactly once"),
+        ("the legacy binary executed next to the new artifact",
+         "\t@./$(WIFI_AUDIT_BIN)\n\nclean:",
+         "\t@./$(WIFI_AUDIT_BIN)\n\t@./test_wifi_audit\n\nclean:", "legacy binary"),
+        ("the per-TU object directory dropped from clean",
+         "\trm -rf test_wifi_audit\n", "", "per-TU object directory"),
+        ("the per-TU object directory removed after the legacy artifact list",
+         "\trm -rf test_wifi_audit\n\trm -f $(LEGACY_TEST_ARTIFACTS)\n",
+         "\trm -f $(LEGACY_TEST_ARTIFACTS)\n\trm -rf test_wifi_audit\n",
+         "before the legacy artifact list"),
+    )
+    rejected = 0
+    for label, old, new, marker in mutations:
+        mutated = _mutate(APPROVED_WIFI_AUDIT_MAKEFILE, old, new, label)
+        try:
+            require_audit_incremental_form(
+                mutated, WIFI_AUDIT_TARGET, WIFI_AUDIT_BIN,
+                WIFI_AUDIT_TEST_SOURCE, WIFI_AUDIT_PRODUCTION_SOURCE,
+                f"mutation[{label}]", WIFI_AUDIT_COMPILE_INCLUDES,
+                WIFI_AUDIT_OBJECT_DIR, WIFI_AUDIT_REQUIRED_HEADERS,
+                WIFI_AUDIT_MUST_PRECEDE, WIFI_AUDIT_EVERY_OBJECT_HEADERS)
+        except AssertionError as error:
+            require(marker in str(error),
+                    f"mutation[{label}] was rejected, but not for the expected "
+                    f"reason {marker!r}: {error}")
+            rejected += 1
+            continue
+        raise AssertionError(
+            f"mutation[{label}] was accepted: the structural check does not "
+            f"detect the removed element")
+    print(f"OK: REQ-MIG-59 mutation harness {rejected + 1}/{rejected + 1} "
+          f"(1 positive accepted, {rejected} negatives rejected)")
+
+
+def _migrated_copy(makefile_text: str) -> str:
+    """Return a copy of the host Makefile with the target in the approved form.
+
+    Only the in-memory copy changes; the repository Makefile is never edited
+    by this contract.  When the monolithic recipe is already gone the target
+    is migrated, and the copy is the file itself: the same helper therefore
+    works before and after the migration lands.
+    """
+    if MONOLITHIC_WIFI_AUDIT_RULE not in makefile_text:
+        require_audit_incremental_form(
+            makefile_text, WIFI_AUDIT_TARGET, WIFI_AUDIT_BIN,
+            WIFI_AUDIT_TEST_SOURCE, WIFI_AUDIT_PRODUCTION_SOURCE,
+            "already-migrated host Makefile", WIFI_AUDIT_COMPILE_INCLUDES,
+            WIFI_AUDIT_OBJECT_DIR, WIFI_AUDIT_REQUIRED_HEADERS,
+            WIFI_AUDIT_MUST_PRECEDE, WIFI_AUDIT_EVERY_OBJECT_HEADERS)
+        return makefile_text
+
+    migrated = makefile_text
+
+    # 1. the new artifact/object variables.
+    anchor = ("WIFI_AUDIT_PERSISTENCE_HDR := "
+              "../../../components/cyberdeck/include/apps/wifi/"
+              "cyberdeck_wifi_audit_persistence.h\n")
+    require(anchor in migrated,
+            "the migrated copy needs the WIFI_AUDIT_PERSISTENCE_HDR "
+            "declaration")
+    migrated = migrated.replace(anchor, anchor + (
+        "WIFI_AUDIT_HDR := ../../../components/cyberdeck/include/apps/wifi/"
+        "cyberdeck_wifi_audit.h\n"
+        "WIFI_AUDIT_BIN := test_wifi_audit_bin\n"
+        "WIFI_AUDIT_OBJS := test_wifi_audit/test.o test_wifi_audit/audit.o\n"),
+        1)
+
+    # 2. the approved rules replace the monolithic recipe.
+    require(MONOLITHIC_WIFI_AUDIT_RULE in migrated,
+            "the migrated copy needs the current test_wifi_audit rule")
+    migrated = migrated.replace(MONOLITHIC_WIFI_AUDIT_RULE,
+                                APPROVED_WIFI_AUDIT_RULES, 1)
+
+    lines = migrated.split("\n")
+
+    # 3. the artifact list swaps the legacy name for the new artifact.
+    for index, line in enumerate(lines):
+        if line.startswith("BINS := ") and re.search(
+                r"(?<![\w])test_wifi_audit(?![\w])", line):
+            lines[index] = re.sub(r"(?<![\w])test_wifi_audit(?![\w])",
+                                  WIFI_AUDIT_BIN, line)
+            break
+    else:
+        raise AssertionError("the migrated copy needs the BINS declaration")
+
+    # 4. the legacy artifact name becomes a cleanable legacy artifact.
+    for index, line in enumerate(lines):
+        if line.startswith("LEGACY_TEST_ARTIFACTS :="):
+            lines[index] = f"{line} {WIFI_AUDIT_TARGET}"
+            break
+    else:
+        raise AssertionError(
+            "the migrated copy needs the LEGACY_TEST_ARTIFACTS declaration")
+
+    # 5. the generated depfiles of the migrated objects are included.
+    for index, line in enumerate(lines):
+        if line.startswith("MAKE_DEPFILES := $(addsuffix .d,"):
+            lines[index] = line.replace("$(addsuffix .d,",
+                                        "$(addsuffix .d,$(WIFI_AUDIT_OBJS) ", 1)
+            break
+    else:
+        raise AssertionError(
+            "the migrated copy needs the MAKE_DEPFILES declaration")
+
+    migrated = "\n".join(lines)
+
+    # 6. the aggregate runs the migrated artifact.
+    require("\t@./test_wifi_audit\n" in migrated,
+            "the migrated copy needs the aggregate execution of the scenario")
+    migrated = migrated.replace("\t@./test_wifi_audit\n",
+                                "\t@./$(WIFI_AUDIT_BIN)\n", 1)
+
+    # 7. clean removes the per-TU object directory, before the legacy list.
+    lines = migrated.split("\n")
+    clean_index = next((index for index, line in enumerate(lines)
+                        if line.startswith("clean:")), -1)
+    require(clean_index >= 0, "the migrated copy needs the clean target")
+    patched = False
+    for index in range(clean_index + 1, len(lines)):
+        line = lines[index]
+        if not line.startswith("\t"):
+            break
+        if patched:
+            continue
+        if line.lstrip("\t").startswith("rm -rf"):
+            lines[index] = line.replace("rm -rf ", "rm -rf test_wifi_audit ", 1)
+            patched = True
+    require(patched,
+            "the migrated copy needs the clean recipe to remove directories")
+    migrated = "\n".join(lines)
+
+    return migrated
+
+
+def check_green_path(makefile_text: str) -> None:
+    """The approved form must be reachable in the real host Makefile.
+
+    The migrated form is the template for the remaining targets, so the
+    contract must stay satisfiable: the approved form is applied to an
+    in-memory copy of the real Makefile and must be accepted there.
+    """
+    try:
+        require_audit_incremental_form(
+            makefile_text, WIFI_AUDIT_TARGET, WIFI_AUDIT_BIN,
+            WIFI_AUDIT_TEST_SOURCE, WIFI_AUDIT_PRODUCTION_SOURCE,
+            "host Makefile (wifi audit target)", WIFI_AUDIT_COMPILE_INCLUDES,
+            WIFI_AUDIT_OBJECT_DIR, WIFI_AUDIT_REQUIRED_HEADERS,
+            WIFI_AUDIT_MUST_PRECEDE, WIFI_AUDIT_EVERY_OBJECT_HEADERS)
+        return
+    except AssertionError:
+        pass
+    migrated = _migrated_copy(makefile_text)
+    require_audit_incremental_form(
+        migrated, WIFI_AUDIT_TARGET, WIFI_AUDIT_BIN, WIFI_AUDIT_TEST_SOURCE,
+        WIFI_AUDIT_PRODUCTION_SOURCE, "migrated copy of the host Makefile",
+        WIFI_AUDIT_COMPILE_INCLUDES, WIFI_AUDIT_OBJECT_DIR,
+        WIFI_AUDIT_REQUIRED_HEADERS, WIFI_AUDIT_MUST_PRECEDE,
+        WIFI_AUDIT_EVERY_OBJECT_HEADERS)
+
+
+def check_wifi_audit_incremental(makefile_text: str) -> None:
+    """The target must already carry the approved incremental form.
+
+    This is the RED structural contract for REQ-MIG-59: it stays red until
+    the Makefile migration of this target lands, and it fails only on the
+    missing incremental structure, never on an unrelated regression.
+    """
+    try:
+        require_audit_incremental_form(
+            makefile_text, WIFI_AUDIT_TARGET, WIFI_AUDIT_BIN,
+            WIFI_AUDIT_TEST_SOURCE, WIFI_AUDIT_PRODUCTION_SOURCE,
+            "host Makefile (wifi audit target)", WIFI_AUDIT_COMPILE_INCLUDES,
+            WIFI_AUDIT_OBJECT_DIR, WIFI_AUDIT_REQUIRED_HEADERS,
+            WIFI_AUDIT_MUST_PRECEDE, WIFI_AUDIT_EVERY_OBJECT_HEADERS)
+    except AssertionError as error:
+        raise AssertionError(
+            f"{error} (REQ-MIG-59 sub-lote test_wifi_audit: expected RED "
+            f"until the incremental {WIFI_AUDIT_TARGET} migration lands)"
+        ) from None
+
+
+# ---------------------------------------------------------------------------
+# REQ-MIG-59 (sub-lote test_wifi_audit): depfile-driven invalidation.
+#
+# The incremental form only pays off when the generated depfiles describe the
+# REAL include graph of both translation units.  These scenarios are answered
+# by GNU make itself: an isolated copy of the tree is built with the real
+# Makefile and the real compiler, and the rebuild plan is read from
+# `make -n -W <header>`, i.e. make's own dependency engine answering "what
+# would be rebuilt if this header changed".
+#
+# The audit header is included by BOTH translation units, so touching it must
+# invalidate both objects and the link.  The control header is a real project
+# header that neither unit includes: touching it must invalidate nothing.
+# ---------------------------------------------------------------------------
+
+
+def _scratch_relative(make_relative: str) -> str:
+    """Translate a Makefile-relative path into a repository-relative one."""
+    prefix = "../../../"
+    require(make_relative.startswith(prefix),
+            f"the host Makefile path {make_relative!r} must stay inside the "
+            f"repository tree")
+    return make_relative[len(prefix):]
+
+
+def _scratch_root() -> Path:
+    """Return a writable directory for the isolated fixture."""
+    for candidate in (os.environ.get("TMPDIR", ""), "/tmp/opencode",
+                      tempfile.gettempdir()):
+        if candidate and os.path.isdir(candidate) and os.access(candidate, os.W_OK):
+            return Path(candidate)
+    return Path(tempfile.gettempdir())
+
+
+def _wifi_audit_fixture_files(makefile_text: str) -> dict:
+    """Return the scratch-relative content of every file the build needs."""
+    return {
+        "tests/host/keymap/Makefile": makefile_text,
+        "tests/host/keymap/test_wifi_audit.cpp":
+            (ROOT / "tests/host/keymap/test_wifi_audit.cpp").read_text(
+                encoding="utf-8"),
+        _scratch_relative(
+            "../../../components/cyberdeck/src/apps/wifi/"
+            "cyberdeck_wifi_audit.cpp"): AUDIT.read_text(encoding="utf-8"),
+        _scratch_relative(WIFI_AUDIT_SHARED_HEADER):
+            (ROOT / _scratch_relative(WIFI_AUDIT_SHARED_HEADER)).read_text(
+                encoding="utf-8"),
+        _scratch_relative(WIFI_AUDIT_PERSISTENCE_HEADER):
+            PERSISTENCE_HEADER.read_text(encoding="utf-8"),
+        _scratch_relative(WIFI_AUDIT_CONTROL_HEADER):
+            (ROOT / _scratch_relative(WIFI_AUDIT_CONTROL_HEADER)).read_text(
+                encoding="utf-8"),
+    }
+
+
+def _materialize_fixture(files: dict) -> Path:
+    """Write the fixture into an isolated directory and return its root."""
+    scratch = Path(tempfile.mkdtemp(prefix="cyberdeck-wifi-audit-",
+                                    dir=str(_scratch_root())))
+    for relative, content in files.items():
+        path = scratch / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    return scratch
+
+
+def _make(build_dir: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run make inside the isolated fixture with a clean environment."""
+    env = dict(os.environ)
+    # The contract itself runs under make: inheriting the parent jobserver
+    # flags would leak -j into the fixture build.
+    env.pop("MAKEFLAGS", None)
+    env.pop("MAKELEVEL", None)
+    env["LC_ALL"] = "C"
+    return subprocess.run(["make", "--no-print-directory", *args],
+                          cwd=str(build_dir), capture_output=True, text=True,
+                          env=env)
+
+
+def _rebuild_plan(build_dir: Path, headers: tuple) -> set:
+    """Return the artifacts make would rebuild if the given headers changed."""
+    args = ["-n"]
+    for header in headers:
+        args += ["-W", header]
+    args.append(WIFI_AUDIT_BIN)
+    result = _make(build_dir, *args)
+    require(result.returncode == 0,
+            f"the dry run of the isolated fixture failed: "
+            f"{result.stderr.strip()[-800:]}")
+    return set(re.findall(r"(?:^|\s)-o\s+(\S+)", result.stdout))
+
+
+def _check_wifi_audit_depfile_scenarios(files: dict, label: str) -> None:
+    """Build the fixture in isolation and check the invalidation scenarios."""
+    pilot = _load_pilot()
+    scratch = _materialize_fixture(files)
+    try:
+        build_dir = scratch / "tests" / "host" / "keymap"
+        result = _make(build_dir, WIFI_AUDIT_BIN)
+        require(result.returncode == 0,
+                f"{label}: the migrated target must build in isolation: "
+                f"{(result.stderr.strip() or result.stdout.strip())[-800:]}")
+
+        model = pilot._MakeModel(files["tests/host/keymap/Makefile"])
+        bin_rules = model.rules_for(WIFI_AUDIT_BIN)
+        require(len(bin_rules) == 1,
+                f"{label}: exactly one rule must produce {WIFI_AUDIT_BIN}")
+        objects = [item for item in model.expand(
+            " ".join(bin_rules[0].prerequisites)).split()
+            if item.endswith(".o")]
+        source_to_object = {}
+        for obj in objects:
+            obj_rules = model.rules_for(obj)
+            require(len(obj_rules) == 1,
+                    f"{label}: object {obj} must have exactly one compile rule")
+            source = pilot._compiled_source(model, obj_rules[0])
+            require(source,
+                    f"{label}: object {obj} must compile exactly one "
+                    f"translation unit")
+            source_to_object[source] = obj
+        test_object = pilot._object_for(source_to_object,
+                                        WIFI_AUDIT_TEST_SOURCE)
+        production_object = pilot._object_for(source_to_object,
+                                               WIFI_AUDIT_PRODUCTION_SOURCE)
+
+        # The generated depfiles and their content are required for both
+        # translation units: they are what makes the scenarios meaningful.
+        dependencies = {}
+        for owner in (test_object, production_object):
+            depfile = build_dir / f"{owner}.d"
+            require(depfile.exists() and depfile.stat().st_size > 0,
+                    f"{label}: {owner} must generate a non-empty depfile "
+                    f"({owner}.d)")
+            dependencies[owner] = pilot._depfile_dependencies(
+                depfile.read_text(encoding="utf-8"), owner)
+
+        def stale_objects(header: str) -> set:
+            return {obj for obj, deps in dependencies.items() if header in deps}
+
+        def expected_plan(header: str) -> set:
+            stale = stale_objects(header)
+            return stale | ({WIFI_AUDIT_BIN} if stale else set())
+
+        # (a) the shared audit header invalidates both objects and the link.
+        shared_stale = stale_objects(WIFI_AUDIT_SHARED_HEADER)
+        require(shared_stale == {test_object, production_object},
+                f"{label}: shared-header scenario: the shared header "
+                f"{WIFI_AUDIT_SHARED_HEADER} must invalidate {test_object} and "
+                f"{production_object}; the generated depfiles bind it to "
+                f"{sorted(shared_stale)}")
+        plan = _rebuild_plan(build_dir, (WIFI_AUDIT_SHARED_HEADER,))
+        require(plan == expected_plan(WIFI_AUDIT_SHARED_HEADER) ==
+                {test_object, production_object, WIFI_AUDIT_BIN},
+                f"{label}: shared-header scenario: touching "
+                f"{WIFI_AUDIT_SHARED_HEADER} must rebuild {test_object}, "
+                f"{production_object} and {WIFI_AUDIT_BIN}; make planned "
+                f"{sorted(plan)}")
+
+        # (b) the probe follows the real include graph: a header neither
+        #     translation unit includes must invalidate nothing.
+        require(WIFI_AUDIT_CONTROL_HEADER not in dependencies[test_object] and
+                WIFI_AUDIT_CONTROL_HEADER not in
+                dependencies[production_object],
+                f"{label}: the control header {WIFI_AUDIT_CONTROL_HEADER} must "
+                f"not be a dependency of the migrated translation units")
+        plan = _rebuild_plan(build_dir, (WIFI_AUDIT_CONTROL_HEADER,))
+        require(not plan,
+                f"{label}: control scenario: touching "
+                f"{WIFI_AUDIT_CONTROL_HEADER}, which neither translation unit "
+                f"includes, must rebuild nothing; make planned {sorted(plan)}")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def check_depfile_invalidation(makefile_text: str) -> None:
+    """The migrated target must invalidate the right objects per header."""
+    if MONOLITHIC_WIFI_AUDIT_RULE in makefile_text:
+        # The migration has not landed yet: the derived copy carries the shape
+        # the migration must have.
+        _check_wifi_audit_depfile_scenarios(
+            _wifi_audit_fixture_files(_migrated_copy(makefile_text)),
+            "migrated copy of the host Makefile")
+    else:
+        # The migration landed: the real host Makefile is the subject.
+        _check_wifi_audit_depfile_scenarios(
+            _wifi_audit_fixture_files(makefile_text),
+            "host Makefile (migrated)")
+    _check_wifi_audit_depfile_scenarios(
+        _wifi_audit_fixture_files(APPROVED_WIFI_AUDIT_MAKEFILE),
+        "approved fixture")
+
+
+def check_depfile_mutation_detection() -> None:
+    """A broken include graph must be rejected by the invalidation scenarios.
+
+    Without these mutations the scenarios could pass on a fixture whose
+    depfiles do not describe the real includes of both translation units.
+    """
+    base = _wifi_audit_fixture_files(
+        _migrated_copy(MAKEFILE.read_text(encoding="utf-8")))
+    production_source = base[
+        "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit.cpp"]
+    shared_header = base[
+        "components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit.h"]
+
+    detached = production_source.replace(
+        '#include "apps/wifi/cyberdeck_wifi_audit.h"',
+        '#include "apps/wifi/cyberdeck_wifi_audit_alias.h"')
+    require(detached != production_source,
+            "mutation[the production translation unit stops depending on the "
+            "shared header] could not be applied to the real production source")
+
+    mutations = (
+        ("the production translation unit stops depending on the shared header",
+         {"components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit.cpp":
+          detached,
+          "components/cyberdeck/include/apps/wifi/"
+          "cyberdeck_wifi_audit_alias.h": shared_header},
+         "shared-header scenario"),
+    )
+    rejected = 0
+    for label, overrides, marker in mutations:
+        files = dict(base)
+        files.update(overrides)
+        try:
+            _check_wifi_audit_depfile_scenarios(files, f"mutation[{label}]")
+        except AssertionError as error:
+            require(marker in str(error),
+                    f"mutation[{label}] was rejected, but not for the expected "
+                    f"reason {marker!r}: {error}")
+            rejected += 1
+            continue
+        raise AssertionError(
+            f"mutation[{label}] was accepted: the invalidation scenarios do "
+            f"not detect the broken include graph")
+    print(f"OK: REQ-MIG-59 depfile mutation harness {rejected + 1}/{rejected + 1} "
+          f"(1 positive accepted, {rejected} negatives rejected)")
 
 
 def main() -> int:
@@ -771,6 +1578,27 @@ def main() -> int:
                    ("lvgl", "bsp_display", "cyberdeck_ui", "xqueuesend", "xtaskcreate"),
                    "persistence seam must remain independent of UI/worker callbacks")
 
+    # REQ-MIG-59: the approved incremental build form of this target.  The
+    # precedent and the mutation harness run first, so a failure below can
+    # only mean "the migration has not landed yet" and never an unrelated
+    # regression of the checker itself.
+    check_incremental_precedent(makefile)
+    check_mutation_detection()
+    # The approved form must be reachable before the target is asserted: the
+    # green path proves the requirement is satisfiable, so the RED below can
+    # only mean "the migration has not landed yet".
+    check_green_path(makefile)
+    print("OK: REQ-MIG-59 green path accepted "
+          "(approved incremental form is reachable)")
+    check_depfile_invalidation(makefile)
+    print("OK: REQ-MIG-59 depfile scenarios accepted "
+          "(the shared audit header invalidates both objects)")
+    check_depfile_mutation_detection()
+    print("OK: REQ-MIG-59 depfile mutation harness accepted "
+          "(a broken include graph is rejected)")
+    check_wifi_audit_incremental(makefile)
+    print("OK: REQ-MIG-59 incremental form accepted "
+          "(per-TU objects, depfiles, link and run wrapper)")
     print("PASS: wifi audit structural and safety contracts")
     return 0
 

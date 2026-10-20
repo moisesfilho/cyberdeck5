@@ -56,16 +56,50 @@ sempre executam o binário atual. No agregado, os cinco cenários mantêm sua or
 e executam uma vez cada. `clean` remove binários legados e diretórios de objetos/
   depfiles; o padrão existente de `.gitignore` cobre esses artefatos.
 
-Os 22 alvos focados migrados nesta etapa mantêm compilação monolítica, sem
-alterar TUs, flags ou ordem: o artefato é `<alvo>_bin` e o alvo público `.PHONY`
-depende dele e sempre executa o teste. `Makefile` é pré-requisito do artefato;
-`BINS` lista os artefatos, e `clean` também remove nomes legados via
-`LEGACY_TEST_ARTIFACTS`. O conjunto inclui também os recém-migrados
-`test_netdiag_dns_adapter`, `test_netdiag_https_adapter` e `test_netdiag_app`.
-Como a receita preserva um único link, mudanças
-transitivas de headers são observadas somente pelos pré-requisitos declarados,
-como nos demais alvos monolíticos existentes; depfiles por TU ficam para etapa
-posterior. O alvo composto `test_ble_bond_reconnect` agora depende e executa os
+Os alvos incrementais por TU estão declarados no `Makefile`: objetos próprios
+por alvo, depfiles `.o.d` em `MAKE_DEPFILES`, artefatos `_bin` em `BINS`, wrappers
+`.PHONY` para executar cenários e limpeza dos diretórios. A ordem de TUs/link,
+flags e includes originais é preservada. O contrato estrutural fixa a lista
+dos alvos cobertos e verifica seus objetos, flags e dependências. Os pilotos
+`test_screen_protection` e `test_wifi_audit` também têm contratos próprios,
+`test_screen_protection_contract.py` e `test_wifi_audit_contract.py`, que cobrem
+suas respectivas migrações.
+
+`tests/host/keymap/test_incremental_batch_contract.py` cobre 30 alvos: os onze
+alvos migrados anteriormente, os seis Tier-A de Wi-Fi event dispatch,
+persistence queue/coordination, clock formatter, terminal filter e edit line,
+os três alvos de indicador Wi-Fi, layout do ícone e menu, e os quatro alvos de
+histórico, evento do teclado, log recente e máquina de estados Wi-Fi, além do
+coordenador de rede, guarda de eco SSH, compositor de linhas SSH, mapa de teclas,
+BMP e orientação. Verifica paridade
+de TUs/flags contra o Makefile baseline,
+dependências diretas/transitivas, controle negativo e mutações. O alvo
+`test_incremental_batch_contract` executa esse contrato uma vez no agregado;
+ele não é artefato de `BINS`.
+
+Os 27 candidatos finais (shell/runtime, editor, diagnóstico de rede, bateria,
+cat, BLE, display, known hosts e poweroff) usam objetos e depfiles próprios
+`*_MIG_OBJS` no `Makefile`, mantendo a ordem e as flags de link de cada cenário.
+`tests/host/keymap/test_incremental_final_contract.py` compara os 27 conjuntos
+de TUs/flags e ordem de link à fixture imutável
+`tests/host/keymap/incremental_final_baseline.json` extraída das receitas no
+commit `59f4758`, verifica 176 depfiles, `BINS`, wrappers, agregado e limpeza;
+o alvo `test_incremental_final_contract` roda no agregado após o build.
+Os contratos `test_shell_help_contract.py`, `test_window_manager_contract.py`
+e `test_coverage_scope_guard.py` verificam as ligações por objeto/depfile após
+a migração, sem exigir a receita monolítica antiga.
+
+O progresso é de 59/59 candidatos originalmente monolíticos elegíveis;
+nenhum permanece pendente.
+Os 13 alvos per-TU que já eram incrementais antes desta tarefa não integram esse
+denominador. Também ficam excluídos os alvos inelegíveis `test_event_log_shim`,
+`test_cat_worker_runtime` e `test_app_runtime_tsan`, e os objetos
+`test_cat_runtime_*.o`. O inventário de alvos e objetos permanece no Makefile.
+
+Os alvos excluídos `test_event_log_shim`, `test_cat_worker_runtime` e
+`test_app_runtime_tsan` continuam com suas regras próprias; os objetos
+`test_cat_runtime_*.o` não foram migrados. O alvo composto
+`test_ble_bond_reconnect` depende e executa os
 artefatos `_bin` de state machine, event dispatch e store, além dos dois
 contratos, sem duplicar os cenários no agregado.
 

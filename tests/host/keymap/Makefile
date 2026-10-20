@@ -64,6 +64,8 @@ SCREEN_PROTECTION_HDR := ../../../components/cyberdeck/include/platform/display/
 SCREEN_PROTECTION_CONTRACT_HDR := contracts/cyberdeck_screen_protection.h
 SCREEN_PROTECTION_TEST := test_screen_protection.cpp
 SCREEN_PROTECTION_CONTRACT := test_screen_protection_contract.py
+SCREEN_PROTECTION_BIN := test_screen_protection_bin
+SCREEN_PROTECTION_OBJS := test_screen_protection/test.o test_screen_protection/protection.o
 WIFI_INDICATOR_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp
 WIFI_ICON_SRC      := ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp
 WIFI_ICON_HDR      := ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_icon.h
@@ -74,6 +76,15 @@ WIFI_EVENT_DISPATCH_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck
 WIFI_PERSISTENCE_QUEUE_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_persistence_queue.cpp
 WIFI_PERSISTENCE_COORDINATOR_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_persistence_coordinator.cpp
 WIFI_AUDIT_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit.cpp
+WIFI_AUDIT_HDR := ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit.h
+WIFI_AUDIT_BIN := test_wifi_audit_bin
+WIFI_AUDIT_OBJS := test_wifi_audit/test.o test_wifi_audit/audit.o
+TERMINAL_SCROLLBACK_BIN := test_terminal_scrollback_bin
+TERMINAL_SCROLLBACK_OBJS := test_terminal_scrollback/test.o test_terminal_scrollback/scrollback.o
+WIFI_SURVEY_BIN := test_wifi_survey_bin
+WIFI_SURVEY_OBJS := test_wifi_survey/test.o test_wifi_survey/survey.o
+RECOVERY_POLICY_BIN := test_recovery_policy_bin
+RECOVERY_POLICY_OBJS := test_recovery_policy/test.o test_recovery_policy/policy.o
 WIFI_AUDIT_SAVE_TEST := test_wifi_audit_save.cpp
 WIFI_AUDIT_SAVE_CONTRACT := test_wifi_audit_save_contract.py
 WIFI_AUDIT_PERSISTENCE_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit_persistence.cpp
@@ -207,7 +218,7 @@ BLE_STATE_BIN := test_ble_state_machine_bin
 BLE_EVENTS_BIN := test_ble_event_dispatch_bin
 BLE_STORE_BIN := test_ble_store_bin
 BLE_COMMAND_BIN := test_ble_command_parse_bin
-BINS := test_shell_help_bin test_shell_app_bin test_keymap test_shell_utils test_history test_keyboard_event test_event_log_recent test_event_log_shim test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_wifi_state_machine test_clock_formatter test_screen_protection_bin test_terminal_filter test_terminal_scrollback_bin test_edit_line test_editor_model test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_screenshot_bmp test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_local_shell test_save_sidecar_recovery test_cat_multiline test_help_unification test_orientation test_wifi_audit test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session test_app_runtime test_runtime_sdk test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app test_window_manager_bin test_recovery_policy_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
+BINS := test_shell_help_bin test_shell_app_bin test_keymap_bin test_shell_utils_bin test_history_bin test_keyboard_event_bin test_event_log_recent_bin test_event_log_shim test_wifi_indicator_state_bin test_wifi_icon_layout_bin test_wifi_menu_bin test_wifi_state_machine_bin test_clock_formatter_bin test_screen_protection_bin test_terminal_filter_bin test_terminal_scrollback_bin test_edit_line_bin test_editor_model_bin test_net_coordinator_bin test_ssh_echo_guard_bin test_ssh_line_composer_bin test_screenshot_bmp_bin test_wifi_event_dispatch_bin test_wifi_persistence_queue_bin test_wifi_persistence_coordination_bin test_local_shell_bin test_save_sidecar_recovery test_cat_multiline_bin test_help_unification_bin test_orientation_bin $(WIFI_AUDIT_BIN) test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session_bin test_app_runtime_bin test_runtime_sdk_bin test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app_bin test_window_manager_bin test_recovery_policy_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
 SAVE_SIDECAR_BIN := test_save_sidecar_recovery_bin
 WIFI_SURVEY_EXPORT_BIN := test_wifi_survey_export_controller_bin
 NETDIAG_CONTROLLER_BIN := test_netdiag_controller_bin
@@ -232,8 +243,66 @@ BLE_STATE_OBJS := test_ble_state_machine/test.o test_ble_state_machine/state.o t
 BLE_EVENTS_OBJS := test_ble_event_dispatch/test.o test_ble_event_dispatch/events.o test_ble_event_dispatch/types.o
 BLE_STORE_OBJS := test_ble_store/test.o test_ble_store/store.o test_ble_store/types.o
 BLE_COMMAND_OBJS := test_ble_command_parse/test.o test_ble_command_parse/shell-utils.o
-MAKE_DEPFILES := $(addsuffix .d,$(SAVE_SIDECAR_OBJS) $(WIFI_SURVEY_EXPORT_OBJS) $(NETDIAG_CONTROLLER_OBJS) $(NETDIAG_TCP_OBJS) $(EVENT_LOG_RUNTIME_OBJS) $(SD_IO_COORDINATOR_OBJS) $(BATTERY_CONTRACT_OBJS) $(BATTERY_VIEW_OBJS) $(BLE_TYPES_OBJS) $(BLE_STATE_OBJS) $(BLE_EVENTS_OBJS) $(BLE_STORE_OBJS) $(BLE_COMMAND_OBJS))
-LEGACY_TEST_ARTIFACTS := test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_shell_help test_shell_app test_screen_protection test_terminal_scrollback test_wifi_audit_persistence test_wifi_audit_save test_wifi_survey test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_recovery_policy test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_window_manager test_time_sync
+WIFI_AUDIT_PERSISTENCE_OBJS := test_wifi_audit_persistence/test.o test_wifi_audit_persistence/persistence.o
+WIFI_AUDIT_SAVE_OBJS := test_wifi_audit_save/test.o test_wifi_audit_save/audit.o test_wifi_audit_save/persistence.o test_wifi_audit_save/clock.o
+SERIAL_NDJSON_OBJS := test_serial_ndjson_dispatch/test.o test_serial_ndjson_dispatch/bridge.o
+SERIAL_SCREEN_DUMP_OBJS := test_serial_screen_dump/test.o test_serial_screen_dump/bridge.o test_serial_screen_dump/screenshot-bmp.o
+SERIAL_CLI_TOLERANCE_OBJS := test_serial_cli_tolerance/test.o test_serial_cli_tolerance/bridge.o
+SERIAL_SYSINFO_WIFI_OBJS := test_serial_sysinfo_wifi/test.o test_serial_sysinfo_wifi/bridge.o
+SERIAL_TERM_DUMP_OBJS := test_serial_term_dump/test.o test_serial_term_dump/bridge.o
+FS_WRITE_DISPATCH_OBJS := test_fs_write_dispatch/test.o test_fs_write_dispatch/bridge.o
+WIFI_EVENT_DISPATCH_OBJS := test_wifi_event_dispatch/test.o test_wifi_event_dispatch/event-dispatch.o
+WIFI_PERSISTENCE_QUEUE_OBJS := test_wifi_persistence_queue/test.o test_wifi_persistence_queue/persistence-queue.o test_wifi_persistence_queue/event-dispatch.o
+WIFI_PERSISTENCE_COORDINATION_OBJS := test_wifi_persistence_coordination/test.o test_wifi_persistence_coordination/persistence-coordination.o test_wifi_persistence_coordination/persistence-queue.o test_wifi_persistence_coordination/event-dispatch.o
+CLOCK_FORMATTER_OBJS := test_clock_formatter/test.o test_clock_formatter/clock.o
+TERMINAL_FILTER_OBJS := test_terminal_filter/test.o test_terminal_filter/terminal-filter.o
+EDIT_LINE_OBJS := test_edit_line/test.o test_edit_line/edit-line.o
+WIFI_INDICATOR_OBJS := test_wifi_indicator_state/test.o test_wifi_indicator_state/indicator.o
+WIFI_ICON_OBJS := test_wifi_icon_layout/test.o test_wifi_icon_layout/icon.o test_wifi_icon_layout/indicator.o
+WIFI_MENU_OBJS := test_wifi_menu/test.o test_wifi_menu/menu.o
+HISTORY_OBJS := test_history/test.o test_history/history.o
+KEYBOARD_EVENT_OBJS := test_keyboard_event/test.o test_keyboard_event/event.o
+EVENT_LOG_RECENT_OBJS := test_event_log_recent/test.o test_event_log_recent/recent.o
+WIFI_STATE_MACHINE_OBJS := test_wifi_state_machine/test.o test_wifi_state_machine/state.o
+NET_COORDINATOR_OBJS := test_net_coordinator/test.o test_net_coordinator/coordinator.o
+SSH_ECHO_GUARD_OBJS := test_ssh_echo_guard/test.o test_ssh_echo_guard/guard.o
+SSH_LINE_COMPOSER_OBJS := test_ssh_line_composer/test.o test_ssh_line_composer/composer.o
+KEYMAP_OBJS := test_keymap/test.o test_keymap/keys.o
+SCREENSHOT_BMP_OBJS := test_screenshot_bmp/test.o test_screenshot_bmp/bmp.o
+ORIENTATION_OBJS := test_orientation/test.o test_orientation/orientation.o
+
+# Per-TU object sets for the final migration batch.
+EDITOR_MODEL_MIG_OBJS := test_editor_model/test.o test_editor_model/editor_model.o
+TIME_SYNC_MIG_OBJS := test_time_sync/test.o test_time_sync/time_sync.o test_time_sync/cJSON.o
+SHELL_UTILS_MIG_OBJS := test_shell_utils/test.o test_shell_utils/shell_utils.o
+SD_PACKAGE_MIG_OBJS := test_sd_package/test.o test_sd_package/sd_package.o
+RESOURCE_CATALOG_MIG_OBJS := test_resource_catalog/test.o test_resource_catalog/resource_catalog.o
+NETDIAG_DNS_ADAPTER_MIG_OBJS := test_netdiag_dns_adapter/test.o test_netdiag_dns_adapter/netdiag_dns_adapter.o
+NETDIAG_HTTPS_ADAPTER_MIG_OBJS := test_netdiag_https_adapter/test.o test_netdiag_https_adapter/netdiag_https_adapter.o
+NETDIAG_APP_MIG_OBJS := test_netdiag_app/test.o test_netdiag_app/netdiag_app.o test_netdiag_app/netdiag_controller.o test_netdiag_app/netdiag_dns_adapter.o test_netdiag_app/netdiag_tcp_adapter.o test_netdiag_app/netdiag_https_adapter.o test_netdiag_app/app_runtime.o test_netdiag_app/resource_catalog.o test_netdiag_app/sd_package.o test_netdiag_app/app_quota.o test_netdiag_app/sd_io_coordinator.o
+SHELL_SESSION_MIG_OBJS := test_shell_session/test.o test_shell_session/shell_session.o test_shell_session/shell_console.o test_shell_session/edit_line.o test_shell_session/history.o test_shell_session/shell_utils.o test_shell_session/local_shell.o test_shell_session/vfs_namespace.o test_shell_session/sd_io_coordinator.o test_shell_session/ssh_line_composer.o test_shell_session/screen_protection.o test_shell_session/app_runtime.o test_shell_session/resource_catalog.o test_shell_session/sd_package.o test_shell_session/app_quota.o test_shell_session/battery_protection.o test_shell_session/battery_status.o test_shell_session/wifi_menu.o test_shell_session/wifi_state_machine.o test_shell_session/wifi_survey.o test_shell_session/ble_types.o test_shell_session/ble_state_machine.o
+SHELL_HELP_MIG_OBJS := test_shell_help/test.o test_shell_help/shell_session.o test_shell_help/shell_console.o test_shell_help/edit_line.o test_shell_help/history.o test_shell_help/shell_utils.o test_shell_help/local_shell.o test_shell_help/vfs_namespace.o test_shell_help/sd_io_coordinator.o test_shell_help/ssh_line_composer.o test_shell_help/screen_protection.o test_shell_help/app_runtime.o test_shell_help/resource_catalog.o test_shell_help/sd_package.o test_shell_help/app_quota.o test_shell_help/battery_protection.o test_shell_help/battery_status.o test_shell_help/wifi_menu.o test_shell_help/wifi_state_machine.o test_shell_help/wifi_survey.o test_shell_help/ble_types.o test_shell_help/ble_state_machine.o test_shell_help/demo_app.o
+APP_RUNTIME_MIG_OBJS := test_app_runtime/test.o test_app_runtime/app_runtime.o test_app_runtime/resource_catalog.o test_app_runtime/sd_package.o test_app_runtime/app_quota.o
+RUNTIME_SDK_MIG_OBJS := test_runtime_sdk/test.o test_runtime_sdk/app_runtime.o test_runtime_sdk/resource_catalog.o test_runtime_sdk/sd_package.o test_runtime_sdk/app_quota.o test_runtime_sdk/app_storage.o test_runtime_sdk/app_logger.o test_runtime_sdk/command_catalog.o test_runtime_sdk/local_shell.o test_runtime_sdk/vfs_namespace.o test_runtime_sdk/sd_io_coordinator.o
+STORAGE_FACADE_MIG_OBJS := test_storage_facade/test.o test_storage_facade/app_runtime.o test_storage_facade/resource_catalog.o test_storage_facade/sd_package.o test_storage_facade/app_quota.o test_storage_facade/app_storage.o test_storage_facade/local_shell.o test_storage_facade/vfs_namespace.o test_storage_facade/sd_io_coordinator.o
+PHASE9_CAPABILITIES_MIG_OBJS := test_phase9_capabilities/test.o test_phase9_capabilities/app_runtime.o test_phase9_capabilities/app_facades.o test_phase9_capabilities/window_manager.o test_phase9_capabilities/resource_catalog.o test_phase9_capabilities/sd_package.o test_phase9_capabilities/app_quota.o
+DEMO_APP_MIG_OBJS := test_demo_app/test.o test_demo_app/demo_app.o test_demo_app/app_runtime.o test_demo_app/resource_catalog.o test_demo_app/sd_package.o test_demo_app/app_quota.o
+SHELL_APP_MIG_OBJS := test_shell_app/test.o test_shell_app/shell_console.o test_shell_app/shell_app.o test_shell_app/shell_session.o test_shell_app/edit_line.o test_shell_app/history.o test_shell_app/shell_utils.o test_shell_app/local_shell.o test_shell_app/vfs_namespace.o test_shell_app/sd_io_coordinator.o test_shell_app/ssh_line_composer.o test_shell_app/screen_protection.o test_shell_app/app_runtime.o test_shell_app/resource_catalog.o test_shell_app/sd_package.o test_shell_app/app_quota.o test_shell_app/battery_protection.o test_shell_app/battery_status.o test_shell_app/wifi_menu.o test_shell_app/wifi_state_machine.o test_shell_app/ble_types.o test_shell_app/ble_state_machine.o
+WINDOW_MANAGER_MIG_OBJS := test_window_manager/test.o test_window_manager/window_manager.o test_window_manager/window_manager_adapter.o test_window_manager/header_view.o test_window_manager/wifi_icon.o test_window_manager/wifi_indicator.o test_window_manager/battery_view.o
+LOCAL_SHELL_MIG_OBJS := test_local_shell/test.o test_local_shell/local_shell.o test_local_shell/vfs_namespace.o test_local_shell/sd_io_coordinator.o
+CAT_MULTILINE_MIG_OBJS := test_cat_multiline/test.o test_cat_multiline/local_shell.o test_cat_multiline/vfs_namespace.o test_cat_multiline/sd_io_coordinator.o
+HELP_UNIFICATION_MIG_OBJS := test_help_unification/test.o test_help_unification/shell_utils.o test_help_unification/local_shell.o test_help_unification/vfs_namespace.o test_help_unification/sd_io_coordinator.o
+BATTERY_PROTECTION_MIG_OBJS := test_battery_protection/test.o test_battery_protection/battery_protection.o
+CAT_WORKER_MIG_OBJS := test_cat_worker/test.o test_cat_worker/cat_worker.o test_cat_worker/local_shell.o test_cat_worker/vfs_namespace.o test_cat_worker/sd_io_coordinator.o
+BLE_BACKGROUND_MIG_OBJS := test_ble_background/test.o test_ble_background/ble_background.o test_ble_background/ble_state_machine.o test_ble_background/ble_types.o
+KEYBOARD_DISPATCH_MIG_OBJS := test_keyboard_dispatch/test.o test_keyboard_dispatch/keyboard_dispatch.o
+DISPLAY_VIEWS_MIG_OBJS := test_display_views/test.o test_display_views/header_view.o test_display_views/terminal_view.o test_display_views/editor_view.o test_display_views/wifi_icon.o test_display_views/wifi_indicator.o test_display_views/battery_view.o
+KNOWN_HOSTS_FILE_MIG_OBJS := test_known_hosts_file/test.o test_known_hosts_file/known_hosts_file.o test_known_hosts_file/sd_io_coordinator.o
+POWEROFF_MIG_OBJS := test_poweroff/test.o test_poweroff/poweroff.o
+MIGRATION_FINAL_OBJS := $(EDITOR_MODEL_MIG_OBJS) $(TIME_SYNC_MIG_OBJS) $(SHELL_UTILS_MIG_OBJS) $(SD_PACKAGE_MIG_OBJS) $(RESOURCE_CATALOG_MIG_OBJS) $(NETDIAG_DNS_ADAPTER_MIG_OBJS) $(NETDIAG_HTTPS_ADAPTER_MIG_OBJS) $(NETDIAG_APP_MIG_OBJS) $(SHELL_SESSION_MIG_OBJS) $(SHELL_HELP_MIG_OBJS) $(APP_RUNTIME_MIG_OBJS) $(RUNTIME_SDK_MIG_OBJS) $(STORAGE_FACADE_MIG_OBJS) $(PHASE9_CAPABILITIES_MIG_OBJS) $(DEMO_APP_MIG_OBJS) $(SHELL_APP_MIG_OBJS) $(WINDOW_MANAGER_MIG_OBJS) $(LOCAL_SHELL_MIG_OBJS) $(CAT_MULTILINE_MIG_OBJS) $(HELP_UNIFICATION_MIG_OBJS) $(BATTERY_PROTECTION_MIG_OBJS) $(CAT_WORKER_MIG_OBJS) $(BLE_BACKGROUND_MIG_OBJS) $(KEYBOARD_DISPATCH_MIG_OBJS) $(DISPLAY_VIEWS_MIG_OBJS) $(KNOWN_HOSTS_FILE_MIG_OBJS) $(POWEROFF_MIG_OBJS)
+
+MAKE_DEPFILES := $(addsuffix .d,$(MIGRATION_FINAL_OBJS) $(SCREEN_PROTECTION_OBJS) $(SAVE_SIDECAR_OBJS) $(WIFI_SURVEY_EXPORT_OBJS) $(NETDIAG_CONTROLLER_OBJS) $(NETDIAG_TCP_OBJS) $(EVENT_LOG_RUNTIME_OBJS) $(SD_IO_COORDINATOR_OBJS) $(BATTERY_CONTRACT_OBJS) $(BATTERY_VIEW_OBJS) $(BLE_TYPES_OBJS) $(BLE_STATE_OBJS) $(BLE_EVENTS_OBJS) $(BLE_STORE_OBJS) $(BLE_COMMAND_OBJS) $(WIFI_AUDIT_OBJS) $(TERMINAL_SCROLLBACK_OBJS) $(WIFI_SURVEY_OBJS) $(RECOVERY_POLICY_OBJS) $(WIFI_AUDIT_PERSISTENCE_OBJS) $(WIFI_AUDIT_SAVE_OBJS) $(SERIAL_NDJSON_OBJS) $(SERIAL_SCREEN_DUMP_OBJS) $(SERIAL_CLI_TOLERANCE_OBJS) $(SERIAL_SYSINFO_WIFI_OBJS) $(SERIAL_TERM_DUMP_OBJS) $(FS_WRITE_DISPATCH_OBJS) $(WIFI_EVENT_DISPATCH_OBJS) $(WIFI_PERSISTENCE_QUEUE_OBJS) $(WIFI_PERSISTENCE_COORDINATION_OBJS) $(CLOCK_FORMATTER_OBJS) $(TERMINAL_FILTER_OBJS) $(EDIT_LINE_OBJS) $(WIFI_INDICATOR_OBJS) $(WIFI_ICON_OBJS) $(WIFI_MENU_OBJS) $(HISTORY_OBJS) $(KEYBOARD_EVENT_OBJS) $(EVENT_LOG_RECENT_OBJS) $(WIFI_STATE_MACHINE_OBJS) $(NET_COORDINATOR_OBJS) $(SSH_ECHO_GUARD_OBJS) $(SSH_LINE_COMPOSER_OBJS) $(KEYMAP_OBJS) $(SCREENSHOT_BMP_OBJS) $(ORIENTATION_OBJS))
+LEGACY_TEST_ARTIFACTS := test_editor_model test_shell_utils test_shell_session test_app_runtime test_runtime_sdk test_demo_app test_local_shell test_cat_multiline test_help_unification test_known_hosts_file test_poweroff  test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_shell_help test_shell_app test_screen_protection test_terminal_scrollback test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_wifi_survey test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_recovery_policy test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_window_manager test_time_sync test_clock_formatter test_terminal_filter test_edit_line test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_keymap test_screenshot_bmp test_orientation
 
 test_save_sidecar_recovery/%.o: test_save_sidecar_recovery.cpp Makefile
 	@mkdir -p $(@D)
@@ -279,8 +348,151 @@ test_netdiag_tcp_adapter/adapter.o: $(NETDIAG_TCP_ADAPTER_SRC) $(NETDIAG_TCP_ADA
 -include $(MAKE_DEPFILES)
 BINS += $(SD_PACKAGE_BIN) $(RESOURCE_CATALOG_BIN)
 
-test_editor_model: test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp ../../../components/cyberdeck/include/apps/editor/cyberdeck_editor_model.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_editor_model.cpp ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp -o $@
+# Tier-A per-translation-unit migrations from REQ-MIG-59. Keep each compile
+# command's baseline flags/includes and the original source/link order.
+test_wifi_event_dispatch/test.o: test_wifi_event_dispatch.cpp contracts/cyberdeck_wifi_event_dispatch.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_event_dispatch/event-dispatch.o: $(WIFI_EVENT_DISPATCH_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_event_dispatch.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_event_dispatch_bin: $(WIFI_EVENT_DISPATCH_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_EVENT_DISPATCH_OBJS) -o $@
+
+.PHONY: test_wifi_event_dispatch
+test_wifi_event_dispatch: test_wifi_event_dispatch_bin
+	@./test_wifi_event_dispatch_bin
+
+test_wifi_persistence_queue/test.o: test_wifi_persistence_queue.cpp contracts/cyberdeck_wifi_persistence_queue.h contracts/cyberdeck_wifi_event_dispatch.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_persistence_queue/persistence-queue.o: $(WIFI_PERSISTENCE_QUEUE_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_persistence_queue.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_persistence_queue/event-dispatch.o: $(WIFI_EVENT_DISPATCH_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_event_dispatch.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_persistence_queue_bin: $(WIFI_PERSISTENCE_QUEUE_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_PERSISTENCE_QUEUE_OBJS) -o $@
+
+.PHONY: test_wifi_persistence_queue
+test_wifi_persistence_queue: test_wifi_persistence_queue_bin
+	@./test_wifi_persistence_queue_bin
+
+test_wifi_persistence_coordination/test.o: test_wifi_persistence_coordination.cpp contracts/cyberdeck_wifi_persistence_coordinator.h contracts/cyberdeck_wifi_persistence_queue.h contracts/cyberdeck_wifi_event_dispatch.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -Icontracts -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_persistence_coordination/persistence-coordination.o: $(WIFI_PERSISTENCE_COORDINATOR_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_persistence_coordinator.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -Icontracts -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_persistence_coordination/persistence-queue.o: $(WIFI_PERSISTENCE_QUEUE_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_persistence_queue.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -Icontracts -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_persistence_coordination/event-dispatch.o: $(WIFI_EVENT_DISPATCH_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_event_dispatch.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -Icontracts -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_persistence_coordination_bin: $(WIFI_PERSISTENCE_COORDINATION_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -Icontracts $(WIFI_PERSISTENCE_COORDINATION_OBJS) -o $@
+
+.PHONY: test_wifi_persistence_coordination
+test_wifi_persistence_coordination: test_wifi_persistence_coordination_bin
+	@./test_wifi_persistence_coordination_bin
+
+test_clock_formatter/test.o: test_clock_formatter.cpp ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_clock_formatter/clock.o: $(CLOCK_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_clock_formatter_bin: $(CLOCK_FORMATTER_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(CLOCK_FORMATTER_OBJS) -o $@
+
+.PHONY: test_clock_formatter
+test_clock_formatter: test_clock_formatter_bin
+	@./test_clock_formatter_bin
+
+test_terminal_filter/test.o: test_terminal_filter.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_terminal_filter.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_terminal_filter/terminal-filter.o: $(TERMINAL_FILTER_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_terminal_filter.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_terminal_filter_bin: $(TERMINAL_FILTER_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(TERMINAL_FILTER_OBJS) -o $@
+
+.PHONY: test_terminal_filter
+test_terminal_filter: test_terminal_filter_bin
+	@./test_terminal_filter_bin
+
+test_edit_line/test.o: test_edit_line.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_edit_line.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_edit_line/edit-line.o: $(EDIT_LINE_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_edit_line.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_edit_line_bin: $(EDIT_LINE_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(EDIT_LINE_OBJS) -o $@
+
+.PHONY: test_edit_line
+test_edit_line: test_edit_line_bin
+	@./test_edit_line_bin
+
+test_screen_protection/test.o: $(SCREEN_PROTECTION_TEST) $(SCREEN_PROTECTION_HDR) $(SCREEN_PROTECTION_CONTRACT_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_screen_protection/protection.o: $(SCREEN_PROTECTION_SRC) $(SCREEN_PROTECTION_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+$(SCREEN_PROTECTION_BIN): $(SCREEN_PROTECTION_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include $(SCREEN_PROTECTION_OBJS) -o $@
+
+test_terminal_scrollback/test.o: test_terminal_scrollback.cpp $(TERMINAL_SCROLLBACK_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -fsanitize=address,undefined -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_terminal_scrollback/scrollback.o: $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -fsanitize=address,undefined -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+$(TERMINAL_SCROLLBACK_BIN): $(TERMINAL_SCROLLBACK_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -fsanitize=address,undefined -I../../../components/cyberdeck/include $(TERMINAL_SCROLLBACK_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+.PHONY: test_screen_protection
+test_screen_protection: $(SCREEN_PROTECTION_BIN)
+	@./$(SCREEN_PROTECTION_BIN)
+
+test_editor_model/test.o: test_editor_model.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_editor_model/editor_model.o: ../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_editor_model_bin: $(EDITOR_MODEL_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(EDITOR_MODEL_MIG_OBJS) -o $@
+
+.PHONY: test_editor_model
+test_editor_model: test_editor_model_bin
+	@./test_editor_model_bin
+
 
 test_editor_runtime_contract: test_editor_runtime_contract.py
 	$(PYTHON) test_editor_runtime_contract.py
@@ -312,8 +524,21 @@ test_time_sync_contract: test_time_sync_contract.py time_sync_traceability.md ..
 	$(PYTHON) test_time_sync_contract.py
 
 .PHONY: test_time_sync
-test_time_sync_bin: test_time_sync.cpp $(TIME_SYNC_SRC) $(TIME_SYNC_SHIM)/cJSON.cpp $(TIME_SYNC_SHIM)/cJSON.h $(TIME_SYNC_SHIM)/esp_http_client.h $(TIME_SYNC_SHIM)/freertos/task.h ../../../components/cyberdeck/include/platform/logging/event_log.h Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I$(TIME_SYNC_SHIM) -Ishim -I../../../components/cyberdeck/include test_time_sync.cpp $(TIME_SYNC_SRC) $(TIME_SYNC_SHIM)/cJSON.cpp -o $@
+test_time_sync/test.o: test_time_sync.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I$(TIME_SYNC_SHIM) -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_time_sync/time_sync.o: ../../../components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I$(TIME_SYNC_SHIM) -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_time_sync/cJSON.o: time_sync_shim/cJSON.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I$(TIME_SYNC_SHIM) -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_time_sync_bin: $(TIME_SYNC_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I$(TIME_SYNC_SHIM) -Ishim -I../../../components/cyberdeck/include $(TIME_SYNC_MIG_OBJS) -o $@
+
 test_time_sync: test_time_sync_bin
 	@./test_time_sync_bin
 
@@ -352,8 +577,17 @@ $(SD_IO_COORDINATOR_BIN): $(SD_IO_COORDINATOR_OBJS) Makefile
 # boundaries and checksum mismatch detection.  The real TU is linked directly.
 # The .PHONY run target only executes the BINS-built binary so the aggregate
 # runs it exactly once.
-$(SD_PACKAGE_BIN): test_sd_package.cpp $(SD_PACKAGE_SRC) $(SD_PACKAGE_HDR) sd_package_traceability.md
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_sd_package.cpp $(SD_PACKAGE_SRC) -o $@
+test_sd_package/test.o: test_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_sd_package/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_sd_package_bin: $(SD_PACKAGE_MIG_OBJS) sd_package_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(SD_PACKAGE_MIG_OBJS) -o $@
+
 
 .PHONY: test_sd_package
 test_sd_package: $(SD_PACKAGE_BIN)
@@ -366,8 +600,17 @@ test_sd_package: $(SD_PACKAGE_BIN)
 # exact 12288-byte boundary) and the compiled catalog's empty/absent
 # semantics.  No production code is altered; coverage percentages are never
 # asserted.
-$(RESOURCE_CATALOG_BIN): test_resource_catalog.cpp $(RESOURCE_CATALOG_SRC) $(RESOURCE_CATALOG_HDR) resource_catalog_traceability.md
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_resource_catalog.cpp $(RESOURCE_CATALOG_SRC) -o $@
+test_resource_catalog/test.o: test_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_resource_catalog/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_resource_catalog_bin: $(RESOURCE_CATALOG_MIG_OBJS) resource_catalog_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(RESOURCE_CATALOG_MIG_OBJS) -o $@
+
 
 .PHONY: test_resource_catalog
 test_resource_catalog: $(RESOURCE_CATALOG_BIN)
@@ -381,8 +624,17 @@ test_netdiag_controller: $(NETDIAG_CONTROLLER_BIN)
 	./$(NETDIAG_CONTROLLER_BIN)
 
 .PHONY: test_netdiag_dns_adapter
-$(NETDIAG_DNS_BIN): test_netdiag_dns_adapter.cpp $(NETDIAG_DNS_ADAPTER_SRC) $(NETDIAG_DNS_ADAPTER_HDR) netdiag_dns_shim/esp_timer.h netdiag_dns_shim/freertos/FreeRTOS.h netdiag_dns_shim/freertos/task.h netdiag_dns_shim/lwip/dns.h netdiag_dns_shim/lwip/ip4_addr.h netdiag_dns_shim/lwip/ip_addr.h netdiag_dns_shim/lwip/tcpip.h netdiag_traceability.md Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -g --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_dns_shim -I../../../components/cyberdeck/include test_netdiag_dns_adapter.cpp $(NETDIAG_DNS_ADAPTER_SRC) -o $@
+test_netdiag_dns_adapter/test.o: test_netdiag_dns_adapter.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -g --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_dns_shim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_dns_adapter/netdiag_dns_adapter.o: ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns_adapter.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -g --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_dns_shim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_dns_adapter_bin: $(NETDIAG_DNS_ADAPTER_MIG_OBJS) netdiag_traceability.md Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -g --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_dns_shim -I../../../components/cyberdeck/include $(NETDIAG_DNS_ADAPTER_MIG_OBJS) -o $@
+
 test_netdiag_dns_adapter: $(NETDIAG_DNS_BIN)
 	@./$(NETDIAG_DNS_BIN)
 
@@ -394,14 +646,68 @@ test_netdiag_tcp_adapter: $(NETDIAG_TCP_BIN)
 	./$(NETDIAG_TCP_BIN)
 
 .PHONY: test_netdiag_https_adapter
-$(NETDIAG_HTTPS_BIN): test_netdiag_https_adapter.cpp $(NETDIAG_HTTPS_ADAPTER_SRC) $(NETDIAG_HTTPS_ADAPTER_HDR) netdiag_https_shim/esp_http_client.h netdiag_https_shim/esp_crt_bundle.h netdiag_https_shim/esp_timer.h netdiag_https_shim/freertos/task.h shim/esp_err.h netdiag_traceability.md Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -g --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include test_netdiag_https_adapter.cpp $(NETDIAG_HTTPS_ADAPTER_SRC) -o $@
+test_netdiag_https_adapter/test.o: test_netdiag_https_adapter.cpp shim/esp_err.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -g --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_https_adapter/netdiag_https_adapter.o: ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_https_adapter.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -g --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_https_adapter_bin: $(NETDIAG_HTTPS_ADAPTER_MIG_OBJS) netdiag_traceability.md Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 -g --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include $(NETDIAG_HTTPS_ADAPTER_MIG_OBJS) -o $@
+
 test_netdiag_https_adapter: $(NETDIAG_HTTPS_BIN)
 	@./$(NETDIAG_HTTPS_BIN)
 
 .PHONY: test_netdiag_app
-$(NETDIAG_APP_BIN): test_netdiag_app.cpp $(NETDIAG_APP_SRC) $(NETDIAG_APP_HDR) $(NETDIAG_CONTROLLER_SRC) $(NETDIAG_DNS_ADAPTER_SRC) $(NETDIAG_TCP_ADAPTER_SRC) $(NETDIAG_HTTPS_ADAPTER_SRC) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(SD_IO_COORDINATOR_SRC) netdiag_app_shim/freertos/FreeRTOS.h netdiag_traceability.md Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include test_netdiag_app.cpp $(NETDIAG_APP_SRC) $(NETDIAG_CONTROLLER_SRC) $(NETDIAG_DNS_ADAPTER_SRC) $(NETDIAG_TCP_ADAPTER_SRC) $(NETDIAG_HTTPS_ADAPTER_SRC) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(SD_IO_COORDINATOR_SRC) -Wl,--wrap=socket -Wl,--wrap=close -Wl,--wrap=fcntl -Wl,--wrap=connect -Wl,--wrap=select -Wl,--wrap=getsockopt -o $@
+test_netdiag_app/test.o: test_netdiag_app.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/netdiag_app.o: ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/netdiag_controller.o: ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_controller.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/netdiag_dns_adapter.o: ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns_adapter.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/netdiag_tcp_adapter.o: ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp_adapter.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/netdiag_https_adapter.o: ../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_https_adapter.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_netdiag_app_bin: $(NETDIAG_APP_MIG_OBJS) netdiag_traceability.md Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Inetdiag_app_shim -Inetdiag_dns_shim -Inetdiag_tcp_shim -Inetdiag_https_shim -Ishim -I../../../components/cyberdeck/include $(NETDIAG_APP_MIG_OBJS) -Wl,--wrap=socket -Wl,--wrap=close -Wl,--wrap=fcntl -Wl,--wrap=connect -Wl,--wrap=select -Wl,--wrap=getsockopt -o $@
+
 test_netdiag_app: $(NETDIAG_APP_BIN)
 	@./$(NETDIAG_APP_BIN)
 
@@ -439,30 +745,91 @@ verify:
 	fi
 
 # 2) Compila os binários de teste.
-test_keymap: test_keymap.cpp $(KEYMAP_SRC) shim/lvgl.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_keymap.cpp $(KEYMAP_SRC) -o test_keymap
+test_keymap/test.o: test_keymap.cpp shim/lvgl.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
 
-test_shell_utils: test_shell_utils.cpp contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) shim/lvgl.h Makefile
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_shell_utils.cpp $(SHELL_UTILS_SRC) -o test_shell_utils
+test_keymap/keys.o: $(KEYMAP_SRC) shim/lvgl.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_keymap_bin: $(KEYMAP_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(KEYMAP_OBJS) -o $@
+
+.PHONY: test_keymap
+test_keymap: test_keymap_bin
+	@./test_keymap_bin
+
+test_shell_utils/test.o: test_shell_utils.cpp contracts/cyberdeck_help.h shim/lvgl.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_utils/shell_utils.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_utils_bin: $(SHELL_UTILS_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SHELL_UTILS_MIG_OBJS) -o $@
+
+.PHONY: test_shell_utils
+test_shell_utils: test_shell_utils_bin
+	@./test_shell_utils_bin
+
 
 # Logica pura (sem LVGL): nao precisa de shim.
 # O header entra como dependencia para que mudancas no contrato (ex.: limite)
 # forcem recompilacao e a validacao do static_assert de paridade.
-test_history: test_history.cpp $(HISTORY_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_history.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_history.cpp $(HISTORY_SRC) -o test_history
+test_history/test.o: test_history.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_history.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_history/history.o: $(HISTORY_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_history.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_history_bin: $(HISTORY_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(HISTORY_OBJS) -o $@
+
+.PHONY: test_history
+test_history: test_history_bin
+	@./test_history_bin
 
 # Logica pura (sem LVGL): nao precisa de shim.
 # O parser e uma unidade pura de producao; o teste fixa o contrato de
 # tab5_char_event_parse sem depender de LVGL, FreeRTOS ou hardware.
-test_keyboard_event: test_keyboard_event.cpp $(KEYBOARD_EVENT_SRC) ../../../components/cyberdeck/include/platform/input/tab5_keyboard_event.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_keyboard_event.cpp $(KEYBOARD_EVENT_SRC) -o test_keyboard_event
+test_keyboard_event/test.o: test_keyboard_event.cpp ../../../components/cyberdeck/include/platform/input/tab5_keyboard_event.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_keyboard_event/event.o: $(KEYBOARD_EVENT_SRC) ../../../components/cyberdeck/include/platform/input/tab5_keyboard_event.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_keyboard_event_bin: $(KEYBOARD_EVENT_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(KEYBOARD_EVENT_OBJS) -o $@
+
+.PHONY: test_keyboard_event
+test_keyboard_event: test_keyboard_event_bin
+	@./test_keyboard_event_bin
 
 # Logica pura extraida de event_log_latest(): selecao de indices do anel
 # "recent" (contrato em event_log_recent.h, sem FreeRTOS/LVGL/SD).
 # A implementacao e compilada junto ao teste para validar o contrato sem
 # depender de FreeRTOS, LVGL ou acesso ao SD.
-test_event_log_recent: test_event_log_recent.cpp $(EVENT_LOG_RECENT_SRC) ../../../components/cyberdeck/include/platform/logging/event_log_recent.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_event_log_recent.cpp $(EVENT_LOG_RECENT_SRC) -o test_event_log_recent
+test_event_log_recent/test.o: test_event_log_recent.cpp ../../../components/cyberdeck/include/platform/logging/event_log_recent.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_event_log_recent/recent.o: $(EVENT_LOG_RECENT_SRC) ../../../components/cyberdeck/include/platform/logging/event_log_recent.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_event_log_recent_bin: $(EVENT_LOG_RECENT_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(EVENT_LOG_RECENT_OBJS) -o $@
+
+.PHONY: test_event_log_recent
+test_event_log_recent: test_event_log_recent_bin
+	@./test_event_log_recent_bin
 
 test_event_log_contract: test_event_log_contract.py ../../../components/cyberdeck/src/platform/logging/event_log.cpp Makefile
 	$(PYTHON) test_event_log_contract.py
@@ -507,8 +874,16 @@ test_event_projection_contract: test_event_projection_contract.py event_projecti
 # Fase 10: policy pura de recovery, incluindo boot pendente, checkpoint,
 # contador de três interrupções, latch e último erro bounded por app.
 .PHONY: test_recovery_policy
-test_recovery_policy_bin: test_recovery_policy.cpp $(RECOVERY_POLICY_SRC) $(RECOVERY_POLICY_HDR) Makefile
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_recovery_policy.cpp $(RECOVERY_POLICY_SRC) -o test_recovery_policy_bin
+test_recovery_policy_bin: $(RECOVERY_POLICY_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(RECOVERY_POLICY_OBJS) -o $@
+
+test_recovery_policy/test.o: test_recovery_policy.cpp $(RECOVERY_POLICY_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_recovery_policy/policy.o: $(RECOVERY_POLICY_SRC) $(RECOVERY_POLICY_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 test_recovery_policy: test_recovery_policy_bin
 	@./test_recovery_policy_bin
 
@@ -529,8 +904,20 @@ test_event_log_config_contract: test_event_log_config_contract.py ../../../compo
 # estados; o contrato NAO recebe parametro ssid). A implementacao pura e
 # compilada junto ao teste para manter o contrato host-side independente do
 # LVGL.
-test_wifi_indicator_state: test_wifi_indicator_state.cpp $(WIFI_INDICATOR_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_indicator.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_indicator_state.cpp $(WIFI_INDICATOR_SRC) -o test_wifi_indicator_state
+test_wifi_indicator_state/test.o: test_wifi_indicator_state.cpp ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_indicator.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_indicator_state/indicator.o: $(WIFI_INDICATOR_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_indicator.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_indicator_state_bin: $(WIFI_INDICATOR_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_INDICATOR_OBJS) -o $@
+
+.PHONY: test_wifi_indicator_state
+test_wifi_indicator_state: test_wifi_indicator_state_bin
+	@./test_wifi_indicator_state_bin
 
 # Logica pura (sem LVGL): layout geometrico do icono Wi-Fi no
 # caixote variavel do header (contrato em cyberdeck_wifi_icon.h;
@@ -542,45 +929,89 @@ test_wifi_indicator_state: test_wifi_indicator_state.cpp $(WIFI_INDICATOR_SRC) .
 # (visible_half_width / determinant_outer_radius), larguras
 # validas/invalidas, determinismo byte a byte, monotonicidade de
 # center_x (largura e margem), margem final ~2px e casos angulares.
-test_wifi_icon_layout: test_wifi_icon_layout.cpp $(WIFI_ICON_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_icon.h ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_indicator.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_icon_layout.cpp $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) -o test_wifi_icon_layout
+test_wifi_icon_layout/test.o: test_wifi_icon_layout.cpp ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_icon.h ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_indicator.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_icon_layout/icon.o: $(WIFI_ICON_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_icon.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_icon_layout/indicator.o: $(WIFI_INDICATOR_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_wifi_indicator.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_icon_layout_bin: $(WIFI_ICON_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_ICON_OBJS) -o $@
+
+.PHONY: test_wifi_icon_layout
+test_wifi_icon_layout: test_wifi_icon_layout_bin
+	@./test_wifi_icon_layout_bin
 
 # Logica pura (sem LVGL): modelo e renderizacao do menu Wi-Fi (scan/saved/deduplicacao/navegacao).
-test_wifi_menu: test_wifi_menu.cpp $(WIFI_MENU_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_menu.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_menu.cpp $(WIFI_MENU_SRC) -o test_wifi_menu
+test_wifi_menu/test.o: test_wifi_menu.cpp ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_menu.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_menu/menu.o: $(WIFI_MENU_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_menu.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_menu_bin: $(WIFI_MENU_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_MENU_OBJS) -o $@
+
+.PHONY: test_wifi_menu
+test_wifi_menu: test_wifi_menu_bin
+	@./test_wifi_menu_bin
 
 # Host-side contract coverage for the pure search/saved state machine:
 # timeout/cancel recovery, stale/future callback tokens, UI lifecycle state,
 # and persistence only after the IP event. No hardware, callbacks, or
 # production adapters are faked; the production pure adapter is linked.
-test_wifi_state_machine: test_wifi_state_machine.cpp $(WIFI_STATE_MACHINE_SRC) $(WIFI_STATE_MACHINE_HDR)
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_state_machine.cpp $(WIFI_STATE_MACHINE_SRC) -o test_wifi_state_machine
+test_wifi_state_machine/test.o: test_wifi_state_machine.cpp $(WIFI_STATE_MACHINE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 
-# TDD contracts for the IP_EVENT crash fix. The producer must only copy a
-# bounded snapshot and enqueue it; persistence/SNTP/UI work belongs to the
-# consumer. These targets intentionally stay RED until the coder adds the
-# production modules named below. No ESP-IDF or hardware is used here.
-test_wifi_event_dispatch: test_wifi_event_dispatch.cpp $(WIFI_EVENT_DISPATCH_SRC) contracts/cyberdeck_wifi_event_dispatch.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_event_dispatch.cpp $(WIFI_EVENT_DISPATCH_SRC) -o test_wifi_event_dispatch
+test_wifi_state_machine/state.o: $(WIFI_STATE_MACHINE_SRC) $(WIFI_STATE_MACHINE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 
-test_wifi_persistence_queue: test_wifi_persistence_queue.cpp $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) contracts/cyberdeck_wifi_persistence_queue.h contracts/cyberdeck_wifi_event_dispatch.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_persistence_queue.cpp $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) -o test_wifi_persistence_queue
+test_wifi_state_machine_bin: $(WIFI_STATE_MACHINE_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_STATE_MACHINE_OBJS) -o $@
 
-# Contract for the worker coordination seam.  The coordinator is linked with
-# both concrete bounded hand-off modules because its public implementation
-# owns references to their types (and therefore cannot be linked in isolation).
-test_wifi_persistence_coordination: test_wifi_persistence_coordination.cpp $(WIFI_PERSISTENCE_COORDINATOR_SRC) $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) contracts/cyberdeck_wifi_persistence_coordinator.h contracts/cyberdeck_wifi_persistence_queue.h contracts/cyberdeck_wifi_event_dispatch.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -Icontracts test_wifi_persistence_coordination.cpp $(WIFI_PERSISTENCE_COORDINATOR_SRC) $(WIFI_PERSISTENCE_QUEUE_SRC) $(WIFI_EVENT_DISPATCH_SRC) -o test_wifi_persistence_coordination
+.PHONY: test_wifi_state_machine
+test_wifi_state_machine: test_wifi_state_machine_bin
+	@./test_wifi_state_machine_bin
 
-test_wifi_audit: test_wifi_audit.cpp $(WIFI_AUDIT_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit.h $(WIFI_AUDIT_PERSISTENCE_HDR) Makefile
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_audit.cpp $(WIFI_AUDIT_SRC) -o test_wifi_audit
+test_wifi_audit/test.o: test_wifi_audit.cpp $(WIFI_AUDIT_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_audit/audit.o: $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_HDR) $(WIFI_AUDIT_PERSISTENCE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+$(WIFI_AUDIT_BIN): $(WIFI_AUDIT_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_AUDIT_OBJS) -o $@
+
+.PHONY: test_wifi_audit
+test_wifi_audit: $(WIFI_AUDIT_BIN)
+	@./$(WIFI_AUDIT_BIN)
 
 # Host contract for the injectable Wi-Fi audit persistence transaction.
 # The target links the real production header/source and exercises every
 # behavioral fault, recovery, ACK, and concurrency case.
 .PHONY: test_wifi_audit_persistence
-test_wifi_audit_persistence_bin: test_wifi_audit_persistence.cpp $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) $(WIFI_AUDIT_PERSISTENCE_CONTRACT_HDR) Makefile
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_audit_persistence.cpp $(WIFI_AUDIT_PERSISTENCE_SRC) -pthread -o test_wifi_audit_persistence_bin
+test_wifi_audit_persistence/test.o: test_wifi_audit_persistence.cpp $(WIFI_AUDIT_PERSISTENCE_HDR) $(WIFI_AUDIT_PERSISTENCE_CONTRACT_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_audit_persistence/persistence.o: $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_audit_persistence_bin: $(WIFI_AUDIT_PERSISTENCE_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -pthread $(WIFI_AUDIT_PERSISTENCE_OBJS) -o $@
 test_wifi_audit_persistence: test_wifi_audit_persistence_bin
 	@./test_wifi_audit_persistence_bin
 
@@ -590,14 +1021,38 @@ test_wifi_audit_persistence_contract: test_wifi_audit_persistence_contract.py $(
 # Simplified Wi-Fi audit save contract: the ordinary audit is display-only;
 # the explicit save path owns directory/timestamp/collision behavior.
 .PHONY: test_wifi_audit_save
-test_wifi_audit_save_bin: $(WIFI_AUDIT_SAVE_TEST) $(WIFI_AUDIT_SRC) ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit.h $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) $(CLOCK_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h Makefile
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_AUDIT_SAVE_TEST) $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(CLOCK_SRC) -pthread -o test_wifi_audit_save_bin
+test_wifi_audit_save/test.o: $(WIFI_AUDIT_SAVE_TEST) $(WIFI_AUDIT_HDR) $(WIFI_AUDIT_PERSISTENCE_HDR) ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_audit_save/audit.o: $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_HDR) $(WIFI_AUDIT_PERSISTENCE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_audit_save/persistence.o: $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_audit_save/clock.o: $(CLOCK_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_audit_save_bin: $(WIFI_AUDIT_SAVE_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -pthread $(WIFI_AUDIT_SAVE_OBJS) -o $@
 test_wifi_audit_save: test_wifi_audit_save_bin
 	@./test_wifi_audit_save_bin
 
 .PHONY: test_wifi_survey
-test_wifi_survey_bin: test_wifi_survey.cpp $(WIFI_SURVEY_SRC) $(WIFI_SURVEY_HDR) Makefile
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_wifi_survey.cpp $(WIFI_SURVEY_SRC) -o test_wifi_survey_bin
+test_wifi_survey/test.o: test_wifi_survey.cpp $(WIFI_SURVEY_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_wifi_survey/survey.o: $(WIFI_SURVEY_SRC) $(WIFI_SURVEY_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+$(WIFI_SURVEY_BIN): $(WIFI_SURVEY_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(WIFI_SURVEY_OBJS) -o $@
 test_wifi_survey: test_wifi_survey_bin
 	@./test_wifi_survey_bin
 
@@ -623,29 +1078,6 @@ test_wifi_mgr_lifecycle_contract: test_wifi_mgr_lifecycle_contract.py ../../../c
 	$(PYTHON) test_wifi_mgr_lifecycle_contract.py
 
 
-# Logica pura (sem LVGL): formatador do relogio do header (plano aprovado:
-# clock "DD/MM/YYYY HH:MM" em GMT-3 no centro do header, NENHUM status SSH no
-# header, indicador de Wi-Fi a direita; conversao UTC->local com offset fixo
-# -180 min, formatacao estilo snprintf com zero-padding e entrada invalida
-# retornando 0 sem escrever nada). O contrato vive em cyberdeck_clock.h; a
-# implementacao (cyberdeck_clock.cpp) sera criada pelo coder junto com a
-# integracao do relogio na UI. Ate la, este target fica vermelho por design
-# (TDD): o build falha por MODULO AUSENTE, com a mensagem
-# "No rule to make target '.../cyberdeck_clock.cpp'".
-test_clock_formatter: test_clock_formatter.cpp $(CLOCK_SRC) ../../../components/cyberdeck/include/platform/display/cyberdeck_clock.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_clock_formatter.cpp $(CLOCK_SRC) -o test_clock_formatter
-
-# TDD RED: politica/estado puro da protecao de tela. O contrato fixa o default
-# de 2 min, a faixa 0..1440, zero desabilitando sem perder o ultimo valor
-# positivo, snapshots NVS e as transicoes exatas do timer. A implementacao de
-# producao esperada e cyberdeck_screen_protection.cpp; ate o coder cria-la, o
-# alvo falha por fonte ausente sem tocar em LVGL/BSP/NVS/hardware.
-.PHONY: test_screen_protection
-test_screen_protection_bin: $(SCREEN_PROTECTION_TEST) $(SCREEN_PROTECTION_SRC) $(SCREEN_PROTECTION_HDR) $(SCREEN_PROTECTION_CONTRACT_HDR) Makefile
-	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include $(SCREEN_PROTECTION_TEST) $(SCREEN_PROTECTION_SRC) -o test_screen_protection_bin
-test_screen_protection: test_screen_protection_bin
-	@./test_screen_protection_bin
-
 # TDD RED: contrato estrutural para comando/UI, timer, NVS e ui.type. Nao
 # executa display, Serial Automation Bridge, simulador ou power-cycle. O catalogo
 # compartilhado de ajuda, a fixture e os dois testes comportamentais que
@@ -654,24 +1086,13 @@ test_screen_protection: test_screen_protection_bin
 test_screen_protection_contract: $(SCREEN_PROTECTION_CONTRACT) $(SCREEN_PROTECTION_SRC) $(SCREEN_PROTECTION_HDR) $(SHELL_HELP_HDR) contracts/cyberdeck_help.h $(SHELL_TEST) $(HELP_UNIFICATION_TEST) $(SERIAL_TEST) ../../../components/cyberdeck/src/platform/display/screen_off.cpp ../../../components/cyberdeck/include/platform/display/screen_off.h ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../.gitignore
 	$(PYTHON) $(SCREEN_PROTECTION_CONTRACT)
 
-# Logica pura (sem LVGL): filtro puro e incremental da saida SSH (contrato em
-# cyberdeck_terminal_filter.h; plano aprovado: remover ANSI/CSI/OSC, normalizar
-# CR/LF, preservar UTF-8/texto e suportar fragmentacao). A implementacao
-# (cyberdeck_terminal_filter.cpp) sera criada pelo coder junto com a integracao
-# no fluxo on_ssh_data()/append_output() do TUI. Ate la, este target fica
-# vermelho por design (TDD): o build falha por MODULO AUSENTE, com a mensagem
-# "No rule to make target '.../cyberdeck_terminal_filter.cpp'".
-test_terminal_filter: test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_terminal_filter.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_terminal_filter.cpp $(TERMINAL_FILTER_SRC) -o test_terminal_filter
-
 # REQ-LAT-03-01..04/11: real bounded scrollback model, UTF-8 pruning and
 # independent 4096-byte viewport.  Sanitizers remain enabled locally while
 # external compile/link flags (including CI coverage) are preserved.
 .PHONY: test_terminal_scrollback
-test_terminal_scrollback_bin: test_terminal_scrollback.cpp $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) Makefile
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -fsanitize=address,undefined -I../../../components/cyberdeck/include test_terminal_scrollback.cpp $(TERMINAL_SCROLLBACK_SRC) $(LDFLAGS) $(LDLIBS) -o test_terminal_scrollback_bin
+test_terminal_scrollback_bin: $(TERMINAL_SCROLLBACK_OBJS) Makefile
 test_terminal_scrollback: test_terminal_scrollback_bin
-	@./test_terminal_scrollback_bin
+	@./$(TERMINAL_SCROLLBACK_BIN)
 
 test_lat03_contract: $(LAT03_CONTRACT) test_terminal_scrollback.cpp $(TERMINAL_SCROLLBACK_SRC) $(TERMINAL_SCROLLBACK_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp Makefile
 	$(PYTHON) $(LAT03_CONTRACT)
@@ -705,24 +1126,101 @@ test_ssh_output_gap: $(SSH_OUTPUT_GAP_TEST) ../../../components/cyberdeck/src/pl
 # testar handle_key/execute_line/insercao de texto como comportamento.
 # Depende apenas de modulos puros ja testados (edit_line, history, modelos
 # BLE/Wi-Fi, shell_utils, local_shell, protecao de tela e bateria).
-test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) $(SHELL_HELP_HDR) $(WIFI_SURVEY_SRC) $(WIFI_SURVEY_HDR) \
-		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
-		$(SD_IO_COORDINATOR_SRC) \
-		$(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
-		$(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
-		$(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) $(BATTERY_PROTECTION_SRC) \
-		$(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) $(WIFI_STATE_MACHINE_SRC) \
-		$(BLE_TYPES_SRC) $(BLE_STATE_SRC) \
-		shim/esp_err.h shim/esp_wifi_types.h shim/freertos/FreeRTOS.h
-	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_session.cpp \
-		$(SESSION_SRC) $(SHELL_CONSOLE_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
-		$(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
-		$(APP_RUNTIME_SRC) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
-		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
-		$(WIFI_STATE_MACHINE_SRC) $(WIFI_SURVEY_SRC) $(BLE_TYPES_SRC) \
-		$(BLE_STATE_SRC) -o test_shell_session
+test_shell_session/test.o: test_shell_session.cpp shim/esp_err.h shim/esp_wifi_types.h shim/freertos/FreeRTOS.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/shell_session.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/shell_console.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/edit_line.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/history.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_history.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/shell_utils.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/vfs_namespace.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/ssh_line_composer.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/screen_protection.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/battery_protection.o: ../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/battery_status.o: ../../../components/cyberdeck/src/platform/sensors/battery_status.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/wifi_menu.o: ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/wifi_state_machine.o: ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/wifi_survey.o: ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_survey.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/ble_types.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session/ble_state_machine.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_session_bin: $(SHELL_SESSION_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) $(SHELL_SESSION_MIG_OBJS) -o $@
+
+.PHONY: test_shell_session
+test_shell_session: test_shell_session_bin
+	@./test_shell_session_bin
+
 
 # REQ-HELP-DETAILS / AC-1..AC-6 + REQ-HELP-05 (expanded): `<command> help`
 # contract for legacy terms, registered app commands and aliases without
@@ -734,25 +1232,101 @@ test_shell_session: test_shell_session.cpp $(SESSION_SRC) $(SESSION_HDR) $(SHELL
 # TUs as test_shell_session plus the real demo application, whose declared
 # usage metadata is exercised as-is.
 .PHONY: test_shell_help
-test_shell_help_bin: test_shell_help.cpp $(SESSION_SRC) $(SESSION_HDR) $(SHELL_HELP_HDR) $(WIFI_SURVEY_SRC) $(WIFI_SURVEY_HDR) \
-		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
-		$(SD_IO_COORDINATOR_SRC) \
-		$(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
-		$(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
-		$(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) $(BATTERY_PROTECTION_SRC) \
-		$(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) $(WIFI_STATE_MACHINE_SRC) \
-		$(BLE_TYPES_SRC) $(BLE_STATE_SRC) \
-		$(DEMO_APP_SRC) $(DEMO_APP_HDR) \
-		shim/esp_err.h shim/esp_wifi_types.h shim/freertos/FreeRTOS.h Makefile
-	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_help.cpp \
-		$(SESSION_SRC) $(SHELL_CONSOLE_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
-		$(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
-		$(APP_RUNTIME_SRC) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
-		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
-		$(WIFI_STATE_MACHINE_SRC) $(WIFI_SURVEY_SRC) $(BLE_TYPES_SRC) \
-		$(BLE_STATE_SRC) $(DEMO_APP_SRC) -o test_shell_help_bin
+test_shell_help/test.o: test_shell_help.cpp shim/esp_err.h shim/esp_wifi_types.h shim/freertos/FreeRTOS.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/shell_session.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/shell_console.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/edit_line.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/history.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_history.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/shell_utils.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/vfs_namespace.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/ssh_line_composer.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/screen_protection.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/battery_protection.o: ../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/battery_status.o: ../../../components/cyberdeck/src/platform/sensors/battery_status.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/wifi_menu.o: ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/wifi_state_machine.o: ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/wifi_survey.o: ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_survey.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/ble_types.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/ble_state_machine.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help/demo_app.o: $(DEMO_APP_SRC) $(DEMO_APP_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_help_bin: $(SHELL_HELP_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) $(SHELL_HELP_MIG_OBJS) -o $@
+
 test_shell_help: test_shell_help_bin
 	@./test_shell_help_bin
 
@@ -771,10 +1345,33 @@ test_shell_help_contract: test_shell_help_contract.py test_shell_help.cpp \
 		help_traceability.md Makefile
 	$(PYTHON) test_shell_help_contract.py
 
-test_app_runtime: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
-	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include test_app_runtime.cpp \
-		$(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) -o test_app_runtime
+test_app_runtime/test.o: test_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_app_runtime/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_app_runtime/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_app_runtime/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_app_runtime/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_app_runtime_bin: $(APP_RUNTIME_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -pthread -I../../../components/cyberdeck/include $(APP_RUNTIME_MIG_OBJS) -o $@
+
+.PHONY: test_app_runtime
+test_app_runtime: test_app_runtime_bin
+	@./test_app_runtime_bin
+
 
 test_app_runtime_tsan: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
@@ -783,70 +1380,265 @@ test_app_runtime_tsan: test_app_runtime.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR
 		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) -o test_app_runtime_tsan
 	./test_app_runtime_tsan
 
-test_runtime_sdk: test_runtime_sdk.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
-		$(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(COMMAND_CATALOG_SRC) \
-		$(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR)
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include \
-		test_runtime_sdk.cpp $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) \
-		$(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(APP_LOGGER_SRC) $(COMMAND_CATALOG_SRC) \
-		$(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -o test_runtime_sdk
+test_runtime_sdk/test.o: test_runtime_sdk.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/app_storage.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/app_logger.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_logger.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/command_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_command_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/vfs_namespace.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_runtime_sdk_bin: $(RUNTIME_SDK_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include $(RUNTIME_SDK_MIG_OBJS) -o $@
+
+.PHONY: test_runtime_sdk
+test_runtime_sdk: test_runtime_sdk_bin
+	@./test_runtime_sdk_bin
+
 
 .PHONY: test_storage_facade
-test_storage_facade_bin: test_storage_facade.cpp $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) $(APP_STORAGE_SRC) \
-		$(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR) Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include \
-		test_storage_facade.cpp $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) \
-		$(APP_QUOTA_SRC) $(APP_STORAGE_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) \
-		-Wl,--wrap=_Z40cyberdeck_local_shell_storage_write_tempPKcS0_St17basic_string_viewIcSt11char_traitsIcEES0_m \
-		-Wl,--wrap=_Z35cyberdeck_local_shell_storage_flushPKcS0_St17basic_string_viewIcSt11char_traitsIcEE \
-		-Wl,--wrap=_Z36cyberdeck_local_shell_storage_renamePKcS0_St17basic_string_viewIcSt11char_traitsIcEES4_ \
-		-Wl,--wrap=_Z45cyberdeck_local_shell_storage_fsync_directoryPKcS0_St17basic_string_viewIcSt11char_traitsIcEE \
-		-Wl,--wrap=link \
-		-Wl,--wrap=_Z33cyberdeck_local_shell_cat_boundedPKcS0_S0_m -o $@
+test_storage_facade/test.o: test_storage_facade.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_storage_facade/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_storage_facade/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_storage_facade/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_storage_facade/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_storage_facade/app_storage.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_storage_facade/local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_storage_facade/vfs_namespace.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_storage_facade/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_storage_facade_bin: $(STORAGE_FACADE_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -I../../../components/cyberdeck/include $(STORAGE_FACADE_MIG_OBJS) -Wl,--wrap=_Z40cyberdeck_local_shell_storage_write_tempPKcS0_St17basic_string_viewIcSt11char_traitsIcEES0_m -Wl,--wrap=_Z35cyberdeck_local_shell_storage_flushPKcS0_St17basic_string_viewIcSt11char_traitsIcEE -Wl,--wrap=_Z36cyberdeck_local_shell_storage_renamePKcS0_St17basic_string_viewIcSt11char_traitsIcEES4_ -Wl,--wrap=_Z45cyberdeck_local_shell_storage_fsync_directoryPKcS0_St17basic_string_viewIcSt11char_traitsIcEE -Wl,--wrap=link -Wl,--wrap=_Z33cyberdeck_local_shell_cat_boundedPKcS0_S0_m -o $@
+
 test_storage_facade: test_storage_facade_bin
 	@./test_storage_facade_bin
 
 .PHONY: test_storage_facade
 
 .PHONY: test_phase9_capabilities
-test_phase9_capabilities_bin: $(PHASE9_CAPABILITIES_TEST) $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
-		$(APP_FACADES_SRC) $(APP_FACADES_HDR) $(WINDOW_MANAGER_SRC) $(WINDOW_MANAGER_HDR) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) Makefile
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include \
-		$(PHASE9_CAPABILITIES_TEST) $(APP_RUNTIME_SRC) $(APP_FACADES_SRC) \
-		$(WINDOW_MANAGER_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
-		-o test_phase9_capabilities_bin
+test_phase9_capabilities/test.o: test_phase9_capabilities.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_phase9_capabilities/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_phase9_capabilities/app_facades.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_facades.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_phase9_capabilities/window_manager.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_window_manager.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_phase9_capabilities/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_phase9_capabilities/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_phase9_capabilities/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_phase9_capabilities_bin: $(PHASE9_CAPABILITIES_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(PHASE9_CAPABILITIES_MIG_OBJS) -o $@
+
 test_phase9_capabilities: test_phase9_capabilities_bin
 	@./test_phase9_capabilities_bin
 
-test_demo_app: test_demo_app.cpp $(DEMO_APP_SRC) $(DEMO_APP_HDR) $(APP_RUNTIME_SRC) $(APP_RUNTIME_HDR) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC)
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_demo_app.cpp \
-		$(DEMO_APP_SRC) $(APP_RUNTIME_SRC) $(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) -o test_demo_app
+test_demo_app/test.o: test_demo_app.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_demo_app/demo_app.o: ../../../components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_demo_app/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_demo_app/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_demo_app/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_demo_app/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_demo_app_bin: $(DEMO_APP_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(DEMO_APP_MIG_OBJS) -o $@
+
+.PHONY: test_demo_app
+test_demo_app: test_demo_app_bin
+	@./test_demo_app_bin
+
 
 # Aplicacao shell de primeiro plano (Fase 7): ownership do console, modos de
 # sessao (SSH como modo), politica de despacho e composicao do prompt.  Liga o
 # console puro, a aplicacao e o runtime reais contra um host de sessao falso.
 .PHONY: test_shell_app
-test_shell_app_bin: test_shell_app.cpp $(SHELL_CONSOLE_SRC) $(SHELL_CONSOLE_HDR) \
-		$(SHELL_APP_SRC) $(SHELL_APP_HDR) $(SESSION_SRC) $(SESSION_HDR) \
-		$(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) \
-		$(SD_IO_COORDINATOR_SRC) \
-		$(APP_RUNTIME_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
-		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
-		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) $(BLE_STATE_SRC) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) Makefile
-	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) test_shell_app.cpp \
-		$(SHELL_CONSOLE_SRC) $(SHELL_APP_SRC) \
-		$(SESSION_SRC) $(EDIT_LINE_SRC) $(HISTORY_SRC) $(SHELL_UTILS_SRC) \
-		$(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) $(LINE_COMPOSER_SRC) $(SCREEN_PROTECTION_SRC) \
-		$(APP_RUNTIME_SRC) \
-		$(RESOURCE_CATALOG_SRC) $(SD_PACKAGE_SRC) $(APP_QUOTA_SRC) \
-		$(BATTERY_PROTECTION_SRC) $(BATTERY_PURE_SRC) $(WIFI_MENU_SRC) \
-		$(WIFI_STATE_MACHINE_SRC) $(BLE_TYPES_SRC) \
-		$(BLE_STATE_SRC) -o test_shell_app_bin
+test_shell_app/test.o: test_shell_app.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/shell_console.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/shell_app.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_app.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/shell_session.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/edit_line.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/history.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_history.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/shell_utils.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/vfs_namespace.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/ssh_line_composer.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/screen_protection.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/battery_protection.o: ../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/battery_status.o: ../../../components/cyberdeck/src/platform/sensors/battery_status.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/wifi_menu.o: ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/wifi_state_machine.o: ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/ble_types.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app/ble_state_machine.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_shell_app_bin: $(SHELL_APP_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -Ishim $(INCLUDES) $(SHELL_APP_MIG_OBJS) -o $@
+
 test_shell_app: test_shell_app_bin
 	@./test_shell_app_bin
 
@@ -867,11 +1659,37 @@ test_lvgl_shell_lifecycle_contract: test_lvgl_shell_lifecycle_contract.py $(SHEL
 # anexa a system_bar(), que o cromo zero da barra e o que faz o header ocupar a
 # linha inteira; ver TEST-REG-8-BAR para as demais regressoes de layout.
 .PHONY: test_window_manager
-test_window_manager_bin: test_window_manager.cpp $(WINDOW_MANAGER_SRC) $(WINDOW_MANAGER_HDR) \
-		$(WINDOW_MANAGER_ADAPTER_SRC) $(WINDOW_MANAGER_ADAPTER_HDR) \
-		$(HEADER_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) \
-		$(BATTERY_VIEW_SRC) shim/full/lvgl.h Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include test_window_manager.cpp $(WINDOW_MANAGER_SRC) $(WINDOW_MANAGER_ADAPTER_SRC) $(HEADER_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) -o test_window_manager_bin
+test_window_manager/test.o: test_window_manager.cpp shim/full/lvgl.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_window_manager/window_manager.o: $(WINDOW_MANAGER_SRC) $(WINDOW_MANAGER_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_window_manager/window_manager_adapter.o: $(WINDOW_MANAGER_ADAPTER_SRC) $(WINDOW_MANAGER_ADAPTER_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_window_manager/header_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_window_manager/wifi_icon.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_window_manager/wifi_indicator.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_window_manager/battery_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_battery_view.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_window_manager_bin: $(WINDOW_MANAGER_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include $(WINDOW_MANAGER_MIG_OBJS) -o $@
+
 test_window_manager: test_window_manager_bin
 	@./test_window_manager_bin
 
@@ -895,9 +1713,6 @@ test_screenshot_lifecycle_contract: test_screenshot_lifecycle_contract.py ../../
 test_serial_lifecycle_contract: test_serial_lifecycle_contract.py ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h ../../../components/cyberdeck/src/apps/system/cyberdeck_service_ports.cpp ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp Makefile
 	$(PYTHON) test_serial_lifecycle_contract.py
 
-test_edit_line: test_edit_line.cpp $(EDIT_LINE_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_edit_line.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_edit_line.cpp $(EDIT_LINE_SRC) -o test_edit_line
-
 # Logica pura (sem LVGL): coordenador do teardown Wi-Fi/SSH e do gating dos
 # timers (contrato em cyberdeck_net_coordinator.h; bug aprovado B: desconexao
 # idempotente, offline por erro de socket notificado uma unica vez, callbacks
@@ -907,8 +1722,20 @@ test_edit_line: test_edit_line.cpp $(EDIT_LINE_SRC) ../../../components/cyberdec
 # integracao em wifi_mgr/ssh_client. Ate la, este target fica vermelho por
 # design (TDD): o build falha por MODULO AUSENTE, com a mensagem
 # "No rule to make target '.../cyberdeck_net_coordinator.cpp'".
-test_net_coordinator: test_net_coordinator.cpp $(NET_COORDINATOR_SRC) ../../../components/cyberdeck/include/platform/networking/cyberdeck_net_coordinator.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_net_coordinator.cpp $(NET_COORDINATOR_SRC) -o test_net_coordinator
+test_net_coordinator/test.o: test_net_coordinator.cpp ../../../components/cyberdeck/include/platform/networking/cyberdeck_net_coordinator.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_net_coordinator/coordinator.o: $(NET_COORDINATOR_SRC) ../../../components/cyberdeck/include/platform/networking/cyberdeck_net_coordinator.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_net_coordinator_bin: $(NET_COORDINATOR_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(NET_COORDINATOR_OBJS) -o $@
+
+.PHONY: test_net_coordinator
+test_net_coordinator: test_net_coordinator_bin
+	@./test_net_coordinator_bin
 
 # Logica pura (sem LVGL): guarda incremental do eco remoto do SSH (contrato em
 # cyberdeck_ssh_echo_guard.h; feature aprovada historico/eco remoto SSH:
@@ -920,8 +1747,20 @@ test_net_coordinator: test_net_coordinator.cpp $(NET_COORDINATOR_SRC) ../../../c
 # coder junto com a integracao em on_ssh_data(). Ate la, este target fica
 # vermelho por design (TDD): o build falha por MODULO AUSENTE, com a mensagem
 # "No rule to make target '.../cyberdeck_ssh_echo_guard.cpp'".
-test_ssh_echo_guard: test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_echo_guard.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) -o test_ssh_echo_guard
+test_ssh_echo_guard/test.o: test_ssh_echo_guard.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_echo_guard.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_ssh_echo_guard/guard.o: $(ECHO_GUARD_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_echo_guard.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_ssh_echo_guard_bin: $(SSH_ECHO_GUARD_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(SSH_ECHO_GUARD_OBJS) -o $@
+
+.PHONY: test_ssh_echo_guard
+test_ssh_echo_guard: test_ssh_echo_guard_bin
+	@./test_ssh_echo_guard_bin
 
 # Logica pura (sem LVGL): composicao local/remota da linha SSH (contrato em
 # cyberdeck_ssh_line_composer.h; plano aprovado de SERIACAO do envio SSH:
@@ -935,8 +1774,20 @@ test_ssh_echo_guard: test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) ../../../componen
 # (deques); a implementacao atual (cyberdeck_ssh_line_composer.cpp) ainda usa a
 # politica FIFO antiga e por isso NAO compila — este target fica vermelho por
 # design (TDD) ate o coder reimplementar o estado unico previsto no contrato.
-test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_line_composer.h
-	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) -o test_ssh_line_composer
+test_ssh_line_composer/test.o: test_ssh_line_composer.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_line_composer.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_ssh_line_composer/composer.o: $(LINE_COMPOSER_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_line_composer.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_ssh_line_composer_bin: $(SSH_LINE_COMPOSER_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(SSH_LINE_COMPOSER_OBJS) -o $@
+
+.PHONY: test_ssh_line_composer
+test_ssh_line_composer: test_ssh_line_composer_bin
+	@./test_ssh_line_composer_bin
 
 # Logica pura (sem LVGL): API pura de geracao de BMP 24-bit top-down
 # (contrato em screenshot_bmp.h; plano aprovado: cabecalho BMP,
@@ -945,14 +1796,47 @@ test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../..
 # (screenshot_bmp.cpp) sera criada pelo coder. Ate la, este target
 # fica vermelho por design (TDD): o build falha por MODULO AUSENTE,
 # com a mensagem "No rule to make target '.../screenshot_bmp.cpp'".
-test_screenshot_bmp: test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) ../../../components/cyberdeck/include/apps/screenshot/screenshot_bmp.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_screenshot_bmp.cpp $(SCREENSHOT_BMP_SRC) -o test_screenshot_bmp
+test_screenshot_bmp/test.o: test_screenshot_bmp.cpp ../../../components/cyberdeck/include/apps/screenshot/screenshot_bmp.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_screenshot_bmp/bmp.o: $(SCREENSHOT_BMP_SRC) ../../../components/cyberdeck/include/apps/screenshot/screenshot_bmp.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_screenshot_bmp_bin: $(SCREENSHOT_BMP_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SCREENSHOT_BMP_OBJS) -o $@
+
+.PHONY: test_screenshot_bmp
+test_screenshot_bmp: test_screenshot_bmp_bin
+	@./test_screenshot_bmp_bin
 
 # Host test for the confined /sdcard local shell.  Include the production
 # header directly: a duplicate test-only ABI here can make the test compile
 # while linking a different class layout/API than the implementation.
-test_local_shell: test_local_shell.cpp $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_local_shell.cpp $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -pthread -Wl,--wrap=opendir -o test_local_shell
+test_local_shell/test.o: test_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_local_shell/local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_local_shell/vfs_namespace.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_local_shell/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_local_shell_bin: $(LOCAL_SHELL_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(LOCAL_SHELL_MIG_OBJS) -pthread -Wl,--wrap=opendir -o $@
+
+.PHONY: test_local_shell
+test_local_shell: test_local_shell_bin
+	@./test_local_shell_bin
+
 
 $(SAVE_SIDECAR_BIN): $(SAVE_SIDECAR_OBJS) save_sidecar_traceability.md Makefile
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(SAVE_SIDECAR_OBJS) -pthread -o $@
@@ -964,22 +1848,80 @@ test_save_sidecar_recovery: $(SAVE_SIDECAR_BIN)
 # generic shell object so a multiline result is checked at the worker's source
 # seam, including CRLF, tabs, UTF-8, exact 12288-byte output, embedded NUL,
 # and a suffix after the first newline for the UI sanitizer.
-test_cat_multiline: $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CAT_MULTILINE_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -pthread -o test_cat_multiline
+test_cat_multiline/test.o: test_cat_multiline.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_cat_multiline/local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_cat_multiline/vfs_namespace.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_cat_multiline/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_cat_multiline_bin: $(CAT_MULTILINE_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CAT_MULTILINE_MIG_OBJS) -pthread -o $@
+
+.PHONY: test_cat_multiline
+test_cat_multiline: test_cat_multiline_bin
+	@./test_cat_multiline_bin
+
 
 # RED: the menu and local shell must render one shared help catalog.  The
 # target links both real production implementations; no production edit is
 # implied by this test registration.
-test_help_unification: $(HELP_UNIFICATION_TEST) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR) shim/lvgl.h Makefile
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(HELP_UNIFICATION_TEST) $(SHELL_UTILS_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -pthread -o test_help_unification
+test_help_unification/test.o: test_help_unification.cpp contracts/cyberdeck_help.h shim/lvgl.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_help_unification/shell_utils.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_help_unification/local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_help_unification/vfs_namespace.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_help_unification/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -pthread -MMD -MP -MF $@.d -c $< -o $@
+
+test_help_unification_bin: $(HELP_UNIFICATION_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(HELP_UNIFICATION_MIG_OBJS) -pthread -o $@
+
+.PHONY: test_help_unification
+test_help_unification: test_help_unification_bin
+	@./test_help_unification_bin
+
 
 # RED structural companion: rejects private literal help lists in the two
 # shells and in the non-linkable LVGL UI.  It performs source inspection only.
 help_unification_contract: $(HELP_UNIFICATION_CONTRACT) contracts/cyberdeck_help.h $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) $(LOCAL_SHELL_SRC) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../code-map.md Makefile
 	$(PYTHON) $(HELP_UNIFICATION_CONTRACT)
 
-test_orientation: test_orientation.cpp $(ORIENTATION_SRC) ../../../components/cyberdeck/include/platform/sensors/orientation.h shim/lvgl.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_orientation.cpp $(ORIENTATION_SRC) -o test_orientation
+test_orientation/test.o: test_orientation.cpp ../../../components/cyberdeck/include/platform/sensors/orientation.h shim/lvgl.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_orientation/orientation.o: $(ORIENTATION_SRC) ../../../components/cyberdeck/include/platform/sensors/orientation.h shim/lvgl.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_orientation_bin: $(ORIENTATION_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(ORIENTATION_OBJS) -o $@
+
+.PHONY: test_orientation
+test_orientation: test_orientation_bin
+	@./test_orientation_bin
 
 # TDD RED: contrato puro de bateria. A API de teste exige tensao real
 # (bus_voltage_mv, 6000..8230 mV), estados charging/discharging/neutral,
@@ -1020,8 +1962,17 @@ test_battery_ui_contract: test_battery_ui_contract.py ../../../components/cyberd
 test_battery_protection: $(BATTERY_PROTECTION_BIN)
 	@./$(BATTERY_PROTECTION_BIN)
 
-$(BATTERY_PROTECTION_BIN): test_battery_protection.cpp $(BATTERY_PROTECTION_CONTRACT_HDR) $(BATTERY_PROTECTION_SRC) $(BATTERY_PROTECTION_HDR)
-	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include test_battery_protection.cpp $(BATTERY_PROTECTION_SRC) -o $@
+test_battery_protection/test.o: test_battery_protection.cpp contracts/cyberdeck_battery_protection.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_battery_protection/battery_protection.o: ../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_battery_protection_bin: $(BATTERY_PROTECTION_MIG_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include $(BATTERY_PROTECTION_MIG_OBJS) -o $@
+
 
 # Contrato host da view pura do indicador de energia: mapeamento total de
 # battery_state x charge_signal x disponibilidade x percentual para visivel,
@@ -1157,36 +2108,79 @@ test_wifi_enter_routing_contract: test_wifi_enter_routing_contract.py ../../../c
 test_wifi_audit_contract: test_wifi_audit_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp $(WIFI_AUDIT_SRC) $(WIFI_AUDIT_PERSISTENCE_SRC) $(WIFI_AUDIT_PERSISTENCE_HDR) $(WIFI_AUDIT_PERSISTENCE_CONTRACT_HDR) ../../../sdkconfig.defaults ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md Makefile
 	$(PYTHON) test_wifi_audit_contract.py
 
+# Structural contract for the eight-target incremental migration batch.
+.PHONY: test_incremental_batch_contract
+test_incremental_batch_contract: test_incremental_batch_contract.py Makefile ../../../code-map.md
+	$(PYTHON) test_incremental_batch_contract.py
+
+.PHONY: test_incremental_final_contract
+test_incremental_final_contract: test_incremental_final_contract.py incremental_final_baseline.json Makefile
+	$(PYTHON) test_incremental_final_contract.py
+
 # USB Serial-JTAG NDJSON manual bridge (REQ-002/003/005/006/007/008/009) — TDD RED: produção ausente
 .PHONY: test_serial_ndjson_dispatch
-test_serial_ndjson_dispatch_bin: test_serial_ndjson_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_ndjson_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_ndjson_dispatch_bin
+test_serial_ndjson_dispatch/test.o: test_serial_ndjson_dispatch.cpp $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_ndjson_dispatch/bridge.o: $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_ndjson_dispatch_bin: $(SERIAL_NDJSON_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) $(SERIAL_NDJSON_OBJS) -o $@
 test_serial_ndjson_dispatch: test_serial_ndjson_dispatch_bin
 	@./test_serial_ndjson_dispatch_bin
 
 .PHONY: test_serial_screen_dump
-test_serial_screen_dump_bin: test_serial_screen_dump.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) $(SCREENSHOT_BMP_SRC) Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_screen_dump.cpp $(SERIAL_BRIDGE_SRC) $(SCREENSHOT_BMP_SRC) -o test_serial_screen_dump_bin
+test_serial_screen_dump/test.o: test_serial_screen_dump.cpp $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_screen_dump/bridge.o: $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_screen_dump/screenshot-bmp.o: $(SCREENSHOT_BMP_SRC) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_serial_screen_dump_bin: $(SERIAL_SCREEN_DUMP_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) $(SERIAL_SCREEN_DUMP_OBJS) -o $@
 test_serial_screen_dump: test_serial_screen_dump_bin
 	@./test_serial_screen_dump_bin
 
 .PHONY: test_serial_cli_tolerance
-test_serial_cli_tolerance_bin: test_serial_cli_tolerance.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_cli_tolerance.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_cli_tolerance_bin
+test_serial_cli_tolerance/test.o: test_serial_cli_tolerance.cpp $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_cli_tolerance/bridge.o: $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_cli_tolerance_bin: $(SERIAL_CLI_TOLERANCE_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) $(SERIAL_CLI_TOLERANCE_OBJS) -o $@
 test_serial_cli_tolerance: test_serial_cli_tolerance_bin
 	@./test_serial_cli_tolerance_bin
 
 .PHONY: test_serial_sysinfo_wifi
-test_serial_sysinfo_wifi_bin: test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_sysinfo_wifi_bin
+test_serial_sysinfo_wifi/test.o: test_serial_sysinfo_wifi.cpp $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_sysinfo_wifi/bridge.o: $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_sysinfo_wifi_bin: $(SERIAL_SYSINFO_WIFI_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) $(SERIAL_SYSINFO_WIFI_OBJS) -o $@
 test_serial_sysinfo_wifi: test_serial_sysinfo_wifi_bin
 	@./test_serial_sysinfo_wifi_bin
 
 # term.dump (REQ-TERM-001 / AC-TERM-001..005): type conhecido, envelope/rid,
 # resultado bounded e truncamento UTF-8-safe na camada host-testavel.
 .PHONY: test_serial_term_dump
-test_serial_term_dump_bin: test_serial_term_dump.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_serial_term_dump.cpp $(SERIAL_BRIDGE_SRC) -o test_serial_term_dump_bin
+test_serial_term_dump/test.o: test_serial_term_dump.cpp $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_term_dump/bridge.o: $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_serial_term_dump_bin: $(SERIAL_TERM_DUMP_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) $(SERIAL_TERM_DUMP_OBJS) -o $@
 test_serial_term_dump: test_serial_term_dump_bin
 	@./test_serial_term_dump_bin
 
@@ -1200,32 +2194,114 @@ test_term_dump_cli: test_term_dump_cli.py ../../../tools/cyberdeck_cli.py
 
 # fs.write seguro (REQ-001..REQ-011) — TDD RED: produção ausente
 .PHONY: test_fs_write_dispatch
-test_fs_write_dispatch_bin: test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_SRC) -o test_fs_write_dispatch_bin
+test_fs_write_dispatch/test.o: test_fs_write_dispatch.cpp $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_fs_write_dispatch/bridge.o: $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+test_fs_write_dispatch_bin: $(FS_WRITE_DISPATCH_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage $(INCLUDES) $(FS_WRITE_DISPATCH_OBJS) -o $@
 test_fs_write_dispatch: test_fs_write_dispatch_bin
 	@./test_fs_write_dispatch_bin
 
 .PHONY: test_cat_worker
-test_cat_worker_bin: test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(VFS_NAMESPACE_SRC) $(LOCAL_SHELL_HDR) Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -DCYBERDECK_CAT_CORE_ONLY -I../../../components/cyberdeck/include test_cat_worker.cpp $(CAT_WORKER_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -o test_cat_worker_bin
+test_cat_worker/test.o: test_cat_worker.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -DCYBERDECK_CAT_CORE_ONLY -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_cat_worker/cat_worker.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -DCYBERDECK_CAT_CORE_ONLY -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_cat_worker/local_shell.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -DCYBERDECK_CAT_CORE_ONLY -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_cat_worker/vfs_namespace.o: ../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -DCYBERDECK_CAT_CORE_ONLY -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_cat_worker/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -DCYBERDECK_CAT_CORE_ONLY -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_cat_worker_bin: $(CAT_WORKER_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -pthread -DCYBERDECK_CAT_CORE_ONLY -I../../../components/cyberdeck/include $(CAT_WORKER_MIG_OBJS) -o $@
+
 test_cat_worker: test_cat_worker_bin
 	@./test_cat_worker_bin
 
 .PHONY: test_ble_background
-test_ble_background_bin: test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) $(BLE_BACKGROUND_HDR) Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include test_ble_background.cpp $(BLE_BACKGROUND_SRC) $(BLE_STATE_SRC) $(BLE_TYPES_SRC) -o test_ble_background_bin
+test_ble_background/test.o: test_ble_background.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_ble_background/ble_background.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_ble_background/ble_state_machine.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_ble_background/ble_types.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_ble_background_bin: $(BLE_BACKGROUND_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim -I../../../components/cyberdeck/include $(BLE_BACKGROUND_MIG_OBJS) -o $@
+
 test_ble_background: test_ble_background_bin
 	@./test_ble_background_bin
 
 .PHONY: test_keyboard_dispatch
-test_keyboard_dispatch_bin: test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) shim/full/lvgl.h shim/full/esp_lvgl_port.h shim/full/freertos/FreeRTOS.h shim/full/freertos/queue.h shim/full/freertos/semphr.h Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -Ishim/full -I../../../components/cyberdeck/include test_keyboard_dispatch.cpp $(KEYBOARD_DISPATCH_SRC) -o test_keyboard_dispatch_bin
+test_keyboard_dispatch/test.o: test_keyboard_dispatch.cpp shim/full/lvgl.h shim/full/esp_lvgl_port.h shim/full/freertos/FreeRTOS.h shim/full/freertos/queue.h shim/full/freertos/semphr.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_keyboard_dispatch/keyboard_dispatch.o: ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_keyboard_dispatch_bin: $(KEYBOARD_DISPATCH_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -Ishim/full -I../../../components/cyberdeck/include $(KEYBOARD_DISPATCH_MIG_OBJS) -o $@
+
 test_keyboard_dispatch: test_keyboard_dispatch_bin
 	@./test_keyboard_dispatch_bin
 
 .PHONY: test_display_views
-test_display_views_bin: test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(EDITOR_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) shim/full/lvgl.h Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include test_display_views.cpp $(HEADER_VIEW_SRC) $(TERMINAL_VIEW_SRC) $(EDITOR_VIEW_SRC) $(WIFI_ICON_SRC) $(WIFI_INDICATOR_SRC) $(BATTERY_VIEW_SRC) -o test_display_views_bin
+test_display_views/test.o: test_display_views.cpp shim/full/lvgl.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_display_views/header_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_display_views/terminal_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_display_views/editor_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_display_views/wifi_icon.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_display_views/wifi_indicator.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_display_views/battery_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_battery_view.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_display_views_bin: $(DISPLAY_VIEWS_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include $(DISPLAY_VIEWS_MIG_OBJS) -o $@
+
 test_display_views: test_display_views_bin
 	@./test_display_views_bin
 
@@ -1403,12 +2479,29 @@ test_ble_bond_reconnect: $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN)
 	@$(MAKE) --no-print-directory test_ble_bond_name_contract
 
 
-BINS += test_poweroff
+BINS += test_poweroff_bin
 BINS += test_cat_worker_runtime
-BINS += test_known_hosts_file
+BINS += test_known_hosts_file_bin
 
-test_known_hosts_file: test_known_hosts_file.cpp ../../../components/cyberdeck/src/apps/ssh/cyberdeck_known_hosts_file.cpp ../../../components/cyberdeck/include/apps/ssh/cyberdeck_known_hosts_file.h $(SD_IO_COORDINATOR_SRC)
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include test_known_hosts_file.cpp ../../../components/cyberdeck/src/apps/ssh/cyberdeck_known_hosts_file.cpp $(SD_IO_COORDINATOR_SRC) -Wl,--wrap=write -Wl,--wrap=fsync -Wl,--wrap=close -Wl,--wrap=fclose -o $@
+test_known_hosts_file/test.o: test_known_hosts_file.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_known_hosts_file/known_hosts_file.o: ../../../components/cyberdeck/src/apps/ssh/cyberdeck_known_hosts_file.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_known_hosts_file/sd_io_coordinator.o: ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_known_hosts_file_bin: $(KNOWN_HOSTS_FILE_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include $(KNOWN_HOSTS_FILE_MIG_OBJS) -Wl,--wrap=write -Wl,--wrap=fsync -Wl,--wrap=close -Wl,--wrap=fclose -o $@
+
+.PHONY: test_known_hosts_file
+test_known_hosts_file: test_known_hosts_file_bin
+	@./test_known_hosts_file_bin
+
 
 CAT_RUNTIME_OBJS := test_cat_runtime_local_shell.o test_cat_runtime_vfs.o test_cat_runtime_sd_io.o
 
@@ -1427,8 +2520,21 @@ test_cat_runtime_sd_io.o: $(SD_IO_COORDINATOR_SRC) $(SD_IO_COORDINATOR_HDR) Make
 test_cat_worker_runtime: test_cat_worker_runtime.cpp $(CAT_WORKER_SRC) $(CAT_RUNTIME_OBJS) event_log_shim/event_log_shim.cpp cat_runtime_shim/freertos/queue.h cat_runtime_shim/freertos/task.h cat_runtime_shim/freertos/semphr.h cat_runtime_shim/freertos/FreeRTOS.h cat_runtime_shim/lvgl.h cat_runtime_shim/esp_lvgl_port.h
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -DESP_PLATFORM -Icat_runtime_shim -Ievent_log_shim -Ishim -I../../../components/cyberdeck/include test_cat_worker_runtime.cpp $(CAT_WORKER_SRC) $(CAT_RUNTIME_OBJS) event_log_shim/event_log_shim.cpp -Wl,--wrap=read -o $@
 
-test_poweroff: test_poweroff.cpp ../../../components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp ../../../components/cyberdeck/include/platform/power/cyberdeck_poweroff.h
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include test_poweroff.cpp ../../../components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp -Wl,--wrap=write -Wl,--wrap=fsync -Wl,--wrap=close -o $@
+test_poweroff/test.o: test_poweroff.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_poweroff/poweroff.o: ../../../components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_poweroff_bin: $(POWEROFF_MIG_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include $(POWEROFF_MIG_OBJS) -Wl,--wrap=write -Wl,--wrap=fsync -Wl,--wrap=close -o $@
+
+.PHONY: test_poweroff
+test_poweroff: test_poweroff_bin
+	@./test_poweroff_bin
+
 
 test_wake_key_contract: test_wake_key_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) test_wake_key_contract.py
@@ -1447,9 +2553,9 @@ test: test-build
 	@$(MAKE) --no-print-directory test_netdiag_dns_adapter
 	@$(MAKE) --no-print-directory test_netdiag_https_adapter
 	@$(MAKE) --no-print-directory test_netdiag_app
-	@./test_poweroff
+	@./test_poweroff_bin
 	@./test_cat_worker_runtime
-	@./test_known_hosts_file
+	@./test_known_hosts_file_bin
 	@$(PYTHON) test_poweroff_contract.py
 	@$(PYTHON) test_poweroff_link_guard.py
 	@echo "==> Executando teste comportamental de sincronizacao UTC (TEST-TIME-01..08)"
@@ -1459,15 +2565,15 @@ test: test-build
 	@echo "==> Executando contrato estrutural do wake-key (REQ-WAKE-KEY-01/02)"
 	@$(MAKE) --no-print-directory test_wake_key_contract
 	@echo "==> Executando testes do keymap do shell de entrada"
-	@./test_keymap
+	@./test_keymap_bin
 	@echo "==> Executando testes dos utilitarios de shell e SSH"
-	@./test_shell_utils
+	@./test_shell_utils_bin
 	@echo "==> Executando testes do historico local do terminal"
-	@./test_history
+	@./test_history_bin
 	@echo "==> Executando testes do parser de eventos Character do teclado"
-	@./test_keyboard_event
+	@./test_keyboard_event_bin
 	@echo "==> Executando testes da selecao de indices do anel recente do log"
-	@./test_event_log_recent
+	@./test_event_log_recent_bin
 	@./test_event_log_shim
 	@$(MAKE) --no-print-directory test_event_log_runtime
 	@echo "==> Executando contrato estrutural do event log"
@@ -1477,21 +2583,21 @@ test: test-build
 	@echo "==> Executando contrato de configuracao do event log"
 	@$(MAKE) --no-print-directory test_event_log_config_contract
 	@echo "==> Executando testes do indicador de estado do Wi-Fi"
-	@./test_wifi_indicator_state
+	@./test_wifi_indicator_state_bin
 	@echo "==> Executando testes do layout do icono Wi-Fi"
-	@./test_wifi_icon_layout
+	@./test_wifi_icon_layout_bin
 	@echo "==> Executando testes do modelo e renderizacao do menu Wi-Fi"
-	@./test_wifi_menu
+	@./test_wifi_menu_bin
 	@echo "==> Executando testes da maquina de estados pura de busca/salvas Wi-Fi"
-	@./test_wifi_state_machine
+	@./test_wifi_state_machine_bin
 	@echo "==> Executando contrato TDD do produtor IP_EVENT"
-	@./test_wifi_event_dispatch
+	@./test_wifi_event_dispatch_bin
 	@echo "==> Executando contrato TDD da fila de persistencia Wi-Fi"
-	@./test_wifi_persistence_queue
+	@./test_wifi_persistence_queue_bin
 	@echo "==> Executando contrato TDD da coordenacao da persistencia Wi-Fi"
-	@./test_wifi_persistence_coordination
+	@./test_wifi_persistence_coordination_bin
 	@echo "==> Executando contrato TDD da auditoria Wi-Fi passiva"
-	@./test_wifi_audit
+	@./$(WIFI_AUDIT_BIN)
 	@echo "==> Executando contrato TDD do fluxo simplificado de salvamento da auditoria Wi-Fi"
 	@./test_wifi_audit_save_bin
 	@echo "==> Executando contrato estrutural do salvamento da auditoria Wi-Fi"
@@ -1501,21 +2607,24 @@ test: test-build
 	@echo "==> Executando binario comportamental da persistencia da auditoria Wi-Fi"
 	@./test_wifi_audit_persistence_bin
 	@echo "==> Executando testes do formatador do relogio do header (GMT-3)"
-	@./test_clock_formatter
+	@./test_clock_formatter_bin
 	@echo "==> Executando contrato puro de politica/estado da protecao de tela"
 	@./test_screen_protection_bin
 	@echo "==> Executando contrato estrutural da protecao de tela/NVS/ui.type"
 	@$(MAKE) --no-print-directory test_screen_protection_contract
+	@echo "==> Executando contrato estrutural do lote de migracao incremental"
+	@$(MAKE) --no-print-directory test_incremental_batch_contract
+	@$(MAKE) --no-print-directory test_incremental_final_contract
 	@echo "==> Executando testes do filtro de saida SSH"
-	@./test_terminal_filter
+	@./test_terminal_filter_bin
 	@echo "==> Executando testes do modelo de scrollback do terminal"
 	@./test_terminal_scrollback_bin
 	@$(MAKE) --no-print-directory test_lat03_contract
 	@$(MAKE) --no-print-directory test_lat04_contract
 	@echo "==> Executando testes do modelo da linha de edicao/sessao SSH"
-	@./test_edit_line
+	@./test_edit_line_bin
 	@echo "==> Executando testes do modelo do editor"
-	@./test_editor_model
+	@./test_editor_model_bin
 	@echo "==> Executando contrato de runtime do editor"
 	@$(MAKE) --no-print-directory test_editor_runtime_contract
 	@echo "==> Executando contrato determinístico de storage/save do editor"
@@ -1523,14 +2632,14 @@ test: test-build
 	@echo "==> Executando contrato da superfície e2e do editor"
 	@$(MAKE) --no-print-directory test_editor_surface_contract
 	@echo "==> Executando testes comportamentais da sessao de shell"
-	@./test_shell_session
+	@./test_shell_session_bin
 	@echo "==> Executando testes do contrato <command> help (REQ-HELP-DETAILS)"
 	@./test_shell_help_bin
 	@echo "==> Executando contrato estrutural dos manifestos de help (REQ-HELP-05)"
 	@$(MAKE) --no-print-directory test_shell_help_contract
 	@echo "==> Executando testes do runtime de aplicacoes compiladas"
-	@./test_app_runtime
-	@./test_runtime_sdk
+	@./test_app_runtime_bin
+	@./test_runtime_sdk_bin
 	@echo "==> Executando teste host real da transacao storage confinada"
 	@./test_storage_facade_bin
 	@echo "==> Executando policy pura e contrato estrutural da Fase 10"
@@ -1540,7 +2649,7 @@ test: test-build
 	@./test_phase9_capabilities_bin
 	@$(MAKE) --no-print-directory test_phase9_capabilities_contract
 	@echo "==> Executando testes do app demo compilado"
-	@./test_demo_app
+	@./test_demo_app_bin
 	@echo "==> Executando aplicacao shell de primeiro plano e seu contrato"
 	@./test_shell_app_bin
 	@$(MAKE) --no-print-directory test_shell_app_contract
@@ -1567,22 +2676,22 @@ test: test-build
 	@echo "==> Executando contrato da alocacao externa da task SSH (PSRAM)"
 	@$(MAKE) --no-print-directory test_ssh_task_alloc_contract
 	@echo "==> Executando testes do coordenador de teardown Wi-Fi/SSH e timers"
-	@./test_net_coordinator
+	@./test_net_coordinator_bin
 	@echo "==> Executando testes da guarda incremental de eco remoto do SSH"
-	@./test_ssh_echo_guard
+	@./test_ssh_echo_guard_bin
 	@echo "==> Executando testes da composicao local/remota da linha SSH"
-	@./test_ssh_line_composer
+	@./test_ssh_line_composer_bin
 	@echo "==> Executando testes da API de geracao de BMP 24-bit"
-	@./test_screenshot_bmp
+	@./test_screenshot_bmp_bin
 	@echo "==> Executando contrato do shell local seguro"
-	@./test_local_shell
+	@./test_local_shell_bin
 	@echo "==> Executando contrato de unificacao do help"
-	@./test_help_unification
+	@./test_help_unification_bin
 	@$(MAKE) --no-print-directory help_unification_contract
 	@echo "==> Executando regressao host da API cat multiline"
-	@./test_cat_multiline
+	@./test_cat_multiline_bin
 	@echo "==> Executando testes de orientacao pura e debounce"
-	@./test_orientation
+	@./test_orientation_bin
 	@echo "==> Executando contrato estrutural da sequencia de boot SD"
 	@$(MAKE) --no-print-directory test_boot_sequence
 	@echo "==> Executando contrato do backlog de transformacao do OS"
@@ -1689,6 +2798,8 @@ test: test-build
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
 	@$(MAKE) --no-print-directory imu_sensor_contract
 clean:
-	rm -f $(BINS) test_app_runtime_tsan $(CAT_RUNTIME_OBJS) test_battery_protection ./*.gcda ./*.gcno ./*.gcov
-	rm -rf test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse .objects
+	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff
+	rm -f $(BINS) test_app_runtime_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
+	rm -rf test_keymap test_screenshot_bmp test_orientation
+	rm -rf test_screen_protection test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_terminal_scrollback test_wifi_survey test_recovery_policy test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_clock_formatter test_terminal_filter test_edit_line test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_echo_guard test_ssh_line_composer .objects
 	rm -f $(LEGACY_TEST_ARTIFACTS)

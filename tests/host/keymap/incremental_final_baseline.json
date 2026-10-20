@@ -1,0 +1,556 @@
+{
+  "test_editor_model": {
+    "sources": [
+      "test_editor_model.cpp",
+      "../../../components/cyberdeck/src/apps/editor/cyberdeck_editor_model.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_time_sync": {
+    "sources": [
+      "test_time_sync.cpp",
+      "../../../components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp",
+      "time_sync_shim/cJSON.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-fsanitize=address,undefined",
+      "-pthread",
+      "-I$(TIME_SYNC_SHIM)",
+      "-Ishim",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_shell_utils": {
+    "sources": [
+      "test_shell_utils.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "$(INCLUDES)"
+    ],
+    "link_flags": []
+  },
+  "test_sd_package": {
+    "sources": [
+      "test_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_resource_catalog": {
+    "sources": [
+      "test_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_netdiag_dns_adapter": {
+    "sources": [
+      "test_netdiag_dns_adapter.cpp",
+      "../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns_adapter.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "-g",
+      "--coverage",
+      "-fsanitize=address,undefined",
+      "-fno-omit-frame-pointer",
+      "-pthread",
+      "-Inetdiag_dns_shim",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_netdiag_https_adapter": {
+    "sources": [
+      "test_netdiag_https_adapter.cpp",
+      "../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_https_adapter.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "-g",
+      "--coverage",
+      "-fsanitize=address,undefined",
+      "-fno-omit-frame-pointer",
+      "-Inetdiag_https_shim",
+      "-Ishim",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_netdiag_app": {
+    "sources": [
+      "test_netdiag_app.cpp",
+      "../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp",
+      "../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_controller.cpp",
+      "../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns_adapter.cpp",
+      "../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp_adapter.cpp",
+      "../../../components/cyberdeck/src/apps/network/cyberdeck_netdiag_https_adapter.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-fsanitize=address,undefined",
+      "-fno-omit-frame-pointer",
+      "-pthread",
+      "-Inetdiag_app_shim",
+      "-Inetdiag_dns_shim",
+      "-Inetdiag_tcp_shim",
+      "-Inetdiag_https_shim",
+      "-Ishim",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": [
+      "-Wl,--wrap=socket",
+      "-Wl,--wrap=close",
+      "-Wl,--wrap=fcntl",
+      "-Wl,--wrap=connect",
+      "-Wl,--wrap=select",
+      "-Wl,--wrap=getsockopt"
+    ]
+  },
+  "test_shell_session": {
+    "sources": [
+      "test_shell_session.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_history.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/battery_status.cpp",
+      "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp",
+      "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp",
+      "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_survey.cpp",
+      "../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp",
+      "../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-Ishim",
+      "$(INCLUDES)"
+    ],
+    "link_flags": []
+  },
+  "test_shell_help": {
+    "sources": [
+      "test_shell_help.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_history.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/battery_status.cpp",
+      "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp",
+      "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp",
+      "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_survey.cpp",
+      "../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp",
+      "../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp",
+      "../../../components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-Ishim",
+      "$(INCLUDES)"
+    ],
+    "link_flags": []
+  },
+  "test_app_runtime": {
+    "sources": [
+      "test_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-pthread",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_runtime_sdk": {
+    "sources": [
+      "test_runtime_sdk.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_logger.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_command_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-pthread",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_storage_facade": {
+    "sources": [
+      "test_storage_facade.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-pthread",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": [
+      "-Wl,--wrap=_Z40cyberdeck_local_shell_storage_write_tempPKcS0_St17basic_string_viewIcSt11char_traitsIcEES0_m",
+      "-Wl,--wrap=_Z35cyberdeck_local_shell_storage_flushPKcS0_St17basic_string_viewIcSt11char_traitsIcEE",
+      "-Wl,--wrap=_Z36cyberdeck_local_shell_storage_renamePKcS0_St17basic_string_viewIcSt11char_traitsIcEES4_",
+      "-Wl,--wrap=_Z45cyberdeck_local_shell_storage_fsync_directoryPKcS0_St17basic_string_viewIcSt11char_traitsIcEE",
+      "-Wl,--wrap=link",
+      "-Wl,--wrap=_Z33cyberdeck_local_shell_cat_boundedPKcS0_S0_m"
+    ]
+  },
+  "test_phase9_capabilities": {
+    "sources": [
+      "test_phase9_capabilities.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_facades.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_window_manager.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_demo_app": {
+    "sources": [
+      "test_demo_app.cpp",
+      "../../../components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_shell_app": {
+    "sources": [
+      "test_shell_app.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_app.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_edit_line.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_history.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/battery_status.cpp",
+      "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp",
+      "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp",
+      "../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp",
+      "../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-Ishim",
+      "$(INCLUDES)"
+    ],
+    "link_flags": []
+  },
+  "test_window_manager": {
+    "sources": [
+      "test_window_manager.cpp",
+      "../../../components/cyberdeck/src/apps/runtime/cyberdeck_window_manager.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_window_manager_adapter.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_battery_view.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-Ishim/full",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_local_shell": {
+    "sources": [
+      "test_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "$(INCLUDES)"
+    ],
+    "link_flags": [
+      "-pthread",
+      "-Wl,--wrap=opendir"
+    ]
+  },
+  "test_cat_multiline": {
+    "sources": [
+      "test_cat_multiline.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "$(INCLUDES)"
+    ],
+    "link_flags": [
+      "-pthread"
+    ]
+  },
+  "test_help_unification": {
+    "sources": [
+      "test_help_unification.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "$(INCLUDES)"
+    ],
+    "link_flags": [
+      "-pthread"
+    ]
+  },
+  "test_battery_protection": {
+    "sources": [
+      "test_battery_protection.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp"
+    ],
+    "flags": [
+      "$(CXXFLAGS)",
+      "-Icontracts",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_cat_worker": {
+    "sources": [
+      "test_cat_worker.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_cat_worker.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",
+      "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-pthread",
+      "-DCYBERDECK_CAT_CORE_ONLY",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_ble_background": {
+    "sources": [
+      "test_ble_background.cpp",
+      "../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cpp",
+      "../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp",
+      "../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-Ishim",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_keyboard_dispatch": {
+    "sources": [
+      "test_keyboard_dispatch.cpp",
+      "../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-fsanitize=address,undefined",
+      "-Ishim/full",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_display_views": {
+    "sources": [
+      "test_display_views.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_battery_view.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-Ishim/full",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": []
+  },
+  "test_known_hosts_file": {
+    "sources": [
+      "test_known_hosts_file.cpp",
+      "../../../components/cyberdeck/src/apps/ssh/cyberdeck_known_hosts_file.cpp",
+      "../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-fsanitize=address,undefined",
+      "-pthread",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": [
+      "-Wl,--wrap=write",
+      "-Wl,--wrap=fsync",
+      "-Wl,--wrap=close",
+      "-Wl,--wrap=fclose"
+    ]
+  },
+  "test_poweroff": {
+    "sources": [
+      "test_poweroff.cpp",
+      "../../../components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp"
+    ],
+    "flags": [
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-O0",
+      "--coverage",
+      "-fsanitize=address,undefined",
+      "-pthread",
+      "-I../../../components/cyberdeck/include"
+    ],
+    "link_flags": [
+      "-Wl,--wrap=write",
+      "-Wl,--wrap=fsync",
+      "-Wl,--wrap=close"
+    ]
+  }
+}

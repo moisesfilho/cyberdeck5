@@ -600,13 +600,28 @@ def check_wiring(makefile):
             failures.append(message)
 
     artifact_prerequisites = makefile_target_tokens(makefile, HELP_ARTIFACT)
-    require(bool(artifact_prerequisites),
-            f"Makefile must define the {HELP_ARTIFACT} artifact target")
-    for token in ("test_shell_help.cpp", "$(SESSION_SRC)", "$(SHELL_UTILS_SRC)",
-                  "$(LOCAL_SHELL_SRC)", "$(BLE_STATE_SRC)", "$(DEMO_APP_SRC)",
-                  "$(DEMO_APP_HDR)", "shim/esp_err.h", "Makefile"):
-        require(token in artifact_prerequisites,
-                f"{HELP_ARTIFACT} must declare {token} as a prerequisite")
+    require(artifact_prerequisites == ["$(SHELL_HELP_MIG_OBJS)", "Makefile"],
+            f"{HELP_ARTIFACT} must link the per-TU object set")
+    source_objects = {
+        "test_shell_help/test.o": ("test_shell_help.cpp", "shim/esp_err.h"),
+        "test_shell_help/shell_session.o": ("../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp",),
+        "test_shell_help/shell_utils.o": ("../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp",),
+        "test_shell_help/local_shell.o": ("../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp",),
+        "test_shell_help/ble_state_machine.o": ("../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_state_machine.cpp",),
+        "test_shell_help/demo_app.o": ("$(DEMO_APP_SRC)", "$(DEMO_APP_HDR)"),
+    }
+    # LOCAL_SHELL_SRC expands to two TUs; each has its own object and depfile.
+    source_objects["test_shell_help/vfs_namespace.o"] = (
+        "../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp",)
+    for obj, tokens in source_objects.items():
+        prerequisites = makefile_target_tokens(makefile, obj)
+        for token in (*tokens, "Makefile"):
+            require(token in prerequisites, f"{obj} must declare {token} as a prerequisite")
+        commands = "\n".join(makefile_recipe_commands(makefile, obj))
+        require("-MMD -MP -MF $@.d -c $< -o $@" in commands,
+                f"{obj} must compile its source with a depfile")
+        require("$(CXXFLAGS)" in commands and "-Ishim" in commands,
+                f"{obj} must retain the project flags and LVGL shim")
 
     artifact_commands = makefile_recipe_commands(makefile, HELP_ARTIFACT)
     require(bool(artifact_commands),
@@ -616,12 +631,10 @@ def check_wiring(makefile):
         ("$(CXX)", "the host build must go through the project C++ compiler"),
         ("$(CXXFLAGS)", "the host build must keep the project compile flags"),
         ("-Ishim", "the host build must use the LVGL shim"),
-        ("test_shell_help.cpp", "the behavioral test must be compiled"),
-        ("$(DEMO_APP_SRC)", "the real demo application source must be compiled"),
-        ("$(BLE_STATE_SRC)", "the real BLE state machine must be linked"),
+        ("$(SHELL_HELP_MIG_OBJS)", "the real test and production objects must be linked"),
     ):
         require(token in artifact_recipe, f"{HELP_ARTIFACT} must keep {message}")
-    require(re.search(rf"-o\s+{re.escape(HELP_ARTIFACT)}\b", artifact_recipe) is not None,
+    require("-o $@" in artifact_recipe,
             f"{HELP_ARTIFACT} must link its own executable")
 
     wrapper_prerequisites = makefile_target_tokens(makefile, HELP_WRAPPER)
@@ -797,14 +810,14 @@ def check_wiring_mutations(makefile):
              lambda body: [line.replace(f"./{HELP_ARTIFACT}", f"./{HELP_WRAPPER}")
                            for line in body])),
         ("drop-demo-app-prerequisite",
-         lambda source: _edit_target_prerequisites(
-             source, HELP_ARTIFACT,
-             lambda body: [line.replace("$(DEMO_APP_SRC) ", "") for line in body])),
+          lambda source: _edit_target_prerequisites(
+              source, "test_shell_help/demo_app.o",
+              lambda body: [line.replace("$(DEMO_APP_SRC) ", "") for line in body])),
         ("drop-demo-app-link",
-         lambda source: _edit_target_recipe(
-             source, HELP_ARTIFACT,
-             lambda body: [line.replace("$(BLE_STATE_SRC) $(DEMO_APP_SRC)",
-                                        "$(BLE_STATE_SRC)") for line in body])),
+          lambda source: _edit_target_prerequisites(
+              source, HELP_ARTIFACT,
+              lambda body: [line.replace("$(SHELL_HELP_MIG_OBJS)",
+                                         "test_shell_help/test.o") for line in body])),
         ("drop-coverage-flag",
          lambda source: _edit_target_recipe(
              source, HELP_ARTIFACT,

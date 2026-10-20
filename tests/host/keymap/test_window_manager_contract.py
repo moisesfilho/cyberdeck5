@@ -1015,35 +1015,41 @@ def check_wiring(component: str, guard: str, makefile: str, codemap: str) -> Non
     wrapper = WINDOW_WRAPPER
 
     artifact_prerequisites = makefile_target_tokens(makefile, artifact)
-    for token in ("test_window_manager.cpp", "$(WINDOW_MANAGER_SRC)",
-                  "$(WINDOW_MANAGER_HDR)", "$(WINDOW_MANAGER_ADAPTER_SRC)",
-                  "$(WINDOW_MANAGER_ADAPTER_HDR)", "shim/full/lvgl.h",
-                  # TEST-REG-8-CHROME observes the real header attached to the
-                  # real bar, so the behavioral binary must link that view.
-                  "$(HEADER_VIEW_SRC)", "$(WIFI_ICON_SRC)",
-                  "$(WIFI_INDICATOR_SRC)", "$(BATTERY_VIEW_SRC)"):
-        require(token in artifact_prerequisites,
-                f"{artifact} must declare {token} as a prerequisite")
+    require(artifact_prerequisites == ["$(WINDOW_MANAGER_MIG_OBJS)", "Makefile"],
+            f"{artifact} must link its per-TU objects")
+    source_objects = {
+        "test.o": ("test_window_manager.cpp", "shim/full/lvgl.h"),
+        "window_manager.o": ("$(WINDOW_MANAGER_SRC)", "$(WINDOW_MANAGER_HDR)"),
+        "window_manager_adapter.o": ("$(WINDOW_MANAGER_ADAPTER_SRC)", "$(WINDOW_MANAGER_ADAPTER_HDR)"),
+        "header_view.o": ("../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp",),
+        "wifi_icon.o": ("../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp",),
+        "wifi_indicator.o": ("../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp",),
+        "battery_view.o": ("../../../components/cyberdeck/src/platform/display/cyberdeck_battery_view.cpp",),
+    }
+    for obj, tokens in source_objects.items():
+        target = f"test_window_manager/{obj}"
+        prereqs = makefile_target_tokens(makefile, target)
+        for token in (*tokens, "Makefile"):
+            require(token in prereqs, f"{target} must declare {token} as a prerequisite")
+        recipe = makefile_recipe(makefile, target)
+        require("-MMD -MP -MF $@.d -c $< -o $@" in recipe,
+                f"{target} must compile with a depfile")
+        require("-Ishim/full" in recipe and "--coverage" in recipe,
+                f"{target} must retain the full LVGL shim and coverage")
     artifact_recipe = makefile_recipe(makefile, artifact)
     for token, message in (
         ("-Ishim/full", "the host build must use the full LVGL shim"),
         ("-std=c++17", "the host build must pin the C++ standard"),
         ("-Wall -Wextra -Werror", "the host build must keep warnings fatal"),
         ("--coverage", "the host build must emit coverage for the scope guard"),
-        ("test_window_manager.cpp", "the behavioral test must be compiled"),
-        ("$(WINDOW_MANAGER_SRC)", "the real pure policy must be linked"),
-        ("$(WINDOW_MANAGER_ADAPTER_SRC)", "the real adapter must be linked"),
-        ("$(HEADER_VIEW_SRC)", "the real header view must be linked"),
-        ("$(WIFI_ICON_SRC)", "the header view dependency must be linked"),
-        ("$(WIFI_INDICATOR_SRC)", "the header view dependency must be linked"),
-        ("$(BATTERY_VIEW_SRC)", "the header view dependency must be linked"),
+        ("$(WINDOW_MANAGER_MIG_OBJS)", "the policy, adapter, header and test objects must be linked"),
     ):
         require(token in artifact_recipe, f"{artifact} must keep {message}")
     require(re.search(r"\$\(CXX\)", artifact_recipe) is not None,
             "the host build must go through the project C++ compiler")
     require("-I../../../components/cyberdeck/include" in artifact_recipe,
             "the host build must reach the production include tree")
-    require(re.search(rf"-o\s+{re.escape(artifact)}\b", artifact_recipe) is not None,
+    require("-o $@" in artifact_recipe,
             f"{artifact} must link its own executable")
 
     wrapper_prerequisites = makefile_target_tokens(makefile, wrapper)
@@ -1148,9 +1154,9 @@ def check_wiring_rejections(makefile: str, component: str, guard: str,
                                           f"./{WINDOW_ARTIFACT}",
                                           f"./{WINDOW_WRAPPER}")),
         ("drop-policy-prerequisite",
-         lambda source: edit_target_prerequisites(
-             source, WINDOW_ARTIFACT,
-             lambda body: [line.replace("$(WINDOW_MANAGER_SRC) ", "")
+          lambda source: edit_target_prerequisites(
+              source, "test_window_manager/window_manager.o",
+              lambda body: [line.replace("$(WINDOW_MANAGER_SRC) ", "")
                            for line in body])),
         ("drop-coverage-flag",
          lambda source: replace_in_recipe(source, WINDOW_ARTIFACT,

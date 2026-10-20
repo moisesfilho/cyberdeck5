@@ -216,7 +216,8 @@ def test_editor_view_is_host_covered_and_not_allowlisted() -> None:
     assert EDITOR_VIEW not in FORBIDDEN_ALLOWLIST
     assert EDITOR_VIEW in production_sources(ROOT, SOURCE_ROOT)
     makefile = (ROOT / "tests/host/keymap/Makefile").read_text()
-    assert "$(EDITOR_VIEW_SRC)" in makefile
+    assert "test_display_views/editor_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp Makefile" in makefile
+    assert "test_display_views/editor_view.o" in makefile
 
 
 def test_netdiag_app_is_required_covered_and_not_allowlisted() -> None:
