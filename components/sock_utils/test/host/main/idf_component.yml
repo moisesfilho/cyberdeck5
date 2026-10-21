@@ -1,5 +1,5 @@
 dependencies:
-  espressif/catch2: "^3.4.0"
+  espressif/catch2: "^3.16.0"
   # O override faz o component manager substituir a dependencia registry
   # "espressif/sock_utils" (baixada por david-cermak/libssh) pela copia
   # local components/sock_utils. Mesmo mecanismo do teste oficial

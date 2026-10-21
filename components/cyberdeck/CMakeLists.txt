@@ -124,10 +124,22 @@ idf_component_register(
          esp_http_client
          esp-tls
          lwip
-         json
+    cjson
         bt
         esp_hosted
 )
+
+if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
+    idf_component_get_property(libssh_target david-cermak__libssh COMPONENT_LIB)
+    if(NOT libssh_target)
+        message(FATAL_ERROR "libssh component target is unavailable")
+    endif()
+    target_include_directories(
+        ${libssh_target}
+        BEFORE PRIVATE "${CMAKE_CURRENT_LIST_DIR}/libssh_idf6_compat"
+    )
+    target_compile_definitions(${libssh_target} PRIVATE HAVE_TERMIOS_H=1)
+endif()
 
 # Observe public FatFS disk-I/O errors even where upstream masks FSInfo status.
 target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=ff_disk_write" "-Wl,--wrap=ff_disk_ioctl")

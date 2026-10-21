@@ -474,7 +474,7 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
   `TEST-EDIT-SAVE`, `TEST-EDIT-INPUT` e `TEST-EDIT-DOC`, incluindo cenarios
   positivos, negativos, de limite e de falha.
 
-- Plataforma: ESP-IDF 5.5.5, LVGL >=9.6,<10.0, BSP `m5stack_tab5`.
+- Plataforma: ESP-IDF 6.1, LVGL >=9.6,<10.0, BSP `m5stack_tab5` 1.3.2.
 - Aplicacao: uma unica tela TUI LVGL, com header, relogio, indicador Wi-Fi, bateria e terminal.
 - Organizacao: `components/cyberdeck/src/apps/` contem fluxos de produto;
   `components/cyberdeck/src/platform/` contem integracoes de hardware e runtime.
@@ -1061,8 +1061,12 @@ handle privado que `nimble_port_freertos_deinit()` espera registrar via
 `nimble_port_freertos_init()`. A task agora chama `vTaskDelete(nullptr)` após
 `nimble_port_run()`; `ble_mgr_stop` solicita a parada via `nimble_port_stop()` e
 não deleta a task externa ou concorrentemente. `test_ble_review_regressions.py`
-protege esse contrato. Build e agregado host passam; no teste posterior, BLE
-avançou sem o assert anterior. O encerramento físico ainda aguarda confirmação.
+protege esse contrato. Migração física de 20/out/2026: C6 atualizado de 2.12.6
+para 3.0.9 por OTA usando temporariamente o host ESP-Hosted 2.13.0; firmware
+final cyberdeck5 com host 3.0.9 confirmou handshake host/C6 3.0.9 e negociação
+SDIO SW_AGGR. `wifi.status` confirmou associação e IP `192.168.68.127`, sem
+reboot (uptime 00:00:43). `bluetooth search` concluiu com timeout e lista vazia;
+não houve panic, mas descoberta BLE de periférico permanece sem confirmação.
 
 O radio BLE nao e do ESP32-P4: e do coprocessor ESP32-C6 alcancado por
 `esp_hosted` (VHCI/HCI), e a stack host roda no P4. Nenhum modulo BLE toca
@@ -1326,11 +1330,18 @@ status`, sem tabelas locais nem getters live adicionais.
 
 `components/cyberdeck/CMakeLists.txt` registra todos os fontes de producao e
 declara dependencias de LVGL, BSP, I2C master, Wi-Fi, rede, FreeRTOS, SD/FATFS,
-libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF, `esp_lvgl_port`,
-LVGL diretamente na faixa `>=9.6.0,<10.0.0`, `esp_hosted`, `esp_wifi_remote`,
-libssh e o override local de `sock_utils`. O
-componente tambem expoe o include de configuracao do port NimBLE usado pelo
-adaptador. `sdkconfig.defaults` habilita `CONFIG_FATFS_FS_LOCK=5` (protege os cinco VFS FAT slots contra rename/unlink de <PII type="CASE_ID" id="198"/> abertos) e `CONFIG_FATFS_TIMEOUT_MS=1000`; a task `wifi_audit_io` ainda impõe deadline próprio de 2 s para chamadas SD/VFS.
+libssh e HTTP server. `main/idf_component.yml` declara ESP-IDF 6.1,
+`esp_lvgl_port`, LVGL diretamente na faixa `>=9.6.0,<10.0.0`, ESP-Hosted 3,
+`esp_wifi_remote` 1.6.5, cJSON do Component Registry, libssh e o override local
+de `sock_utils`. IDF 6 moveu o componente `json` para fora do SDK; o componente
+usa `espressif/cjson`. A compatibilidade `components/cyberdeck/libssh_idf6_compat/termios.h`
+e o include/define privado do alvo libssh adaptam a mudança de caminho do
+header termios do IDF 6, sem alterar `managed_components`. O BSP declara
+`esp_driver_i2s` diretamente para satisfazer a verificação de dependências de
+headers do IDF 6. `sdkconfig.defaults` habilita `CONFIG_FATFS_FS_LOCK=5`
+(protege os cinco VFS FAT slots contra rename/unlink de arquivos abertos) e
+`CONFIG_FATFS_TIMEOUT_MS=1000`; a task `wifi_audit_io` ainda impõe deadline
+próprio de 2 s para chamadas SD/VFS.
 
 ### Overlay local
 
@@ -1469,7 +1480,7 @@ helpers privados, entao a regra nao fixa a implementacao interna do adaptador.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `.clang-format`, `.github/workflows/quality-gate.yml`, `tools/coverage_scope_guard.py`, `tests/host/keymap/test_coverage_scope_guard.py` | `quality`, guard de escopo gcovr | Gate determinístico de formatação C++ (clang-format 18.1.8, ranges alterados em `ble_mgr.cpp` e no seam de `cyberdeck_cat_worker`), lint, smells, Bandit, agregado host com `-O0 --coverage` e build ESP-IDF 5.5.5 depois dos checks host. O agregado executa `test_serial_ndjson_dispatch`, `test_serial_screen_dump`, `test_serial_cli_tolerance`, `test_serial_sysinfo_wifi` e `test_fs_write_dispatch`, além dos binários host dos seams UI/worker. A cobertura global bloqueia em >=80% de linhas, >=94% de funções e >=59% de branches em `components/cyberdeck/src/**/*.cpp`; uma única execução gcovr usa `--txt-metric branch`, `--fail-under-line 80`, `--fail-under-function 94` e `--fail-under-branch 59`. O JSON temporário fica em `$RUNNER_TEMP/cyberdeck-coverage.json`. O guard compara fail-closed as TUs de produção ao JSON do gcovr e aceita somente uma allowlist explícita de adaptadores hardware/ESP-IDF; `test_coverage_scope_guard.py` cobre os casos de escopo e allowlist. `cyberdeck_ui.cpp` é allowlisted especificamente por ser composição LVGL/BSP/FreeRTOS, enquanto o comportamento foi deslocado para modelos host-testáveis. `ssh_client.cpp` é allowlisted por acoplar libssh a BSP/FreeRTOS. A allowlist tem 15 entradas e ganhou mais três adaptadores: `cyberdeck_display_port.cpp` (captura BSP/LVGL com `bsp_display_lock` e `lv_snapshot_take`, sem build host), `cyberdeck_service_ports.cpp` (encaminhamento fino para os adaptadores `wifi_mgr`/`ssh_client`/`ble_mgr`/serial bridge) e `cyberdeck_system_apps.cpp` (composição e lifecycle dos system apps acoplada a serviços de hardware, coberta por `test_system_apps_contract.py`, `test_shell_app_contract.py` e `test_serial_lifecycle_contract.py`). `apps/demo/cyberdeck_demo_app.cpp` não é allowlisted: passa a ser coberta pelo binário host `test_demo_app`. TUs cobertas não podem permanecer allowlisted, e `cyberdeck_cat_worker.cpp`, `cyberdeck_keyboard_dispatch.cpp`, `cyberdeck_header_view.cpp`, `cyberdeck_terminal_view.cpp` e `cyberdeck_ble_background.cpp` são proibidas na allowlist. O gate BLE isolado foi removido. As actions são pinadas por SHA exato: checkout v4.2.2 em `11bd71901bbe5b1630ceea73d27597364c9af683` e Espressif branch v1 tip em `8fc05d1470d5591417e7a3707a1f2bec178db4ae`. |
+| `.clang-format`, `.github/workflows/quality-gate.yml`, `tools/coverage_scope_guard.py`, `tests/host/keymap/test_coverage_scope_guard.py` | `quality`, guard de escopo gcovr | Gate usa clang-format 23.1.3, Ruff 0.17.1, gcovr 8.7, Bandit 1.9.4 e checkout v7.0.1 pinado por SHA; agrega testes host e build ESP-IDF 6.1. Mantém os limites globais de cobertura (80% linhas, 94% funções, 59% branches), `coverage_scope_guard.py` fail-closed e allowlist explícita dos adaptadores hardware. A formatação de `ble_mgr.cpp` valida somente as faixas alteradas para preservar regiões legadas.
 
 Declaracao de validacao fisica reportada pelo usuario (REQ-HW-01): foram testados
 no firmware gravado `0202b2b` os cenarios de conexao Bluetooth, scan,

@@ -1,9 +1,10 @@
 dependencies:
-  idf: ">=5.4"
+  idf: ">=6.1"
   espressif/esp_lvgl_port: "^2"
   lvgl/lvgl: ">=9.6.0,<10.0.0"
-  espressif/esp_hosted: "^2.11.0"
+  espressif/esp_hosted: "^3.0.9"
   espressif/esp_wifi_remote: "^1.6.4"
+  espressif/cjson: "^1.7.19"
   david-cermak/libssh: "*"
   # Replace libssh's transitive espressif/sock_utils dependency with the
   # maintained dual-stack implementation in the application workspace.

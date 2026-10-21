@@ -9,8 +9,8 @@ inspects the real firmware sources for composition, routing, threading and
 scope boundaries.
 
 The approved host is **NimBLE** on the P4 driving the C6 controller over the
-ESP-Hosted HCI VHCI transport (``CONFIG_BT_NIMBLE_ENABLED=y``,
-``CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y``, ``CONFIG_BT_BLUEDROID_ENABLED=n``), so
+ESP-Hosted HCI transport (IDF 5 uses the legacy VHCI Kconfig; IDF 6 uses
+``CONFIG_ESP_HOSTED_HOST_FEAT_BT=y`` and the explicit Hosted NimBLE adapter), so
 every stack check below names the real NimBLE host entry points and rejects the
 Bluedroid-only ones.  Composition checks describe the *public bounded* adapter
 surface (bounded queue + observer) and the invariants around it, never the
@@ -503,17 +503,23 @@ def check_adapter_composition(report: Report) -> None:
                        f"the BLE adapter is a NimBLE host: {token!r} (Bluedroid) "
                        "must not appear (REQ-BLE-001)")
 
-    # Regression: esp_hosted must be ready before the controller, and the
-    # controller must be enabled before NimBLE is initialized.  Checking the
-    # actual start() body (rather than file-wide token order) prevents helper
-    # declarations or comments from making an obsolete build look green.
+    # Regression: transport is ready before the controller, and HCI is bound
+    # before NimBLE initialization. IDF 6 routes controller setup and binding
+    # through the ESP-Hosted stack adapter; IDF 5 uses the legacy calls.
     start_body = function_body(source, "esp_err_t ble_mgr_start(", report)
-    init_order = (
-        "esp_hosted_connect_to_slave",
-        "esp_hosted_bt_controller_init",
-        "esp_hosted_bt_controller_enable",
-        "nimble_port_init",
-    )
+    if "ESP_HOSTED_BT_HOST_STACK_NIMBLE" in start_body:
+        init_order = (
+            "esp_hosted_connect_to_slave",
+            "esp_hosted_bt_host_stack_setup",
+            "nimble_port_init",
+        )
+    else:
+        init_order = (
+            "esp_hosted_connect_to_slave",
+            "esp_hosted_bt_controller_init",
+            "esp_hosted_bt_controller_enable",
+            "nimble_port_init",
+        )
     positions = []
     for token in init_order:
         position = start_body.find(token)
@@ -522,8 +528,8 @@ def check_adapter_composition(report: Report) -> None:
         positions.append(position)
     if all(position >= 0 for position in positions):
         report.require(positions == sorted(positions),
-                       "BLE initialization order must be connect < controller init "
-                       "< controller enable < NimBLE init")
+                        "BLE initialization must connect, initialize/bind Hosted HCI, "
+                        "then initialize NimBLE")
 
     # Regression: transport/controller initialization is non-fatal.  The
     # adapter returns errors and cleans up; it must not hide an aborting macro
@@ -612,13 +618,17 @@ def check_configuration(report: Report) -> None:
         for token in ("CONFIG_BT_ENABLED=y",):
             report.require(token in defaults,
                            f"sdkconfig.defaults must enable the BLE host ({token})")
-        # The approved host is NimBLE carrying HCI over the ESP-Hosted VHCI
-        # transport; the C6 owns the controller, so the local one is disabled.
-        for token in ("CONFIG_BT_NIMBLE_ENABLED=y", "CONFIG_BT_CONTROLLER_DISABLED=y",
-                      "CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y"):
+        # The C6 owns the controller. Hosted 2.x (IDF 5) used legacy VHCI
+        # Kconfig; Hosted 3.x (IDF 6) selects the stack-agnostic BT feature.
+        for token in ("CONFIG_BT_NIMBLE_ENABLED=y", "CONFIG_BT_CONTROLLER_DISABLED=y"):
             report.require(token in defaults,
                            f"sdkconfig.defaults must select the approved NimBLE host "
                            f"over ESP-Hosted ({token})")
+        report.require(
+            "CONFIG_ESP_HOSTED_HOST_FEAT_BT=y" in defaults
+            or "CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y" in defaults,
+            "sdkconfig.defaults must enable the Hosted NimBLE HCI transport",
+        )
         report.require("CONFIG_BT_BLUEDROID_ENABLED=n" in defaults,
                        "sdkconfig.defaults must keep Bluedroid disabled: the "
                        "approved host is NimBLE (REQ-BLE-001)")

@@ -6,7 +6,11 @@
 #include "platform/logging/event_log.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_idf_version.h"
 #include "esp_hosted.h"
+#if ESP_IDF_VERSION_MAJOR >= 6
+#include "esp_hosted_bt_host_stack.h"
+#endif
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -168,7 +172,7 @@ struct hid_discovery_context {
 };
 static hid_discovery_context s_hid = {};
 
-static struct ble_mgr_observer s_observers[BLE_MGR_MAX_OBSERVERS] = {0};
+static struct ble_mgr_observer s_observers[BLE_MGR_MAX_OBSERVERS] = {};
 
 static void ble_mgr_task(void *arg);
 static void ble_host_task(void *arg);
@@ -270,6 +274,23 @@ esp_err_t ble_mgr_start(void)
         return err;
     }
 
+#if ESP_IDF_VERSION_MAJOR >= 6
+    esp_hosted_bt_host_stack_cfg_t bt_stack_cfg = {};
+    bt_stack_cfg.stack = ESP_HOSTED_BT_HOST_STACK_NIMBLE;
+    bt_stack_cfg.bring_up_controller = true;
+    bt_stack_cfg.controller_ready_timeout_ms = EH_BT_CTRL_DEFAULT_READY_TIMEOUT_MS;
+    err = esp_hosted_bt_host_stack_setup(&bt_stack_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_hosted_bt_host_stack_setup failed: %s (%d); BLE disabled", esp_err_to_name(err), err);
+        vSemaphoreDelete(s_dispatch_mutex);
+        s_dispatch_mutex = NULL;
+        vSemaphoreDelete(s_ble_mutex);
+        s_ble_mutex = NULL;
+        vQueueDelete(s_ble_queue);
+        s_ble_queue = NULL;
+        return err;
+    }
+#else
     err = esp_hosted_bt_controller_init();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "esp_hosted_bt_controller_init failed: %s (%d); BLE disabled",
@@ -295,6 +316,7 @@ esp_err_t ble_mgr_start(void)
         s_ble_queue = NULL;
         return err;
     }
+#endif
 
     esp_hosted_coprocessor_fwver_t c6_fw = {};
     const int fw_rc = esp_hosted_get_coprocessor_fwversion(&c6_fw);
@@ -587,14 +609,13 @@ static void start_scan_command(const ble_mgr_cmd_t &cmd)
     s_scan_peer_count = 0;
     s_dispatch.publish_scan_started(token);
 
-    struct ble_gap_disc_params params = {
-        .itvl = 0,
-        .window = 0,
-        .filter_policy = 0,
-        .limited = 0,
-        .passive = 0,
-        .filter_duplicates = 1,
-    };
+    struct ble_gap_disc_params params = {};
+    params.itvl = 0;
+    params.window = 0;
+    params.filter_policy = 0;
+    params.limited = 0;
+    params.passive = 0;
+    params.filter_duplicates = 1;
     const uint8_t own_addr_type = s_own_addr_type;
     ESP_LOGI(TAG, "BLE scan start token=%llu addr_type=%u interval=%u window=%u passive=%u dup=%u",
              static_cast<unsigned long long>(token), own_addr_type, static_cast<unsigned>(params.itvl),
@@ -746,7 +767,8 @@ static void ble_mgr_task(void *arg)
             s_pair_addr_type = cmd.pair.addr_type;
             char addr_str[18];
             format_addr(cmd.pair.addr, addr_str, sizeof(addr_str));
-             ble_addr_t peer_addr = {.type = stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.pair.addr_type))};
+            ble_addr_t peer_addr = {};
+            peer_addr.type = stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.pair.addr_type));
             memcpy(peer_addr.val, cmd.pair.addr, sizeof(peer_addr.val));
             struct ble_gap_conn_params params = {
                 .scan_itvl = BLE_GAP_INITIAL_CONN_ITVL_MIN, .scan_window = BLE_GAP_INITIAL_CONN_ITVL_MIN,
@@ -770,7 +792,7 @@ static void ble_mgr_task(void *arg)
                  s_auth_conn == BLE_HS_CONN_HANDLE_NONE || cmd.passkey.io_action != s_auth_action ||
                  cmd.passkey.addr_type != s_auth_addr_type ||
                  memcmp(cmd.passkey.addr, s_auth_addr, sizeof(s_auth_addr)) != 0) break;
-            struct ble_sm_io pkey = {0};
+            struct ble_sm_io pkey = {};
             bool valid = false;
             switch (cmd.passkey.io_action) {
             case BLE_MGR_AUTH_IO_DISP:
@@ -865,9 +887,11 @@ static void ble_mgr_task(void *arg)
                 .min_ce_len = 0,
                 .max_ce_len = 0,
             };
-             ble_addr_t peer_addr = {.type = stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type))};
+            ble_addr_t peer_addr = {};
+            peer_addr.type = stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type));
             memcpy(peer_addr.val, cmd.connect.addr, 6);
-             int rc = ble_gap_connect(s_own_addr_type, &peer_addr, BLE_HS_FOREVER, &conn_params, ble_gap_event_cb, (void *)(uintptr_t)token);
+            int rc = ble_gap_connect(s_own_addr_type, &peer_addr, BLE_HS_FOREVER, &conn_params, ble_gap_event_cb,
+                                     (void *)(uintptr_t)token);
             if (rc != 0) {
                 ESP_LOGE(TAG, "ble_gap_connect failed: %d", rc);
                 s_dispatch.publish_disconnected(token);
@@ -900,7 +924,8 @@ static void ble_mgr_task(void *arg)
             s_connection_conn = BLE_HS_CONN_HANDLE_NONE;
             s_pair_conn = BLE_HS_CONN_HANDLE_NONE;
             s_auth_conn = BLE_HS_CONN_HANDLE_NONE;
-             ble_addr_t peer_addr = {.type = stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type))};
+            ble_addr_t peer_addr = {};
+            peer_addr.type = stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type));
             memcpy(peer_addr.val, cmd.connect.addr, sizeof(peer_addr.val));
             struct ble_gap_conn_params params = {
                 .scan_itvl = BLE_GAP_INITIAL_CONN_ITVL_MIN, .scan_window = BLE_GAP_INITIAL_CONN_ITVL_MIN,

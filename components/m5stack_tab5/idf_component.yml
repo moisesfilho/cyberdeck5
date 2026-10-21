@@ -1,10 +1,10 @@
 dependencies:
   esp_codec_dev:
     public: true
-    version: ~1.5
+    version: ^1.6.2
   esp_video:
     public: true
-    version: ~2.0
+    version: ^2.5.0
   espressif/bmi270:
     public: true
     version: '*'
@@ -36,7 +36,7 @@ dependencies:
 description: Board Support Package (BSP) for M5Stack Tab5
 repository: git://github.com/espressif/esp-bsp.git
 repository_info:
-  commit_sha: 91c2e12ea0610b71a120afb9162a991731989b8a
+  commit_sha: f259a6abd5808019b1903a422092a4234ca95a51
   path: bsp/m5stack_tab5
 tags:
 - bsp
@@ -44,4 +44,4 @@ tags:
 targets:
 - esp32p4
 url: https://github.com/espressif/esp-bsp/tree/master/bsp/m5stack_tab5
-version: 1.2.0~1
+version: 1.3.2

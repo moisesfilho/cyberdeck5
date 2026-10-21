@@ -28,7 +28,7 @@ client in the terminal. The architecture separates `platform/hardware`,
 ## Requisitos
 
 - M5Stack Tab5
-- ESP-IDF 5.5.5
+- ESP-IDF 6.1
 - Python 3.12
 - Linux
 

@@ -8,7 +8,7 @@ set(SRC
     src/bsp_storage.c
 )
 
-set(REQ esp_driver_gpio esp_driver_i2c fatfs vfs esp_driver_sdspi esp_driver_sdmmc)
+set(REQ esp_driver_gpio esp_driver_i2c esp_driver_i2s fatfs vfs esp_driver_sdspi esp_driver_sdmmc)
 set(PRIV_REQ esp_lcd esp_driver_ledc)
 
 idf_component_register(

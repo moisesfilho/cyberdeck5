@@ -18,9 +18,15 @@ esp_err_t bsp_feature_enable(bsp_feature_t feature, bool enable)
     switch (feature) {
     case BSP_FEATURE_LCD: {
         esp_io_expander_handle_t io_expander = bsp_io_expander_init();
-        ret |= esp_io_expander_set_dir(io_expander, BSP_LCD_EN, IO_EXPANDER_OUTPUT);
-        ret |= esp_io_expander_set_level(io_expander, BSP_LCD_EN, enable);
-        ret |= esp_io_expander_set_output_mode(io_expander, BSP_LCD_EN, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
+        if (enable) {
+            ret |= esp_io_expander_set_pullupdown(io_expander, BSP_LCD_EN, IO_EXPANDER_PULL_UP);
+            ret |= esp_io_expander_set_dir(io_expander, BSP_LCD_EN, IO_EXPANDER_INPUT);
+            ret |= esp_io_expander_set_output_mode(io_expander, BSP_LCD_EN, IO_EXPANDER_OUTPUT_MODE_OPEN_DRAIN);
+        } else {
+            ret |= esp_io_expander_set_dir(io_expander, BSP_LCD_EN, IO_EXPANDER_OUTPUT);
+            ret |= esp_io_expander_set_level(io_expander, BSP_LCD_EN, 0);
+            ret |= esp_io_expander_set_output_mode(io_expander, BSP_LCD_EN, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
+        }
         break;
     }
     case BSP_FEATURE_TOUCH: {

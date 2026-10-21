@@ -133,7 +133,8 @@ def main() -> int:
     task_connects = [line for line in task.splitlines() if "ble_gap_connect(" in line]
     assert len(task_connects) == 3
     assert task.count("stack_address_type(static_cast<cyberdeck_ble::address_type>(cmd.") >= 3
-    assert task.count("peer_addr = {.type = stack_address_type") >= 3
+    assert task.count("peer_addr = {}") >= 3
+    assert task.count("peer_addr.type = stack_address_type(") >= 3
     assert source.count("out.connection.addr_type = static_cast<uint8_t>(in.addr_type)") == 2
 
     # Stale callbacks and malformed reports are bounded/fail-closed.
