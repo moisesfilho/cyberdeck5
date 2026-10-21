@@ -199,6 +199,27 @@ esp_err_t bsp_sdcard_mount(void)
     return bsp_sdcard_sdmmc_mount(&cfg);
 }
 
+static esp_err_t sdmmc_host_init_shared(void)
+{
+    return ESP_OK;
+}
+
+static esp_err_t sdmmc_host_deinit_shared(void)
+{
+    return ESP_OK;
+}
+
+esp_err_t bsp_sdcard_mount_hosted(void)
+{
+    sdmmc_host_t host = {0};
+    bsp_sdcard_cfg_t cfg = {0};
+    bsp_sdcard_get_sdmmc_host(SDMMC_HOST_SLOT_0, &host);
+    host.init = sdmmc_host_init_shared;
+    host.deinit = sdmmc_host_deinit_shared;
+    cfg.host = &host;
+    return bsp_sdcard_sdmmc_mount(&cfg);
+}
+
 esp_err_t bsp_sdcard_unmount(void)
 {
     esp_err_t ret = ESP_OK;

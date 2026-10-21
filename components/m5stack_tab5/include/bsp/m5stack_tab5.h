@@ -292,6 +292,15 @@ typedef struct {
 esp_err_t bsp_sdcard_mount(void);
 
 /**
+ * @brief Mount the SD card in slot 0 while ESP-Hosted owns the SDMMC controller
+ *        and uses slot 1.
+ *
+ * The supplied-host workaround prevents the SD VFS layer from initializing
+ * or deinitializing the shared controller during mount/unmount.
+ */
+esp_err_t bsp_sdcard_mount_hosted(void);
+
+/**
  * @brief Unmount microSD card from virtual file system
  *
  * @return

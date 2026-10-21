@@ -575,22 +575,24 @@ do IDF na maquina e carregar o ambiente quando necessario.
 
 | Ponto | Arquivo | Responsabilidade |
 | --- | --- | --- |
-| `app_main()` | `main/app_main.cpp` | Monta SD, inicializa NVS sem erase automatico, registra a tentativa de recovery antes do startup, registra system apps, inicia display/LVGL, IMU, UI, protecao de tela, adaptador de bateria, teclado, brilho e inicia o supervisor normal ou a superficie bounded de safe mode; event log e startup de servicos sao best-effort, falhas preservam latch/diagnostico sem ESP_ERROR_CHECK e adiam o checkpoint; o checkpoint de prontidao e o ultimo passo bem-sucedido. |
+| `app_main()` | `main/app_main.cpp` | Inicializa NVS/recovery antes do SD para conhecer safe mode; no boot normal alimenta e conecta ESP-Hosted antes de montar SD, usando mount BSP com init/deinit no-op para slot 0 enquanto Hosted possui SDMMC slot 1. Em safe mode pula Hosted. Depois recupera sidecars, inicia log, display/LVGL, IMU/UI, protecao de tela, bateria, teclado e supervisor; falhas preservam latch e adiam checkpoint. |
 | `cyberdeck_ui_init()` | `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | Compoe a tela TUI, registra callbacks/timers e inicializa os componentes visuais de header, terminal e teclado. |
-| `wifi_mgr_start()` | `components/cyberdeck/src/apps/wifi/wifi_mgr.cpp` | Inicia o gerenciamento de Wi-Fi e reconexao. |
+| `wifi_mgr_hosted_transport_prepare()` / `wifi_mgr_start()` | `components/cyberdeck/src/apps/wifi/wifi_mgr.cpp` | `hosted_transport_prepare` alimenta o C6, aguarda 500 ms e inicializa/conecta Hosted antes do SD; `wifi_mgr_start` reutiliza esse transporte e depois inicia Wi-Fi/reconexao. `CONFIG_ESP_HOSTED_AUTO_CALL_INIT_BEFORE_APP_MAIN=n` evita init prematuro no constructor. |
 | `screenshot_server_init()` / `screenshot_server_start()` / `screenshot_server_stop()` | `components/cyberdeck/src/apps/screenshot/screenshot_server.cpp` | Lifecycle do servidor HTTP por task proprietária, com fila bounded de snapshots/comando, handshake de prontidão, join/quiescência antes de `httpd_stop()` e quarentena fail-safe em timeout. |
 | `tab5_keyboard_init()` | `components/cyberdeck/src/platform/input/tab5_keyboard.cpp` | Inicia a task do teclado fisico e entrega eventos a `cyberdeck_keyboard_input`. |
 
 Ordem relevante de inicializacao:
 
-1. `bsp_sdcard_mount()` e validacao de `bsp_sdcard_get_handle()`.
-2. `event_log_init()` e `nvs_flash_init()`.
-3. `bsp_display_start()`.
-4. Sob lock do display: `imu_reader_start()`, `cyberdeck_ui_init()` e `screen_off_init()`.
-5. Apos liberar o display: `battery_protection_start()`; o adaptador inicializa o reader INA226 sensor-only e falha apenas gera log.
-6. Callback do teclado, `tab5_keyboard_init()` e brilho.
-7. `screenshot_server_init()`, callback de estado do screenshot e `wifi_mgr_start()`.
-8. O recovery confirma prontidao somente apos toda a ordem acima; em safe mode
+1. `nvs_flash_init()` e `cyberdeck_recovery::init()` para decidir safe mode.
+2. Fora do safe mode, `wifi_mgr_hosted_transport_prepare()` inicializa Hosted/C6.
+3. Montagem SD: `bsp_sdcard_mount_hosted()` com Hosted ativo; mount comum no safe mode.
+4. `bsp_sdcard_get_handle()` e recuperacao de sidecars; entao `event_log_init()`.
+5. `bsp_display_start()`.
+6. Sob lock do display: `imu_reader_start()`, `cyberdeck_ui_init()` e `screen_off_init()`.
+7. Apos liberar o display: `battery_protection_start()`; o adaptador inicializa o reader INA226 sensor-only e falha apenas gera log.
+8. Callback do teclado, `tab5_keyboard_init()` e brilho.
+9. `screenshot_server_init()`, callback de estado do screenshot e `wifi_mgr_start()`.
+10. O recovery confirma prontidao somente apos toda a ordem acima; em safe mode
    apenas event log, shell e Serial-JTAG sao iniciados.
 
 ## Funcionalidades
@@ -1062,11 +1064,93 @@ handle privado que `nimble_port_freertos_deinit()` espera registrar via
 `nimble_port_run()`; `ble_mgr_stop` solicita a parada via `nimble_port_stop()` e
 não deleta a task externa ou concorrentemente. `test_ble_review_regressions.py`
 protege esse contrato. Migração física de 20/out/2026: C6 atualizado de 2.12.6
-para 3.0.9 por OTA usando temporariamente o host ESP-Hosted 2.13.0; firmware
-final cyberdeck5 com host 3.0.9 confirmou handshake host/C6 3.0.9 e negociação
-SDIO SW_AGGR. `wifi.status` confirmou associação e IP `192.168.68.127`, sem
-reboot (uptime 00:00:43). `bluetooth search` concluiu com timeout e lista vazia;
-não houve panic, mas descoberta BLE de periférico permanece sem confirmação.
+para 3.0.9 por OTA usando temporariamente o host ESP-Hosted 2.13.0; o helper
+precisou habilitar `BSP_FEATURE_WIFI` pelo expansor antes de Hosted. Causa
+confirmada da falha do firmware final: o construtor auto-inicializava Hosted
+antes do `app_main`; a primeira inicialização do expansor, dentro de
+`wifi_mgr_start()`, resetava suas saídas e interrompia a alimentação do C6.
+Além da alimentação anterior à inicialização, a referência upstream
+`examples/mcu_hosted_sdio_sdmmc_combined` identifica o C6 no slot 1 e o SD no
+slot 0, mas exige Hosted inicializado primeiro no P4/IDF 6 e substituição dos
+callbacks `host.init/deinit` do mount SD por no-op. A inicialização antiga
+montava SD antes de Hosted, potencialmente reproduzindo o problema de
+compartilhamento do controlador (esp-idf #16233/#17889). Implementado no boot:
+NVS/recovery primeiro para decidir safe mode; no boot normal, o prepare
+Hosted alimenta o C6 e conecta antes de `bsp_sdcard_mount_hosted()`; o BSP
+mantém o controller ao montar/desmontar slot 0. Safe mode pula Hosted.
+`wifi_mgr_start()` reutiliza a conexão preparada. Validação física P4 em
+21/out/2026: contratos focados, `git diff --check` e build ESP-IDF 6.1 passaram;
+firmware `731a462-dirty` gravado em `/dev/ttyACM0` (somente P4; nenhum flash C6).
+Boot normal, `safe_mode=false`, `interrupted_boots=0` após 58 s, heap ~31.6 MB;
+`ls` listou o conteúdo do SD. Wi-Fi conectou a `AT163032` e obteve
+`192.168.68.129`, permanecendo conectado. Duas buscas `bluetooth search` com
+Wi-Fi/IP ativo terminaram em `Bluetooth search timed out.` sem dispositivos;
+logo, o transporte e Wi-Fi/IP estão validados, mas coexistência BLE+Wi-Fi e
+descoberta BLE nesse firmware permanecem FAIL/inconclusivos. No dispositivo, a
+captura anterior
+mostrou o C6 com `Card init success`,
+anunciou capabilities `0x0d` (WLAN + HCI/SDIO + BLE) e versões 3.0.9 pareadas;
+não houve novo reset SDIO na captura (uptime ~1m42). Porém, chamadas RPC Wi-Fi
+subsequentes não receberam resposta (`esp_wifi_get_mac`/`set_config`), o Wi-Fi
+não obteve IP e `cyberdeck.bluetooth` ficou em `start/begin` sem concluir.
+Instrumentação temporária de 21/out (removida após a coleta) confirmou que os
+RPCs `WifiInit`, `WifiSetMode` e `WifiStart` respondem normalmente, mas pedidos
+após `STA_START` são enviados e não recebem resposta; o setup BT repete o RPC
+`FeatureControl` por ~260 s antes de falhar. Sem `esp_wifi_start()` o controller
+BT e NimBLE sincronizaram, e o scan no Tab5 mostrou 17 dispositivos (99 reports
+GAP) via `term.dump`. Nesse teste foi identificado e corrigido um segundo
+defeito: stack protection fault da task `ble_mgr` ao receber reports; sua stack
+passou de 4096 para 8192 bytes (contrato em
+`tests/host/keymap/test_ble_integration_contract.py`). Com BLE iniciado antes da estação, `WifiStart`
+expirou, o HCI deixou de responder e houve reset durante rollback; essa ordem
+não corrige a coexistência. A ordem normal de Wi-Fi foi restaurada. Na validação
+de 21/out, Wi-Fi/IP agora funcionam após Hosted-before-SD, mas duas buscas BLE
+com Wi-Fi associado terminaram sem dispositivos. Monitor serial do boot seguinte
+isolou a causa: `esp_hosted_bt_host_stack_setup()` completou, C6 3.0.9 foi lido
+e controller/HCI ficou pronto; em seguida surgiu `Failed to create BLE host
+task`. Vincular `ble_host` a `CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=4096`
+permitiu criar a task e sincronizar o NimBLE com Wi-Fi/IP ativo. Contudo, o
+primeiro comando HCI retornou `BLE_HS_EUNKNOWN`; depois `BLE_HS_ETIMEOUT_HCI`
+repetiu e `ble_gap_disc` falhou com 21. Causa adicional: `ble_host` estava em
+prioridade 4, sem afinidade, divergindo do port NimBLE IDF (`configMAX_PRIORITIES - 4`,
+`NIMBLE_CORE`). Também surgiram `eh_sdio: dma_alloc(1024) failed` e
+`rx_get_buffer failed`, indicando pressão na memória DMA interna quando Wi-Fi
+e BLE compartilham o transporte. Habilitado `CONFIG_EH_HOST_PORT_DMA_PREFER_SPIRAM=y`:
+o allocator SDIO alinhado tenta primeiro DMA-capable SPIRAM no P4 e cai para
+RAM interna, além da stack NimBLE de 4096 bytes e prioridade/afinidade oficiais.
+Stacks de tarefas não devem ir para SPIRAM: o teste causou assert durante acesso
+flash. Após reset físico em 21/out, a falha DMA RX não reapareceu, mas o primeiro
+HCI Reset retornou `BLE_HS_EUNKNOWN` e `LE Set Scan Enable` expirou
+(`BLE_HS_ETIMEOUT_HCI`, sem reports). O teste de isolamento posterior não foi
+conclusivo: parar `cyberdeck.wifi` desmontou/indisponibilizou o transporte Hosted
+compartilhado; depois surgiram `sdio_get_tx_buffer_num: err 263`/sem créditos no
+slave, e o Wi-Fi não reiniciou. Com base no exemplo oficial
+`bleprph_wifi_coex`, a inicialização Hosted-BT foi alterada para aguardar
+boundedmente Wi-Fi+IP antes de subir o controller (15 s; prossegue sem IP após o
+limite). Validado fisicamente em 21/out após build/flash apenas P4: Wi-Fi
+conectou a `AT163032`, IP `192.168.68.129`; log confirmou `Wi-Fi ready before
+Hosted Bluetooth startup`. Apesar de um `BLE_HS_EUNKNOWN` no primeiro HCI Reset,
+NimBLE sincronizou. `bluetooth search` completou com status 0, 88 GAP reports,
+15 dispositivos renderizados; sem HCI timeout, falha `dma_alloc` ou reboot,
+uptime 54 s. Depois, `WirelessKeyboard 2` foi visto no scan; o usuário realizou
+manualmente a conexão/pairing e validou a digitação HID. `ui.dump` mostrou o
+ícone Bluetooth conectado, `sys.info` manteve uptime contínuo (16:56) e
+`wifi.status` permaneceu associado com IP. Coexistência BLE+Wi-Fi, descoberta,
+conexão e entrada HID confirmadas no dispositivo.
+Para diagnóstico não invasivo do coprocessador, o esquema oficial Tab5
+(`Tab5_Schematics_PDF.pdf`, página 1) mostra J1/C6_ISP: pino 2 = RF_C6_TXD,
+pino 6 = GND. A USB Serial-JTAG disponível é apenas a do P4; não há adaptador
+USB-UART 3,3 V conectado nem acesso físico ao J1 nesta sessão. Capturar logs
+diretos do C6 requer RX 3,3 V no pino 2 e GND no pino 6, sem conectar VCC;
+não foi alterado nem gravado o firmware do C6 nesse diagnóstico.
+
+No IDF 6, `ble_mgr_start()` usa `esp_hosted_bt_host_stack_setup()` para subir
+controller e associar VHCI/NimBLE; a sequência de controller init/enable abaixo
+descreve o caminho legado de IDF anterior. A task `ble_host` usa
+`CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE` (4096), com `configMAX_PRIORITIES - 4`
+e `NIMBLE_CORE`, conforme o port oficial IDF. Seu stack permanece em RAM interna
+porque tarefas executam callbacks NVS/flash; stacks SPIRAM falharam com o assert
+`esp_task_stack_is_sane_cache_disabled`. A task de gestão mantém 8192 bytes.
 
 O radio BLE nao e do ESP32-P4: e do coprocessor ESP32-C6 alcancado por
 `esp_hosted` (VHCI/HCI), e a stack host roda no P4. Nenhum modulo BLE toca
@@ -1080,7 +1164,7 @@ esta fora do escopo e e rejeitado por contrato.
 | `components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_event_dispatch.h`, `components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_event_dispatch.cpp` | `k_max_pending_events` (8), `ble_event_kind`, `ble_event`, `event_dispatch`, `begin_scan`/`begin_pairing`/`begin_connection` (incluindo ativacao com token externo), `publish_*`, `drain`, `drop_stale`, `reset`, `event_summary` | Seam entre o callback da stack e o modelo de tela. Publica somente snapshots bounded, com fila limitada e overflow fail-closed; o adaptador pode ativar cada geracao com o token emitido pelo modelo, eliminando dominios shadow. Tokens monotônicos compartilhados impedem que callback obsoleto ou de outra geração seja aplicado. `drop_stale` conserva a geracao ativa e a imediatamente anterior por tipo, sem que pairing invalide scan; conexoes copiam endereco e marcador automatico para o snapshot. `event_summary` inclui nome sanitizado/bounded e nunca contem passkey, PIN, link key ou IRK. |
 | `components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_background.h`, `components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cpp` + `tests/host/keymap/test_ble_background.cpp` | `cyberdeck_ble_background::scheduler`, `k_window_interval_ms` (10000), `k_restore_retry_limit` (3), `k_token_base` (1<<63) | Observador background de reconexao: restaura bonds NVS uma vez no boot (somente o `last_connected` arma o primeiro ciclo), observa anuncios em janelas de 10 s, conecta apenas peers conhecidos, limita a 3 tentativas por ciclo e reabre com novo anuncio. Opera sobre `cyberdeck_ble::state_machine&` e enfileira comandos `ble_mgr` (scan/cancel); nunca toca LVGL, terminal ou tela. A UI mantem o pump (`on_ble_event`/`process_ble_events`/`ble_submit_actions`) e apenas roteia eventos e preempcao manual para o scheduler; `test_ble_background` cobre o scheduler host. |
 | `components/cyberdeck/include/apps/bluetooth/cyberdeck_ble_store.h`, `components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_store.cpp` | `k_max_bonds` (16), `k_max_record_bytes` (96), `k_max_store_bytes` (2048), `k_bond_magic` (`CDB1`), `bond_record`, `store_result`, `encode_bond`, `decode_bond`, `bond_store` (`add`/`update`/`remove`/`find`/`snapshot`/`serialize`/`deserialize`/`clear`) | Persistencia logica de bonds, sem ESP-IDF, NVS ou FATFS; o registro e `addr` + `addr_type` + `name` + `kind` + `last`, nessa ordem fixa. O tipo preserva public/random static/RPA/NRPA; nao existe campo para chave, IRK, LTK ou passkey, e payload com campo desconhecido e rejeitado fail-closed. `deserialize` e atomico. |
-| `components/cyberdeck/include/apps/bluetooth/ble_mgr.h`, `components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp` | `ble_mgr_start`, `ble_mgr_stop`, `ble_bond_snapshot_t`, `ble_bonds_copy` | Adaptador ESP-IDF, unico modulo autorizado a falar com a stack BLE do C6 via `esp_hosted`. `ble_mgr_start` executa estritamente `esp_hosted_connect_to_slave()` -> `esp_hosted_bt_controller_init()` -> `esp_hosted_bt_controller_enable()` -> `nimble_port_init()`, registra cada retorno e mantém o boot não fatal; após habilitar o controlador consulta e registra `esp_hosted_get_coprocessor_fwversion()` quando disponível. Falha de transporte/controlador encerra a tentativa sem iniciar NimBLE, sem retry/reset loop. Possui task FreeRTOS dedicada e fila bounded; a UI apenas enfileira. Pair/connect usam o endereco e token da acao, a seguranca inicia por `ble_gap_security_initiate` e so callbacks reais publicam conclusoes; cancelamento/desconexao usam terminacao bounded, OOB e passkeys invalidos falham fechados. O ciclo de vida separa o cancelamento de pairing da conexao autenticada promovida apos o bond: disconnect fisico publica DISCONNECTED real e permite nova conexao. Callbacks GAP e comandos de cancelamento/autenticacao validam a geracao ativa; callbacks stale nao alteram estado nem publicam. Bonds existentes sao atualizados, nao duplicados. `ble_bonds_copy` expõe snapshot bounded de identidade (addr+tipo+nome/kind/last, sem segredo) sob `s_dispatch_mutex` com espera curta e fail-closed, para restauracao NVS no boot pelo observador da UI. O `event_dispatch` fica protegido por mutex entre a task `ble_mgr` e callbacks GAP; a task host nomeada `ble_host` usa stack de 8192 bytes e o drain bounded continua fora da UI. Para o scan, o adaptador infere o tipo de endereco com `ble_hs_id_infer_auto(0, ...)` em vez de fixar `BLE_OWN_ADDR_PUBLIC`, registra inicio/fim e mantem contadores bounded de GAP DISC, cinco tipos aceitos, ignorados, stale/mutex, publicacoes, descartes de dispatch e malformed sem payloads irrestritos. Relatorios `BLE_GAP_EVENT_DISC` dos cinco tipos de anuncio LE (incluindo respostas de scan) sao encaminhados a `scan_report_adv`; tipos desconhecidos sao ignorados. Falha de inicializacao e nao fatal no boot. O teardown `nimble_port_freertos` permanece como follow-up fora desta tarefa. |
+| `components/cyberdeck/include/apps/bluetooth/ble_mgr.h`, `components/cyberdeck/src/apps/bluetooth/ble_mgr.cpp` | `ble_mgr_start`, `ble_mgr_stop`, `ble_bond_snapshot_t`, `ble_bonds_copy` | Adaptador ESP-IDF, unico modulo autorizado a falar com a stack BLE do C6 via `esp_hosted`. `ble_mgr_start` executa estritamente `esp_hosted_connect_to_slave()` -> `esp_hosted_bt_controller_init()` -> `esp_hosted_bt_controller_enable()` -> `nimble_port_init()`, registra cada retorno e mantém o boot não fatal; após habilitar o controlador consulta e registra `esp_hosted_get_coprocessor_fwversion()` quando disponível. Falha de transporte/controlador encerra a tentativa sem iniciar NimBLE, sem retry/reset loop. Possui task FreeRTOS dedicada e fila bounded; a UI apenas enfileira. Pair/connect usam o endereco e token da acao, a seguranca inicia por `ble_gap_security_initiate` e so callbacks reais publicam conclusoes; cancelamento/desconexao usam terminacao bounded, OOB e passkeys invalidos falham fechados. O ciclo de vida separa o cancelamento de pairing da conexao autenticada promovida apos o bond: disconnect fisico publica DISCONNECTED real e permite nova conexao. Callbacks GAP e comandos de cancelamento/autenticacao validam a geracao ativa; callbacks stale nao alteram estado nem publicam. Bonds existentes sao atualizados, nao duplicados. `ble_bonds_copy` expõe snapshot bounded de identidade (addr+tipo+nome/kind/last, sem segredo) sob `s_dispatch_mutex` com espera curta e fail-closed, para restauracao NVS no boot pelo observador da UI. O `event_dispatch` fica protegido por mutex entre a task `ble_mgr` e callbacks GAP; a task de gestão usa stack 8192 bytes para reports GAP; `ble_host` usa `CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE` (4096) para preservar RAM interna com Wi-Fi ativo; o drain bounded continua fora da UI. Para o scan, o adaptador infere o tipo de endereco com `ble_hs_id_infer_auto(0, ...)` em vez de fixar `BLE_OWN_ADDR_PUBLIC`, registra inicio/fim e mantem contadores bounded de GAP DISC, cinco tipos aceitos, ignorados, stale/mutex, publicacoes, descartes de dispatch e malformed sem payloads irrestritos. Relatorios `BLE_GAP_EVENT_DISC` dos cinco tipos de anuncio LE (incluindo respostas de scan) sao encaminhados a `scan_report_adv`; tipos desconhecidos sao ignorados. Falha de inicializacao e nao fatal no boot. O teardown `nimble_port_freertos` permanece como follow-up fora desta tarefa. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h`, `components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp` | `CYBERDECK_CMD_BLUETOOTH_SEARCH`, `CYBERDECK_CMD_BLUETOOTH_PAIRED`, `CYBERDECK_CMD_LOG`, `"bluetooth search"`, `"bluetooth paired"` | Parser roteia exatamente os dois subcomandos aprovados; o verbo nu e qualquer operando extra continuam `CYBERDECK_CMD_UNKNOWN`. O comando `log` preserva os argumentos para o override de linhas por sessao. Nao ha subcomando para Bluetooth Classic. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h` | linha `bluetooth [search|paired]` | Catalogo unico legado de ajuda (18 entradas `[terminal]`); Bluetooth e a 7a entrada legada, entre `battery` e `app`. A sessao acrescenta ao final comandos unicos de manifests registrados como `[app]`, sem alterar a ordem legada. |
 | `tests/host/keymap/contracts/cyberdeck_ble_types.h` | ABI de `cyberdeck_ble_types.h` | Fixture de teste, nao e implementacao de producao. |

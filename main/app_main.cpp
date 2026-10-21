@@ -11,6 +11,7 @@
 #include "apps/system/cyberdeck_recovery.h"
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "apps/screenshot/screenshot_server.h"
+#include "apps/wifi/wifi_mgr.h"
 #include "platform/display/cyberdeck_display_port.h"
 #include "bsp/m5stack_tab5.h"
 #include "platform/storage/cyberdeck_sd_io_coordinator.h"
@@ -24,9 +25,37 @@ extern "C" void app_main(void)
     static cyberdeck_sd_io::coordinator sd_io_coordinator;
     cyberdeck_sd_io::bind_global(sd_io_coordinator);
     cyberdeck_poweroff_init(sd_io_coordinator);
+
+    esp_err_t err = nvs_flash_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS unavailable: %s (not erasing)", esp_err_to_name(err));
+    }
+    /* Recovery is NVS-backed, so establish safe mode before deciding whether
+     * normal boot should power and initialize the C6 before the SD card. */
+    const esp_err_t recovery_err = cyberdeck_recovery::init();
+    if (recovery_err != ESP_OK) {
+        ESP_LOGE(TAG, "recovery state unavailable: %s", esp_err_to_name(recovery_err));
+    }
+
+    bool hosted_transport_ready = false;
+    if (!cyberdeck_recovery::safe_mode()) {
+        const esp_err_t hosted_err = wifi_mgr_hosted_transport_prepare();
+        if (hosted_err == ESP_OK) {
+            hosted_transport_ready = true;
+        } else {
+            ESP_LOGW(TAG, "ESP-Hosted pre-init failed: %s; trying normal SD mount",
+                     esp_err_to_name(hosted_err));
+        }
+    }
+
     /* The terminal exposes its virtual root / only after the physical /sdcard
-     * mount has completed and its BSP handle has been verified. */
-    ESP_ERROR_CHECK(bsp_sdcard_mount());
+     * mount has completed and its BSP handle has been verified. On IDF 6,
+     * ESP-Hosted and SD share the SDMMC controller (C6 slot 1, SD slot 0), so
+     * Hosted must claim it first and the SD VFS must not re-init/deinit it. */
+    const esp_err_t sd_mount_err = hosted_transport_ready
+        ? bsp_sdcard_mount_hosted()
+        : bsp_sdcard_mount();
+    ESP_ERROR_CHECK(sd_mount_err);
     if (bsp_sdcard_get_handle() == nullptr) return;
     {
         auto recovery_lease = sd_io_coordinator.acquire(cyberdeck_sd_io::access::write);
@@ -42,16 +71,8 @@ extern "C" void app_main(void)
         }
     }
 
-    esp_err_t err = nvs_flash_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "NVS unavailable: %s (not erasing)", esp_err_to_name(err));
-    }
     /* Recovery state is persisted before registering or starting services.
      * Corrupt/unavailable NVS is reported, never erased automatically. */
-    const esp_err_t recovery_err = cyberdeck_recovery::init();
-    if (recovery_err != ESP_OK) {
-        ESP_LOGE(TAG, "recovery state unavailable: %s", esp_err_to_name(recovery_err));
-    }
     ESP_ERROR_CHECK(cyberdeck_system_apps_register());
     cyberdeck_apps::global_runtime().set_sd_io(&sd_io_coordinator);
     cyberdeck_ui_bind_sd_io(sd_io_coordinator);

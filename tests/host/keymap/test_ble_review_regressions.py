@@ -81,7 +81,8 @@ def main() -> int:
     host_task = function_body(mgr, "static void ble_host_task(")
     assert host_task.index("nimble_port_run()") < host_task.index("vTaskDelete(nullptr)")
     assert host_task.rstrip().endswith("vTaskDelete(nullptr);")
-    assert 'xTaskCreate(ble_host_task, "ble_host"' in mgr
+    assert 'xTaskCreatePinnedToCore(\n        ble_host_task, "ble_host"' in mgr
+    assert "configMAX_PRIORITIES - 4, NULL, NIMBLE_CORE" in mgr
 
     # The UI lookup key is the complete BLE identity, and each union member is
     # populated explicitly after value-initialization (no type-punning alias).

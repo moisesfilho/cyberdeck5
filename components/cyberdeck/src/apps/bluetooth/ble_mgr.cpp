@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_idf_version.h"
+#include "sdkconfig.h"
 #include "esp_hosted.h"
 #if ESP_IDF_VERSION_MAJOR >= 6
 #include "esp_hosted_bt_host_stack.h"
@@ -44,8 +45,8 @@ static const char *TAG = "ble_mgr";
 #define BLE_MGR_QUEUE_SIZE 8
 #define BLE_MGR_GAP_EVENT_QUEUE_SIZE 16
 #define BLE_MGR_GAP_TERMINAL_QUEUE_SIZE 1
-#define BLE_MGR_TASK_STACK 4096
-#define BLE_MGR_HOST_TASK_STACK 8192
+#define BLE_MGR_TASK_STACK 8192
+#define BLE_MGR_HOST_TASK_STACK CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE
 #define BLE_MGR_TASK_PRIO 5
 #define BLE_MGR_MAX_OBSERVERS 4
 #define BLE_MGR_NVS_NAMESPACE "ble_bonds"
@@ -261,6 +262,7 @@ esp_err_t ble_mgr_start(void)
         return ESP_ERR_NO_MEM;
     }
 
+    ESP_LOGI(TAG, "BLE startup: connecting Hosted transport");
     esp_err_t err = esp_hosted_connect_to_slave();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "esp_hosted_connect_to_slave failed: %s (%d); BLE disabled",
@@ -275,6 +277,7 @@ esp_err_t ble_mgr_start(void)
     }
 
 #if ESP_IDF_VERSION_MAJOR >= 6
+    ESP_LOGI(TAG, "BLE startup: setting up Hosted controller and HCI");
     esp_hosted_bt_host_stack_cfg_t bt_stack_cfg = {};
     bt_stack_cfg.stack = ESP_HOSTED_BT_HOST_STACK_NIMBLE;
     bt_stack_cfg.bring_up_controller = true;
@@ -318,6 +321,7 @@ esp_err_t ble_mgr_start(void)
     }
 #endif
 
+    ESP_LOGI(TAG, "BLE startup: Hosted controller/HCI ready");
     esp_hosted_coprocessor_fwver_t c6_fw = {};
     const int fw_rc = esp_hosted_get_coprocessor_fwversion(&c6_fw);
     if (fw_rc == ESP_OK) {
@@ -646,7 +650,10 @@ static void ble_mgr_task(void *arg)
     (void)arg;
     ESP_LOGI(TAG, "BLE manager task started");
 
-    if (xTaskCreate(ble_host_task, "ble_host", BLE_MGR_HOST_TASK_STACK, NULL, BLE_MGR_TASK_PRIO - 1, NULL) != pdPASS) {
+    const BaseType_t host_task_created = xTaskCreatePinnedToCore(
+        ble_host_task, "ble_host", BLE_MGR_HOST_TASK_STACK, NULL,
+        configMAX_PRIORITIES - 4, NULL, NIMBLE_CORE);
+    if (host_task_created != pdPASS) {
         ESP_LOGE(TAG, "Failed to create BLE host task");
         vTaskDelete(NULL);
         return;

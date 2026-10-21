@@ -18,6 +18,8 @@
 #include "platform/logging/event_log.h"
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include <cstdint>
 #include <initializer_list>
@@ -27,6 +29,8 @@ namespace {
 constexpr const char *TAG = "system_apps";
 constexpr uint32_t k_ssh_lifecycle_timeout_ms = 1000;
 constexpr uint32_t k_wifi_lifecycle_timeout_ms = 8000;
+constexpr uint32_t k_ble_wifi_ready_timeout_ms = 15000;
+constexpr uint32_t k_ble_wifi_ready_poll_ms = 100;
 constexpr uint32_t k_time_sync_lifecycle_timeout_ms = 9000;
 constexpr uint32_t k_ssh_task_stack_bytes = 24576;
 constexpr uint32_t k_ssh_event_queue_depth = 8;
@@ -82,6 +86,22 @@ bool stop_serial() {
 }
 
 bool start_bluetooth() {
+    if (wifi_mgr_is_enabled()) {
+        const TickType_t wait_ticks = pdMS_TO_TICKS(k_ble_wifi_ready_timeout_ms);
+        const TickType_t poll_ticks = pdMS_TO_TICKS(k_ble_wifi_ready_poll_ms);
+        const TickType_t started = xTaskGetTickCount();
+        wifi_status_t status{};
+        while (static_cast<TickType_t>(xTaskGetTickCount() - started) < wait_ticks) {
+            if (wifi_mgr_get_status(&status) == ESP_OK && status.connected && status.has_ip) {
+                ESP_LOGI(TAG, "Wi-Fi ready before Hosted Bluetooth startup");
+                break;
+            }
+            vTaskDelay(poll_ticks);
+        }
+        if (!(status.connected && status.has_ip))
+            ESP_LOGW(TAG, "Wi-Fi did not obtain IP within %u ms; starting Bluetooth anyway",
+                     static_cast<unsigned>(k_ble_wifi_ready_timeout_ms));
+    }
     return ble_mgr_start() == ESP_OK;
 }
 bool stop_bluetooth() {

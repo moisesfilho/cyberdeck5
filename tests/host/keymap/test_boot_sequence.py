@@ -15,6 +15,7 @@ APP_MAIN = ROOT / "main" / "app_main.cpp"
 UI_SOURCE = ROOT / "components" / "cyberdeck" / "src" / "platform" / "display" / "cyberdeck_ui.cpp"
 SYSTEM_APPS_SOURCE = ROOT / "components" / "cyberdeck" / "src" / "apps" / "system" / "cyberdeck_system_apps.cpp"
 RECOVERY_SOURCE = ROOT / "components" / "cyberdeck" / "src" / "apps" / "system" / "cyberdeck_recovery.cpp"
+BSP_STORAGE_SOURCE = ROOT / "components" / "m5stack_tab5" / "src" / "bsp_storage.c"
 LOCAL_SHELL_HEADER = ROOT / "components" / "cyberdeck" / "include" / "apps" / "shell" / "cyberdeck_local_shell.h"
 
 
@@ -28,6 +29,7 @@ def main() -> int:
     ui = UI_SOURCE.read_text(encoding="utf-8")
     system_apps = SYSTEM_APPS_SOURCE.read_text(encoding="utf-8")
     recovery = RECOVERY_SOURCE.read_text(encoding="utf-8")
+    bsp_storage = BSP_STORAGE_SOURCE.read_text(encoding="utf-8")
     local_shell_header = LOCAL_SHELL_HEADER.read_text(encoding="utf-8")
     failures: list[str] = []
 
@@ -53,6 +55,21 @@ def main() -> int:
             "the BSP SD-card handle must be checked after mounting",
             failures,
         )
+    nvs_init = re.search(r"\bnvs_flash_init\s*\(\s*\)", app)
+    recovery_init = re.search(r"\bcyberdeck_recovery::init\s*\(\s*\)", app)
+    hosted_prepare = re.search(r"\bwifi_mgr_hosted_transport_prepare\s*\(\s*\)", app)
+    hosted_mount = re.search(r"\bbsp_sdcard_mount_hosted\s*\(\s*\)", app)
+    check(nvs_init is not None and recovery_init is not None and hosted_prepare is not None,
+          "app_main must initialize NVS/recovery and prepare Hosted before SD mount", failures)
+    if nvs_init and recovery_init and hosted_prepare and mount_calls:
+        check(nvs_init.start() < recovery_init.start() < hosted_prepare.start() < mount_calls[0].start(),
+              "normal boot must decide safe mode and prepare the C6 before SDMMC slot 0 mount", failures)
+    check(hosted_mount is not None and mount_calls and hosted_mount.start() < mount_calls[0].start(),
+          "Hosted-ready boot must use the shared-controller SD mount path", failures)
+    check("host.init = sdmmc_host_init_shared" in bsp_storage and
+          "host.deinit = sdmmc_host_deinit_shared" in bsp_storage and
+          "cfg.host = &host" in bsp_storage,
+          "Hosted SD mount must preserve the shared SDMMC controller lifecycle", failures)
     logging_start = re.search(r"cyberdeck_system_apps_start_logging\s*\(\s*\)", app)
     check(logging_start is not None, "app_main must start logging through the supervisor", failures)
     if handle_check and logging_start:

@@ -11,6 +11,7 @@
 #include <atomic>
 #include "esp_check.h"
 #include "esp_event.h"
+#include "esp_hosted.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -217,6 +218,7 @@ public:
 #define s_scan_done_pending (wifi_context().scan_done_pending)
 #define s_started (wifi_context().started)
 #define s_radio_enabled (wifi_context().radio_enabled)
+static bool s_hosted_transport_ready = false;
 #define s_wifi_initialized (wifi_context().wifi_initialized)
 #define s_event_loop_created (wifi_context().event_loop_created)
 #define s_netif_initialized (wifi_context().netif_initialized)
@@ -1385,6 +1387,33 @@ esp_err_t wifi_mgr_stop(uint32_t timeout_ms)
     return ESP_OK;
 }
 
+esp_err_t wifi_mgr_hosted_transport_prepare(void)
+{
+    if (s_hosted_transport_ready) return ESP_OK;
+
+    const esp_err_t power_err = bsp_feature_enable(BSP_FEATURE_WIFI, true);
+    if (power_err != ESP_OK) return power_err;
+    s_radio_enabled = true;
+
+    /* The Tab5 IO expander controls C6 power and resets its outputs on its
+     * first initialization. Bring up Hosted only after the rail is enabled. */
+    vTaskDelay(pdMS_TO_TICKS(500));
+    ESP_LOGI(TAG, "Initializing ESP-Hosted after enabling the Tab5 C6 power rail");
+    esp_err_t err = esp_hosted_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_hosted_init failed: %d", err);
+        return err;
+    }
+    err = esp_hosted_connect_to_slave();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_hosted_connect_to_slave failed: %d", err);
+        return err;
+    }
+    s_hosted_transport_ready = true;
+    ESP_LOGI(TAG, "ESP-Hosted coprocessor connected");
+    return ESP_OK;
+}
+
 esp_err_t wifi_mgr_start(void)
 {
     lifecycle_guard lifecycle;
@@ -1438,9 +1467,8 @@ esp_err_t wifi_mgr_start(void)
     s_has_ip = false;
     s_connected_ssid[0] = '\0';
 
-    esp_err_t start_err = bsp_feature_enable(BSP_FEATURE_WIFI, true);
+    esp_err_t start_err = wifi_mgr_hosted_transport_prepare();
     if (start_err != ESP_OK) { return rollback_start(false, start_err); }
-    s_radio_enabled = true;
 
     /* Carrega a config salva no SD (se existir) para conexao automatica */
     if (wifi_storage_mount() == ESP_OK && wifi_storage_load(&s_cfg) == ESP_OK) {

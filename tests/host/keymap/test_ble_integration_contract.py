@@ -448,6 +448,12 @@ def check_adapter_composition(report: Report) -> None:
     # The adapter owns a task; the UI only enqueues.
     report.require("xTaskCreate" in source or "xTaskCreatePinnedToCore" in source,
                    "the BLE adapter must own a dedicated FreeRTOS task")
+    report.require(re.search(r"#\s*define\s+BLE_MGR_TASK_STACK\s+8192\b", source)
+                   is not None,
+                   "BLE manager needs 8192 bytes to process GAP reports on device")
+    report.require(re.search(r'xTaskCreate\s*\(\s*ble_mgr_task\s*,\s*"ble_mgr"\s*,\s*'
+                             r'BLE_MGR_TASK_STACK', source) is not None,
+                   "BLE manager task must use the bounded 8192-byte stack")
     # Every task the adapter creates must be named: an anonymous worker shows up
     # as "task" in the FreeRTOS dump and cannot be diagnosed in the field.
     task_creations = re.findall(
@@ -474,6 +480,13 @@ def check_adapter_composition(report: Report) -> None:
     # Non-fatal boot: a failure must be logged, never fatal.
     app = strip_comments(report.read(APP))
     system_apps = strip_comments(report.read(SYSTEM_APPS))
+    bluetooth_start = function_body(system_apps, "bool start_bluetooth(", report)
+    report.require("wifi_mgr_is_enabled()" in bluetooth_start
+                   and "wifi_mgr_get_status(&status)" in bluetooth_start
+                   and "status.connected && status.has_ip" in bluetooth_start
+                   and "k_ble_wifi_ready_timeout_ms" in bluetooth_start
+                   and "ble_mgr_start()" in bluetooth_start,
+                   "Hosted Bluetooth startup must wait boundedly for Wi-Fi IP when Wi-Fi is enabled")
     if app:
         body = function_body(app, "void app_main(", report)
         start_owner = body if "ble_mgr_start" in body else system_apps
@@ -550,15 +563,22 @@ def check_adapter_composition(report: Report) -> None:
     report.require(source.count("xSemaphoreGive(s_dispatch_mutex)") >= 2,
                    "manager and GAP callback paths must release the dispatch mutex")
 
-    # Regression: the host task has an explicit diagnostic name and the
-    # approved 8192-byte stack contract, not an accidental default/renamed
-    # task that could regress silently.
-    report.require(re.search(r"#\s*define\s+BLE_MGR_HOST_TASK_STACK\s+8192\b", source)
-                   is not None,
-                   "BLE host task stack must remain explicitly set to 8192 bytes")
-    report.require(re.search(r"xTaskCreate\s*\(\s*ble_host_task\s*,\s*\"ble_host\"\s*,\s*"
-                             r"BLE_MGR_HOST_TASK_STACK", source) is not None,
-                   "BLE host task must use the named 8192-byte stack contract")
+    # The manager stack is deliberately larger for processing reports, while
+    # the NimBLE host uses the IDF-configured stack to avoid wasteful internal
+    # RAM allocation when Wi-Fi is also active.
+    report.require(re.search(r"#\s*define\s+BLE_MGR_HOST_TASK_STACK\s+"
+                             r"CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE\b", source) is not None,
+                   "BLE host task stack must follow the NimBLE Kconfig setting")
+    report.require("CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=4096" in
+                   (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8"),
+                   "NimBLE host task stack must use the validated 4096-byte default")
+    report.require("CONFIG_EH_HOST_PORT_DMA_PREFER_SPIRAM=y" in
+                   (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8"),
+                   "ESP-Hosted SDIO DMA buffers must prefer P4 DMA-capable SPIRAM")
+    report.require(re.search(r"xTaskCreatePinnedToCore\s*\(\s*ble_host_task\s*,\s*\"ble_host\"\s*,\s*"
+                             r"BLE_MGR_HOST_TASK_STACK\s*,\s*NULL\s*,\s*configMAX_PRIORITIES\s*-\s*4\s*,\s*"
+                             r"NULL\s*,\s*NIMBLE_CORE", source) is not None,
+                   "BLE host task must match the official NimBLE port priority and core affinity")
 
     # The pure modules must not be reachable from the LVGL task: the UI keeps no
     # stack handle.  The rule is an allow-list of the public bounded API, so a

@@ -24,6 +24,10 @@ typedef struct {
 typedef void (*wifi_state_cb_t)(const wifi_status_t *status, bool enabled, void *ctx);
 
 esp_err_t wifi_mgr_start(void);
+/* Powers and connects the Tab5 C6 Hosted transport without starting Wi-Fi.
+ * Boot calls this before mounting the SD card because both use the P4 SDMMC
+ * controller on separate slots. */
+esp_err_t wifi_mgr_hosted_transport_prepare(void);
 /* Stops both Wi-Fi workers and releases the driver resources.  A timeout is
  * fail-safe: resources are retained and the manager is quarantined. */
 esp_err_t wifi_mgr_stop(uint32_t timeout_ms);
