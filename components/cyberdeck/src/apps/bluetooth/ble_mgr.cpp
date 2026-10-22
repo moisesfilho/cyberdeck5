@@ -769,7 +769,8 @@ static void ble_mgr_task(void *arg)
         }
         case BLE_MGR_CMD_PAIR: {
             uint64_t token = s_pair_token = s_dispatch.begin_pairing(cmd.token, "");
-            if (token == 0) break;
+            if (token == 0)
+                break;
             memcpy(s_pair_addr, cmd.pair.addr, sizeof(s_pair_addr));
             s_pair_addr_type = cmd.pair.addr_type;
             char addr_str[18];
@@ -921,12 +922,13 @@ static void ble_mgr_task(void *arg)
             if (cmd.token == 0 || cmd.token <= s_connection_token) break;
             char address[18];
             format_addr(cmd.connect.addr, address, sizeof(address));
-             const auto addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
-             uint64_t token = s_connection_token = s_dispatch.begin_connection(cmd.token, address, addr_type, true);
-            if (token == 0) break;
+            const auto addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
+            uint64_t token = s_connection_token = s_dispatch.begin_connection(cmd.token, address, addr_type, true);
+            if (token == 0)
+                break;
             s_connection_automatic = true;
-             strlcpy(s_connection_address, address, sizeof(s_connection_address));
-             s_connection_addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
+            strlcpy(s_connection_address, address, sizeof(s_connection_address));
+            s_connection_addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
             s_connection_gap_token = token;
             s_connection_conn = BLE_HS_CONN_HANDLE_NONE;
             s_pair_conn = BLE_HS_CONN_HANDLE_NONE;

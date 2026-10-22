@@ -1564,7 +1564,7 @@ helpers privados, entao a regra nao fixa a implementacao interna do adaptador.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `.clang-format`, `.github/workflows/quality-gate.yml`, `tools/coverage_scope_guard.py`, `tests/host/keymap/test_coverage_scope_guard.py` | `quality`, guard de escopo gcovr | Gate usa clang-format 23.1.3, Ruff 0.17.1, gcovr 8.7, Bandit 1.9.4 e checkout v7.0.1 pinado por SHA; agrega testes host e build ESP-IDF 6.1. Mantém os limites globais de cobertura (80% linhas, 94% funções, 59% branches), `coverage_scope_guard.py` fail-closed e allowlist explícita dos adaptadores hardware. A formatação de `ble_mgr.cpp` valida somente as faixas alteradas para preservar regiões legadas.
+| `.clang-format`, `.github/workflows/quality-gate.yml`, `tools/coverage_scope_guard.py`, `tests/host/keymap/test_coverage_scope_guard.py` | `quality`, guard de escopo gcovr | Gate usa clang-format 23.1.3, Ruff 0.17.1, gcovr 8.7, Bandit 1.9.4 e checkout v7.0.1 pinado por SHA; agrega testes host e build ESP-IDF 6.1. Mantém os limites globais de cobertura (80% linhas, 94% funções, 59% branches), `coverage_scope_guard.py` fail-closed e allowlist explícita dos adaptadores hardware. A formatação de `ble_mgr.cpp` valida somente faixas explícitas (incluindo pairing/reconnect) para preservar regiões legadas; ao inserir linhas nesses blocos, mantenha os intervalos alinhados. `cyberdeck_time_sync.cpp` e os shims NetDiag listados no workflow também são validados integralmente conforme clang-format 23.1.3.
 
 Declaracao de validacao fisica reportada pelo usuario (REQ-HW-01): foram testados
 no firmware gravado `0202b2b` os cenarios de conexao Bluetooth, scan,
