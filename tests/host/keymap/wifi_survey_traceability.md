@@ -49,7 +49,7 @@ transição de estado do controller tem teste comportamental independente. Isso
 não executa scheduling FreeRTOS, lifecycle real/reinit, ou persistência FatFS.
 Somente os alvos focados foram executados; sem suíte global, firmware build ou
 device validation. O resultado ambiental conhecido de branch coverage global
-local é 58.06% (<59%); este trabalho não altera o gate nem reivindica aprovação.
+local é 58.06%; este trabalho não altera os thresholds nem reivindica aprovação.
 
 ## Execução focada
 

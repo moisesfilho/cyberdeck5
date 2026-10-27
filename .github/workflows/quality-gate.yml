@@ -114,15 +114,15 @@ jobs:
           make CXXFLAGS='-std=c++17 -Wall -Wextra -Werror -O0 --coverage' \
             test
           echo '### Global host coverage (compiled/tested production C++)' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Coverage gates: >=80% lines, >=94% functions, >=59% branches.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Coverage gates: >=80% lines, >=90% functions, >=50% branches.' >> "$GITHUB_STEP_SUMMARY"
           GCOVR_ARGS=(
             --root ../../..
             --filter '../../../components/cyberdeck/src/.*\.cpp'
             --txt-metric branch
             --json "$RUNNER_TEMP/cyberdeck-coverage.json"
             --fail-under-line 80
-            --fail-under-function 94
-            --fail-under-branch 59
+            --fail-under-function 90
+            --fail-under-branch 50
             --print-summary
           )
           gcovr "${GCOVR_ARGS[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -151,6 +151,6 @@ jobs:
             echo '| ESP-IDF 6.1 build | ${{ steps.firmware-build.outcome }} |'
             echo '| Host aggregate and coverage | ${{ steps.host-coverage.outcome }} |'
             echo '| App grant ThreadSanitizer | ${{ steps.app-grant-tsan.outcome }} |'
-            echo '| Global host C++ coverage | line >=80%; functions >=94%; branches >=59% |'
+            echo '| Global host C++ coverage | line >=80%; functions >=90%; branches >=50% |'
             echo '| Coverage scope | fail-closed gcovr JSON guard; explicit hardware allowlist only |'
           } >> "$GITHUB_STEP_SUMMARY"

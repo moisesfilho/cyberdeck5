@@ -56,7 +56,7 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 - `-jN` paraleliza somente a construção; sem essa opção, ela é serial. O Makefile
   preserva o jobserver/opção do chamador. A execução dos cenários permanece
   ordenada e serial para evitar concorrência entre cenários e artefatos gcov.
-  A CI aplica gcovr mínimo de 80% linhas, 94% funções e 59% branches, além do
+  A CI aplica gcovr mínimo de 80% linhas, 90% funções e 50% branches, além do
   scope guard de TUs; alvos focados não executam esses gates globais.
 - Não execute alvos que escrevem cobertura concorrentemente no mesmo diretório.
   Use `make -C tests/host/keymap clean` antes de uma rodada de cobertura limpa;

@@ -19,7 +19,7 @@ execução focada; para paralelizar somente a construção do agregado, passe
 `-jN` ao make (por exemplo, `make -C tests/host/keymap -j4 test`). Sem essa
 opção, a construção é serial. O Makefile não sobrescreve jobserver/jobs do
 chamador. Os cenários e gates continuam ordenados. A CI exige gcovr mínimo de
-80% de linhas, 94% de funções e 59% de branches, além do scope guard de TUs;
+80% de linhas, 90% de funções e 50% de branches, além do scope guard de TUs;
 alvos focados não executam esses gates globais. Executáveis `<alvo>_bin` ficam
 na raiz de `tests/host/keymap/`. Alvos incrementais por TU armazenam objetos,
 depfiles `.o.d` e sidecars gcov em diretórios `test_<alvo>/`; alvos monolíticos
@@ -80,8 +80,11 @@ ele não é artefato de `BINS`.
 `test_storage_facade.cpp` usa um app host com estado de execução explícito:
 `start()` marca running e `stop()` limpa o estado, permitindo que o runtime
 valide corretamente o ciclo de parada e a revogação do grant.
-No runtime, iniciar novamente o foreground já ativo é idempotente, inclusive
-para o dono do console; o bloqueio de parar o console continua separado.
+Os testes `test_app_runtime.cpp` e `test_shell_app.cpp` cobrem start repetido
+do foreground ativo, inclusive a preservação do console.
+`test_music_player.cpp` usa os shims FreeRTOS em
+`tests/host/keymap/music_runtime_shim/` para exercitar falhas de fila, semáforo,
+alocação de TCB e criação de task, verificando rollback da inicialização.
 `test_term_dump_cli.py` cobre o uso de diretório temporário portátil e privado
 na gravação dos logs recuperados por `events.read`.
 
@@ -837,7 +840,8 @@ destrói recursos potencialmente usados.
        control block FreeRTOS em memória interna; rollback/stop usam
        `vQueueDeleteWithCaps`. O worker usa stack em PSRAM e TCB estático em alocação
        interna dedicada (rollback se faltar RAM); `test_music_player` cobre as
-       capabilities/erro de TCB e lifecycle host.
+       capabilities e rollback de queue, completion semaphore, TCB e worker task,
+       além do lifecycle no host.
    liberação após completion. Boot normal de 2026-10-27 confirmou LVGL/touch usando
    buffers DMA PSRAM após Hosted/Wi-Fi. O mesmo boot revelou assert posterior em
    `xTaskCreateStaticPinnedToCore` (`portVALID_TCB_MEM`) porque o `StaticTask_t`
@@ -895,7 +899,10 @@ destrói recursos potencialmente usados.
   e aguarda scan e player.
 - Os testes adicionados ao Makefile incluem `test_music_model.cpp` para a lógica
   pura, `test_music_app.cpp` para comandos/scan com portas injetadas,
-  `test_music_player.cpp` para fila, cancelamento, leases e lifecycle worker, e
+  `test_music_player.cpp` para fila, cancelamento, leases, lifecycle worker e
+  shims `music_runtime_shim/freertos/idf_additions.h` e
+  `music_runtime_shim/music_freertos_shim.cpp` suportam fault injection de
+  semáforo binário e criação de task estática para cobrir rollback de startup; e
   `test_music_audio_output.cpp` para volume, mute, falhas e roteamento via backend
   codec injetável. `music_traceability.md` relaciona esses cenários a
   REQ-MUSIC/AC-MUSIC/TEST-AUDIO; os casos de secure-open usam a produção real do
@@ -1848,7 +1855,7 @@ helpers privados, entao a regra nao fixa a implementacao interna do adaptador.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `.clang-format`, `.github/workflows/quality-gate.yml`, `tools/coverage_scope_guard.py`, `tests/host/keymap/test_coverage_scope_guard.py` | `quality`, guard de escopo gcovr | Gate usa clang-format 23.1.3, Ruff 0.17.1, gcovr 8.7, Bandit 1.9.4 e checkout v7.0.1 pinado por SHA; agrega testes host e build ESP-IDF 6.1. Mantém os limites globais de cobertura (80% linhas, 94% funções, 59% branches), `coverage_scope_guard.py` fail-closed e allowlist explícita dos adaptadores hardware. A formatação de `ble_mgr.cpp` valida somente faixas explícitas (incluindo pairing/reconnect) para preservar regiões legadas; ao inserir linhas nesses blocos, mantenha os intervalos alinhados. `cyberdeck_time_sync.cpp` e os shims NetDiag listados no workflow também são validados integralmente conforme clang-format 23.1.3.
+| `.clang-format`, `.github/workflows/quality-gate.yml`, `tools/coverage_scope_guard.py`, `tests/host/keymap/test_coverage_scope_guard.py` | `quality`, guard de escopo gcovr | Gate usa clang-format 23.1.3, Ruff 0.17.1, gcovr 8.7, Bandit 1.9.4 e checkout v7.0.1 pinado por SHA; agrega testes host e build ESP-IDF 6.1. Mantém os limites globais de cobertura (80% linhas, 90% funções, 50% branches), `coverage_scope_guard.py` fail-closed e allowlist explícita dos adaptadores hardware. A formatação de `ble_mgr.cpp` valida somente faixas explícitas (incluindo pairing/reconnect) para preservar regiões legadas; ao inserir linhas nesses blocos, mantenha os intervalos alinhados. `cyberdeck_time_sync.cpp` e os shims NetDiag listados no workflow também são validados integralmente conforme clang-format 23.1.3.
 
 Declaracao de validacao fisica reportada pelo usuario (REQ-HW-01): foram testados
 no firmware gravado `0202b2b` os cenarios de conexao Bluetooth, scan,

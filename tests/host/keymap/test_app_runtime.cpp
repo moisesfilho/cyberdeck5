@@ -475,6 +475,8 @@ int main() {
     check(exclusive_runtime.start_application("console.test"), "console foreground starts");
     check(console.stop_calls == 0, "foreground start does not stop itself");
     check(exclusive_runtime.active_foreground() == "console.test", "active foreground is tracked");
+    check(exclusive_runtime.start_application("console.test"),
+          "starting the active console foreground is idempotent");
     check(!exclusive_runtime.switch_foreground("console.test"),
           "console cannot deactivate itself through foreground switch");
     check(exclusive_runtime.active_foreground() == "console.test" && console.running(),

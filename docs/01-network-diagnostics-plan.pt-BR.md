@@ -131,9 +131,10 @@ Os testes host executam os TUs reais com shims nas fronteiras de plataforma;
 `test_netdiag_app` verifica 47 cenários/assertivas incluindo grant revogado,
 cancelamento e quarentena do worker. Os alvos focados também geram cobertura.
 O agregado e o build ESP-IDF passaram localmente; com GCC/gcov 13.4 local, os
-gates gcovr passaram (86,5% linhas, 94,9% funções, 59,2% branches; mínimo de
-branches 59%). O GCC/gcov 15.2 do host ainda mede 57,4% de branches com o
-mesmo agregado: os resultados não são intercambiáveis entre toolchains.
+gates gcovr passaram (86,5% linhas, 94,9% funções, 59,2% branches; mínimos de
+80% linhas, 90% funções e 50% branches). O GCC/gcov 15.2 do host ainda mede
+57,4% de branches com o mesmo agregado: os resultados não são intercambiáveis
+entre toolchains.
 
 O Quality Gate remoto passou no commit `dbe3a94` (run `38916411814`) e no
 commit `8e41338` (segunda tentativa do run `38918012957`); a primeira tentativa

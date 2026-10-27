@@ -12,6 +12,8 @@
 extern bool music_test_fail_caps_queue_create;
 unsigned music_test_last_queue_caps = 0;
 bool music_test_fail_caps_queue_create = false;
+bool music_test_fail_binary_semaphore_create = false;
+bool music_test_fail_static_task_create = false;
 
 namespace {
 thread_local bool completion_signaled_in_task = false;
@@ -28,7 +30,10 @@ TickType_t xTaskGetTickCount() {
 
 void vTaskDelay(TickType_t ticks) { std::this_thread::sleep_for(std::chrono::milliseconds(ticks)); }
 
-SemaphoreHandle_t xSemaphoreCreateBinary() { return new music_test_semaphore{}; }
+SemaphoreHandle_t xSemaphoreCreateBinary() {
+    if (music_test_fail_binary_semaphore_create) return nullptr;
+    return new music_test_semaphore{};
+}
 int xSemaphoreTake(SemaphoreHandle_t semaphore, TickType_t timeout) {
     if (semaphore == nullptr) return 0;
     std::unique_lock<std::mutex> lock(semaphore->mutex);
@@ -98,6 +103,7 @@ int xTaskCreate(TaskFunction_t entry, const char *, unsigned, void *context, uns
 }
 TaskHandle_t xTaskCreateStatic(TaskFunction_t entry, const char *name, unsigned, void *context,
                                unsigned priority, StackType_t *, StaticTask_t *) {
+    if (music_test_fail_static_task_create) return nullptr;
     if (entry == nullptr) return nullptr;
     TaskHandle_t handle = reinterpret_cast<void *>(1);
     std::thread([entry, context] { completion_signaled_in_task = false; entry(context); }).detach();

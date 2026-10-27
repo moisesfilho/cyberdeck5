@@ -979,6 +979,7 @@ void supervisor_ownership_contract() {
     check(shell.console_ready(), "the supervisor start hook owns console creation");
     check(runtime.start_application("cyberdeck.shell"),
           "starting an already running shell is idempotent");
+    check(shell.console_ready(), "idempotent shell start preserves the active console");
 
     /* O console e o unico caminho para os comandos, portanto o proprio console
      * nao pode se desligar: parar a si mesmo removeria a unica forma de
