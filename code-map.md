@@ -77,6 +77,12 @@ dependências diretas/transitivas, controle negativo e mutações. O alvo
 `test_incremental_batch_contract` executa esse contrato uma vez no agregado;
 ele não é artefato de `BINS`.
 
+`test_storage_facade.cpp` usa um app host com estado de execução explícito:
+`start()` marca running e `stop()` limpa o estado, permitindo que o runtime
+valide corretamente o ciclo de parada e a revogação do grant.
+No runtime, iniciar novamente o foreground já ativo é idempotente, inclusive
+para o dono do console; o bloqueio de parar o console continua separado.
+
 Os 27 candidatos finais (shell/runtime, editor, diagnóstico de rede, bateria,
 cat, BLE, display, known hosts e poweroff) usam objetos e depfiles próprios
 `*_MIG_OBJS` no `Makefile`, mantendo a ordem e as flags de link de cada cenário.

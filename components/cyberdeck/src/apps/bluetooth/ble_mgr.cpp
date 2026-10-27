@@ -611,7 +611,8 @@ static void start_scan_command(const ble_mgr_cmd_t &cmd)
     s_scan_next_generation_ready = false;
     s_scan_cancel_token = 0;
     uint64_t token = s_scan_token = s_dispatch.begin_scan(cmd.token);
-    if (token == 0) return;
+    if (token == 0)
+        return;
     s_scan_cancel_pending = false;
     s_scan_stats = {};
     s_scan_peer_count = 0;

@@ -269,7 +269,7 @@ bool runtime::activate_foreground(std::size_t index) {
         }
     }
     if (states_[index] == app_state::running && previous == index)
-        return !applications_[index]->get_manifest().owns_console;
+        return true;
     if (states_[index] == app_state::running) {
         for (std::size_t i = 0; i < count_; ++i) {
             if (i != index && applications_[i]->get_manifest().type == app_type::foreground &&
