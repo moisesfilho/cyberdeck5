@@ -1,0 +1,138 @@
+--- a/host/mcu/eh_host_mcu_transport/src/eh_host_bus_sdio.c
++++ b/host/mcu/eh_host_mcu_transport/src/eh_host_bus_sdio.c
+@@ -1185,7 +1185,7 @@
+ 	return 1;
+ }
+ 
+-static esp_err_t sdio_push_pkt_to_queue(uint8_t * rxbuff, uint16_t len, uint16_t offset)
++static esp_err_t sdio_push_pkt_to_queue(uint8_t *rxbuff, uint16_t len, uint16_t offset, bool dma_owned)
+ {
+ 	uint8_t pkt_prio = PRIO_Q_OTHERS;
+ 	struct esp_payload_header *h= NULL;
+@@ -1196,7 +1196,7 @@
+ 	memset(&buf_handle, 0, sizeof(interface_buffer_handle_t));
+ 
+ 	buf_handle.priv_buffer_handle = rxbuff;
+-	buf_handle.free_buf_handle    = sdio_buffer_free;
++    buf_handle.free_buf_handle    = dma_owned ? sdio_buffer_free : free;
+ 	buf_handle.payload_len        = len;
+ 	buf_handle.if_type            = h->if_type;
+ 	buf_handle.if_num             = h->if_num;
+@@ -1211,7 +1211,7 @@
+ 
+ 	if( (!from_slave_queue[pkt_prio]) || (!sem_from_slave_queue)) {
+ 		ESP_LOGI(TAG, "uninitialised from_slave_queue or sem_from_slave_queue");
+-		sdio_buffer_free(rxbuff);
++		buf_handle.free_buf_handle(rxbuff);
+ 		return ESP_FAIL;
+ 	}
+ 
+@@ -1250,7 +1250,7 @@
+ 		return ESP_FAIL;
+ 	}
+ 
+-	if (sdio_push_pkt_to_queue(buf, len, offset)) {
++	if (sdio_push_pkt_to_queue(buf, len, offset, true)) {
+ 		ESP_LOGE(TAG, "Failed to push Rx packet to queue");
+ 		return ESP_FAIL;
+ 	}
+@@ -1290,10 +1290,10 @@
+ 			return ESP_FAIL;
+ 		}
+ 
+-		uint8_t *pkt_rxbuff = sdio_buffer_alloc(MEMSET_REQUIRED);
++		uint8_t *pkt_rxbuff = (uint8_t *)malloc(packet_size);
+ 		if (pkt_rxbuff) {
+ 			memcpy(pkt_rxbuff, buf, packet_size);
+-			if (sdio_push_pkt_to_queue(pkt_rxbuff, len, offset))
++			if (sdio_push_pkt_to_queue(pkt_rxbuff, len, offset, false))
+ 				ESP_LOGI(TAG, "aggr rx: failed to queue sub-frame");
+ 		} /* OOM: skip this sub-frame, keep walking */
+ 
+@@ -1382,16 +1382,18 @@
+ 			}
+ 			return ESP_FAIL;
+ 		}
+-		pkt_rxbuff = sdio_buffer_alloc(MEMSET_REQUIRED);
++		packet_size = len + offset;
++		if (packet_size > buf_len) {
++			ESP_LOGE(TAG, "stream-rx size overrun pkt=%lu remaining=%lu",
++				(unsigned long)packet_size, (unsigned long)buf_len);
++			return ESP_FAIL;
++		}
++		pkt_rxbuff = (uint8_t *)malloc(packet_size);
+ 		if (!pkt_rxbuff) {
+ 			if (!mempool_oom_logged) {
+ 				ESP_LOGW(TAG, "mempool OOM start (RX)");
+ 				mempool_oom_logged = true;
+ 			}
+-			packet_size = len + offset;
+-			if (packet_size > buf_len) {
+-				return ESP_FAIL;
+-			}
+ 			buf_len -= packet_size;
+ 			buf     += packet_size;
+ 			continue;
+@@ -1402,17 +1404,9 @@
+ 			mempool_oom_logged = false;
+ 		}
+ 
+-		packet_size = len + offset;
+-		if (packet_size > buf_len) {
+-			ESP_LOGE(TAG, "stream-rx size overrun pkt=%lu remaining=%lu",
+-					(unsigned long)packet_size,
+-					(unsigned long)buf_len);
+-			sdio_buffer_free(pkt_rxbuff);
+-			return ESP_FAIL;
+-		}
+ 		memcpy(pkt_rxbuff, buf, packet_size);
+ 
+-		if (sdio_push_pkt_to_queue(pkt_rxbuff, len, offset)) {
++		if (sdio_push_pkt_to_queue(pkt_rxbuff, len, offset, false)) {
+ 			ESP_LOGI(TAG, "Failed to push a packet to queue from stream");
+ 		}
+ 
+--- a/host/mcu/eh_host_mcu_transport/src/eh_host_mcu_transport_channels.c
++++ b/host/mcu/eh_host_mcu_transport/src/eh_host_mcu_transport_channels.c
+@@ -14,6 +14,9 @@
+ #include "eh_host_mcu_transport_channels.h"
+ #include "eh_host_mcu_transport_priv.h"
+ #include "eh_host_port_dma.h"
++#ifdef ESP_PLATFORM
++#include "esp_heap_caps.h"
++#endif
+ #include "eh_frame.h"
+ #include "esp_netif_types.h"
+ 
+@@ -41,8 +44,20 @@
+     }
+ 
+     size_t total = eh_frame_hdr_size() + payload_len;
+-    /* MUST be DMA-capable; sdmmc/SPI master reject non-DMA buffers. */
+-    uint8_t *buf = (uint8_t *)eh_host_port_dma_alloc(total);
++    void (*free_func)(void *) = NULL;
++    uint8_t *buf = NULL;
++#if EH_HOST_TRANSPORT_BUS_SDIO
++    /* SDIO copies this queued frame into its DMA staging buffer before transfer. */
++#if defined(ESP_PLATFORM) && defined(CONFIG_SPIRAM)
++    buf = (uint8_t *)heap_caps_malloc(total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
++#endif
++    if (!buf) buf = (uint8_t *)malloc(total);
++    free_func = free;
++#else
++    /* Other transports may DMA directly from this queued frame. */
++    buf = (uint8_t *)eh_host_port_dma_alloc(total);
++    free_func = eh_host_port_dma_free;
++#endif
+     if (!buf) return ESP_ERR_NO_MEM;
+ 
+     memcpy(buf + eh_frame_hdr_size(), payload, payload_len);
+@@ -56,7 +71,7 @@
+         .payload            = buf + eh_frame_hdr_size(),
+         .payload_len        = payload_len,
+         .payload_zcopy      = 0,
+-        .free_buf_handle    = eh_host_port_dma_free,
++        .free_buf_handle    = free_func,
+     };
+     eh_frame_encode(buf, &bh, payload_len);
+     int rc = eh_host_mcu_transport_tx(&bh);

@@ -926,7 +926,10 @@ destrói recursos potencialmente usados.
      `managed_components` (`eh_host_bus_sdio.c` e `eh_host_mcu_transport_channels.c`);
      sua reprodução explícita está versionada em `tools/esp-hosted-cpu-staging.patch`
      e `tools/prepare_esp_hosted_cpu_staging.py` (aplicar após resolver componentes,
-     verificar revisão/hash antes do build; restore reversível). `CMakeLists.txt`
+     verificar revisão/hash antes do build; restore reversível). O patch é um
+     artefato-fonte necessário ao script; hashes de origem e destino ficam no
+     próprio script, sem manifestos auxiliares no componente vendorizado.
+     `CMakeLists.txt`
      executa verify após project() e antes do link do ELF em cada build:
      reconfigure e build incremental sem patch falham fechado. O teste
      `tests/host/keymap/test_esp_hosted_cpu_staging.py` (alvo focado e agregado)
