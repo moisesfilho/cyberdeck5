@@ -30,7 +30,7 @@ struct state {
 bool begin_boot(state &value);
 /* Only a readiness checkpoint clears the pending boot and its counter. */
 bool commit_ready(state &value);
-/* Safe mode is deliberately not cleared by a normal boot. */
+/* Explicit operator clear acknowledges the current boot and clears the latch. */
 bool clear_safe_mode(state &value);
 bool record_error(state &value, std::string_view app, std::string_view message);
 std::string_view error_for(const state &value, std::string_view app);

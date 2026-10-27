@@ -95,12 +95,16 @@ NETDIAG_USAGE = (
      "host: 1..253 ASCII letters, digits, dots, or hyphens; port: decimal 1..65535\n"
      "URL: https, at most 512 bytes; no userinfo, fragment, whitespace, or explicit port in authority\n"),
 )
+MUSIC_USAGE = (
+    ("music queue <directory> | list | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
+     "MP3 playback from SD; volume is capped at 50\n"),
+)
 DEMO_USAGE = (
     ("demo", "arguments are not declared; extra arguments are currently ignored\n"),
 )
 
 # Compiled-in inventory, in registration order (REQ-HELP-05): 7 commandless
-# services, the console-owning shell, and 3 command-bearing applications.
+# services, the console-owning shell, and 4 command-bearing applications.
 # `symbol` is the registered expression in `k_apps`; `source` selects where the
 # manifest is declared.  `command` is the manifest's `command` field: the
 # editor and netdiag leave it empty and are therefore reached through their
@@ -144,15 +148,20 @@ EXPECTED_APPS = (
      "description": "Explicit-target connectivity diagnostics",
      "type": "foreground", "commands": ("netdiag",), "command": "",
      "usage": NETDIAG_USAGE, "owns_console": False},
+    {"symbol": "&cyberdeck_music::global_application()", "source": "music",
+     "id": "cyberdeck.music", "name": "Music", "description": "Background local MP3 player",
+     "type": "background", "commands": ("music",), "command": "", "usage": MUSIC_USAGE,
+     "owns_console": False},
 )
 
-COMMAND_BEARING_COUNT = 3
+COMMAND_BEARING_COUNT = 4
 COMMANDLESS_SERVICE_COUNT = 7
 CONSOLE_OWNER_COUNT = 1
 
 FIXTURE_USAGE_FUNCTIONS = {
     "editor": "editor_usage_manifest",
     "netdiag": "netdiag_usage_manifest",
+    "music": "music_usage_manifest",
 }
 
 # Scenario identifiers of this contract, mapped in help_traceability.md.
@@ -858,6 +867,7 @@ def main() -> int:
         "demo": DEMO_APP.read_text(encoding="utf-8"),
         "editor": EDITOR_APP.read_text(encoding="utf-8"),
         "netdiag": NETDIAG_APP.read_text(encoding="utf-8"),
+        "music": (ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp").read_text(encoding="utf-8"),
     }
 
     try:
@@ -975,7 +985,7 @@ def main() -> int:
         fixture_symbols = _registration_symbols(help_test, "application *const registered[]")
         require(len(fixture_symbols) == len(EXPECTED_APPS),
                 f"the fixture inventory must register {len(EXPECTED_APPS)} applications")
-        require(fixture_symbols[-COMMAND_BEARING_COUNT:] == ("&demo", "&editor", "&netdiag"),
+        require(fixture_symbols[-COMMAND_BEARING_COUNT:] == ("&demo", "&editor", "&netdiag", "&music"),
                 "the fixture inventory must register the command-bearing apps in production order")
         for app in EXPECTED_APPS:
             if app["source"] not in FIXTURE_USAGE_FUNCTIONS:

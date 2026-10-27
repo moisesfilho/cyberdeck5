@@ -14,6 +14,9 @@ public:
     void update_ble(bool connected);
     void update_wifi(bool lit);
     void update_battery(const cyberdeck_battery_view::presentation &presentation);
+    void update_music(bool active);
+    void set_music_action(void (*action)(void *), void *context);
+    void dispatch_music_action();
 
 private:
     lv_obj_t *s_clock_status = nullptr;
@@ -24,6 +27,9 @@ private:
     lv_obj_t *s_battery_symbol = nullptr;
     lv_obj_t *s_battery_percentage = nullptr;
     lv_obj_t *s_battery_percentage_bold = nullptr;
+    lv_obj_t *s_music_button = nullptr;
+    void (*music_action_)(void *) = nullptr;
+    void *music_context_ = nullptr;
 };
 
 } // namespace cyberdeck_header_view

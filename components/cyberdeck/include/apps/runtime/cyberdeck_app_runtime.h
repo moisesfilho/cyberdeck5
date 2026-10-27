@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -145,10 +146,17 @@ public:
     bool register_application(application &app);
     result execute_line(std::string_view line);
     bool start_application(std::string_view id);
+    /* Stops the current foreground app and its dependents before starting the
+     * requested foreground app. The console owner is never stopped. */
+    bool switch_foreground(std::string_view id);
+    std::string_view active_foreground() const;
     bool stop_application(std::string_view id);
     bool restart_application(std::string_view id);
     bool start_all();
     bool stop_all();
+    void set_command_dispatch_ready(bool ready) {
+        command_dispatch_ready_.store(ready, std::memory_order_release);
+    }
     void set_logger(logger *value);
     void set_sd_io(cyberdeck_sd_io::coordinator *value);
     logger *app_logger() const { return logger_; }
@@ -185,10 +193,14 @@ private:
     std::array<std::uint64_t, k_max_applications> grant_generations_{};
     std::array<std::uint16_t, k_max_applications> grant_masks_{};
     mutable std::mutex grant_mutex_;
+    std::atomic<bool> command_dispatch_ready_{true};
+    std::string_view active_foreground_{};
     quota quotas_{};
 
     bool start_index(std::size_t index, std::array<bool, k_max_applications> &visiting);
     bool stop_index(std::size_t index);
+    bool activate_foreground(std::size_t index);
+    void refresh_active_foreground();
     std::size_t index_of(std::string_view id) const;
     bool grant_is_valid(std::size_t index, std::uint64_t generation,
                         std::uint16_t mask) const;

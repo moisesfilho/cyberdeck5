@@ -14,6 +14,11 @@ DISPATCH = ROOT / "components/cyberdeck/src/platform/input/cyberdeck_keyboard_di
 def function_body(source: str, signature: str) -> str:
     start = source.index(signature)
     opening = source.index("{", start)
+    semicolon = source.find(";", start)
+    while semicolon >= 0 and semicolon < opening:
+        start = source.index(signature, semicolon + 1)
+        opening = source.index("{", start)
+        semicolon = source.find(";", start)
     depth = 0
     for index in range(opening, len(source)):
         if source[index] == "{":
@@ -87,10 +92,8 @@ def main() -> int:
             "the session must implement both physical input paths")
     # The facade definition must delegate to the session key handler; the
     # forward declaration (which has no body) is skipped explicitly.
-    local_key_def = re.search(
-        r"void\s+local_key\s*\(\s*uint32_t\s+\w+\s*\)\s*\{[^}]*\}", ui)
-    require(local_key_def is not None and
-            "s_shell_app.handle_key(translate_session_key(key))" in local_key_def.group(0),
+    local_key_def = function_body(ui, "void local_key(uint32_t key)")
+    require("s_shell_app.handle_key(translate_session_key(key))" in local_key_def,
             "local_key must delegate to the extracted session key handler")
 
     terminal_changed = function_body(ui, "void terminal_changed(")

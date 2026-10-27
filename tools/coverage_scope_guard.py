@@ -29,9 +29,6 @@ ALLOWLIST = {
         "system app composition/lifecycle bound to hardware services; covered by "
         "structural Python contracts (test_system_apps_contract.py, "
         "test_shell_app_contract.py, test_serial_lifecycle_contract.py)",
-    "components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp":
-        "NVS/ESP-IDF recovery adapter; exercised by the Phase 10 structural "
-        "contract and intentionally not host-linkable",
     "components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp":
         "SDK/LVGL application composition; exercised by the editor runtime "
         "structural contract and not host-linkable",

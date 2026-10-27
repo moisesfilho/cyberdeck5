@@ -378,12 +378,14 @@ int main() {
     CHECK(subject.status(completed) && completed.state == cyberdeck_music::playback_state::playing &&
           completed.selected == 1);
     CHECK(audio_write_count > 1);
+    CHECK(storage.active_leases() == 1);
     std::ifstream persisted(fixture_path, std::ios::binary);
     const std::string after((std::istreambuf_iterator<char>(persisted)), std::istreambuf_iterator<char>());
     CHECK(after.size() == 24U * 417U);
     CHECK(after[0] == static_cast<char>(0xFF) && static_cast<unsigned char>(after[1]) == 0xFB);
     CHECK(subject.stop(2000));
     CHECK(!subject.running());
+    CHECK(storage.active_leases() == 0);
     CHECK(wait_until([] { return music_test_delete_without_completion_count() == 0; }, std::chrono::seconds(1)));
     CHECK(music_test_delete_without_completion_count() == 0);
 

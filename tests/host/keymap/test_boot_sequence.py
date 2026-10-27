@@ -64,6 +64,23 @@ def main() -> int:
     if nvs_init and recovery_init and hosted_prepare and mount_calls:
         check(nvs_init.start() < recovery_init.start() < hosted_prepare.start() < mount_calls[0].start(),
               "normal boot must decide safe mode and prepare the C6 before SDMMC slot 0 mount", failures)
+    for stage, call in (("hosted_prepare", "wifi_mgr_hosted_transport_prepare()"),
+                        ("sd_mount", "bsp_sdcard_mount_hosted()"),
+                        ("battery_protection", "battery_protection_start()")):
+        begin = re.search(rf'HOSTED_DIAG boot stage={stage} begin[^\n]*', app)
+        end = re.search(rf'HOSTED_DIAG boot stage={stage} end result=%s[^\n]*', app)
+        invocation = re.search(re.escape(call), app)
+        check(begin is not None and end is not None and invocation is not None and
+              begin.start() < invocation.start() < end.start(),
+              f"TEST-DIAG-BOOT-{stage}: diagnostic markers must bracket the existing call", failures)
+    check("HOSTED_DIAG boot stage=sd_mount end result=%s duration_ms=%lld" in app,
+          "TEST-DIAG-BOOT-SD: mount diagnostic must retain elapsed time and result", failures)
+    battery_begin = app.find("HOSTED_DIAG boot stage=battery_protection begin")
+    battery_call = app.find("battery_protection_start()")
+    battery_end = app.find("HOSTED_DIAG boot stage=battery_protection end")
+    check(battery_begin >= 0 and battery_call > battery_begin and battery_end > battery_call and
+          app.find("if (battery_err != ESP_OK)", battery_end) > battery_end,
+          "TEST-DIAG-BOOT-BATTERY: logging must not change the existing nonfatal error policy", failures)
     check(hosted_mount is not None and mount_calls and hosted_mount.start() < mount_calls[0].start(),
           "Hosted-ready boot must use the shared-controller SD mount path", failures)
     check("host.init = sdmmc_host_init_shared" in bsp_storage and

@@ -4,6 +4,7 @@
 #include "apps/bluetooth/cyberdeck_ble_state_machine.h"
 #include "apps/bluetooth/cyberdeck_ble_types.h"
 #include "apps/editor/cyberdeck_editor_app.h"
+#include "apps/music/cyberdeck_music_app.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/shell/cyberdeck_cat_worker.h"
 #include "apps/shell/cyberdeck_edit_line.h"
@@ -90,11 +91,13 @@ lv_timer_t *s_wifi_audit_timer = nullptr;
 lv_timer_t *s_wifi_survey_timer = nullptr;
 lv_timer_t *s_battery_timer = nullptr;
 lv_timer_t *s_terminal_output_timer = nullptr;
+lv_timer_t *s_music_status_timer = nullptr;
 cyberdeck_terminal_scrollback::model s_scrollback;
 
 cyberdeck_terminal_filter s_ssh_output_filter;
 cyberdeck_ssh_line_composer s_ssh_line_composer;
 bool s_rendering = false;
+bool s_music_ui_active = false;
 bool s_terminal_output_dirty = false;
 bool s_virtual_enter_handled = false;
 std::string s_last_clock_text;
@@ -279,6 +282,7 @@ void terminal_geometry_changed(lv_event_t *) {
     render_terminal();
 }
 void process_terminal_output(lv_timer_t *timer);
+void process_music_status(lv_timer_t *timer);
 void editor_view_action(std::string_view action, void *context);
 void zero_string(std::string &s);
 void refresh_ble_status();
@@ -580,6 +584,10 @@ void destroy_ui_resource_handles() {
         lv_timer_del(s_terminal_output_timer);
         s_terminal_output_timer = nullptr;
     }
+    if (s_music_status_timer != nullptr) {
+        lv_timer_del(s_music_status_timer);
+        s_music_status_timer = nullptr;
+    }
     s_terminal_view.deinit();
     /* A deinit during BLE authentication must not leave the passkey resident.
      * Detaching also drops the console the shell application owns. */
@@ -656,6 +664,7 @@ void destroy_ui_resource_handles() {
 
 void hidden(lv_obj_t *obj, bool value);
 void local_key(uint32_t key);
+void music_indicator_action(void *context);
 
 void on_cat_result(const char *output, size_t output_length, bool accepted, void *) {
     auto sanitize_for_lvgl = [](const char *input, size_t input_length) {
@@ -891,6 +900,14 @@ void refresh_battery_status() {
 
 void process_battery_protection(lv_timer_t *) {
     refresh_battery_status();
+}
+
+void process_music_status(lv_timer_t *) {
+    s_header_view.update_music(cyberdeck_music::global_application().has_playback());
+    if (s_music_ui_active) {
+        s_terminal_output_dirty = true;
+        render_terminal();
+    }
 }
 
 void update_clock(lv_timer_t *) {
@@ -1495,11 +1512,22 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view, 
     return output;
 }
 
+std::string music_tui_panel() {
+    const auto status = cyberdeck_music::global_application().execute("music", "status");
+    std::string panel = "[ MUSIC PLAYER / TERMINAL UI ]\n";
+    if (status.status == cyberdeck_apps::result_status::handled)
+        panel += status.output;
+    else
+        panel += "music service unavailable\n";
+    panel += "Escape: return to previous app\n";
+    return panel;
+}
+
 void render_terminal() {
     if (!s_terminal)
         return;
     auto &editor_app = cyberdeck_editor::global_application();
-    if (!editor_app.document().path().empty()) {
+    if (!editor_app.document().path().empty() && !s_music_ui_active) {
         if (editor_app.close_requested()) {
             s_editor_search_mode = false;
             s_editor_search.clear();
@@ -1551,6 +1579,11 @@ void render_terminal() {
      * the complete bounded scrollback so a swipe can expose older lines; the
      * textual dump still reads directly from the model below. */
     std::string output = get_rendered_output(view, true);
+    if (s_music_ui_active) {
+        if (!output.empty() && output.back() != '\n')
+            output += '\n';
+        output += music_tui_panel();
+    }
     const std::string editor = view.text();
     std::string visual = output + editor;
     std::size_t cursor_byte = 0;
@@ -2204,7 +2237,8 @@ cyberdeck_shell_session::key translate_session_key(uint32_t key) {
 }
 
 bool editor_input_active() {
-    return !s_editor_view_context.empty() && !cyberdeck_editor::global_application().document().path().empty();
+    return !s_music_ui_active && !s_editor_view_context.empty() &&
+           !cyberdeck_editor::global_application().document().path().empty();
 }
 void editor_local_key(uint32_t key) {
     auto &editor_app = cyberdeck_editor::global_application();
@@ -2221,7 +2255,18 @@ void editor_local_key(uint32_t key) {
         route(LV_KEY_ENTER, cyberdeck_editor::key::enter);
 }
 void local_key(uint32_t key) {
+    if (s_music_ui_active && key == LV_KEY_ESC) {
+        s_music_ui_active = false;
+        render_terminal();
+        return;
+    }
     s_shell_app.handle_key(translate_session_key(key));
+}
+
+void music_indicator_action(void *) {
+    s_music_ui_active = true;
+    s_terminal_output_dirty = true;
+    render_terminal();
 }
 
 } // namespace
@@ -2240,7 +2285,13 @@ extern "C" esp_err_t cyberdeck_ui_term_dump(char *buffer, size_t capacity, size_
         return ESP_ERR_INVALID_STATE;
     }
     const cyberdeck_shell_console::line_view view = compose_console_line();
-    const std::string rendered = get_rendered_output(view, true) + view.text();
+    std::string rendered = get_rendered_output(view, true);
+    if (s_music_ui_active) {
+        if (!rendered.empty() && rendered.back() != '\n')
+            rendered += '\n';
+        rendered += music_tui_panel();
+    }
+    rendered += view.text();
     const std::string snapshot = rendered.size() > capacity ? truncate_left_utf8(rendered, capacity) : rendered;
     if (!snapshot.empty()) {
         std::memcpy(buffer, snapshot.data(), snapshot.size());
@@ -2333,6 +2384,7 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
         destroy_ui_resource_handles();
         return ESP_ERR_NO_MEM;
     }
+    s_header_view.set_music_action(music_indicator_action, nullptr);
     cyberdeck_apps::service_ports::wifi_set_state_callback(on_wifi_state, nullptr);
     s_last_clock_text.clear();
     update_clock(nullptr);
@@ -2345,10 +2397,11 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     s_wifi_survey_timer = lv_timer_create(process_wifi_survey, 100, nullptr);
     s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
     s_terminal_output_timer = lv_timer_create(process_terminal_output, 100, nullptr);
+    s_music_status_timer = lv_timer_create(process_music_status, 250, nullptr);
     if (s_clock_timer == nullptr || s_wifi_state_timer == nullptr || s_wifi_scan_timer == nullptr ||
         s_ble_timer == nullptr || s_ssh_timer == nullptr || s_wifi_audit_timer == nullptr ||
-        s_wifi_survey_timer == nullptr ||
-        s_battery_timer == nullptr || s_terminal_output_timer == nullptr) {
+        s_wifi_survey_timer == nullptr || s_battery_timer == nullptr || s_terminal_output_timer == nullptr ||
+        s_music_status_timer == nullptr) {
         destroy_ui_resource_handles();
         return ESP_ERR_NO_MEM;
     }
@@ -2387,10 +2440,13 @@ extern "C" void cyberdeck_keyboard_input(const char *text, size_t length, uint8_
 }
 
 extern "C" bool cyberdeck_ui_poweroff_freeze(uint32_t timeout_ms) {
-    if (!bsp_display_lock(pdMS_TO_TICKS(timeout_ms))) return false;
-    for (auto *timer : {s_clock_timer, s_wifi_state_timer, s_wifi_scan_timer, s_ble_timer,
-                        s_ssh_timer, s_wifi_audit_timer, s_wifi_survey_timer, s_battery_timer, s_terminal_output_timer}) {
-        if (timer != nullptr) lv_timer_pause(timer);
+    if (!bsp_display_lock(pdMS_TO_TICKS(timeout_ms)))
+        return false;
+    for (auto *timer :
+         {s_clock_timer, s_wifi_state_timer, s_wifi_scan_timer, s_ble_timer, s_ssh_timer, s_wifi_audit_timer,
+          s_wifi_survey_timer, s_battery_timer, s_terminal_output_timer, s_music_status_timer}) {
+        if (timer != nullptr)
+            lv_timer_pause(timer);
     }
     s_keyboard_dispatch.stop();
     bsp_display_unlock();

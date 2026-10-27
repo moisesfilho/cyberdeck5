@@ -251,6 +251,7 @@ struct player::impl {
             bool failed = false;
             error_stage failure = error_stage::none;
             bool eof = false;
+            bool continue_with_next = false;
             bool first_pcm_write = true;
             if (!publish_if_current(req, playback_state::playing)) {
                 close(fd);
@@ -370,33 +371,27 @@ struct player::impl {
                 publish_error(req, failure, played_ms, duration_ms);
             } else {
                 (void)publish_if_current(req, playback_state::stopped, played_ms, duration_ms);
-                request next{};
-                bool advance = false;
-                {
-                    std::lock_guard<std::mutex> lock(state_mutex);
-                    if (req.generation == playback_generation.load(std::memory_order_acquire) && eof &&
-                        state.repeat != repeat_mode::off && queue_count != 0) {
-                        if (state.repeat == repeat_mode::one) {
-                            // keep current selection
-                        } else if (state.shuffle && queue_count > 1) {
-                            shuffle_counter = shuffle_counter * 1664525U + 1013904223U;
-                            queue_selected = (queue_selected + 1 + shuffle_counter % (queue_count - 1)) % queue_count;
-                        } else if (queue_selected + 1 < queue_count)
-                            ++queue_selected;
-                        else
-                            queue_selected = 0;
-                        state.selected = queue_selected;
-                        const track &item = queue_tracks[queue_selected];
-                        std::memcpy(next.path, item.path.data(), item.path.size());
-                        next.path[k_max_path_bytes] = '\0';
-                        next.kind = request_kind::play;
-                        next.generation = req.generation;
-                        advance = true;
-                    }
+                std::lock_guard<std::mutex> lock(state_mutex);
+                if (req.generation == playback_generation.load(std::memory_order_acquire) && eof &&
+                    state.repeat != repeat_mode::off && queue_count != 0) {
+                    if (state.repeat == repeat_mode::one) {
+                        // Repeat the current track without adding another queued request.
+                    } else if (state.shuffle && queue_count > 1) {
+                        shuffle_counter = shuffle_counter * 1664525U + 1013904223U;
+                        queue_selected = (queue_selected + 1 + shuffle_counter % (queue_count - 1)) % queue_count;
+                    } else if (queue_selected + 1 < queue_count)
+                        ++queue_selected;
+                    else
+                        queue_selected = 0;
+                    state.selected = queue_selected;
+                    const track &item = queue_tracks[queue_selected];
+                    std::memcpy(req.path, item.path.data(), item.path.size());
+                    req.path[k_max_path_bytes] = '\0';
+                    continue_with_next = true;
                 }
-                if (advance && xQueueSend(queue, &next, 0) != pdTRUE)
-                    publish_error(req, error_stage::io);
             }
+            if (continue_with_next)
+                (void)xQueueSend(queue, &req, 0);
         }
         cyberdeck_audio_output::stop();
         worker_exited.store(true, std::memory_order_release);

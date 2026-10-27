@@ -1,5 +1,6 @@
 #include "platform/display/cyberdeck_ui.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "lvgl.h"
 #include "nvs_flash.h"
 #include "bsp/esp-bsp.h"
@@ -22,6 +23,9 @@ static const char *TAG = "cyberdeck5";
 
 extern "C" void app_main(void)
 {
+    cyberdeck_apps::runtime &app_runtime = cyberdeck_apps::global_runtime();
+    app_runtime.set_command_dispatch_ready(false);
+
     static cyberdeck_sd_io::coordinator sd_io_coordinator;
     cyberdeck_sd_io::bind_global(sd_io_coordinator);
     cyberdeck_poweroff_init(sd_io_coordinator);
@@ -39,7 +43,11 @@ extern "C" void app_main(void)
 
     bool hosted_transport_ready = false;
     if (!cyberdeck_recovery::safe_mode()) {
+        ESP_LOGI(TAG, "HOSTED_DIAG boot stage=hosted_prepare begin t_us=%lld",
+                 static_cast<long long>(esp_timer_get_time()));
         const esp_err_t hosted_err = wifi_mgr_hosted_transport_prepare();
+        ESP_LOGI(TAG, "HOSTED_DIAG boot stage=hosted_prepare end result=%s t_us=%lld", esp_err_to_name(hosted_err),
+                 static_cast<long long>(esp_timer_get_time()));
         if (hosted_err == ESP_OK) {
             hosted_transport_ready = true;
         } else {
@@ -52,9 +60,13 @@ extern "C" void app_main(void)
      * mount has completed and its BSP handle has been verified. On IDF 6,
      * ESP-Hosted and SD share the SDMMC controller (C6 slot 1, SD slot 0), so
      * Hosted must claim it first and the SD VFS must not re-init/deinit it. */
-    const esp_err_t sd_mount_err = hosted_transport_ready
-        ? bsp_sdcard_mount_hosted()
-        : bsp_sdcard_mount();
+    const int64_t sd_mount_started_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "HOSTED_DIAG boot stage=sd_mount begin hosted_ready=%d t_us=%lld", hosted_transport_ready,
+             static_cast<long long>(sd_mount_started_us));
+    const esp_err_t sd_mount_err = hosted_transport_ready ? bsp_sdcard_mount_hosted() : bsp_sdcard_mount();
+    ESP_LOGI(TAG, "HOSTED_DIAG boot stage=sd_mount end result=%s duration_ms=%lld t_us=%lld",
+             esp_err_to_name(sd_mount_err), static_cast<long long>((esp_timer_get_time() - sd_mount_started_us) / 1000),
+             static_cast<long long>(esp_timer_get_time()));
     ESP_ERROR_CHECK(sd_mount_err);
     if (bsp_sdcard_get_handle() == nullptr) return;
     {
@@ -113,7 +125,11 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(screen_off_init(display, 20));
     bsp_display_unlock();
 
+    ESP_LOGI(TAG, "HOSTED_DIAG boot stage=battery_protection begin t_us=%lld",
+             static_cast<long long>(esp_timer_get_time()));
     const esp_err_t battery_err = battery_protection_start();
+    ESP_LOGI(TAG, "HOSTED_DIAG boot stage=battery_protection end result=%s t_us=%lld", esp_err_to_name(battery_err),
+             static_cast<long long>(esp_timer_get_time()));
     if (battery_err != ESP_OK) {
         ESP_LOGW(TAG, "Battery protection unavailable: %s", esp_err_to_name(battery_err));
     }
@@ -149,5 +165,6 @@ extern "C" void app_main(void)
     } else {
         ESP_LOGW(TAG, "recovery checkpoint deferred after startup failure");
     }
+    app_runtime.set_command_dispatch_ready(true);
     ESP_LOGI(TAG, "CYBERDECK5 iniciado");
 }

@@ -136,7 +136,7 @@ class CyberdeckSession:
         if "rid" not in request:
             request["rid"] = self._new_rid()
         payload = (json.dumps(request, separators=(",", ":")) + "\n").encode()
-        is_dump = request.get("type") == "screen.dump"
+        is_dump = request.get("type") in ("screen.dump", "events.read")
 
         self._discard_input()
         self.transport.write(payload)
@@ -160,8 +160,12 @@ class CyberdeckSession:
                 break
             if frame.get("event") == "start":
                 continue
+            if frame.get("event") == "recovery_start":
+                continue
             if isinstance(frame.get("chunk"), int) and "b64" in frame:
                 self._merge_chunk(chunks, frame)
+            elif frame.get("event") == "recovery_chunk":
+                continue
             elif frame.get("event") == "end":
                 got_end = True
                 break
@@ -171,20 +175,59 @@ class CyberdeckSession:
 
         if is_dump and frames[0].get("ok") is not False:
             start = frames[0] if frames[0].get("event") == "start" else None
-            if start is None or not isinstance(start.get("size"), int) or not isinstance(start.get("chunks"), int):
+            if start is None or not isinstance(start.get("size"), int) or (
+                request.get("type") == "screen.dump" and not isinstance(start.get("chunks"), int)
+            ):
                 raise RuntimeError("screen.dump: start invalido (size/chunks obrigatorios)")
-            if start["size"] < 0 or start["chunks"] < 0:
+            if start["size"] < 0 or ("chunks" in start and start["chunks"] < 0):
                 raise RuntimeError("screen.dump: size/chunks invalidos")
-            self._validate_chunks(chunks, start["chunks"])
             if not got_end:
                 raise RuntimeError("screen.dump: frame end ausente")
-            payload_len = sum(len(base64.b64decode(chunks[i]["b64"])) for i in range(start["chunks"]))
-            if payload_len != start["size"]:
-                raise RuntimeError("screen.dump: tamanho recebido=%d declarado=%d" % (payload_len, start["size"]))
-            if "crc32" in start:
-                raw = b"".join(base64.b64decode(chunks[i]["b64"]) for i in range(start["chunks"]))
-                if not isinstance(start["crc32"], int) or (zlib.crc32(raw) & 0xFFFFFFFF) != start["crc32"]:
-                    raise RuntimeError("screen.dump: CRC32 divergente")
+            if request.get("type") == "screen.dump":
+                self._validate_chunks(chunks, start["chunks"])
+                payload_len = sum(len(base64.b64decode(chunks[i]["b64"])) for i in range(start["chunks"]))
+                if payload_len != start["size"]:
+                    raise RuntimeError("screen.dump: tamanho recebido=%d declarado=%d" % (payload_len, start["size"]))
+                if "crc32" in start:
+                    raw = b"".join(base64.b64decode(chunks[i]["b64"]) for i in range(start["chunks"]))
+                    if not isinstance(start["crc32"], int) or (zlib.crc32(raw) & 0xFFFFFFFF) != start["crc32"]:
+                        raise RuntimeError("screen.dump: CRC32 divergente")
+        if request.get("type") == "events.read" and frames[0].get("event") == "start":
+            sd_chunks = [frame for frame in frames if frame.get("event") == "chunk"]
+            sd_chunks.sort(key=lambda frame: frame.get("offset", -1))
+            expected_sd_offset = 0
+            sd_bytes = bytearray()
+            for frame in sd_chunks:
+                if frame.get("offset") != expected_sd_offset:
+                    raise RuntimeError("events.read: log SD com lacuna/offset invalido")
+                decoded = base64.b64decode(frame["b64"], validate=True)
+                if len(decoded) != frame.get("size"):
+                    raise RuntimeError("events.read: tamanho de chunk SD divergente")
+                sd_bytes.extend(decoded)
+                expected_sd_offset += len(decoded)
+            if expected_sd_offset != frames[0].get("size"):
+                raise RuntimeError("events.read: tamanho do log SD divergente")
+            frames.append({"rid": request.get("rid"), "ok": True, "event": "sd_log",
+                           "size": len(sd_bytes), "text": bytes(sd_bytes).decode("utf-8", "replace")})
+            recovery = [frame for frame in frames if frame.get("event") == "recovery_chunk"]
+            recovery.sort(key=lambda frame: frame.get("offset", -1))
+            expected_offset = 0
+            recovery_bytes = bytearray()
+            for frame in recovery:
+                if frame.get("offset") != expected_offset:
+                    raise RuntimeError("events.read: recovery journal com lacuna/offset invalido")
+                decoded = base64.b64decode(frame["b64"], validate=True)
+                if len(decoded) != frame.get("size"):
+                    raise RuntimeError("events.read: tamanho de chunk recovery divergente")
+                recovery_bytes.extend(decoded)
+                expected_offset += len(decoded)
+            raw = bytes(recovery_bytes)
+            if raw:
+                frames.append({"rid": request.get("rid"), "ok": True, "event": "recovery_log",
+                               "size": len(raw), "text": raw.decode("utf-8", "replace")})
+            recovery_start = next((frame for frame in frames if frame.get("event") == "recovery_start"), None)
+            if recovery_start is not None and recovery_start.get("size") != len(raw):
+                raise RuntimeError("events.read: tamanho do recovery journal divergente")
         return frames
 
     @staticmethod
@@ -193,6 +236,13 @@ class CyberdeckSession:
         ordered = [f for f in frames if isinstance(f.get("chunk"), int) and "b64" in f]
         ordered.sort(key=lambda f: f["chunk"])
         return b"".join(base64.b64decode(f["b64"]) for f in ordered)
+
+    @staticmethod
+    def events_payload(frames, event):
+        frame = next((item for item in frames if item.get("event") == event), None)
+        if frame is None:
+            return b""
+        return frame.get("text", "").encode("utf-8")
 
 
 Session = CyberdeckSession
@@ -215,6 +265,10 @@ def build_request(args) -> dict:
         return {"type": "wifi.status"}
     if args.command == "wifi.scan":
         return {"type": "wifi.scan"}
+    if args.command == "events.read":
+        return {"type": "events.read"}
+    if args.command == "sys.safe_mode.clear":
+        return {"type": "sys.safe_mode.clear"}
     if args.command == "ui.click":
         return {"type": "ui.click", "x": args.x, "y": args.y}
     if args.command == "ui.tap":
@@ -402,6 +456,8 @@ def make_parser() -> argparse.ArgumentParser:
     p_type.add_argument("text")
     sub.add_parser("ui.dump", help="arvore visivel (classes/texto/coordenadas)")
     sub.add_parser("term.dump", help="snapshot textual do terminal renderizado")
+    sub.add_parser("events.read", help="exporta o log SD e o journal NVS de recovery")
+    sub.add_parser("sys.safe_mode.clear", help="limpa explicitamente o latch de safe mode persistido")
     sub.add_parser("ui.clear", help="limpa a linha e executa `clear`")
     sub.add_parser("screen.shot", help="metadados do frame atual (BMP)")
     p_dump = sub.add_parser("screen.dump", help="stream BMP em chunks com CRC32 (REQ-006/007)")
@@ -459,8 +515,23 @@ def main(argv=None) -> int:
             print("falha ao salvar screenshot: %s" % exc, file=sys.stderr)
             return 2
 
+    if args.command == "events.read":
+        for event, path in (("sd_log", "/tmp/opencode/cyberdeck-sd-event-log.txt"),
+                            ("recovery_log", "/tmp/opencode/cyberdeck-recovery-journal.txt")):
+            payload = CyberdeckSession.events_payload(frames, event)
+            if payload:
+                with open(path, "wb") as output:
+                    output.write(payload)
+                print("events.read: %s salvo em %s (%d bytes)" % (event, path, len(payload)), file=sys.stderr)
+
     for frame in frames:
         print(json.dumps(frame, ensure_ascii=False))
+    if args.command == "events.read":
+        for name in ("sd_log", "recovery_log"):
+            frame = next((item for item in frames if item.get("event") == name), None)
+            if frame is not None:
+                print("--- %s (%s bytes) ---" % (name, frame["size"]))
+                print(frame["text"], end="" if frame["text"].endswith("\n") else "\n")
     if any(frame.get("ok") is False for frame in frames):
         return 1
     return 0

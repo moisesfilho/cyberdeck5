@@ -22,6 +22,11 @@ void disable_scrolling(lv_obj_t *object)
     lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_OFF);
 }
 
+void music_clicked(lv_event_t *event) {
+    auto *view = static_cast<cyberdeck_header_view::view *>(lv_event_get_user_data(event));
+    if (view != nullptr) view->dispatch_music_action();
+}
+
 void style_base(lv_obj_t *object, lv_color_t background, lv_color_t text)
 {
     lv_obj_set_style_bg_color(object, background, 0);
@@ -156,6 +161,24 @@ bool view::create(lv_obj_t *parent)
     lv_obj_set_hidden(s_battery_percentage_bold, true);
     lv_obj_set_hidden(s_battery_status, true);
 
+    s_music_button = lv_btn_create(right);
+    if (s_music_button == nullptr)
+        return false;
+    lv_obj_set_size(s_music_button, 26, 36);
+    lv_obj_set_style_bg_color(s_music_button, kBlack, 0);
+    lv_obj_set_style_bg_opa(s_music_button, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_music_button, 0, 0);
+    lv_obj_set_style_pad_all(s_music_button, 0, 0);
+    lv_obj_set_hidden(s_music_button, true);
+    lv_obj_add_event_cb(s_music_button, music_clicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *music_icon = lv_label_create(s_music_button);
+    if (music_icon == nullptr)
+        return false;
+    lv_label_set_text(music_icon, LV_SYMBOL_PLAY);
+    style_base(music_icon, kBlack, kWhite);
+    apply_header_font(music_icon);
+    lv_obj_center(music_icon);
+
     lv_obj_update_layout(header);
     lv_obj_update_layout(right);
     cyberdeck_wifi_icon_update_layout(s_wifi_status, lv_obj_get_width(s_wifi_status));
@@ -210,6 +233,21 @@ void view::update_battery(const cyberdeck_battery_view::presentation &presentati
                    lv_obj_get_y(s_battery_percentage));
     lv_obj_set_hidden(s_battery_percentage_bold, !presentation.show_percentage);
     lv_obj_set_hidden(s_battery_status, false);
+}
+
+void view::update_music(bool active) {
+    if (s_music_button != nullptr)
+        lv_obj_set_hidden(s_music_button, !active);
+}
+
+void view::set_music_action(void (*action)(void *), void *context) {
+    music_action_ = action;
+    music_context_ = context;
+}
+
+void view::dispatch_music_action() {
+    if (music_action_ != nullptr)
+        music_action_(music_context_);
 }
 
 } // namespace cyberdeck_header_view

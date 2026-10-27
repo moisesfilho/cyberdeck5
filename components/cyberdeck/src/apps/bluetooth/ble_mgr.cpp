@@ -6,6 +6,7 @@
 #include "platform/logging/event_log.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_idf_version.h"
 #include "sdkconfig.h"
 #include "esp_hosted.h"
@@ -337,8 +338,11 @@ esp_err_t ble_mgr_start(void)
 
     err = nimble_port_init();
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "nimble_port_init failed: %s (%d); BLE disabled",
-                 esp_err_to_name(err), err);
+        ESP_LOGW(TAG,
+                 "nimble_port_init failed: %s (%d); BLE disabled, internal_free=%lu internal_largest=%lu",
+                 esp_err_to_name(err), err,
+                 static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
         vSemaphoreDelete(s_dispatch_mutex);
         s_dispatch_mutex = NULL;
         vSemaphoreDelete(s_ble_mutex);

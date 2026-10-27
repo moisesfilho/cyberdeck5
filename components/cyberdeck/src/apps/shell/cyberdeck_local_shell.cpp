@@ -473,6 +473,186 @@ cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root, co
     return cyberdeck_local_shell_cat_bounded(host_root, cwd, command, 12288);
 }
 
+int cyberdeck_local_shell_open_readonly(const char *host_root, const char *cwd, std::string_view input,
+                                        std::size_t max_bytes, std::size_t &file_size) {
+    file_size = 0;
+    if (host_root == nullptr || cwd == nullptr || input.empty() || input.size() > 256 || max_bytes == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    const std::string raw(input);
+    const std::string virtual_path = raw.front() == '/' ? raw : std::string(cwd) + "/" + raw;
+    if (!valid_virtual_path(virtual_path, "/")) {
+        errno = EACCES;
+        return -1;
+    }
+    cyberdeck_vfs_namespace::resolved_path target{};
+    if (cyberdeck_vfs_namespace::resolve(cwd, raw.c_str(), target) &&
+        target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path &&
+        !cyberdeck_vfs_namespace::is_filesystem_backend(target)) {
+        errno = EACCES;
+        return -1;
+    }
+    const std::string relative = virtual_path.size() > 1 ? virtual_path.substr(1) : std::string{};
+    if (!cat_relative_safe(relative) || relative.empty() || relative == "sdcard" || relative.rfind("sdcard/", 0) == 0) {
+        errno = EACCES;
+        return -1;
+    }
+    const cat_candidate_status candidate = cat_candidate_status_for(host_root, relative, max_bytes);
+    if (candidate != cat_candidate_status::regular) {
+        errno = candidate == cat_candidate_status::missing     ? ENOENT
+                : candidate == cat_candidate_status::too_large ? EFBIG
+                                                               : EACCES;
+        return -1;
+    }
+    const int descriptor = cat_open_regular(host_root, relative);
+    if (descriptor < 0)
+        return -1;
+    struct stat info = {};
+    if (::fstat(descriptor, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 0 ||
+        static_cast<unsigned long long>(info.st_size) > max_bytes) {
+        const int error = errno == 0 ? EFBIG : errno;
+        close_descriptor(descriptor);
+        errno = error;
+        return -1;
+    }
+    file_size = static_cast<std::size_t>(info.st_size);
+    return descriptor;
+}
+
+int cyberdeck_local_shell_open_directory(const char *host_root, const char *cwd, std::string_view input) {
+    if (host_root == nullptr || cwd == nullptr || input.empty() || input.size() > 256) {
+        errno = EINVAL;
+        return -1;
+    }
+    const std::string raw(input);
+    const std::string virtual_path = raw.front() == '/' ? raw : std::string(cwd) + "/" + raw;
+    if (!valid_virtual_path(virtual_path, "/")) {
+        errno = EACCES;
+        return -1;
+    }
+    cyberdeck_vfs_namespace::resolved_path target{};
+    if (cyberdeck_vfs_namespace::resolve(cwd, raw.c_str(), target) &&
+        target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path &&
+        !cyberdeck_vfs_namespace::is_filesystem_backend(target)) {
+        errno = EACCES;
+        return -1;
+    }
+    const std::string relative = virtual_path.size() > 1 ? virtual_path.substr(1) : std::string{};
+    if (relative == "sdcard" || relative.rfind("sdcard/", 0) == 0 ||
+        (!relative.empty() && !cat_relative_safe(relative))) {
+        errno = EACCES;
+        return -1;
+    }
+    int descriptor = -1;
+#if defined(ESP_PLATFORM)
+    std::string full(host_root);
+    if (!relative.empty()) {
+        if (full.back() != '/')
+            full += '/';
+        full += relative;
+    }
+    int flags = O_RDONLY;
+#if defined(O_DIRECTORY)
+    flags |= O_DIRECTORY;
+#endif
+#if defined(O_NOFOLLOW)
+    flags |= O_NOFOLLOW;
+#endif
+    descriptor = ::open(full.c_str(), flags);
+#else
+#if defined(O_NOFOLLOW) && defined(O_DIRECTORY) && defined(AT_FDCWD)
+    int directory = ::open(host_root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (directory < 0)
+        return -1;
+    if (relative.empty())
+        return directory;
+    std::size_t begin = 0;
+    while (begin < relative.size()) {
+        std::size_t end = relative.find('/', begin);
+        if (end == std::string::npos)
+            end = relative.size();
+        char component[256]{};
+        const std::size_t length = end - begin;
+        if (length == 0 || length >= sizeof(component)) {
+            close_descriptor(directory);
+            errno = EINVAL;
+            return -1;
+        }
+        std::memcpy(component, relative.data() + begin, length);
+        const int next = ::openat(directory, component, O_RDONLY | O_NOFOLLOW | O_DIRECTORY);
+        close_descriptor(directory);
+        if (next < 0)
+            return -1;
+        directory = next;
+        begin = end + 1;
+    }
+    return directory;
+#else
+    errno = ENOTSUP;
+    return -1;
+#endif
+#endif
+    if (descriptor < 0)
+        return -1;
+    struct stat info {};
+    if (::fstat(descriptor, &info) != 0 || !S_ISDIR(info.st_mode)) {
+        const int error = errno == 0 ? ENOTDIR : errno;
+        close_descriptor(descriptor);
+        errno = error;
+        return -1;
+    }
+    return descriptor;
+}
+
+DIR *cyberdeck_local_shell_opendir(const char *host_root, const char *cwd, std::string_view path) {
+#if defined(ESP_PLATFORM)
+    if (host_root == nullptr || cwd == nullptr || path.empty() || path.size() > 256) {
+        errno = EINVAL;
+        return nullptr;
+    }
+    const std::string raw(path);
+    const std::string virtual_path = raw.front() == '/' ? raw : std::string(cwd) + "/" + raw;
+    if (!valid_virtual_path(virtual_path, "/")) {
+        errno = EACCES;
+        return nullptr;
+    }
+    cyberdeck_vfs_namespace::resolved_path target{};
+    if (cyberdeck_vfs_namespace::resolve(cwd, raw.c_str(), target) &&
+        target.kind == cyberdeck_vfs_namespace::path_kind::namespace_path &&
+        !cyberdeck_vfs_namespace::is_filesystem_backend(target)) {
+        errno = EACCES;
+        return nullptr;
+    }
+    const std::string relative = virtual_path.size() > 1 ? virtual_path.substr(1) : std::string{};
+    if (relative == "sdcard" || relative.rfind("sdcard/", 0) == 0 ||
+        (!relative.empty() && !cat_relative_safe(relative))) {
+        errno = EACCES;
+        return nullptr;
+    }
+    std::string physical_path(host_root);
+    if (!relative.empty()) {
+        if (!physical_path.empty() && physical_path.back() == '/')
+            physical_path.pop_back();
+        physical_path += "/" + relative;
+    }
+    struct stat info {};
+    if (::stat(physical_path.c_str(), &info) != 0)
+        return nullptr;
+    if (!S_ISDIR(info.st_mode)) {
+        errno = ENOTDIR;
+        return nullptr;
+    }
+    /* FATFS directories are enumerated through opendir; open(O_DIRECTORY) is unsupported. */
+    return ::opendir(physical_path.c_str());
+#else
+    const int descriptor = cyberdeck_local_shell_open_directory(host_root, cwd, path);
+    if (descriptor < 0)
+        return nullptr;
+    return ::fdopendir(descriptor);
+#endif
+}
+
 namespace {
 bool storage_path(const char *root, const char *cwd, std::string_view input, fs::path &out) {
     errno = 0;

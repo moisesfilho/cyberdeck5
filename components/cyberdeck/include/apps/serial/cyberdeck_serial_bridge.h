@@ -111,6 +111,11 @@ struct SysInfo {
     bool safe_mode = false;
     std::uint32_t interrupted_boots = 0;
     bool recovery_persisted = false;
+    std::uint32_t internal_free = 0;
+    std::uint32_t internal_largest = 0;
+    std::uint32_t dma_free = 0;
+    std::uint32_t dma_largest = 0;
+    std::uint32_t psram_free = 0;
 };
 
 struct WifiNet {

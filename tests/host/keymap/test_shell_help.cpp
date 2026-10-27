@@ -3,9 +3,9 @@
 // registered app commands and aliases, without executing either; unknown
 // commands; syntax rejection; general help flags; poweroff isolation; normal
 // dispatch preservation; and — REQ-HELP-05 — the usage-metadata contract:
-// `edit help`, `demo help` and `netdiag help` must reveal every usage format
-// and subcommand the application declares, the compiled-in inventory (11 apps:
-// 3 command-bearing, 7 commandless services, shell excluded) must be filtered
+// `edit help`, `demo help`, `netdiag help` and `music help` must reveal every usage format
+// and subcommand the application declares, the compiled-in inventory (12 apps:
+// 4 command-bearing, 7 commandless services, shell excluded) must be filtered
 // correctly, aliases/collisions resolve without shadowing, and help never
 // starts or executes an application.
 //
@@ -407,6 +407,22 @@ cyberdeck_apps::manifest netdiag_usage_manifest()
     return item;
 }
 
+cyberdeck_apps::manifest music_usage_manifest()
+{
+    cyberdeck_apps::manifest item{};
+    item.id = "cyberdeck.music";
+    item.name = "Music";
+    item.version = "1.0.0";
+    item.description = "Background local MP3 player";
+    item.type = cyberdeck_apps::app_type::background;
+    item.commands[0] = "music";
+    item.command_count = 1;
+    item.command_help_entries[0] = {
+        "music queue <directory> | list | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
+        "MP3 playback from SD; volume is capped at 50\n"};
+    return item;
+}
+
 cyberdeck_apps::manifest commandless_manifest(const char *id, const char *name, const char *description,
                                               cyberdeck_apps::app_type type = cyberdeck_apps::app_type::service)
 {
@@ -770,6 +786,26 @@ int main()
         check_no_side_effects(h, "TEST-HELP-APP-USAGE-NETDIAG: help touches no platform port");
     }
 
+    /* --- TEST-HELP-APP-USAGE-MUSIC: exact approved manifest usage and no execution. */
+    {
+        fake_host h;
+        help_manifest_app music(music_usage_manifest());
+        check(h.apps.register_application(music), "TEST-HELP-APP-USAGE-MUSIC: music manifest registers");
+        session s(h);
+        submit(s, "music help");
+        const std::string expected =
+            "/$ music help\n"
+            "music [app]\n"
+            "  Music (cyberdeck.music) version 1.0.0\n"
+            "  Background local MP3 player\n"
+            "  usage: music queue <directory> | list | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status\n"
+            "  MP3 playback from SD; volume is capped at 50\n";
+        check_eq(h.output, expected, "TEST-HELP-APP-USAGE-MUSIC: complete independent golden");
+        check(music.executions == 0 && h.apps.state("cyberdeck.music") == cyberdeck_apps::app_state::registered,
+              "TEST-HELP-APP-USAGE-MUSIC: help does not execute or start music");
+        check_no_side_effects(h, "TEST-HELP-APP-USAGE-MUSIC: no platform side effects");
+    }
+
     /* --- TEST-HELP-APP-USAGE-DEMO: `demo help` on the REAL demo application
      * declares no arguments and keeps the faithful note about ignored extras. */
     {
@@ -799,9 +835,9 @@ int main()
     }
 
     /* --- TEST-HELP-APP-INVENTORY: the compiled-in inventory mirrors the
-     * production k_apps registration — 11 applications = 7 commandless
+     * production k_apps registration — 12 applications = 7 commandless
      * services + the console-owning shell (excluded from app commands) +
-     * 3 command-bearing apps (demo, editor, netdiag), in registration order. */
+     * 4 command-bearing apps (demo, editor, netdiag, music), in registration order. */
     {
         fake_host h;
         help_manifest_app event_log(commandless_manifest(
@@ -830,14 +866,15 @@ int main()
         cyberdeck_apps::demo_application demo;
         help_manifest_app editor(editor_usage_manifest());
         help_manifest_app netdiag(netdiag_usage_manifest());
+        help_manifest_app music(music_usage_manifest());
         cyberdeck_apps::application *const registered[] = {
             &event_log, &shell_app, &wifi,     &serial, &ssh,   &screenshot, &bluetooth,
-            &time_sync, &demo,      &editor,   &netdiag};
+            &time_sync, &demo,      &editor,   &netdiag, &music};
         for (cyberdeck_apps::application *app : registered)
             check(h.apps.register_application(*app),
                   "TEST-HELP-APP-INVENTORY: inventory application registers");
-        check(h.apps.size() == 11,
-              "TEST-HELP-APP-INVENTORY: registers the 11 compiled-in applications");
+        check(h.apps.size() == 12,
+              "TEST-HELP-APP-INVENTORY: registers all 12 compiled-in applications");
 
         std::size_t command_bearing = 0;
         std::size_t commandless_services = 0;
@@ -860,10 +897,10 @@ int main()
                 ++commandless_services;
             }
         }
-        check(command_bearing == 3,
-              "TEST-HELP-APP-INVENTORY: exactly 3 applications are command-bearing");
-        check(bearing_ids == std::vector<std::string>{"cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag"},
-              "TEST-HELP-APP-INVENTORY: command-bearing apps are demo, editor and netdiag in registration order");
+        check(command_bearing == 4,
+              "TEST-HELP-APP-INVENTORY: exactly 4 applications are command-bearing");
+        check(bearing_ids == std::vector<std::string>{"cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag", "cyberdeck.music"},
+              "TEST-HELP-APP-INVENTORY: command-bearing apps are demo, editor, netdiag and music in registration order");
         check(commandless_services == 7,
               "TEST-HELP-APP-INVENTORY: exactly 7 services declare no shell command");
         check(console_owners == 1,
@@ -878,6 +915,8 @@ int main()
             "edit [app]\n"
             "  start compiled application\n"
             "netdiag [app]\n"
+            "  start compiled application\n"
+            "music [app]\n"
             "  start compiled application\n";
         check_eq(h.output, inventory_expected,
                  "TEST-HELP-APP-INVENTORY: general help appends exactly the 3 command-bearing rows once, in order");

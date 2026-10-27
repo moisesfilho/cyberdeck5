@@ -4,6 +4,7 @@
 #include "apps/demo/cyberdeck_demo_app.h"
 #include "apps/editor/cyberdeck_editor_app.h"
 #include "apps/network/cyberdeck_netdiag_app.h"
+#include "apps/music/cyberdeck_music_app.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/runtime/cyberdeck_resource_catalog.h"
 #include "apps/runtime/cyberdeck_sd_package.h"
@@ -249,10 +250,10 @@ service_application s_screenshot{make_manifest("cyberdeck.screenshot", "Screensh
                                                k_screenshot_task_stack_bytes, k_screenshot_control_queue_depth),
                                  start_screenshot, stop_screenshot, true};
 service_application s_bluetooth{make_manifest("cyberdeck.bluetooth", "Bluetooth service", "ESP-Hosted BLE manager",
-                                              {"cyberdeck.event_log"}, {"ble"}, 1000,
-                                              cyberdeck_apps::app_type::background, {"ble"},
-                                              k_ble_host_task_stack_bytes, k_ble_command_queue_depth),
-                                start_bluetooth, stop_bluetooth, true};
+                                               {"cyberdeck.event_log"}, {"ble"}, 1000,
+                                               cyberdeck_apps::app_type::background, {"ble"},
+                                               k_ble_host_task_stack_bytes, k_ble_command_queue_depth),
+                                 start_bluetooth, stop_bluetooth, false};
 service_application s_time_sync{
     make_manifest("cyberdeck.time_sync", "UTC time synchronization", "Bounded HTTPS UTC clock synchronization",
                   {"cyberdeck.event_log", "cyberdeck.wifi"}, {"network", "clock"}, k_time_sync_lifecycle_timeout_ms,
@@ -260,12 +261,18 @@ service_application s_time_sync{
     start_time_sync, stop_time_sync, true};
 
 cyberdeck_apps::application *const k_apps[] = {
-    &s_event_log, &cyberdeck_shell_app::global_application(),
-    &s_wifi,      &s_serial,
-    &s_ssh,       &s_screenshot,
-    &s_bluetooth, &s_time_sync,
-    &s_demo,      &cyberdeck_editor::global_application(),
+    &s_event_log,
+    &cyberdeck_shell_app::global_application(),
+    &s_wifi,
+    &s_serial,
+    &s_ssh,
+    &s_screenshot,
+    &s_bluetooth,
+    &s_time_sync,
+    &s_demo,
+    &cyberdeck_editor::global_application(),
     &cyberdeck_netdiag::global_application(),
+    &cyberdeck_music::global_application(),
 };
 
 bool s_registered = false;
@@ -294,7 +301,7 @@ extern "C" esp_err_t cyberdeck_system_apps_register(void) {
             ESP_LOGE(TAG, "failed to register system app");
             return ESP_ERR_NO_MEM;
         }
-        const auto &saved = cyberdeck_recovery::current();
+        const auto saved = cyberdeck_recovery::current();
         const std::string_view reason = cyberdeck_recovery::error_for(saved, app->get_manifest().id);
         if (!reason.empty()) {
             (void)cyberdeck_apps::global_runtime().restore_failure_reason(app->get_manifest().id, reason);
@@ -311,12 +318,11 @@ extern "C" esp_err_t cyberdeck_system_apps_start_logging(void) {
 
 extern "C" esp_err_t cyberdeck_system_apps_start(void) {
     cyberdeck_apps::runtime &runtime = cyberdeck_apps::global_runtime();
-    const bool started = runtime.start_all();
-    if (!started) {
-        for (const char *id :
-              {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial", "cyberdeck.ssh",
-               "cyberdeck.screenshot", "cyberdeck.bluetooth", "cyberdeck.time_sync", "cyberdeck.editor",
-               "cyberdeck.netdiag"}) {
+    const bool all_started = runtime.start_all();
+    if (!all_started) {
+        for (const char *id : {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial",
+                               "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth", "cyberdeck.time_sync",
+                               "cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag", "cyberdeck.music"}) {
             if (runtime.state(id) == cyberdeck_apps::app_state::failed) {
                 cyberdeck_recovery::record_app_error(id, runtime.failure_reason(id).data());
                 ESP_LOGW(TAG, "system app failed: %s (%.*s)", id, static_cast<int>(runtime.failure_reason(id).size()),
@@ -324,7 +330,21 @@ extern "C" esp_err_t cyberdeck_system_apps_start(void) {
             }
         }
     }
-    return started ? ESP_OK : ESP_FAIL;
+
+    /* Optional services must not keep recovery pending when the interactive
+     * shell and Serial-JTAG recovery path are available. */
+    const bool shell_ready = runtime.state("cyberdeck.shell") == cyberdeck_apps::app_state::running;
+    const bool serial_ready = runtime.state("cyberdeck.serial") == cyberdeck_apps::app_state::running;
+    if (!shell_ready || !serial_ready) {
+        ESP_LOGE(TAG, "essential startup incomplete: shell=%s serial=%s",
+                 cyberdeck_apps::app_state_name(runtime.state("cyberdeck.shell")),
+                 cyberdeck_apps::app_state_name(runtime.state("cyberdeck.serial")));
+        return ESP_FAIL;
+    }
+    if (!all_started) {
+        ESP_LOGW(TAG, "essential services ready; optional services remain degraded");
+    }
+    return ESP_OK;
 }
 
 extern "C" esp_err_t cyberdeck_system_apps_start_safe_mode(void) {

@@ -85,6 +85,8 @@ WIFI_SURVEY_BIN := test_wifi_survey_bin
 WIFI_SURVEY_OBJS := test_wifi_survey/test.o test_wifi_survey/survey.o
 RECOVERY_POLICY_BIN := test_recovery_policy_bin
 RECOVERY_POLICY_OBJS := test_recovery_policy/test.o test_recovery_policy/policy.o
+RECOVERY_RUNTIME_SRC := ../../../components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp
+RECOVERY_RUNTIME_POLICY_SRC := ../../../components/cyberdeck/src/apps/system/cyberdeck_recovery_policy.cpp
 WIFI_AUDIT_SAVE_TEST := test_wifi_audit_save.cpp
 WIFI_AUDIT_SAVE_CONTRACT := test_wifi_audit_save_contract.py
 WIFI_AUDIT_PERSISTENCE_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit_persistence.cpp
@@ -218,7 +220,7 @@ BLE_STATE_BIN := test_ble_state_machine_bin
 BLE_EVENTS_BIN := test_ble_event_dispatch_bin
 BLE_STORE_BIN := test_ble_store_bin
 BLE_COMMAND_BIN := test_ble_command_parse_bin
-BINS := test_shell_help_bin test_shell_app_bin test_keymap_bin test_shell_utils_bin test_history_bin test_keyboard_event_bin test_event_log_recent_bin test_event_log_shim test_wifi_indicator_state_bin test_wifi_icon_layout_bin test_wifi_menu_bin test_wifi_state_machine_bin test_clock_formatter_bin test_screen_protection_bin test_terminal_filter_bin test_terminal_scrollback_bin test_edit_line_bin test_editor_model_bin test_net_coordinator_bin test_ssh_echo_guard_bin test_ssh_line_composer_bin test_screenshot_bmp_bin test_wifi_event_dispatch_bin test_wifi_persistence_queue_bin test_wifi_persistence_coordination_bin test_local_shell_bin test_save_sidecar_recovery test_cat_multiline_bin test_help_unification_bin test_orientation_bin $(WIFI_AUDIT_BIN) test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session_bin test_app_runtime_bin test_runtime_sdk_bin test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app_bin test_window_manager_bin test_recovery_policy_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
+BINS := test_shell_help_bin test_shell_app_bin test_keymap_bin test_shell_utils_bin test_history_bin test_keyboard_event_bin test_event_log_recent_bin test_event_log_shim test_wifi_indicator_state_bin test_wifi_icon_layout_bin test_wifi_menu_bin test_wifi_state_machine_bin test_clock_formatter_bin test_screen_protection_bin test_terminal_filter_bin test_terminal_scrollback_bin test_edit_line_bin test_editor_model_bin test_net_coordinator_bin test_ssh_echo_guard_bin test_ssh_line_composer_bin test_screenshot_bmp_bin test_wifi_event_dispatch_bin test_wifi_persistence_queue_bin test_wifi_persistence_coordination_bin test_local_shell_bin test_save_sidecar_recovery test_cat_multiline_bin test_help_unification_bin test_orientation_bin $(WIFI_AUDIT_BIN) test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session_bin test_app_runtime_bin test_runtime_sdk_bin test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app_bin test_window_manager_bin test_recovery_policy_bin test_recovery_runtime_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
 SAVE_SIDECAR_BIN := test_save_sidecar_recovery_bin
 WIFI_SURVEY_EXPORT_BIN := test_wifi_survey_export_controller_bin
 NETDIAG_CONTROLLER_BIN := test_netdiag_controller_bin
@@ -227,7 +229,60 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN)
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_player_bin test_music_decoder_scratch_bin
+
+MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
+MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
+MUSIC_MODEL_TEST := test_music_model.cpp
+MUSIC_MODEL_BIN := test_music_model_bin
+MUSIC_AUDIO_TEST := test_music_audio_output.cpp
+MUSIC_AUDIO_SRC := ../../../components/cyberdeck/src/platform/audio/cyberdeck_audio_output.cpp
+MUSIC_AUDIO_HDR := ../../../components/cyberdeck/include/platform/audio/cyberdeck_audio_output.h
+MUSIC_AUDIO_SHIMS := music_runtime_shim/bsp/m5stack_tab5.h \
+	music_runtime_shim/esp_codec_dev.h \
+	music_runtime_shim/freertos/FreeRTOS.h \
+	music_runtime_shim/freertos/task.h
+MUSIC_APP_TEST := test_music_app.cpp
+MUSIC_APP_MAIN_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp
+MUSIC_APP_OBJ := test_music_app/music_app.o
+MUSIC_APP_SOURCES := \
+	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
+	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp \
+	../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp \
+	../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp \
+	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp \
+	../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp \
+	../../../components/cyberdeck/src/apps/shell/cyberdeck_local_shell.cpp \
+	../../../components/cyberdeck/src/apps/shell/cyberdeck_vfs_namespace.cpp \
+	music_runtime_shim/music_freertos_shim.cpp
+
+MUSIC_APP_HDRS := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_app.h \
+	../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h \
+	../../../components/cyberdeck/include/apps/music/cyberdeck_music_player.h \
+	../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h \
+	../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_storage.h \
+	../../../components/cyberdeck/include/apps/shell/cyberdeck_local_shell.h \
+	../../../components/cyberdeck/include/platform/audio/cyberdeck_audio_output.h \
+	../../../components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h
+MUSIC_PLAYER_TEST := test_music_player.cpp
+MUSIC_PLAYER_SOURCES := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp \
+	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
+	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp \
+	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp \
+	../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp \
+	../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp \
+	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp \
+	../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp \
+	music_runtime_shim/music_freertos_shim.cpp
+MUSIC_PLAYER_SHIMS := music_runtime_shim/esp_log.h \
+	music_runtime_shim/esp_heap_caps.h \
+	music_runtime_shim/freertos/idf_additions.h \
+	music_runtime_shim/bsp/m5stack_tab5.h \
+	music_runtime_shim/esp_codec_dev.h \
+	music_runtime_shim/freertos/FreeRTOS.h \
+	music_runtime_shim/freertos/queue.h \
+	music_runtime_shim/freertos/semphr.h \
+	music_runtime_shim/freertos/task.h
 
 # Incremental compilation for the first migrated coverage-producing targets.
 SAVE_SIDECAR_OBJS := test_save_sidecar_recovery/test.o test_save_sidecar_recovery/local-shell.o test_save_sidecar_recovery/vfs.o test_save_sidecar_recovery/sd-io.o
@@ -301,7 +356,7 @@ KNOWN_HOSTS_FILE_MIG_OBJS := test_known_hosts_file/test.o test_known_hosts_file/
 POWEROFF_MIG_OBJS := test_poweroff/test.o test_poweroff/poweroff.o
 MIGRATION_FINAL_OBJS := $(EDITOR_MODEL_MIG_OBJS) $(TIME_SYNC_MIG_OBJS) $(SHELL_UTILS_MIG_OBJS) $(SD_PACKAGE_MIG_OBJS) $(RESOURCE_CATALOG_MIG_OBJS) $(NETDIAG_DNS_ADAPTER_MIG_OBJS) $(NETDIAG_HTTPS_ADAPTER_MIG_OBJS) $(NETDIAG_APP_MIG_OBJS) $(SHELL_SESSION_MIG_OBJS) $(SHELL_HELP_MIG_OBJS) $(APP_RUNTIME_MIG_OBJS) $(RUNTIME_SDK_MIG_OBJS) $(STORAGE_FACADE_MIG_OBJS) $(PHASE9_CAPABILITIES_MIG_OBJS) $(DEMO_APP_MIG_OBJS) $(SHELL_APP_MIG_OBJS) $(WINDOW_MANAGER_MIG_OBJS) $(LOCAL_SHELL_MIG_OBJS) $(CAT_MULTILINE_MIG_OBJS) $(HELP_UNIFICATION_MIG_OBJS) $(BATTERY_PROTECTION_MIG_OBJS) $(CAT_WORKER_MIG_OBJS) $(BLE_BACKGROUND_MIG_OBJS) $(KEYBOARD_DISPATCH_MIG_OBJS) $(DISPLAY_VIEWS_MIG_OBJS) $(KNOWN_HOSTS_FILE_MIG_OBJS) $(POWEROFF_MIG_OBJS)
 
-MAKE_DEPFILES := $(addsuffix .d,$(MIGRATION_FINAL_OBJS) $(SCREEN_PROTECTION_OBJS) $(SAVE_SIDECAR_OBJS) $(WIFI_SURVEY_EXPORT_OBJS) $(NETDIAG_CONTROLLER_OBJS) $(NETDIAG_TCP_OBJS) $(EVENT_LOG_RUNTIME_OBJS) $(SD_IO_COORDINATOR_OBJS) $(BATTERY_CONTRACT_OBJS) $(BATTERY_VIEW_OBJS) $(BLE_TYPES_OBJS) $(BLE_STATE_OBJS) $(BLE_EVENTS_OBJS) $(BLE_STORE_OBJS) $(BLE_COMMAND_OBJS) $(WIFI_AUDIT_OBJS) $(TERMINAL_SCROLLBACK_OBJS) $(WIFI_SURVEY_OBJS) $(RECOVERY_POLICY_OBJS) $(WIFI_AUDIT_PERSISTENCE_OBJS) $(WIFI_AUDIT_SAVE_OBJS) $(SERIAL_NDJSON_OBJS) $(SERIAL_SCREEN_DUMP_OBJS) $(SERIAL_CLI_TOLERANCE_OBJS) $(SERIAL_SYSINFO_WIFI_OBJS) $(SERIAL_TERM_DUMP_OBJS) $(FS_WRITE_DISPATCH_OBJS) $(WIFI_EVENT_DISPATCH_OBJS) $(WIFI_PERSISTENCE_QUEUE_OBJS) $(WIFI_PERSISTENCE_COORDINATION_OBJS) $(CLOCK_FORMATTER_OBJS) $(TERMINAL_FILTER_OBJS) $(EDIT_LINE_OBJS) $(WIFI_INDICATOR_OBJS) $(WIFI_ICON_OBJS) $(WIFI_MENU_OBJS) $(HISTORY_OBJS) $(KEYBOARD_EVENT_OBJS) $(EVENT_LOG_RECENT_OBJS) $(WIFI_STATE_MACHINE_OBJS) $(NET_COORDINATOR_OBJS) $(SSH_ECHO_GUARD_OBJS) $(SSH_LINE_COMPOSER_OBJS) $(KEYMAP_OBJS) $(SCREENSHOT_BMP_OBJS) $(ORIENTATION_OBJS))
+MAKE_DEPFILES := $(addsuffix .d,$(MIGRATION_FINAL_OBJS) $(SCREEN_PROTECTION_OBJS) $(SAVE_SIDECAR_OBJS) $(WIFI_SURVEY_EXPORT_OBJS) $(NETDIAG_CONTROLLER_OBJS) $(NETDIAG_TCP_OBJS) $(EVENT_LOG_RUNTIME_OBJS) $(SD_IO_COORDINATOR_OBJS) $(BATTERY_CONTRACT_OBJS) $(BATTERY_VIEW_OBJS) $(BLE_TYPES_OBJS) $(BLE_STATE_OBJS) $(BLE_EVENTS_OBJS) $(BLE_STORE_OBJS) $(BLE_COMMAND_OBJS) $(WIFI_AUDIT_OBJS) $(TERMINAL_SCROLLBACK_OBJS) $(WIFI_SURVEY_OBJS) $(RECOVERY_POLICY_OBJS) $(WIFI_AUDIT_PERSISTENCE_OBJS) $(WIFI_AUDIT_SAVE_OBJS) $(SERIAL_NDJSON_OBJS) $(SERIAL_SCREEN_DUMP_OBJS) $(SERIAL_CLI_TOLERANCE_OBJS) $(SERIAL_SYSINFO_WIFI_OBJS) $(SERIAL_TERM_DUMP_OBJS) $(FS_WRITE_DISPATCH_OBJS) $(WIFI_EVENT_DISPATCH_OBJS) $(WIFI_PERSISTENCE_QUEUE_OBJS) $(WIFI_PERSISTENCE_COORDINATION_OBJS) $(CLOCK_FORMATTER_OBJS) $(TERMINAL_FILTER_OBJS) $(EDIT_LINE_OBJS) $(WIFI_INDICATOR_OBJS) $(WIFI_ICON_OBJS) $(WIFI_MENU_OBJS) $(HISTORY_OBJS) $(KEYBOARD_EVENT_OBJS) $(EVENT_LOG_RECENT_OBJS) $(WIFI_STATE_MACHINE_OBJS) $(NET_COORDINATOR_OBJS) $(SSH_ECHO_GUARD_OBJS) $(SSH_LINE_COMPOSER_OBJS) $(KEYMAP_OBJS) $(SCREENSHOT_BMP_OBJS) $(ORIENTATION_OBJS) $(MUSIC_APP_OBJ))
 LEGACY_TEST_ARTIFACTS := test_editor_model test_shell_utils test_shell_session test_app_runtime test_runtime_sdk test_demo_app test_local_shell test_cat_multiline test_help_unification test_known_hosts_file test_poweroff  test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_shell_help test_shell_app test_screen_protection test_terminal_scrollback test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_wifi_survey test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_recovery_policy test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_window_manager test_time_sync test_clock_formatter test_terminal_filter test_edit_line test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_keymap test_screenshot_bmp test_orientation
 
 test_save_sidecar_recovery/%.o: test_save_sidecar_recovery.cpp Makefile
@@ -886,6 +941,16 @@ test_recovery_policy/policy.o: $(RECOVERY_POLICY_SRC) $(RECOVERY_POLICY_HDR) Mak
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 test_recovery_policy: test_recovery_policy_bin
 	@./test_recovery_policy_bin
+
+test_recovery_runtime_bin: test_recovery_runtime.cpp $(RECOVERY_RUNTIME_SRC) $(RECOVERY_RUNTIME_POLICY_SRC) \
+		recovery_runtime_shim/esp_err.h recovery_runtime_shim/esp_log.h recovery_runtime_shim/nvs.h \
+		recovery_runtime_shim/nvs_flash.h Makefile
+	$(CXX) $(CXXFLAGS) -pthread -Irecovery_runtime_shim -I../../../components/cyberdeck/include \
+		test_recovery_runtime.cpp $(RECOVERY_RUNTIME_SRC) $(RECOVERY_RUNTIME_POLICY_SRC) -o $@
+
+.PHONY: test_recovery_runtime
+test_recovery_runtime: test_recovery_runtime_bin
+	@./test_recovery_runtime_bin
 
 test_phase10_contract: $(PHASE10_CONTRACT) $(RECOVERY_POLICY_SRC) $(RECOVERY_POLICY_HDR) \
 		../../../components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp \
@@ -1836,6 +1901,7 @@ test_local_shell_bin: $(LOCAL_SHELL_MIG_OBJS) Makefile
 .PHONY: test_local_shell
 test_local_shell: test_local_shell_bin
 	@./test_local_shell_bin
+	@python3 test_music_scan_opendir_contract.py
 
 
 $(SAVE_SIDECAR_BIN): $(SAVE_SIDECAR_OBJS) save_sidecar_traceability.md Makefile
@@ -2417,7 +2483,7 @@ test_ble_command_parse: $(BLE_COMMAND_BIN)
 # wiring, the FreeRTOS task boundary, the log-secret rule, the REQ-BLE-011
 # classic-Bluetooth exclusion and the REQ/AC traceability.  Source inspection
 # only; it never opens hardware, a radio or the Serial Automation Bridge.
-test_ble_integration_contract: test_ble_integration_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_STATE_SRC) $(BLE_STATE_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STORE_CONTRACT_HDR) ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../main/idf_component.yml ../../../sdkconfig.defaults ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md ../../../code-map.md ../../../.gitignore
+test_ble_integration_contract: test_ble_integration_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_STATE_SRC) $(BLE_STATE_HDR) $(BLE_TYPES_CONTRACT_HDR) $(BLE_STATE_CONTRACT_HDR) $(BLE_EVENTS_CONTRACT_HDR) $(BLE_STORE_CONTRACT_HDR) ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../main/app_main.cpp ../../../components/m5stack_tab5/src/bsp_display.c ../../../components/m5stack_tab5/include/bsp/m5stack_tab5.h ../../../components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp ../../../components/cyberdeck/CMakeLists.txt ../../../main/idf_component.yml ../../../sdkconfig.defaults ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md ../../../code-map.md ../../../.gitignore
 	$(PYTHON) test_ble_integration_contract.py
 
 test_ble_scan_contract: test_ble_scan_contract.py $(BLE_MGR_SRC) $(BLE_MGR_HDR) $(BLE_TYPES_HDR) $(BLE_STORE_HDR) $(BLE_EVENTS_HDR)
@@ -2542,7 +2608,67 @@ test_wake_key_contract: test_wake_key_contract.py ../../../components/cyberdeck/
 .PHONY: test-build
 test-build: $(BINS)
 
+.PHONY: test_music_model
+test_music_model: $(MUSIC_MODEL_BIN)
+	@./$(MUSIC_MODEL_BIN)
+
+$(MUSIC_MODEL_BIN): $(MUSIC_MODEL_TEST) $(MUSIC_MODEL_SRC) $(MUSIC_MODEL_HDR) music_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(MUSIC_MODEL_TEST) $(MUSIC_MODEL_SRC) -o $@
+
+.PHONY: test_music_audio_output
+test_music_audio_output: test_music_audio_output_bin
+	@./test_music_audio_output_bin
+
+test_music_audio_output_bin: $(MUSIC_AUDIO_TEST) $(MUSIC_AUDIO_SRC) $(MUSIC_AUDIO_HDR) $(MUSIC_AUDIO_SHIMS) music_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -Imusic_runtime_shim -I../../../components/cyberdeck/include $(MUSIC_AUDIO_TEST) $(MUSIC_AUDIO_SRC) -o $@
+
+.PHONY: test_music_app
+test_music_app: test_music_app_bin
+	@./test_music_app_bin
+
+$(MUSIC_APP_OBJ): $(MUSIC_APP_MAIN_SRC) $(MUSIC_APP_HDRS) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -ffunction-sections -fdata-sections -pthread -Imusic_runtime_shim \
+		-I../../../components/cyberdeck/include -Dcyberdeck_local_shell_opendir=music_test_secure_opendir \
+		-Dcyberdeck_local_shell_open_readonly=music_test_secure_open -MMD -MP -MF $@.d -c $< -o $@
+
+test_music_app_bin: $(MUSIC_APP_TEST) $(MUSIC_APP_OBJ) $(MUSIC_APP_SOURCES) $(MUSIC_APP_HDRS) $(MUSIC_AUDIO_SHIMS) music_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -ffunction-sections -fdata-sections -pthread -Imusic_runtime_shim \
+		-I../../../components/cyberdeck/include $(MUSIC_APP_TEST) $(MUSIC_APP_OBJ) $(MUSIC_APP_SOURCES) \
+		-Wl,--wrap=lstat -Wl,--gc-sections -o $@
+
+.PHONY: test_music_player
+test_music_player: test_music_player_bin
+	@./test_music_player_bin
+
+test_music_player_bin: $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) $(MUSIC_PLAYER_SHIMS) $(MUSIC_APP_HDRS) $(MUSIC_AUDIO_HDR) music_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -Wno-error=stringop-truncation -ffunction-sections -fdata-sections -pthread -Imusic_runtime_shim \
+		-I../../../components/cyberdeck/include -I../../../components/cyberdeck $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) \
+		-Wl,--wrap=close -Wl,--wrap=read -Wl,--gc-sections -o $@
+
+.PHONY: test_esp_hosted_cpu_staging
+test_esp_hosted_cpu_staging:
+	@$(PYTHON) test_esp_hosted_cpu_staging.py
+
+.PHONY: test_music_decoder_stack_contract
+test_music_decoder_stack_contract:
+	@$(PYTHON) test_music_decoder_stack_contract.py
+
+.PHONY: test_music_decoder_scratch
+test_music_decoder_scratch: test_music_decoder_scratch_bin
+	@./test_music_decoder_scratch_bin
+
+test_music_decoder_scratch_bin: test_music_decoder_scratch.cpp ../../../components/cyberdeck/third_party/minimp3/minimp3.h Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck $< -o $@
+
 test: test-build
+	@$(MAKE) --no-print-directory test_esp_hosted_cpu_staging
+	@$(MAKE) --no-print-directory test_music_decoder_stack_contract
+	@$(MAKE) --no-print-directory test_music_decoder_scratch
+	@$(MAKE) --no-print-directory test_music_model
+	@$(MAKE) --no-print-directory test_music_audio_output
+	@$(MAKE) --no-print-directory test_music_app
+	@$(MAKE) --no-print-directory test_music_player
 	@$(MAKE) --no-print-directory test_save_sidecar_recovery
 	@$(MAKE) --no-print-directory test_wifi_survey_export_controller
 	@$(MAKE) --no-print-directory test_netdiag_controller
@@ -2644,6 +2770,7 @@ test: test-build
 	@./test_storage_facade_bin
 	@echo "==> Executando policy pura e contrato estrutural da Fase 10"
 	@$(MAKE) --no-print-directory test_recovery_policy
+	@$(MAKE) --no-print-directory test_recovery_runtime
 	@$(MAKE) --no-print-directory test_phase10_contract
 	@echo "==> Executando testes de capabilities da Fase 9"
 	@./test_phase9_capabilities_bin
@@ -2797,7 +2924,12 @@ test: test-build
 	# it remains a separate, non-masked gate.
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
 	@$(MAKE) --no-print-directory imu_sensor_contract
+.PHONY: test_display_memory_contract
+test_display_memory_contract: test_display_memory_contract.py ../../../components/m5stack_tab5/src/bsp_display.c ../../../components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp
+	$(PYTHON) test_display_memory_contract.py
+
 clean:
+	rm -rf test_music_app
 	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff
 	rm -f $(BINS) test_app_runtime_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
 	rm -rf test_keymap test_screenshot_bmp test_orientation

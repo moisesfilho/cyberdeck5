@@ -37,11 +37,10 @@ PRE_EXISTING_ALLOWLIST = frozenset({
     "components/cyberdeck/src/platform/sensors/ina226_reader.cpp",
 })
 
-# The four adapters added to the allowlist: no host build exists for them.
+# Adapters with no host build; the recovery adapter now has a host runtime test.
 NEWLY_ALLOWLISTED = frozenset({
     "components/cyberdeck/src/apps/system/cyberdeck_service_ports.cpp",
     "components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp",
-    "components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp",
     "components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp",
     "components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp",
 })
@@ -156,10 +155,10 @@ def write_report(report: Path, files) -> None:
 # --- TEST-COV-001..005: structural contract of the reviewed allowlist ---------
 
 def test_allowlist_is_exactly_the_reviewed_set() -> None:
-    """TEST-COV-001: 11 pre-existing adapters plus exactly 5 new ones."""
+    """TEST-COV-001: 11 pre-existing adapters plus exactly 4 new ones."""
     expected = PRE_EXISTING_ALLOWLIST | NEWLY_ALLOWLISTED
-    assert len(ALLOWLIST) == 16, \
-        f"allowlist must hold exactly 16 entries, found {len(ALLOWLIST)}"
+    assert len(ALLOWLIST) == 15, \
+        f"allowlist must hold exactly 15 entries, found {len(ALLOWLIST)}"
     assert set(ALLOWLIST) == expected, (
         "allowlist drifted from the reviewed set: "
         f"missing={sorted(expected - set(ALLOWLIST))} "

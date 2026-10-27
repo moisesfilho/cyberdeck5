@@ -12,8 +12,9 @@ esp_err_t cyberdeck_system_apps_register(void);
 /* Starts the supervisor-owned event log before the rest of boot emits events. */
 esp_err_t cyberdeck_system_apps_start_logging(void);
 
-/* Starts service applications in dependency order. Individual services are
- * non-fatal at boot, matching the previous app_main behavior. */
+/* Starts all system apps in dependency order. Returns ESP_OK when shell and
+ * Serial-JTAG are running; failures of optional services are diagnosed but do
+ * not block the recovery checkpoint unless they prevent an essential app. */
 esp_err_t cyberdeck_system_apps_start(void);
 
 /* Best-effort start of only the recovery surface: event log, shell and

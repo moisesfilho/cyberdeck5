@@ -4,6 +4,7 @@
 import json
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 from test_incremental_batch_contract import Model, expand_vars
@@ -23,7 +24,7 @@ def check() -> None:
     clean = model.rule("clean")
     aggregate = model.rule("test")
     assert clean and aggregate
-    assert len(bins) == len(set(bins)) == 74
+    assert len(bins) == len(set(bins)) == 80
     assert len(baseline) == 27
 
     clean_dirs = set()
@@ -76,8 +77,16 @@ def check() -> None:
         assert wrapper, name
         assert artifact in expand_vars(wrapper["prereqs_raw"], model).split(), name
         invocations = [line.strip().lstrip("@") for line in wrapper["recipe"]]
-        assert len(invocations) == 1, name
-        assert expand_vars(invocations[0], model) == f"./{artifact}", name
+        if name == "test_local_shell":
+            # The wrapper also owns the ESP opendir integration contract; keep
+            # both checks ordered and exact instead of treating the extra
+            # required scenario as an unexpected duplicate binary invocation.
+            assert len(invocations) == 2, name
+            assert expand_vars(invocations[0], model) == f"./{artifact}", name
+            assert expand_vars(invocations[1], model) == "python3 test_music_scan_opendir_contract.py", name
+        else:
+            assert len(invocations) == 1, name
+            assert expand_vars(invocations[0], model) == f"./{artifact}", name
 
         production_depfile = (HERE / f"{objects[1]}.d").read_text()
         first_rule = production_depfile.split("\n\n", 1)[0]
@@ -95,10 +104,33 @@ def check() -> None:
         for obj in set(objects) - set(consumers):
             assert f"-o {obj}" not in dry_run, f"{name}: header rebuilds unrelated {obj}"
 
+    music_object = "test_music_app/music_app.o"
+    assert music_object + ".d" in depfiles
+    assert model.expanded_var("MUSIC_APP_OBJ").strip() == music_object
+    assert (HERE / f"{music_object}.d").is_file(), "missing music app depfile"
+
     # Makefile edits invalidate all 176 TUs; a second no-op build does not.
     built = subprocess.run(["make", "-s", "-n", "test-build"], cwd=HERE,
                            check=True, capture_output=True, text=True).stdout
     assert not re.search(r"(?:g\+\+|clang\+\+) .* -c ", built), "second build recompiles"
+
+    music_dir = Path("test_music_app")
+    assert music_dir.name in clean_dirs
+    with tempfile.TemporaryDirectory(prefix="incremental-clean-") as sandbox:
+        sandbox_path = Path(sandbox)
+        isolated_music_dir = sandbox_path / music_dir
+        isolated_music_dir.mkdir()
+        for artifact in ("music_app.o", "music_app.o.d", "music_app.gcda"):
+            (isolated_music_dir / artifact).touch()
+        music_bin = sandbox_path / "test_music_app_bin"
+        unrelated_bin = sandbox_path / "test_terminal_filter_bin"
+        music_bin.touch()
+        unrelated_bin.touch()
+        subprocess.run(["make", "-s", "-f", str(MAKEFILE), "-C", sandbox,
+                        "clean"], check=True)
+        assert not isolated_music_dir.exists(), "clean must remove music objects and coverage data"
+        assert not music_bin.exists(), "clean must remove listed BINS"
+        assert not unrelated_bin.exists(), "clean must remove all declared BINS in sandbox"
 
 
 if __name__ == "__main__":

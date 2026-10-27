@@ -13,6 +13,7 @@
 #include "esp_event.h"
 #include "esp_hosted.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -712,7 +713,13 @@ static void try_connect(void)
     memset(&wcfg, 0, sizeof(wcfg));
     strlcpy((char *)wcfg.sta.ssid, s_cfg.ssid, sizeof(wcfg.sta.ssid));
     strlcpy((char *)wcfg.sta.password, s_cfg.password, sizeof(wcfg.sta.password));
-    if (esp_wifi_set_config(WIFI_IF_STA, &wcfg) != ESP_OK) {
+    const int64_t config_started_us = esp_timer_get_time();
+    const esp_err_t config_err = esp_wifi_set_config(WIFI_IF_STA, &wcfg);
+    ESP_LOGI(TAG, "HOSTED_DIAG wifi stage=set_config result=%s duration_ms=%lld t_us=%lld",
+             esp_err_to_name(config_err),
+             static_cast<long long>((esp_timer_get_time() - config_started_us) / 1000),
+             static_cast<long long>(esp_timer_get_time()));
+    if (config_err != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_set_config falhou");
         clear_secret((char *)wcfg.sta.password, sizeof(wcfg.sta.password));
         return;
@@ -1391,7 +1398,11 @@ esp_err_t wifi_mgr_hosted_transport_prepare(void)
 {
     if (s_hosted_transport_ready) return ESP_OK;
 
+    ESP_LOGI(TAG, "HOSTED_DIAG hosted stage=power_enable begin t_us=%lld",
+             static_cast<long long>(esp_timer_get_time()));
     const esp_err_t power_err = bsp_feature_enable(BSP_FEATURE_WIFI, true);
+    ESP_LOGI(TAG, "HOSTED_DIAG hosted stage=power_enable end result=%s t_us=%lld", esp_err_to_name(power_err),
+             static_cast<long long>(esp_timer_get_time()));
     if (power_err != ESP_OK) return power_err;
     s_radio_enabled = true;
 
@@ -1399,12 +1410,24 @@ esp_err_t wifi_mgr_hosted_transport_prepare(void)
      * first initialization. Bring up Hosted only after the rail is enabled. */
     vTaskDelay(pdMS_TO_TICKS(500));
     ESP_LOGI(TAG, "Initializing ESP-Hosted after enabling the Tab5 C6 power rail");
+    const int64_t hosted_init_started_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "HOSTED_DIAG hosted stage=esp_hosted_init begin t_us=%lld",
+             static_cast<long long>(hosted_init_started_us));
     esp_err_t err = esp_hosted_init();
+    ESP_LOGI(TAG, "HOSTED_DIAG hosted stage=esp_hosted_init end result=%s duration_ms=%lld t_us=%lld",
+             esp_err_to_name(err), static_cast<long long>((esp_timer_get_time() - hosted_init_started_us) / 1000),
+             static_cast<long long>(esp_timer_get_time()));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_hosted_init failed: %d", err);
         return err;
     }
+    const int64_t hosted_connect_started_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "HOSTED_DIAG hosted stage=connect_to_slave begin t_us=%lld",
+             static_cast<long long>(hosted_connect_started_us));
     err = esp_hosted_connect_to_slave();
+    ESP_LOGI(TAG, "HOSTED_DIAG hosted stage=connect_to_slave end result=%s duration_ms=%lld t_us=%lld",
+             esp_err_to_name(err), static_cast<long long>((esp_timer_get_time() - hosted_connect_started_us) / 1000),
+             static_cast<long long>(esp_timer_get_time()));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_hosted_connect_to_slave failed: %d", err);
         return err;
@@ -1492,7 +1515,13 @@ esp_err_t wifi_mgr_start(void)
     if (s_sta_netif == NULL) { return rollback_start(false, ESP_ERR_NO_MEM); }
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    int64_t wifi_stage_started_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "HOSTED_DIAG wifi stage=esp_wifi_init begin t_us=%lld",
+             static_cast<long long>(wifi_stage_started_us));
     start_err = esp_wifi_init(&cfg);
+    ESP_LOGI(TAG, "HOSTED_DIAG wifi stage=esp_wifi_init end result=%s duration_ms=%lld t_us=%lld",
+             esp_err_to_name(start_err), static_cast<long long>((esp_timer_get_time() - wifi_stage_started_us) / 1000),
+             static_cast<long long>(esp_timer_get_time()));
     if (start_err != ESP_OK) { return rollback_start(false, start_err); }
     s_wifi_initialized = true;
     start_err = esp_wifi_set_mode(WIFI_MODE_STA);
@@ -1535,7 +1564,14 @@ esp_err_t wifi_mgr_start(void)
         s_wifi_event_worker = NULL;
         return rollback_start(false, ESP_ERR_NO_MEM);
     }
+    wifi_stage_started_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "HOSTED_DIAG wifi stage=esp_wifi_start begin t_us=%lld",
+             static_cast<long long>(wifi_stage_started_us));
     const esp_err_t wifi_start_err = esp_wifi_start();
+    ESP_LOGI(TAG, "HOSTED_DIAG wifi stage=esp_wifi_start end result=%s duration_ms=%lld t_us=%lld",
+             esp_err_to_name(wifi_start_err),
+             static_cast<long long>((esp_timer_get_time() - wifi_stage_started_us) / 1000),
+             static_cast<long long>(esp_timer_get_time()));
     if (wifi_start_err != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_start failed");
         return rollback_start(true, wifi_start_err);

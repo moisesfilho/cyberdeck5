@@ -27,6 +27,7 @@
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "apps/wifi/wifi_mgr.h"
@@ -769,19 +770,46 @@ std::string sys_info_to_json(const SysInfo &info)
     out += std::to_string(info.interrupted_boots);
     out += ",\"recovery_persisted\":";
     out += info.recovery_persisted ? "true" : "false";
+    out += ",\"internal_free\":";
+    out += std::to_string(info.internal_free);
+    out += ",\"internal_largest\":";
+    out += std::to_string(info.internal_largest);
+    out += ",\"dma_free\":";
+    out += std::to_string(info.dma_free);
+    out += ",\"dma_largest\":";
+    out += std::to_string(info.dma_largest);
+    out += ",\"psram_free\":";
+    out += std::to_string(info.psram_free);
     out.push_back('}');
     return out;
 }
 
 bool sys_info_from_json(const std::string &json, SysInfo &out)
 {
-    static const std::vector<std::string> wanted = {"fw_version", "idf_version", "chip", "free_heap", "uptime"};
+    static const std::vector<std::string> wanted = {"fw_version", "idf_version", "chip", "free_heap", "uptime",
+                                                    "internal_free", "internal_largest", "dma_free", "dma_largest",
+                                                    "psram_free"};
     std::vector<json_field> fields(wanted.size());
-    if (!parse_document(json.data(), json.size(), wanted, fields)) {
+    static const std::vector<std::string> legacy_wanted = {"fw_version", "idf_version", "chip", "free_heap",
+                                                           "uptime"};
+    std::vector<json_field> legacy_fields(legacy_wanted.size());
+    if (!parse_document(json.data(), json.size(), wanted, fields) &&
+        !parse_document(json.data(), json.size(), legacy_wanted, legacy_fields)) {
         return false;
     }
+    const bool parsed_extended = fields[0].k != json_field::kind::absent;
+    const bool has_memory_fields = fields[5].k != json_field::kind::absent ||
+                                   fields[6].k != json_field::kind::absent ||
+                                   fields[7].k != json_field::kind::absent ||
+                                   fields[8].k != json_field::kind::absent ||
+                                   fields[9].k != json_field::kind::absent;
+    if (!parsed_extended) {
+        std::copy(legacy_fields.begin(), legacy_fields.end(), fields.begin());
+        for (std::size_t i = legacy_fields.size(); i < fields.size(); ++i)
+            fields[i] = {};
+    }
     for (std::size_t i = 0; i < wanted.size(); ++i) {
-        if (fields[i].k == json_field::kind::absent) {
+        if (i < legacy_fields.size() && fields[i].k == json_field::kind::absent) {
             return false;
         }
     }
@@ -797,6 +825,24 @@ bool sys_info_from_json(const std::string &json, SysInfo &out)
     out.chip = fields[2].s;
     out.free_heap = std::atoi(fields[3].raw.c_str());
     out.uptime = fields[4].s;
+    if (has_memory_fields) {
+        if (fields[5].k != json_field::kind::absent)
+            out.internal_free = static_cast<std::uint32_t>(std::strtoul(fields[5].raw.c_str(), nullptr, 10));
+        if (fields[6].k != json_field::kind::absent)
+            out.internal_largest = static_cast<std::uint32_t>(std::strtoul(fields[6].raw.c_str(), nullptr, 10));
+        if (fields[7].k != json_field::kind::absent)
+            out.dma_free = static_cast<std::uint32_t>(std::strtoul(fields[7].raw.c_str(), nullptr, 10));
+        if (fields[8].k != json_field::kind::absent)
+            out.dma_largest = static_cast<std::uint32_t>(std::strtoul(fields[8].raw.c_str(), nullptr, 10));
+        if (fields[9].k != json_field::kind::absent)
+            out.psram_free = static_cast<std::uint32_t>(std::strtoul(fields[9].raw.c_str(), nullptr, 10));
+    } else {
+        out.internal_free = 0;
+        out.internal_largest = 0;
+        out.dma_free = 0;
+        out.dma_largest = 0;
+        out.psram_free = 0;
+    }
     return true;
 }
 
@@ -831,6 +877,11 @@ std::string handle_sys_info(const std::string &rid)
     info.idf_version = esp_get_idf_version();
     info.chip = "esp32p4";
     info.free_heap = static_cast<int>(esp_get_free_heap_size());
+    info.internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    info.internal_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    info.dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    info.dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+    info.psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     const std::int64_t total_secs = esp_timer_get_time() / 1000000;
     char up[16] = {0};
     std::snprintf(up, sizeof(up), "%02d:%02d:%02d", static_cast<int>(total_secs / 3600),
@@ -1770,6 +1821,7 @@ device_result exec_events_read(const request &req)
     d.handled = true;
     constexpr std::size_t k_chunk = 1024;
     const size_t total = event_log_text_size();
+    const size_t recovery_total = cyberdeck_recovery::journal_size();
     std::string start = "{\"rid\":";
     append_json_string(start, req.rid);
     start += ",\"ok\":true,\"event\":\"start\",\"size\":";
@@ -1783,7 +1835,7 @@ device_result exec_events_read(const request &req)
         size_t count = 0;
         if (event_log_text_read(offset, bytes, sizeof(bytes), &count) != ESP_OK || count == 0) {
             send_frame(build_error_envelope(req.rid, dispatch_error::internal, "events.txt indisponivel"));
-            break;
+            return d;
         }
         std::string frame = "{\"rid\":";
         append_json_string(frame, req.rid);
@@ -1796,6 +1848,35 @@ device_result exec_events_read(const request &req)
         frame.push_back('}');
         send_frame(frame);
         offset += count;
+    }
+    std::string recovery_start = "{\"rid\":";
+    append_json_string(recovery_start, req.rid);
+    recovery_start += ",\"ok\":true,\"event\":\"recovery_start\",\"size\":";
+    recovery_start += std::to_string(recovery_total);
+    recovery_start.push_back('}');
+    send_frame(recovery_start);
+    std::size_t recovery_offset = 0;
+    char recovery_bytes[k_chunk];
+    while (recovery_offset < recovery_total && !stop_requested()) {
+        std::size_t count = 0;
+        if (cyberdeck_recovery::journal_read(recovery_offset, recovery_bytes, sizeof(recovery_bytes), &count) != ESP_OK ||
+            count == 0) {
+            send_frame(build_error_envelope(req.rid, dispatch_error::internal, "recovery journal indisponivel"));
+            break;
+        }
+        std::string frame = "{\"rid\":";
+        append_json_string(frame, req.rid);
+        frame += ",\"ok\":true,\"event\":\"recovery_chunk\",\"chunk\":";
+        frame += std::to_string(recovery_offset / k_chunk);
+        frame += ",\"offset\":";
+        frame += std::to_string(recovery_offset);
+        frame += ",\"size\":";
+        frame += std::to_string(count);
+        frame += ",\"b64\":";
+        append_json_string(frame, base64_encode(reinterpret_cast<const std::uint8_t *>(recovery_bytes), count));
+        frame.push_back('}');
+        send_frame(frame);
+        recovery_offset += count;
     }
     send_frame(frame_event(req, "end"));
     return d;

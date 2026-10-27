@@ -35,9 +35,10 @@ inline constexpr int LV_DIR_NONE=0, LV_DIR_ALL=1, LV_SCROLLBAR_MODE_OFF=0,
     LV_FLEX_ALIGN_START=0,
     LV_FLEX_ALIGN_CENTER=1, LV_FLEX_ALIGN_END=2, LV_TEXT_ALIGN_CENTER=1,
     LV_PART_MAIN=0, LV_PART_INDICATOR=1, LV_PART_KNOB=2, LV_OPA_TRANSP=0,
-     LV_OPA_COVER=255, LV_RADIUS_CIRCLE=999, LV_EVENT_SIZE_CHANGED=1,
-     LV_EVENT_FOCUSED=2, LV_EVENT_INSERT=3, LV_EVENT_VALUE_CHANGED=4,
-     LV_EVENT_KEY=5, LV_EVENT_PRESSED=6, LV_EVENT_RELEASED=7,
+      LV_OPA_COVER=255, LV_RADIUS_CIRCLE=999, LV_EVENT_SIZE_CHANGED=1,
+      LV_EVENT_FOCUSED=2, LV_EVENT_INSERT=3, LV_EVENT_VALUE_CHANGED=4,
+      LV_EVENT_KEY=5, LV_EVENT_PRESSED=6, LV_EVENT_RELEASED=7,
+      LV_EVENT_CLICKED=8,
      LV_INDEV_TYPE_POINTER=1, LV_INDEV_TYPE_KEYPAD=2;
 inline constexpr int LV_OBJ_FLAG_CLICKABLE=1, LV_OBJ_FLAG_CLICK_FOCUSABLE=2;
 
@@ -71,12 +72,14 @@ inline constexpr lv_result_t LV_RESULT_OK = 0, LV_RESULT_INVALID = -1;
 inline constexpr int LV_SIZE_CONTENT=-1;
 inline constexpr int LV_LABEL_LONG_CLIP=0;
 inline constexpr const char *LV_SYMBOL_BLUETOOTH="BT", *LV_SYMBOL_CHARGE="CHG",
-    *LV_SYMBOL_BATTERY_FULL="BAT", *LV_SYMBOL_MINUS="-";
+    *LV_SYMBOL_BATTERY_FULL="BAT", *LV_SYMBOL_MINUS="-", *LV_SYMBOL_PLAY="PLAY";
 inline lv_color_t lv_color_hex(std::uint32_t v) { return {v}; }
 inline int lv_pct(int v) { return v; }
 #define LV_PCT(v) (v)
 inline int lv_obj_width(const lv_obj_t *o) { return o ? o->width : 0; }
 inline lv_obj_t *lv_obj_create(lv_obj_t *p) { auto *o=new lv_obj_t; o->parent=p; if(p)p->children.push_back(o); return o; }
+inline lv_obj_t *lv_btn_create(lv_obj_t *p) { return lv_obj_create(p); }
+inline void lv_obj_center(lv_obj_t *) {}
 inline lv_obj_t *lv_label_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_arc_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_textarea_create(lv_obj_t *p) { return lv_obj_create(p); }

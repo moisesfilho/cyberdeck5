@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <cstddef>
+#include <dirent.h>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,6 +20,10 @@ struct cyberdeck_local_shell_result {
 cyberdeck_local_shell_result cyberdeck_local_shell_cat(const char *host_root, const char *cwd, const char *command);
 cyberdeck_local_shell_result cyberdeck_local_shell_cat_bounded(const char *host_root, const char *cwd,
                                                                const char *command, std::size_t max_bytes);
+int cyberdeck_local_shell_open_readonly(const char *host_root, const char *cwd, std::string_view path,
+                                        std::size_t max_bytes, std::size_t &file_size);
+int cyberdeck_local_shell_open_directory(const char *host_root, const char *cwd, std::string_view path);
+DIR *cyberdeck_local_shell_opendir(const char *host_root, const char *cwd, std::string_view path);
 
 // Internal SDK backend. Applications never receive these functions or a VFS
 // handle; storage_facade owns the confined transaction.

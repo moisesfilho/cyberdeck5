@@ -54,6 +54,8 @@ void explicit_clear_is_the_only_policy_transition_out_of_safe_mode()
     CHECK(value.safe_mode_latched);
     CHECK(cyberdeck_recovery::clear_safe_mode(value));
     CHECK(!value.safe_mode_latched && !value.boot_pending && value.interrupted_boots == 0);
+    CHECK(!cyberdeck_recovery::commit_ready(value));
+    CHECK(!value.boot_pending && value.interrupted_boots == 0);
 }
 }
 

@@ -170,10 +170,8 @@ def password_and_blank_routing(session: str) -> None:
 
 
 def ui_delegation(ui: str) -> None:
-    local_key_def = re.search(
-        r"void\s+local_key\s*\(\s*uint32_t\s+\w+\s*\)\s*\{[^}]*\}", ui)
-    require(local_key_def is not None and
-            "s_shell_app.handle_key(translate_session_key(key))" in local_key_def.group(0),
+    local_key_def = function_body(ui, "void local_key(uint32_t key)")
+    require("s_shell_app.handle_key(translate_session_key(key))" in local_key_def,
             "UI local_key facade must delegate to the extracted session key handler")
 
 

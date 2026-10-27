@@ -137,6 +137,11 @@ def test_build_request_shape():
     for other in ("ui.dump", "screen.shot"):
         other_req = cli.build_request(parser.parse_args([other]))
         require(other_req != req, f"{other} nao pode gerar o mesmo request de term.dump")
+    events = cli.build_request(parser.parse_args(["events.read"]))
+    require(events == {"type": "events.read"}, "events.read deve ter request sem campos extras")
+    clear = cli.build_request(parser.parse_args(["sys.safe_mode.clear"]))
+    require(clear == {"type": "sys.safe_mode.clear"},
+            "safe mode clear deve mapear ao request explicito sem campos extras")
 
 
 # ---------------------------------------------------------------------
@@ -271,7 +276,36 @@ def test_unknown_command_rejected():
         raise AssertionError("build_request deve rejeitar comando desconhecido")
 
 
+def test_events_read_includes_and_validates_recovery_journal():
+    data = b"load safe=0\ntransition=clear safe=0\n"
+    encoded = __import__("base64").b64encode(data).decode("ascii")
+    transport = FakeTransport()
+    transport.replies = [
+        b'{"rid":"test","ok":true,"event":"start","size":0,"chunks":0}' + bytes([10]),
+        (json.dumps({"rid": "test", "ok": True, "event": "recovery_start", "size": len(data)}) + "\n").encode(),
+        (json.dumps({"rid": "test", "ok": True, "event": "recovery_chunk", "chunk": 0,
+                     "offset": 0, "size": len(data), "b64": encoded}) + "\n").encode(),
+        b'{"rid":"test","ok":true,"event":"end"}' + bytes([10]),
+    ]
+    session = cli.open_session(transport)
+    frames = session.exchange({"rid": "test", "type": "events.read"})
+    journal = next((frame for frame in frames if frame.get("event") == "recovery_log"), None)
+    require(journal is not None and journal["text"].encode() == data,
+            "events.read deve remontar o journal NVS e preservar o texto")
+    sd_log = next((frame for frame in frames if frame.get("event") == "sd_log"), None)
+    require(sd_log is not None and sd_log["text"] == "",
+            "events.read deve manter também o contrato de log SD vazio")
+    require(cli.CyberdeckSession.events_payload(frames, "recovery_log") == data,
+            "events.read deve expor bytes do journal para gravação local")
+
+
 def main_all():
+    # The explicit recovery clear is a real device command; expose its exact
+    # request through the CLI without triggering it during local tests.
+    parser = cli.make_parser()
+    require(cli.build_request(parser.parse_args(["sys.safe_mode.clear"])) ==
+            {"type": "sys.safe_mode.clear"},
+            "safe mode clear must map to its explicit request")
     test_parser_exposes_term_dump()
     test_build_request_shape()
     test_request_line_is_single_ndjson()
@@ -281,6 +315,7 @@ def main_all():
     test_error_output_returns_1()
     test_no_response_returns_2()
     test_unknown_command_rejected()
+    test_events_read_includes_and_validates_recovery_journal()
     print("PASS: term_dump_cli")
     return 0
 

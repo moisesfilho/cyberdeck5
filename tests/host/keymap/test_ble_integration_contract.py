@@ -544,6 +544,40 @@ def check_adapter_composition(report: Report) -> None:
                         "BLE initialization must connect, initialize/bind Hosted HCI, "
                         "then initialize NimBLE")
 
+    nimble_failure = start_body.find('if (err != ESP_OK)', start_body.find('nimble_port_init()'))
+    nimble_failure_tail = start_body[nimble_failure:nimble_failure + 700] if nimble_failure >= 0 else ""
+    report.require("heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)" in nimble_failure_tail and
+                   "heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)" in nimble_failure_tail and
+                   "return err;" in nimble_failure_tail,
+                   "NimBLE init failure must report internal heap diagnostics and fail closed")
+
+    bsp_display = (ROOT / "components/m5stack_tab5/src/bsp_display.c").read_text(encoding="utf-8")
+    report.require("SOC_PSRAM_DMA_CAPABLE" in bsp_display and
+                   ".buff_spiram = draw_buffers_in_spiram" in bsp_display and
+                   ".sw_rotate = true" in bsp_display,
+                   "Tab5 display buffers must use DMA-capable PSRAM while preserving software rotation")
+    report.require("bsp_display_lcd_init(cfg);" in bsp_display and
+                   '"LVGL display initialization failed; touch init skipped"' in bsp_display and
+                   "lvgl_port_remove_disp(disp);" in bsp_display,
+                   "BSP must fail closed and clean display resources before touch or LVGL teardown")
+
+    lvgl_port_display = (ROOT / "components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c").read_text(encoding="utf-8")
+    error_path = lvgl_port_display[lvgl_port_display.find("err:"):]
+    report.require("ret = ESP_ERR_NO_MEM;" in lvgl_port_display and
+                   '"Not enough memory for LVGL buffer (rotation buffer) allocation!"' in lvgl_port_display and
+                   "lv_display_delete(disp);" in error_path and
+                   "disp = NULL;" in error_path and
+                   "disp_ctx != NULL && disp_ctx->draw_buffs[2]" in error_path and
+                   "return NULL;" in error_path,
+                   "Local LVGL port must set allocation errors and safely release partial display/buffers")
+
+    music_player = (ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp").read_text(encoding="utf-8")
+    report.require("StaticTask_t *task_control = nullptr;" in music_player and
+                   "heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)" in music_player and
+                   "impl_->task_stack, impl_->task_control" in music_player and
+                   music_player.count("heap_caps_free(impl_->task_control);") >= 2,
+                   "Music static-task TCB must be internal RAM and freed on rollback/worker completion")
+
     # Regression: transport/controller initialization is non-fatal.  The
     # adapter returns errors and cleans up; it must not hide an aborting macro
     # in the path under test.
@@ -572,6 +606,9 @@ def check_adapter_composition(report: Report) -> None:
     report.require("CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=4096" in
                    (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8"),
                    "NimBLE host task stack must use the validated 4096-byte default")
+    nimble_defaults = (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8")
+    report.require("CONFIG_BT_NIMBLE_STATIC_TO_DYNAMIC=n" in nimble_defaults,
+                   "NimBLE SM initialization pools must remain static under internal-DRAM allocation")
     report.require("CONFIG_EH_HOST_PORT_DMA_PREFER_SPIRAM=y" in
                    (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8"),
                    "ESP-Hosted SDIO DMA buffers must prefer P4 DMA-capable SPIRAM")

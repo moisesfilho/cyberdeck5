@@ -1,5 +1,15 @@
 # Help: requisitos, cenários e evidência host (REQ-HELP-01..05)
 
+## Atualização do inventário music (TEST-MUSIC-HELP-01)
+
+O inventário vigente possui 12 aplicações: 4 comandadas (`demo`, `editor`,
+`netdiag`, `music`), 7 serviços sem comando e o shell como único console owner.
+`test_shell_help` compara a saída completa de `music help` a um golden literal,
+confirma ausência de execução/efeitos colaterais e inclui music na enumeração e
+no help geral. `test_shell_help_contract.py` reconcilia o registro, manifesto,
+uso declarado e fixture com produção, mantendo ordem e invariantes explícitos.
+Esta cobertura host não prova reprodução de áudio nem rendering físico.
+
 Matriz `REQ-HELP-01..05 -> TEST` do catálogo único de help usado pelo menu, pelo
 shell local e pelo help por comando. As definições de REQ-HELP-01..05 abaixo são
 as registradas nos contratos dos próprios testes (não há documento de requisitos

@@ -475,6 +475,10 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
   positivos, negativos, de limite e de falha.
 
 - Plataforma: ESP-IDF 6.1, LVGL >=9.6,<10.0, BSP `m5stack_tab5` 1.3.2.
+- `version.txt` na raiz define `PROJECT_VER` pelo mecanismo nativo do ESP-IDF
+  (prioridade sobre argumentos VERSION e `git describe`); use inteiro positivo
+  como identificador independente de CI para builds locais/físicos e incremente-o
+  para a próxima versão de firmware. O valor é exposto como versão do app/firmware.
 - Aplicacao: uma unica tela TUI LVGL, com header, relogio, indicador Wi-Fi, bateria e terminal.
 - Organizacao: `components/cyberdeck/src/apps/` contem fluxos de produto;
   `components/cyberdeck/src/platform/` contem integracoes de hardware e runtime.
@@ -575,13 +579,82 @@ do IDF na maquina e carregar o ambiente quando necessario.
 
 | Ponto | Arquivo | Responsabilidade |
 | --- | --- | --- |
-| `app_main()` | `main/app_main.cpp` | Inicializa NVS/recovery antes do SD para conhecer safe mode; no boot normal alimenta e conecta ESP-Hosted antes de montar SD, usando mount BSP com init/deinit no-op para slot 0 enquanto Hosted possui SDMMC slot 1. Em safe mode pula Hosted. Depois recupera sidecars, inicia log, display/LVGL, IMU/UI, protecao de tela, bateria, teclado e supervisor; falhas preservam latch e adiam checkpoint. |
+| `app_main()` | `main/app_main.cpp` | Inicializa NVS/recovery antes do SD para conhecer safe mode; no boot normal alimenta e conecta ESP-Hosted antes de montar SD, usando mount BSP com init/deinit no-op para slot 0 enquanto Hosted possui SDMMC slot 1. Em safe mode pula Hosted. `HOSTED_DIAG` registra timestamps, resultado e duração da preparação Hosted, mount SD e inicialização da proteção de bateria, sem dados de credenciais. Depois recupera sidecars, inicia log, display/LVGL, IMU/UI, proteção de tela, bateria, teclado e supervisor. A admissão de comandos do runtime fica fechada antes da exposição da UI e abre após startup/checkpoint. Falhas da plataforma ou da superfície essencial preservam boot pendente; falhas apenas em serviços opcionais são registradas, mas não bloqueiam checkpoint. |
+| `cyberdeck_system_apps_start()` | `components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp` | Tenta iniciar todos os apps; recovery considera pronto quando `cyberdeck.shell` e `cyberdeck.serial` estão `running`. Falhas de Wi-Fi/Bluetooth/time sync/screenshot/editor/netdiag/music são persistidas/logadas e deixam estado degradado sem impedir checkpoint, desde que shell/Serial-JTAG estejam operacionais. O serviço BLE não é idempotente: se `nimble_port_init()` falhar parcialmente, o runtime não repete a inicialização no mesmo boot. Falha de init BLE registra heap interno livre/bloco maior e retorna erro, sem assert/retry automático. Dependências ainda podem fazer um app essencial falhar e manter boot pendente. Contratos: `test_phase10_contract.py::test_optional_service_failures_do_not_block_essential_checkpoint`, `test_system_apps_contract.py` e `test_ble_integration_contract.py`. |
 | `cyberdeck_ui_init()` | `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | Compoe a tela TUI, registra callbacks/timers e inicializa os componentes visuais de header, terminal e teclado. |
-| `wifi_mgr_hosted_transport_prepare()` / `wifi_mgr_start()` | `components/cyberdeck/src/apps/wifi/wifi_mgr.cpp` | `hosted_transport_prepare` alimenta o C6, aguarda 500 ms e inicializa/conecta Hosted antes do SD; `wifi_mgr_start` reutiliza esse transporte e depois inicia Wi-Fi/reconexao. `CONFIG_ESP_HOSTED_AUTO_CALL_INIT_BEFORE_APP_MAIN=n` evita init prematuro no constructor. |
+| `runtime::execute_line()` startup fence | `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp` | Rejeita dispatch com `system startup in progress` enquanto `app_main` inicia apps. O flag atomic é desabilitado antes de UI/teclado e reabilitado depois do checkpoint, evitando que `app start`/comandos de apps concorram com `runtime::start_all()`. Cobertura comportamental em `test_app_runtime.cpp` e estrutural em `test_phase10_contract.py`. |
+| `wifi_mgr_hosted_transport_prepare()` / `wifi_mgr_start()` | `components/cyberdeck/src/apps/wifi/wifi_mgr.cpp` | `hosted_transport_prepare` alimenta o C6, aguarda 500 ms e inicializa/conecta Hosted antes do SD; `wifi_mgr_start` reutiliza esse transporte e depois inicia Wi-Fi/reconexão. `HOSTED_DIAG` registra fases de rail, `esp_hosted_init`, `connect_to_slave`, `esp_wifi_init/start` e duração/resultado de `esp_wifi_set_config`, sem SSID/senha. `CONFIG_ESP_HOSTED_AUTO_CALL_INIT_BEFORE_APP_MAIN=n` evita init prematuro no constructor. |
 | `bsp_display_start()` / `bsp_display_lcd_init()` | `components/m5stack_tab5/src/bsp_display.c` | Inicializa painel DSI/LVGL e touch. Em SoCs com `SOC_PSRAM_DMA_CAPABLE`, buffers de desenho e rotação SW usam PSRAM com capability DMA; demais SoCs preservam o allocator DMA padrão. Telemetria registra memória livre/maior bloco compatível, DMA e interna. Falha ao criar display limpa painel/PHY e encerra antes do touch; falha no touch remove display, limpa painel e desinicializa LVGL. Regressão estrutural no `test_ble_integration_contract.py`. |
 | Overlay `esp_lvgl_port` 2.9.0 | `components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c` | `main/idf_component.yml` fixa a versão de registry `^2` mas substitui o componente gerenciado via `override_path`. O cleanup do `lvgl_port_add_disp_priv` marca explicitamente falhas de alocação, tolera contexto nulo, remove display parcial e libera buffers/semaphore antes de retornar `NULL`; evita retorno ambíguo/vazamento no erro de rotação. O build do IDF seleciona o arquivo local (ver `build/build.ninja`). |
 | `screenshot_server_init()` / `screenshot_server_start()` / `screenshot_server_stop()` | `components/cyberdeck/src/apps/screenshot/screenshot_server.cpp` | Lifecycle do servidor HTTP por task proprietária, com fila bounded de snapshots/comando, handshake de prontidão, join/quiescência antes de `httpd_stop()` e quarentena fail-safe em timeout. |
 | `tab5_keyboard_init()` | `components/cyberdeck/src/platform/input/tab5_keyboard.cpp` | Inicia a task do teclado fisico e entrega eventos a `cyberdeck_keyboard_input`. |
+
+### Persistência do recovery
+
+`cyberdeck_recovery.cpp` serializa init, checkpoint, clear e gravação de erro
+com um mutex de estado. Transições são preparadas numa cópia e só publicadas em
+RAM após `nvs_commit`; falha de persistência mantém o estado anterior e marca a
+persistência indisponível. `current()` retorna snapshot por valor. Falha de
+leitura/abertura NVS seleciona safe mode. `clear_safe_mode` remove latch e
+contador sem cancelar `boot_pending`, permitindo que um clear recebido durante
+startup não invalide o `commit_ready` subsequente. `test_recovery_runtime.cpp`
+liga o adapter real a um fake NVS e cobre indisponibilidade fail-closed,
+commit falho, concorrência clear/checkpoint e sobrevivência a reinit. O TU agora
+é executado e coberto no host, removido da allowlist; a policy pura permanece em
+`test_recovery_policy.cpp`.
+
+The same adapter keeps a separate 2 KiB rolling diagnostic journal in the
+`cyberdeck_rec/diag` NVS key (1900 bytes, below the NVS single-blob limit), independent from SD/event-log availability. It
+records the loaded blob and before/after `boot_begin`, `clear`, and `checkpoint`
+state plus persistence results; `events.read` exports it as a distinct bounded
+`recovery_log` payload. `test_recovery_runtime.cpp` covers NVS journal reinit and
+bounded reads, while `test_term_dump_cli.py` covers reconstruction of the serial
+frames. Use `python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 events.read` to
+capture both the SD text log and the NVS recovery journal without opening a
+second serial reader. The journal is best-effort and never changes the recovery
+state or blocks boot if its own NVS write fails; journal commit errors are logged
+to UART. The CLI writes decoded payloads
+to `/tmp/opencode/cyberdeck-sd-event-log.txt` and
+`/tmp/opencode/cyberdeck-recovery-journal.txt` for inspection.
+Physical capture after flashing hash
+`32ff8e16224d63e74f4eef3f7e899e1d667d5b817ddb8ca4a63b0399cbb4d802` showed two
+boots with prior `safe=1,pending=0,interrupted=0`, followed by `boot_begin` and
+`checkpoint`; no `clear` transition was recorded by the instrumented image.
+`sys.info` remained safe mode with rising uptime. This proves the latch was
+already present before those boots, but not which earlier actor set it. No
+further clear/reset was sent; Hosted/app validation remains blocked. Code search
+shows only `begin_boot` (sets after the three-interruption threshold) and
+`clear_safe_mode` (explicit clear) mutate the latch; `commit_ready` does not.
+The SD text log contains concatenated historical boots, so it cannot attribute
+the current persisted value to a specific event.
+The later clear command did return `cleared=true` and immediate `sys.info` showed
+`safe_mode=false`, but its transition journal was not captured before reboot.
+The next captured boot read `prior_safe=1,pending=1,interrupted=3` and completed
+in safe mode. Therefore persistence/reversion remains unresolved; no further
+clear or reset is authorized. `tools/cyberdeck_cli.py sys.safe_mode.clear` now
+exposes the bridge's existing explicit command and has a host request-shape
+assertion in `test_term_dump_cli.py`; running that CLI command changes device
+NVS and requires explicit operator authorization.
+
+Validação de 2026-10-23: `cyberdeck_system_apps_start()` agora separa sucesso da
+superfície essencial (shell + Serial-JTAG) de falha em serviços opcionais;
+todos os apps continuam sendo tentados e falhas permanecem registradas. Host
+completo e cobertura CI passam (87.0% linhas / 94.8% funções / 59.0% branches;
+73 cobertos / 15 allowlisted), build ESP-IDF 6.1 e poweroff link guard passam.
+O flash de validação respondeu `safe_mode=true`; após um clear e reset
+controlados, o boot normal alcançou checkpoint com shell/Serial-JTAG prontos,
+apesar de Wi-Fi/Bluetooth degradados. Uma tentativa anterior emitiu comandos
+antes do checkpoint do novo boot e a captura registrou HP WDT. Saved PCs apontam
+para o handler de panic/stack guard do Core1, mas não identificam a task/origem.
+O gate atômico em `runtime::execute_line` foi flashado e validado: aos 5 s,
+comandos de app são rejeitados; após checkpoint explícito, `safe_mode=false`,
+`interrupted_boots=0` e uptime crescente. `cyberdeck.music` iniciou e listou a
+faixa esperada. Um único `music play 1` foi aceito pela ponte; a escrita serial
+da consulta seguinte expirou, então o cenário foi interrompido sem repetir play.
+Nenhum WDT/panic posterior consta na captura, mas o status final do player e
+áudio audível não foram confirmados. Não atribuir a falha de serial ao player;
+Hosted RPC TX falhava e Wi-Fi/Bluetooth estavam degradados. Host/TSan/coverage/
+build passam. Ver capturas e hashes em `docs/03-audio-player-plan.pt-BR.md`.
 
 Ordem relevante de inicializacao:
 
@@ -606,7 +679,12 @@ Ordem relevante de inicializacao:
 join cooperativo/quarentena para `wifi_event_worker` e `net_worker`; o system
 app usa `stop_wifi()` com orçamento de 8000 ms. O contrato estrutural fica em
 `tests/host/keymap/test_wifi_mgr_lifecycle_contract.py` e é integrado ao
-Makefile host.
+Makefile host. Seus cenários `TEST-DIAG-WIFI-*` verificam que logs de
+instrumentação cercam as chamadas existentes de Hosted/Wi-Fi, preservam
+resultado/duração, não duplicam chamadas e não mencionam credenciais.
+`tests/host/keymap/test_boot_sequence.py` cobre `TEST-DIAG-BOOT-*`: ordem dos
+marcadores de boot em torno de Hosted, mount SD e bateria, incluindo a política
+não fatal já existente para falha de inicialização da proteção.
 
 Esta entrada supersede o recorte histórico da tabela de Wi-Fi: o stop público
 e o teardown simétrico dos dois workers já estão implementados; timeout não
@@ -689,8 +767,179 @@ destrói recursos potencialmente usados.
     controller e contexto vivos, e bloqueia start/restart/operações até completion.
     Completion só libera o handle via `wait_worker` (join/reap) uma vez; stop
     pendente é finalizado antes de novo start, sem reset/restart inseguro.
-    Registro permanece em `cyberdeck_system_apps.cpp`; manifest e comando
-    `netdiag` são preservados.
+     Registro permanece em `cyberdeck_system_apps.cpp`; manifest e comando
+     `netdiag` são preservados.
+
+## Player de áudio local (`music`)
+
+- `components/cyberdeck/include/apps/music/cyberdeck_music_model.h` e
+  `src/apps/music/cyberdeck_music_model.cpp` definem os limites bounded da fila
+  (64 faixas, caminhos/títulos limitados, MP3 até 32 MiB), estados, seleção,
+  progresso, seek, volume, shuffle/repeat e parser ID3v2.2–2.4 para título e
+  artista. O app `cyberdeck.music` em `cyberdeck_music_app.{h,cpp}` registra o
+  comando de terminal `music` como app `background` (não participa da exclusividade
+  de foreground): `queue /diretorio` inicia scan assíncrono,
+  `list`, `play [n]`, `pause`, `resume`, `stop`, `next`, `prev`, `seek
+  <segundos>`, `volume`, `shuffle`, `repeat`, `status` e `help`. O scan limita a
+  64 MP3 regulares e consulta o secure-open do shell; mantém READ lease durante
+  enumeração e só publica uma fila completa após validar grant/lifecycle. Uma
+  trava curta serializa a publicação final com stop/poweroff: quiesce fecha a
+  admissão do scanner e marca cancelamento antes de aguardar o worker; uma
+  operação de secure-open já em voo não pode publicar resultado stale após esse
+  fence. Novos scans também são recusados quando o coordinator SD não está OPEN.
+  A enumeração e os waits continuam fora da UI.
+   - `cyberdeck_music_player.{h,cpp}` é o serviço FreeRTOS de playback em
+    background: fila bounded de requisições e stack de worker em PSRAM byte-addressable
+     (`xQueueCreateWithCaps`/`xTaskCreateStatic`); o TCB estático é alocado separadamente
+     em RAM interna, exigência de `portVALID_TCB_MEM` no ESP-IDF. A stack é alocada
+   explicitamente em PSRAM; o chamador aguarda completion, chama `vTaskDelete` e
+   libera a stack após a saída do worker. Mantém READ lease longa até fechar o FD,
+  stream de blocos bounded, decode minimp3, estados/progresso, pausa/seek e
+  geração monotônica por comando para descartar plays obsoletos e impedir que
+  um dequeue posterior limpe cancelamento de stop/halt;
+    quiesce/join antes do drain SD. Repetição/auto-avanço por EOF continua no
+    mesmo ciclo do worker, reutiliza o request atual e mantém exatamente uma READ
+    lease; não re-enfileira requests que deixem leases presas. A app depende de `player_interface` injetável;
+   o player implementa essa porta sem alterar o comportamento do singleton. O
+   comando `prev` sincroniza seleção e posição atuais do player antes de aplicar
+   a regra de reiniciar a faixa após 3 s; EOF atualiza seleção publicada junto
+   ao índice interno antes de enfileirar a próxima faixa, sob o mesmo lock e
+   guard de geração.
+   worker publica completion como último acesso aos handles e se autoexclui; stop
+  descarta requests pendentes, enfileira wake sentinel e aguarda completion mesmo
+   quando a fila estava cheia. Tags ID3 maiores que o limite de extração de
+   metadados continuam sendo puladas sem alocar seu conteúdo integral; tamanhos
+   syncsafe são validados contra o tamanho do arquivo. O snapshot registra
+   estágio de falha bounded (`open`, `id3`, `decode`, `codec_start`,
+   `codec_write`, `read`, `io`); `music status` mostra `error_stage` apenas em
+    estado error. Publicação é protegida pelo mutex e geração do playback. Logs
+    operacionais marcam worker/file-open, início e fim do codec, primeira escrita
+    PCM e falha final (stage/generation), sem registrar o caminho do arquivo nem
+     emitir log por frame. Após um `music play 1` manual sem serial aberta
+   travar/reiniciar o Tab5, `-fstack-usage` do compilador ESP32-P4 mediu 17.200 B
+   no `mp3dec_decode_frame` original versus stack de 8.192 B da task. Correção
+   candidata: scratch no heap uma vez por faixa, com erro `decode` se indisponível;
+   `mp3dec_decode_frame_with_scratch` local mede 976 B, worker 1.152 B. O wrapper
+    upstream permanece disponível; adaptação em `components/cyberdeck/THIRD_PARTY.md`.
+     Falhas do lifecycle inicial agora registram estágio específico (`storage_grant`,
+     `player`, queue, completion semaphore, worker task ou scan completion semaphore)
+     sem SSID/caminhos; `app info` continua expondo o resultado genérico do supervisor.
+      O payload da fila bounded do player é alocado com `xQueueCreateWithCaps` em
+      PSRAM byte-addressable (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`), mantendo o
+       control block FreeRTOS em memória interna; rollback/stop usam
+       `vQueueDeleteWithCaps`. O worker usa stack em PSRAM e TCB estático em alocação
+       interna dedicada (rollback se faltar RAM); `test_music_player` cobre as
+       capabilities/erro de TCB e lifecycle host.
+   liberação após completion. Boot normal de 2026-10-27 confirmou LVGL/touch usando
+   buffers DMA PSRAM após Hosted/Wi-Fi. O mesmo boot revelou assert posterior em
+   `xTaskCreateStaticPinnedToCore` (`portVALID_TCB_MEM`) porque o `StaticTask_t`
+   estava dentro do `impl` alocado na PSRAM; agora o TCB é alocação interna dedicada,
+   coberta por `test_music_player` e pelo contrato de integração. Essa variante já
+   foi buildada, mas ainda não foi flashada/validada fisicamente. Validação física do
+   build `3c21fe901d934f36583efb02959f8540c55c9fb0302a3c5016895b61341d00cd`
+      não alcançou o firmware: após flash verificado, o ESP32-P4 panicou no boot em
+      `PC=0x4fc0424c`, `MTVAL=0x50091000`, antes de qualquer log Hosted/app; causa
+      ainda não simbolizada. O sistema não deve declarar esta variante validada.
+      A validação física anterior identificou
+     `xQueueCreate` falhando com depth 8/item 268 B junto de falha na task BLE e
+     socket HTTP; o motivo do esgotamento de memória interna permanece sistêmico e
+     não é resolvido integralmente por esta realocação.
+   `test_music_decoder_stack_contract.py` verifica ownership/stack;
+   `test_music_decoder_scratch.cpp` compara duas frames decodificadas com o
+   wrapper upstream e scratch externo (PCM/status iguais, ASan/UBSan limpos).
+   Ambos estão no agregado e `BINS` inclui o novo binário; o contrato incremental
+    final espera 80 bins únicos. Host/build passaram; firmware corrigido SHA-256
+    `0bcb094320d7563f2d6b8d590a5220f417ba1b25f7ac3ff76550107b324c116d`
+    gravado e verificado em `/dev/ttyACM0`. Boot com checkpoint, uptime 48→53 s,
+    safe_mode=false, interrupted_boots=0, Wi-Fi com IP e sem erros RPC/RX/panic
+    na captura `/tmp/opencode/music-scratch-boot.raw`. A abertura serial ainda
+    causou reset USB. Teste manual posterior do usuário voltou a travar
+    e reiniciar ao tocar: a correção de stack foi insuficiente. Coredump está
+    desabilitado (`sdkconfig`); sem log contemporâneo não há backtrace para
+    localizar a falha restante. Nenhum novo play/flash após esse relato.
+   `cyberdeck_audio_output.{h,cpp}` integra
+  `bsp_audio_codec_speaker_init`, codec ES8388, volume limitado a 50 e comuta
+  amplificador do speaker conforme detecção do jack; o jack recebe saída do
+  codec. A tabela `backend` é seam aditiva e instalável antes da primeira
+  inicialização, permitindo exercitar codec/roteamento com callbacks determinísticos.
+  Falha ao desligar o amplificador mantém estado de rota em falha, força retry e
+  bloqueia start/write até a rota segura ser confirmada.
+  `components/m5stack_tab5/CMakeLists.txt` compila `bsp_audio.c` e declara
+  `esp_codec_dev`/expander como dependências.
+- O código upstream minimp3 revision
+  `ea99364f61c14656440e8d77e9c233ccf3124633` está em
+  `components/cyberdeck/third_party/minimp3/minimp3.h`, com licença CC0 em
+  `third_party/minimp3/LICENSE`; `components/cyberdeck/THIRD_PARTY.md` registra
+  origem/revisão. `components/cyberdeck/CMakeLists.txt` compila model, app,
+  player e adapter de áudio. `cyberdeck_system_apps.cpp` registra o app e seu
+  comando.
+- `cyberdeck_app_storage.{h,cpp}` expõe API aditiva de abertura read-only
+  bounded; `cyberdeck_local_shell.{h,cpp}` resolve caminho virtual e retorna FD
+  regular sem symlink/traversal, propriedade transferida ao player, que mantém
+  a lease do coordinator até fechar. `cyberdeck_local_shell_opendir` entrega um
+  `DIR*` oriundo de walk openat/O_NOFOLLOW em hosts; no ESP-IDF valida namespace,
+  confinamento e tipo por `stat`, então enumera diretamente com `opendir` no VFS
+  FATFS (que não possui symlinks e não implementa fdopendir nem abertura de
+  diretórios via `open(O_DIRECTORY)`). A abertura do arquivo de cada entrada
+  continua sendo revalidada pelo secure-open.
+  Poweroff inclui estágio `music` após
+  fechar admissão SD e antes do drain; `cyberdeck_music_poweroff_quiesce` cancela
+  e aguarda scan e player.
+- Os testes adicionados ao Makefile incluem `test_music_model.cpp` para a lógica
+  pura, `test_music_app.cpp` para comandos/scan com portas injetadas,
+  `test_music_player.cpp` para fila, cancelamento, leases e lifecycle worker, e
+  `test_music_audio_output.cpp` para volume, mute, falhas e roteamento via backend
+  codec injetável. `music_traceability.md` relaciona esses cenários a
+  REQ-MUSIC/AC-MUSIC/TEST-AUDIO; os casos de secure-open usam a produção real do
+  shell em `test_local_shell.cpp` e exercitam recusa de symlink/traversal sem
+  enfraquecer os flags `O_NOFOLLOW`.
+- `cyberdeck_header_view.{h,cpp}` adiciona botão global acionável enquanto há
+  playback; callback da TUI em `cyberdeck_ui.cpp` abre um painel no terminal e
+  Escape retorna ao conteúdo anterior. O painel é acrescentado após o scrollback
+  para permanecer visível no bottom-anchor sem ser gravado no histórico. Timer atualiza progresso/presença do
+  indicador e integra-se ao teardown/freeze da UI. Os comandos do shell seguem
+  o catálogo dinâmico de manifests de apps; não há view separada nem task de UI
+  dedicada.
+- Validação local do snapshot integrado: agregado host com flags coverage PASS;
+  gcovr 87.0% linhas / 94.8% funções / 59.0% branches; scope guard 73 TUs
+   cobertas e 15 allowlisted; runtime recovery 23 checks; build ESP-IDF 6.1 PASS.
+   A validação mais recente gravou o build com logs diagnósticos: boot/checkpoint,
+   `sys.info` e start/status do app passaram, sem WDT/panic; Hosted RPC segue
+   falhando (`get_mac`/`set_config` timeout, depois TX SDIO/BLE CP not ready),
+   então nenhum scan/play foi enviado nesta sessão. SDIO enumera e negocia RPC V2
+   + SW_AGGR; host 3.0.10/CP 3.0.9 é marcado compatível. A/B temporário com
+    streaming legado reproduziu a falha, descartando SW_AGGR como causa provável.
+    A/B com alocação RX alinhada/PSRAM eliminou `mempool OOM` RX, mas RPC 284
+    passou a falhar imediatamente no TX e o BLE continuou CP-not-ready; falta de
+     DMA RX é fator, porém insuficiente. Trace posterior comprovou heap DMA interno
+     esgotado/fragmentado: TX do RPC 387 falha para 38 B com 703 B livres/bloco
+     112; na variante RX-PSRAM, TX do RPC 284 falha para 66 B com 867 B livres/
+     bloco 200, antes de esperar resposta. A alocação RX PSRAM remove OOM, mas não
+     resolve TX. Heap DMA é causa confirmada da falha TX sob carga; o CP ainda não
+      foi validado isoladamente. Fontes Hosted de diagnóstico foram restauradas;
+     em seguida, variante CPU-staging foi gravada (SHA-256 do binário
+     `e7ee8ddce54e2b27eaa4f711ec0ddc87ea1e68ed6affc515e06fc21e983857d4`). Primeiro
+     boot passou checkpoint, conectou Wi-Fi e completou fila de 1 faixa sem
+     playback; reabertura serial causou reset USB `CHIP_USB_UART_RESET`. Segundo
+     boot ainda não validado além de uptime 5→10 s; Wi-Fi desconectado na janela
+     inicial. A variante candidata permanece ativa em dois arquivos ignorados de
+     `managed_components` (`eh_host_bus_sdio.c` e `eh_host_mcu_transport_channels.c`);
+     sua reprodução explícita está versionada em `tools/esp-hosted-cpu-staging.patch`
+     e `tools/prepare_esp_hosted_cpu_staging.py` (aplicar após resolver componentes,
+     verificar revisão/hash antes do build; restore reversível). `CMakeLists.txt`
+     executa verify após project() e antes do link do ELF em cada build:
+     reconfigure e build incremental sem patch falham fechado. O teste
+     `tests/host/keymap/test_esp_hosted_cpu_staging.py` (alvo focado e agregado)
+     verifica round-trip isolado, recusa de drift e gate CMake; suíte host integral
+     e reconfigure/build positivos passaram, e reconfigure sem patch falhou como
+     esperado. Binário local após reconfigure é `50792ce1e712d1c5cd2336822087b80dc9572f1f176dac986a65da5d8410af34`,
+     distinto do binário gravado; não houve novo flash. Não é correção física
+     aceita nem aplicada automaticamente. Os marcos de
+   codec ainda não foram exercitados no hardware; cobertura host não prova
+   I2S/FATFS/codec. Playback, jack e controles permanecem pendentes.
+   `tests/manual/music-player-validation.pt-BR.md`
+  registra a ordem do gate recovery/Hosted antes do app e dos testes speaker/jack;
+  `version.txt=3` identifica o próximo firmware integrado.
 
 | Arquivo | Simbolos/funcao | Papel |
 | --- | --- | --- |
@@ -786,6 +1035,28 @@ pelo comando `wifi` e pela auditoria local.
 Lifecycle diagnostics: `cyberdeck_app_runtime.cpp` preserves the bounded last
 error restored for each application, exposes it as `last_error` in `app info`,
 and emits structured bounded logger events for start, stop, failure and timeout.
+A new start attempt clears diagnostics from the previous attempt; a successful
+hook then leaves no stale `last_error`, unless the current hook exceeded its
+lifecycle budget and records a fresh timeout. `test_app_runtime` covers recovery
+from `failed` to `running` and verifies that `app info` reports `last_error: none`.
+
+Recovery clear is an explicit acknowledgement of the current interrupted boot:
+`clear_safe_mode` clears the latch, `boot_pending`, and interruption count in one
+persisted transition. This prevents the reset caused by closing/reopening the
+USB Serial-JTAG connection from counting the just-cleared safe-mode boot as a
+new interruption. The pure policy test and Phase 10 contract cover the atomic
+transition.
+
+Foreground execution is exclusive: the runtime tracks `active_foreground`, and
+`switch_foreground` completes the previous app's teardown (including dependent
+apps) before starting the next. Command dispatch uses the same activation path;
+`start_all` does not eagerly start foreground apps. The shell/console owner stays
+protected from self-deactivation by the foreground switch API and by the existing
+`stops_console_owner` rule. `test_app_runtime` covers
+switch, failed teardown/start, restart and command-driven activation.
+The console owner itself cannot be reactivated through `switch_foreground` from
+its own command channel, so a shell command cannot tear down its only control
+surface. The device check remains blocked by the persistent recovery latch.
 
 Command help metadata: `manifest::command_help_entries` in
 `cyberdeck_app_runtime.h` aligns usage/parameter text with declared commands;
@@ -814,7 +1085,7 @@ shortcuts remain interactive documentation, not shell commands.
 | `components/cyberdeck/include/apps/system/cyberdeck_system_apps.h`, `components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp` | `cyberdeck_system_apps_register`, `cyberdeck_system_apps_start_logging`, `cyberdeck_system_apps_start`, `cyberdeck_system_apps_start_safe_mode`, `service_application`, `event_log_logger`, `make_manifest` | Registro fixo dos system apps do Tab5, incluindo `cyberdeck.event_log`. O adaptador `event_log_logger` implementa a porta `cyberdeck_apps::logger` e encaminha ao backend persistente; o supervisor injeta essa porta ao registrar as aplicações. `cyberdeck_system_apps_start_logging` inicia o logger antes do restante do boot, `cyberdeck_system_apps_start` delega a ordem dos demais apps ao supervisor via `start_all`, e `cyberdeck_system_apps_start_safe_mode` tenta toda a superfície permitida (event log, shell e Serial-JTAG), registra cada falha no recovery e retorna erro sem abortar nem iniciar serviços proibidos. `make_manifest` declara tipo, dependências, recursos, capacidades, stack, fila e orçamento de lifecycle por app (Wi-Fi usa 8 s, pois `wifi_mgr_start()` leva ~2,7 s para subir o radio C6 e o storage SD). SSH, BLE, Serial e Screenshot possuem stop idempotente com joins bounded; Wi-Fi expõe `wifi_mgr_stop()` com join dos dois workers, cancelamento de timers/callbacks e quarentena fail-safe. |
 | `components/cyberdeck/include/apps/system/cyberdeck_time_sync.h`, `components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp` + `tests/host/keymap/time_sync_traceability.md` | `cyberdeck_time_sync_start`, `cyberdeck_time_sync_stop`, `cyberdeck_time_sync_boot_ready` | System app assíncrono `cyberdeck.time_sync`, dependente de Wi-Fi: após o checkpoint de boot e somente com conexão + IP agenda uma única tentativa por token, primeiro em `https://timeapi.io/api/time/current/zone?timeZone=UTC`, com fallback em `https://worldtimeapi.org/api/timezone/Etc/UTC` somente para falha de transporte/HTTP/corpo/parser. Ambas usam CA bundle oficial, timeout independente de 4000 ms e corpo bounded a 2048 bytes; a primeira valida JSON com `year`, `month`, `day`, `hour`, `minute`, `seconds`, `timeZone == UTC`, tipos numéricos e data válida, enquanto o fallback preserva `timezone == Etc/UTC` e `utc_datetime` com fração opcional. Nenhum caminho altera o clock antes da validação; somente `settimeofday` bem-sucedido produz o evento `time_sync`/`success` depois do `fsync` real em `events.log`, sem fallback após tentativa válida de atualização. A task assíncrona (stack de 16384 bytes), criada com `xTaskCreateWithCaps` e encerrada com `vTaskDeleteWithCaps`, callback, token por conexão e teardown são idempotentes/quiescentes; stop é observado entre as duas tentativas e o orçamento de lifecycle cobre ambas sem bloquear boot. O caminho crítico usa fila durável prioritária bounded, retry limitado e diagnóstico de backpressure; a projeção textual é best-effort. A matriz em `time_sync_traceability.md` mantém REQ/AC -> TEST, distinguindo host de TEST-TIME-10 manual. | REQ-TIMELOG-01..04, AC-TIMELOG-01..04 |
 | `components/cyberdeck/include/apps/system/cyberdeck_recovery_policy.h`, `components/cyberdeck/src/apps/system/cyberdeck_recovery_policy.cpp` | `cyberdeck_recovery::state`, `begin_boot`, `commit_ready`, `record_error` | Politica pura e bounded de recovery: blob versionado conceitualmente, tentativa pendente, tres boots interrompidos, latch de safe mode e ultimo erro por app. Nao depende de ESP-IDF/NVS. |
-| `components/cyberdeck/include/apps/system/cyberdeck_recovery.h`, `components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp` | `cyberdeck_recovery::init`, `safe_mode`, `commit_ready`, `clear_safe_mode`, `record_app_error` | Adaptador NVS da politica. Usa o namespace NVS `cyberdeck_rec` (limite de 15 caracteres; distinto do namespace C++), persiste a tentativa antes do startup e o checkpoint somente no fim; falha, corrupcao ou indisponibilidade nao dispara `nvs_flash_erase`. O TU depende de NVS/ESP-IDF e permanece na allowlist explicita do guard de coverage, coberto pelo contrato estrutural da Fase 10. |
+| `components/cyberdeck/include/apps/system/cyberdeck_recovery.h`, `components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp` | `cyberdeck_recovery::init`, `safe_mode`, `commit_ready`, `clear_safe_mode`, `record_app_error` | Adaptador NVS da politica. Usa o namespace NVS `cyberdeck_rec` (limite de 15 caracteres; distinto do namespace C++), persiste a tentativa antes do startup e o checkpoint somente no fim; falha, corrupcao ou indisponibilidade nao dispara `nvs_flash_erase`. O adapter real é ligado no host via `test_recovery_runtime.cpp` com NVS fake; é coberto e removido da allowlist de coverage. |
 | `components/cyberdeck/include/apps/system/cyberdeck_service_ports.h`, `components/cyberdeck/src/apps/system/cyberdeck_service_ports.cpp` | `cyberdeck_apps::service_ports::{wifi,ssh,ssh_generation,ble,serial_start,serial_stop}` | Gateway das portas de serviço consumidas pela composição da UI. Centraliza Wi-Fi, SSH, BLE e Serial; `cyberdeck_ui.cpp` não referencia mais diretamente `wifi_mgr_*`, `ssh_client_*`, `ble_mgr_*` ou `bridge_start`. Serial expõe stop cooperativo bounded. A porta SSH também expõe a geração monotônica aceita para filtragem de eventos stale; os callbacks continuam bounded nos contratos públicos existentes; a conversão geral para event bus permanece pendente. |
 | `components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp` | `session::execute_line`, `help_text` | Resolve help na rota dinâmica antes do shell local e do passthrough SSH, preservando o eco normal do comando. `help_text` concatena os 18 comandos legados com comandos dos manifests atualmente registrados, independentemente do lifecycle; remove colisões/duplicatas e categoriza as linhas como `[terminal]`/`[app]`. Apps como `edit`/`demo` aparecem quando registrados; em safe mode, só aparecem apps registrados nesse runtime. O runtime permanece fora do formatter header-only host-linkable. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_shell_console.h`, `components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp` | `k_terminal_limit`, `utf8_char_count`, `utf8_valid_start_offset`, `truncate_left_utf8`, `fit_prompt_marker`, `fit_visible_line`, `session_mode`, `mode_for`, `surface_state`, `line_input`, `line_view`, `compose`, `first_token`, `is_legacy_command`, `dispatcher::resolve`, `dispatcher::collisions` | Politica pura do console do shell (Fase 7), sem LVGL, ESP-IDF, terminal ou sessao local. As helpers de UTF-8 e de ajuste de largura foram movidas do TU anonimo de `cyberdeck_ui.cpp` sem alterar comportamento, de modo que prompt, linha e scrollback tem uma unica autoria sobre o limite de 12288 bytes (`k_terminal_limit = cyberdeck_edit_line::limit`). `compose` aplica mascara na senha, suprime o prompt local quando outro dono controla a entrada ou quando SSH esta conectado, preserva a linha remota filtrada sem inferir prompt e clampa o cursor na janela visivel UTF-8. `dispatcher` resolve o primeiro token e preserva o roteamento existente. |
@@ -1320,8 +1591,8 @@ branch; it is directed by `test_display_lock_contract` in the host Makefile.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h` | `cyberdeck_serial::k_max_ndjson_line=4096`, `k_max_rid_len=64`, `k_screen_chunk_bytes=1024`, `k_fs_write_max_bytes=2048`, `dispatch_error`, `request/response/dispatch_result`, `SysInfo/WifiNet`, `LineAssembler`, `crc32/screen_bmp_size/screen_chunk_bounds/screen_dump_*`, `sys_info_* / wifi_scan_* / handle_* / dispatch_one / build_envelope`, `bridge_start`/`bridge_stop` (`#ifdef ESP_PLATFORM`) | Contrato NDJSON bounded e lifecycle da task `serial_brg`: start aguarda prontidão, stop solicita saída e faz join bounded sem desmontar driver, hook global ou sincronização compartilhada. `fs.write` seguro com path confinado, 2048 decoded, Base64 canonico, commit por temp unico no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename (replace atomico no host; no-clobber no ESP/FATFS) e NDJSON errors. Header puro (sem `esp_err.h`). |
-| `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp` | parser JSON proprio (`parse_value` classifica e decodifica cada valor numa unica passada: string vira `kind::string` com `s` decodificado e `raw` literal com aspas), dispatch, sessao BMP/CRC, LineAssembler; `term.dump` reutiliza a API textual bounded da UI, com JSON escaping e envelope <=3500; `fs.write` (campos `path/data_b64/size` no `k_request_fields`, tipo conhecido `fs.write`, validacao rid/type/path/data_b64/size, path safety traversal/symlink/directory/parent, 2048, Base64 strict canonico `b64_decode_canonical`, temp unico `.fswrite.<sequencia>.tmp` no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename sem unlink do destino, CRC; no ESP exige `O_NOFOLLOW` e limita `/sdcard` ao VFS FATFS sem symlink/openat, valida parents e o descriptor temporario, rejeita overwrite existente porque nao ha garantia de replace atomico, e preserva o destino em falha de rename; no host a raiz logica `/sdcard` e reancorada em sandbox `/tmp/cyberdeck5_sd` via `CYBERDECK_SD_ROOT`); device: task `serial_brg` com handle real, handshake de prontidao, stop cooperativo/join bounded e estado fail-safe, driver USB Serial-JTAG, `esp_log_set_vprintf` com mutex, hooks UI/wifi/screen/fs | Dispatch NDJSON sem alocacao >4096, validacao UTF-8/rid/type, `screen.dump` byte-identical em chunks 1024 com CRC IEEE e flag `end`, feeder tolerante a logs/fragmentacao, `sys.info`/`wifi` e `term.dump`; `fs.write` com validacao completa, commit seguro e erros tipados `invalid_path`/`invalid_payload`/`io_error`. A captura LVGL de `screen.dump` mantém snapshot, cópia e destruição sob o lock do display. Autocontido em relacao a `screenshot_bmp_*` fora de `ESP_PLATFORM`: os tres testes que nao linkam `screenshot_bmp.cpp` nao veem undefined de funcoes externas (stride/size/header/conv sao espelhados localmente com formulas identicas). |
+ | `components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h` | `cyberdeck_serial::k_max_ndjson_line=4096`, `k_max_rid_len=64`, `k_screen_chunk_bytes=1024`, `k_fs_write_max_bytes=2048`, `dispatch_error`, `request/response/dispatch_result`, `SysInfo/WifiNet`, `LineAssembler`, `crc32/screen_bmp_size/screen_chunk_bounds/screen_dump_*`, `sys_info_* / wifi_scan_* / handle_* / dispatch_one / build_envelope`, `bridge_start`/`bridge_stop` (`#ifdef ESP_PLATFORM`) | Contrato NDJSON bounded e lifecycle da task `serial_brg`: start aguarda prontidão, stop solicita saída e faz join bounded sem desmontar driver, hook global ou sincronização compartilhada. `sys.info` acrescenta heap interno/DMA/PSRAM, inclusive maior bloco interno e DMA; campos são opcionais ao decodificar respostas para compatibilidade. `fs.write` seguro com path confinado, 2048 decoded, Base64 canonico, commit por temp unico no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename (replace atomico no host; no-clobber no ESP/FATFS) e NDJSON errors. Header puro (sem `esp_err.h`). |
+| `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp` | parser JSON proprio (`parse_value` classifica e decodifica cada valor numa unica passada: string vira `kind::string` com `s` decodificado e `raw` literal com aspas), dispatch, sessao BMP/CRC, LineAssembler; `term.dump` reutiliza a API textual bounded da UI, com JSON escaping e envelope <=3500; `fs.write` (campos `path/data_b64/size` no `k_request_fields`, tipo conhecido `fs.write`, validacao rid/type/path/data_b64/size, path safety traversal/symlink/directory/parent, 2048, Base64 strict canonico `b64_decode_canonical`, temp unico `.fswrite.<sequencia>.tmp` no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename sem unlink do destino, CRC; no ESP exige `O_NOFOLLOW` e limita `/sdcard` ao VFS FATFS sem symlink/openat, valida parents e o descriptor temporario, rejeita overwrite existente porque nao ha garantia de replace atomico, e preserva o destino em falha de rename; no host a raiz logica `/sdcard` e reancorada em sandbox `/tmp/cyberdeck5_sd` via `CYBERDECK_SD_ROOT`); `sys.info` reporta heap total, interno, DMA e PSRAM, incluindo maior bloco livre interno/DMA; device: task `serial_brg` com handle real, handshake de prontidao, stop cooperativo/join bounded e estado fail-safe, driver USB Serial-JTAG, `esp_log_set_vprintf` com mutex, hooks UI/wifi/screen/fs | Dispatch NDJSON sem alocacao >4096, validacao UTF-8/rid/type, `screen.dump` byte-identical em chunks 1024 com CRC IEEE e flag `end`, feeder tolerante a logs/fragmentacao, `sys.info`/`wifi` e `term.dump`; `fs.write` com validacao completa, commit seguro e erros tipados `invalid_path`/`invalid_payload`/`io_error`. A captura LVGL de `screen.dump` mantém snapshot, cópia e destruição sob o lock do display. Autocontido em relacao a `screenshot_bmp_*` fora de `ESP_PLATFORM`: os tres testes que nao linkam `screenshot_bmp.cpp` nao veem undefined de funcoes externas (stride/size/header/conv sao espelhados localmente com formulas identicas). |
 | `tools/cyberdeck_cli.py` | `CyberdeckSession`, `open_session/connect`, `exchange`, comandos `ping/sys.info/wifi.status/wifi.scan/ui.click/ui.tap/ui.type/ui.dump/term.dump/ui.clear/screen.shot/screen.dump/fs.write`, `build_request` com `--data/--data-b64/--input/--stdin/--size/stdin`, `validate_fs_write_path`, `decode_b64_canonical`, `read_fs_write_input`, `FS_WRITE_MAX_BYTES=2048`, encoding Base64 canonico | Cliente NDJSON host: correlacao por `rid` (sem campo `action`), descarte de logs/frames nao-JSON, `term.dump` como resposta unica com snapshot textual bounded, validacao de dump (contiguidade, Base64 canonico, `size`/`chunks`/`crc32` do `start`); `fs.write` com CLI seguro (build_request, input/stdin, 2048, strict canonical, recusa eager de path invalido); pyserial opcional com mensagem clara. |
 | `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp` | O helper de truncamento UTF-8 de `term.dump` pertence ao bloco `ESP_PLATFORM`, pois somente o caminho do dispositivo o utiliza. |
 | `main/app_main.cpp` | `cyberdeck_serial::bridge_start()` | Inicia a ponte ao fim do boot, apos `wifi_mgr_start()`; falha loga aviso sem abortar o boot (ordem do `test_boot_sequence.py` preservada). |
@@ -1464,7 +1735,7 @@ próprio de 2 s para chamadas SD/VFS.
 | `screen_off.cpp` + `cyberdeck_ui.cpp` + `cyberdeck_shell_utils.cpp` + `cyberdeck_serial_bridge.cpp` + `app_main.cpp` + `cyberdeck_shell_help.h` | `test_screen_protection_contract.py` (rotas de comando, literal `screen [on|off|timeout <0-1440>]` na linha do bloco screen do catalogo compartilhado (4 campos, incluindo parametros) com delegacao `cyberdeck_help_text()` -> `cyberdeck_shell_help::text()`, fixture `contracts/cyberdeck_help.h` e os dois testes comportamentais que a comparam, timer LVGL, persistencia/restauracao NVS, default seguro, init NVS antes do adapter, duplo toque e caminho transitivo `ui.type` -> `inject_text_segmented`/`inject_enter` -> `cyberdeck_keyboard_input`; o alvo do Makefile declara todos esses arquivos como pre-requisitos) |
 | `cyberdeck_history.cpp` | `test_history.cpp` |
 | `cyberdeck_edit_line.cpp` | `test_edit_line.cpp`, `test_prompt_behavior.py` |
-| `cyberdeck_local_shell.cpp`, `cyberdeck_cat_worker.cpp` | `test_local_shell.cpp` (raiz virtual `/`, caminhos relativos/absolutos, rejeição do alias `/sdcard`, confinamento, operações e regressões de segurança; acrescenta casos de symlink, abertura, limites e erros bounded de comandos; snapshot atual: 1106 checks, baseline 1047), `test_cat_multiline.cpp` (API dedicada com cwd `/` e alias físico rejeitado, LF/CRLF/tabs/UTF-8, marcador final, bytes inválidos, limite exato de 12288, NUL embutido e sufixo após newline preservados para sanitização), `cat_contract.py`, `test_cat_multiline_contract.py` (contrato estrutural de ponteiro+tamanho explícito, textarea multiline/max-length, limite UTF-8 e payload completo até append), `test_cat_lifecycle_sanitization_contract.py` (ramos sem task vs. com task, drain/join/ack, reset sincronizado, callback/generation e sanitizacao), `test_cat_start_teardown_start_contract.py` (restart e invalidacao stale), `test_cat_stack_footprint_contract.py` (regressao do stack minimo do worker), `test_cat_worker_path_safety_contract.py` (proibe o caminho worker->shell/resolve/path/vector e exige API cat-specific heap/bounded), `local_shell_security_contract.py`, `local_shell_tokenizer_contract.py` (tokenização e contrato estrutural do root `/`), `test_prompt_behavior.py`, `test_local_prompt_contract.py` |
+| `cyberdeck_local_shell.cpp`, `cyberdeck_cat_worker.cpp` | `test_local_shell.cpp` (raiz virtual `/`, caminhos relativos/absolutos, rejeição do alias `/sdcard`, confinamento, operações e regressões de segurança; inclui secure-open/opendir para arquivo, diretório, symlink, traversal e tamanho; focado atual: 1122 checks), `test_cat_multiline.cpp` (API dedicada com cwd `/` e alias físico rejeitado, LF/CRLF/tabs/UTF-8, marcador final, bytes inválidos, limite exato de 12288, NUL embutido e sufixo após newline preservados para sanitização), `cat_contract.py`, `test_cat_multiline_contract.py` (contrato estrutural de ponteiro+tamanho explícito, textarea multiline/max-length, limite UTF-8 e payload completo até append), `test_cat_lifecycle_sanitization_contract.py` (ramos sem task vs. com task, drain/join/ack, reset sincronizado, callback/generation e sanitizacao), `test_cat_start_teardown_start_contract.py` (restart e invalidacao stale), `test_cat_stack_footprint_contract.py` (regressao do stack minimo do worker), `test_cat_worker_path_safety_contract.py` (proibe o caminho worker->shell/resolve/path/vector e exige API cat-specific heap/bounded), `local_shell_security_contract.py`, `local_shell_tokenizer_contract.py` (tokenização e contrato estrutural do root `/`), `test_prompt_behavior.py`, `test_local_prompt_contract.py` |
 | `event_log_recent.cpp` + Kconfig/log shell | `test_event_log_recent.cpp` (default 20 preservado, capacidade 64, faixa 1..64, wrap/clamp/ordem e canário), `test_event_log_contract.py`, `test_event_log_config_contract.py` (contrato estrutural do anel e binding Kconfig), `test_shell_session.cpp` (parser/sessão e `log lines 40` com 40 eventos) |
 | `cyberdeck_clock.cpp` | `test_clock_formatter.cpp` |
 | `cyberdeck_wifi_indicator.cpp` | `test_wifi_indicator_state.cpp` |

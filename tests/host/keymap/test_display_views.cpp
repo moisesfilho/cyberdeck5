@@ -2,6 +2,7 @@
 #include "platform/display/cyberdeck_terminal_view.h"
 #include "platform/display/cyberdeck_editor_view.h"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <iostream>
@@ -113,10 +114,32 @@ int main()
         clock->x, clock->y};
     assert(geometry_after_long_text == geometry_before_long_text);
     header.update_ble(false); header.update_ble(true); header.update_ble(false);
+    /* TEST-AUDIO-26/27: real header view keeps the global music action hidden
+     * while idle, exposes it for active/paused playback, and dispatches the
+     * registered action exactly once. */
+    assert(right->children.size() == 4);
+    const auto *music_button = right->children[3];
+    assert(music_button->hidden);
+    assert(music_button->width == 26 && music_button->height == 36);
+    assert(music_button->children.size() == 1);
+    assert(!music_button->children[0]->text.empty());
+    int music_action_calls = 0;
+    const auto music_action = [](void *context) { ++*static_cast<int *>(context); };
+    header.set_music_action(music_action, &music_action_calls);
+    lv_shim_emit_event(const_cast<lv_obj_t *>(music_button), LV_EVENT_CLICKED);
+    assert(music_action_calls == 1);
+    header.update_music(false);
+    assert(music_button->hidden);
+    header.update_music(true);
+    assert(!music_button->hidden);
+    header.dispatch_music_action();
+    assert(music_action_calls == 2);
+    header.update_music(false);
+    assert(music_button->hidden);
     header.update_wifi(false); header.update_wifi(true);
     cyberdeck_battery_view::presentation presentation{};
     header.update_battery(presentation);
-    assert(right->children.size() == 3);
+    assert(right->children.size() == 4);
     assert(right->children[0]->hidden);
     assert(right->children[1]->children.size() == 4);
     assert(right->children[2]->hidden);
@@ -338,6 +361,21 @@ int main()
     assert(newest[0] == "eight" && newest[1] == "nine");
     touch_swipe(terminal, touch, 120, -120);
     assert(visible_line_texts(terminal, cursor) == newest);
+
+    /* TEST-AUDIO-28: with preceding shell scrollback, the appended music panel
+     * remains at the bottom of the real terminal view and survives navigation
+     * away from, then back to, the newest viewport. */
+    const std::string panel_transcript =
+        "old-0\nold-1\nold-2\nold-3\nold-4\nold-5\n[MUSIC PANEL]\nEscape: return\n";
+    terminal.render(panel_transcript);
+    std::vector<std::string> panel_bottom = visible_line_texts(terminal, cursor);
+    assert(std::find(panel_bottom.begin(), panel_bottom.end(), "Escape: return") != panel_bottom.end());
+    touch_swipe(terminal, touch, -120, 120);
+    const std::vector<std::string> panel_oldest = visible_line_texts(terminal, cursor);
+    assert(!panel_oldest.empty() && panel_oldest.front() == "old-0");
+    touch_swipe(terminal, touch, 120, -120);
+    panel_bottom = visible_line_texts(terminal, cursor);
+    assert(std::find(panel_bottom.begin(), panel_bottom.end(), "Escape: return") != panel_bottom.end());
 
     /* TEST-CURSOR-05 / REQ-LAT04-08: scrolling away hides the editing cursor, blink ticks
      * cannot resurrect it over historical output, and returning to bottom

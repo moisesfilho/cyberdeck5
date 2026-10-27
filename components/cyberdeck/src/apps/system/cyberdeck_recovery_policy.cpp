@@ -35,8 +35,8 @@ bool clear_safe_mode(state &value)
 {
     if (value.version != k_state_version) return false;
     value.safe_mode_latched = false;
-    value.interrupted_boots = 0;
     value.boot_pending = false;
+    value.interrupted_boots = 0;
     return true;
 }
 

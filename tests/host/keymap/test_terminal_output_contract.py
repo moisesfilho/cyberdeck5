@@ -320,7 +320,10 @@ def main() -> int:
     assert "if (!complete && output.size() > available)" in rendered
     assert "constexpr size_t viewport_bytes = 4096;" in source
     term_dump = body(source, "extern \"C\" esp_err_t cyberdeck_ui_term_dump(")
-    assert "const std::string rendered = get_rendered_output(view, true) + view.text();" in term_dump
+    assert "std::string rendered = get_rendered_output(view, true);" in term_dump
+    assert "if (s_music_ui_active)" in term_dump
+    assert 'rendered += music_tui_panel();' in term_dump
+    assert "rendered += view.text();" in term_dump
     assert "truncate_left_utf8(rendered, capacity)" in term_dump
     assert "*out_bytes = snapshot.size();" in term_dump
     assert "*out_truncated = rendered.size() > snapshot.size() ? 1 : 0;" in term_dump
