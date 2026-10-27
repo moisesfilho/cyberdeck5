@@ -7,6 +7,8 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
+#include "soc/soc_caps.h"
 #include "bsp_err_check.h"
 #include "driver/ledc.h"
 #include "esp_lcd_panel_io.h"
@@ -467,7 +469,22 @@ static lv_display_t *bsp_display_lcd_init(const bsp_display_cfg_t *cfg)
         }
     };
 
-    return lvgl_port_add_disp_dsi(&disp_cfg, &dpi_cfg);
+    const uint32_t buffer_caps = cfg->flags.buff_dma ? MALLOC_CAP_DMA | MALLOC_CAP_8BIT : MALLOC_CAP_8BIT;
+    const size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    const size_t largest_dma = heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    const uint32_t allocation_caps = buffer_caps | (cfg->flags.buff_spiram ? MALLOC_CAP_SPIRAM : 0);
+    const size_t free_buffer = heap_caps_get_free_size(allocation_caps);
+    const size_t largest_buffer = heap_caps_get_largest_free_block(allocation_caps);
+    const size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ESP_LOGI(TAG, "LVGL buffers: bytes=%lu buffer_free=%lu buffer_largest=%lu dma_free=%lu dma_largest=%lu internal_free=%lu",
+             (unsigned long)(disp_cfg.buffer_size * sizeof(lv_color_t) * (disp_cfg.double_buffer ? 2U : 1U)),
+             (unsigned long)free_buffer, (unsigned long)largest_buffer,
+             (unsigned long)free_dma, (unsigned long)largest_dma, (unsigned long)free_internal);
+    lv_display_t *display = lvgl_port_add_disp_dsi(&disp_cfg, &dpi_cfg);
+    if (display == NULL) {
+        bsp_display_delete();
+    }
+    return display;
 }
 #endif // (BSP_CONFIG_NO_GRAPHIC_LIB == 0)
 
@@ -565,6 +582,11 @@ static esp_err_t bsp_touch_exit_sleep(void)
 #if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)
 lv_display_t *bsp_display_start(void)
 {
+#if SOC_PSRAM_DMA_CAPABLE
+    const bool draw_buffers_in_spiram = true;
+#else
+    const bool draw_buffers_in_spiram = false;
+#endif
     bsp_display_cfg_t cfg = {
         .lvgl_port_cfg = {
             .task_priority = 4,
@@ -582,7 +604,7 @@ lv_display_t *bsp_display_start(void)
 #endif
         .flags = {
             .buff_dma = true,
-            .buff_spiram = false,
+            .buff_spiram = draw_buffers_in_spiram,
             .sw_rotate = true,
         }
     };
@@ -592,9 +614,35 @@ lv_display_t *bsp_display_start(void)
 lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg)
 {
     assert(cfg != NULL);
-    BSP_ERROR_CHECK_RETURN_NULL(lvgl_port_init(&cfg->lvgl_port_cfg));
-    BSP_NULL_CHECK(disp = bsp_display_lcd_init(cfg), NULL);
-    BSP_NULL_CHECK(disp_indev_touch = bsp_display_indev_touch_init(disp), NULL);
+    esp_err_t err = lvgl_port_init(&cfg->lvgl_port_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LVGL port init failed: %s", esp_err_to_name(err));
+        return NULL;
+    }
+
+    disp = bsp_display_lcd_init(cfg);
+    if (disp == NULL) {
+        ESP_LOGE(TAG, "LVGL display initialization failed; touch init skipped");
+        bsp_display_delete();
+        err = lvgl_port_deinit();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "LVGL port cleanup after display failure failed: %s", esp_err_to_name(err));
+        }
+        return NULL;
+    }
+
+    disp_indev_touch = bsp_display_indev_touch_init(disp);
+    if (disp_indev_touch == NULL) {
+        ESP_LOGE(TAG, "Touch initialization failed; removing partial display");
+        lvgl_port_remove_disp(disp);
+        disp = NULL;
+        bsp_display_delete();
+        err = lvgl_port_deinit();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "LVGL port cleanup after touch failure failed: %s", esp_err_to_name(err));
+        }
+        return NULL;
+    }
 
     return disp;
 }
