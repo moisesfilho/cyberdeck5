@@ -299,6 +299,20 @@ def test_events_read_includes_and_validates_recovery_journal():
             "events.read deve expor bytes do journal para gravação local")
 
 
+def test_events_read_output_directory_is_private_and_portable():
+    import ast
+
+    tree = ast.parse((ROOT / "tools/cyberdeck_cli.py").read_text())
+    source = (ROOT / "tools/cyberdeck_cli.py").read_text()
+    require('tempfile.gettempdir()' in source and 'os.makedirs(output_dir, mode=0o700, exist_ok=True)' in source,
+            "events.read deve usar diretório temporário portátil com permissões privadas")
+    require('"/tmp/opencode/' not in source,
+            "events.read não deve fixar um diretório temporário compartilhado")
+    require(any(isinstance(node, ast.Import) and any(alias.name == "tempfile" for alias in node.names)
+                for node in ast.walk(tree)),
+            "CLI deve importar tempfile explicitamente")
+
+
 def main_all():
     # The explicit recovery clear is a real device command; expose its exact
     # request through the CLI without triggering it during local tests.
@@ -316,6 +330,7 @@ def main_all():
     test_no_response_returns_2()
     test_unknown_command_rejected()
     test_events_read_includes_and_validates_recovery_journal()
+    test_events_read_output_directory_is_private_and_portable()
     print("PASS: term_dump_cli")
     return 0
 

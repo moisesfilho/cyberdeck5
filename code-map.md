@@ -82,6 +82,8 @@ ele não é artefato de `BINS`.
 valide corretamente o ciclo de parada e a revogação do grant.
 No runtime, iniciar novamente o foreground já ativo é idempotente, inclusive
 para o dono do console; o bloqueio de parar o console continua separado.
+`test_term_dump_cli.py` cobre o uso de diretório temporário portátil e privado
+na gravação dos logs recuperados por `events.read`.
 
 Os 27 candidatos finais (shell/runtime, editor, diagnóstico de rede, bateria,
 cat, BLE, display, known hosts e poweroff) usam objetos e depfiles próprios
@@ -619,9 +621,9 @@ frames. Use `python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 events.read` to
 capture both the SD text log and the NVS recovery journal without opening a
 second serial reader. The journal is best-effort and never changes the recovery
 state or blocks boot if its own NVS write fails; journal commit errors are logged
-to UART. The CLI writes decoded payloads
-to `/tmp/opencode/cyberdeck-sd-event-log.txt` and
-`/tmp/opencode/cyberdeck-recovery-journal.txt` for inspection.
+to UART. The CLI writes decoded payloads beneath
+`<system temporary directory>/opencode/` (mode 0700), using
+`cyberdeck-sd-event-log.txt` and `cyberdeck-recovery-journal.txt`.
 Physical capture after flashing hash
 `32ff8e16224d63e74f4eef3f7e899e1d667d5b817ddb8ca4a63b0399cbb4d802` showed two
 boots with prior `safe=1,pending=0,interrupted=0`, followed by `boot_begin` and

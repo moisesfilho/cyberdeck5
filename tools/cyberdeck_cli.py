@@ -21,7 +21,9 @@ import base64
 import binascii
 import itertools
 import json
+import os
 import sys
+import tempfile
 import time
 import zlib
 
@@ -516,10 +518,13 @@ def main(argv=None) -> int:
             return 2
 
     if args.command == "events.read":
-        for event, path in (("sd_log", "/tmp/opencode/cyberdeck-sd-event-log.txt"),
-                            ("recovery_log", "/tmp/opencode/cyberdeck-recovery-journal.txt")):
+        output_dir = os.path.join(tempfile.gettempdir(), "opencode")
+        os.makedirs(output_dir, mode=0o700, exist_ok=True)
+        for event, name in (("sd_log", "cyberdeck-sd-event-log.txt"),
+                            ("recovery_log", "cyberdeck-recovery-journal.txt")):
             payload = CyberdeckSession.events_payload(frames, event)
             if payload:
+                path = os.path.join(output_dir, name)
                 with open(path, "wb") as output:
                     output.write(payload)
                 print("events.read: %s salvo em %s (%d bytes)" % (event, path, len(payload)), file=sys.stderr)
