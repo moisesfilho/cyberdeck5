@@ -1,6 +1,8 @@
 #include "apps/runtime/cyberdeck_app_runtime.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <utility>
 
@@ -273,7 +275,7 @@ bool runtime::activate_foreground(std::size_t index) {
     if (states_[index] == app_state::running) {
         for (std::size_t i = 0; i < count_; ++i) {
             if (i != index && applications_[i]->get_manifest().type == app_type::foreground &&
-                states_[i] == app_state::running &&
+                states_[i] == app_state::running && !stops_console_owner(applications_[i]->get_manifest().id) &&
                 (!stop_index(i) || states_[i] != app_state::registered))
                 return false;
         }
@@ -282,6 +284,7 @@ bool runtime::activate_foreground(std::size_t index) {
     }
 
     if (previous != k_not_found && previous != index && states_[previous] == app_state::running &&
+        !stops_console_owner(applications_[previous]->get_manifest().id) &&
         (!stop_index(previous) || states_[previous] != app_state::registered))
         return false;
     if (previous == index)
@@ -307,7 +310,7 @@ void runtime::refresh_active_foreground() {
 
 bool runtime::stop_application(std::string_view id) {
     const std::size_t index = index_of(id);
-    if (index == k_not_found || !stop_index(index))
+    if (index == k_not_found || stops_console_owner(id) || !stop_index(index))
         return false;
     refresh_active_foreground();
     return true;
@@ -315,7 +318,7 @@ bool runtime::stop_application(std::string_view id) {
 
 bool runtime::restart_application(std::string_view id) {
     const std::size_t index = index_of(id);
-    if (index == k_not_found)
+    if (index == k_not_found || stops_console_owner(id))
         return false;
     if (applications_[index]->get_manifest().type == app_type::foreground) {
         if (states_[index] == app_state::running && !stop_index(index))
@@ -342,8 +345,13 @@ bool runtime::start_all() {
 
 bool runtime::stop_all() {
     bool ok = true;
-    for (std::size_t i = count_; i-- > 0;)
+    for (std::size_t i = count_; i-- > 0;) {
+        if (stops_console_owner(applications_[i]->get_manifest().id)) {
+            ok = false;
+            continue;
+        }
         ok = stop_index(i) && ok;
+    }
     refresh_active_foreground();
     return ok;
 }
@@ -512,28 +520,17 @@ bool runtime::stop_index(std::size_t index) {
                 return false;
         }
     }
-    /* Revoke before teardown so callbacks that outlive the hook cannot use a
-     * resource.  The generation check also invalidates copied facades. */
-    {
-        std::lock_guard<std::mutex> lock(grant_mutex_);
-        states_[index] = app_state::stopping;
-        applications_[index]->grant_ = {};
-        ++grant_generations_[index];
-    }
-    quotas_.revoke(index);
+    /* Teardown owns the cooperative stop/join boundary. Keep the app running
+     * and its grant valid until that boundary succeeds; a failed join must be
+     * retryable without losing the foreground surface or its resources. */
     log_lifecycle(index, "stop", "begin");
     const auto started = std::chrono::steady_clock::now();
     const bool stopped = applications_[index]->teardown() && !applications_[index]->running();
-    /* Keep revocation idempotent after the hook as well: a teardown may have
-     * retained a callback or returned through an error path. */
-    quotas_.revoke(index);
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     if (!stopped) {
-        {
-            std::lock_guard<std::mutex> lock(grant_mutex_);
-            states_[index] = app_state::failed;
-        }
+        /* Do not infer failure state from a partial teardown: the app may
+         * still own live worker resources and must remain the active owner. */
         failures_[index] = applications_[index]->running() ? "stop hook failed: app still running"
                                                           : "stop hook failed";
         log_lifecycle(index, "failure", "stop_hook_failed");
@@ -544,8 +541,11 @@ bool runtime::stop_index(std::size_t index) {
      * effective bound must be enforced by the service's cooperative join. */
     {
         std::lock_guard<std::mutex> lock(grant_mutex_);
+        applications_[index]->grant_ = {};
+        ++grant_generations_[index];
         states_[index] = app_state::registered;
     }
+    quotas_.revoke(index);
     if (elapsed > applications_[index]->get_manifest().lifecycle_timeout_ms) {
         failures_[index] = "stop hook timeout";
         log_lifecycle(index, "timeout", "stop_hook");
@@ -755,14 +755,19 @@ result runtime::execute_line(std::string_view line) {
             }
         }
         if (command_match) {
-            /* Command applications are demand-started at their dispatch
-             * boundary.  Use the normal lifecycle path so dependencies,
-             * grants and lifecycle diagnostics are identical to an explicit
-             * app start; service applications remain boot/lifecycle-owned. */
-            if (item.type == app_type::foreground && !activate_foreground(i))
-                return rejected("app: command application failed to start");
             const std::size_t args_begin = line.find(words[0]) + words[0].size();
             const std::string_view args = args_begin < line.size() ? line.substr(args_begin) : std::string_view{};
+            if (item.type == app_type::foreground) {
+                const bool active = active_foreground_ == item.id && states_[i] == app_state::running;
+                const bool no_arguments = std::all_of(args.begin(), args.end(), [](unsigned char value) {
+                    return std::isspace(value) != 0;
+                });
+                const bool opens_foreground = item.commands_require_active_foreground && no_arguments;
+                if (!active && item.commands_require_active_foreground && !opens_foreground)
+                    return rejected("app: command requires active foreground");
+                if ((!item.commands_require_active_foreground || opens_foreground) && !activate_foreground(i))
+                    return rejected("app: command application failed to start");
+            }
             return app.execute(matched_command, args);
         }
     }

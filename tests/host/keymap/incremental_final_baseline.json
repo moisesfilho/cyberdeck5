@@ -491,6 +491,7 @@
       "../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp",
       "../../../components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp",
       "../../../components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp",
+      "../../../components/cyberdeck/src/platform/display/cyberdeck_music_view.cpp",
       "../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp",
       "../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_indicator.cpp",
       "../../../components/cyberdeck/src/platform/display/cyberdeck_battery_view.cpp"

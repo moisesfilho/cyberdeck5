@@ -81,10 +81,36 @@ ele não é artefato de `BINS`.
 `start()` marca running e `stop()` limpa o estado, permitindo que o runtime
 valide corretamente o ciclo de parada e a revogação do grant.
 Os testes `test_app_runtime.cpp` e `test_shell_app.cpp` cobrem start repetido
-do foreground ativo, inclusive a preservação do console.
+do foreground ativo, inclusive a preservação do console. Ao ativar outro
+foreground, o runtime preserva o owner do console e seus dependentes, evitando
+invalidar a sessão que está executando o comando; stop/restart explícitos e
+stop-all protegem as cascatas do owner; stop-all ainda tenta parar aplicativos
+independentes e retorna falso se algum owner/dependente for retido. A sequência de música
+ativa também comprova dependência Serial preservada, retorno à shell e recusa
+de stop explícito sem desmontar a sessão; `test_shell_app.cpp` executa essa
+troca com a aplicação shell real e confirma identidade/linha da sessão no retorno.
+`TEST-RT-STOP-ALL-PROTECTED-FAILURE-01..05` combina owner de console, serviço
+Serial dependente e falha de teardown independente, verificando continuação,
+resultado falso, preservação da cadeia e retry seguro.
 `test_music_player.cpp` usa os shims FreeRTOS em
 `tests/host/keymap/music_runtime_shim/` para exercitar falhas de fila, semáforo,
 alocação de TCB e criação de task, verificando rollback da inicialização.
+`test_music_app.cpp` cobre enumeração e falhas/cancelamento de scan, além de
+integrar o stop falho do player ao runtime (foreground/grant retidos até retry)
+e reabertura com novo scan/fixture. Também confirma que grants permanecem
+válidos durante teardown pendente e são revogados após teardown bem-sucedido.
+`test_display_views` agora também links o TU real
+`cyberdeck_music_view.cpp` com o shim LVGL completo; cobre criação, renderização,
+visibilidade, os sete callbacks/contexto e destroy/recreate. Isso prova o
+dispatch da superfície no shim, não touch/teclado físico, que continua no roteiro
+manual. O shim completo fornece `LV_LABEL_LONG_WRAP` e `lv_label_get_text` para
+corresponder às APIs usadas pelo TU. O TU está incluído no scope guard sem
+allowlist.
+O runtime conserva estado foreground, grant
+e quota quando teardown falha, para que stop/join possa ser repetido sem liberar
+recursos vivos; somente teardown bem-sucedido revoga o grant e registra o app
+como parado. A rastreabilidade da
+surface, adapter e lifecycle fica em `tests/host/keymap/player_traceability.md`.
 `test_term_dump_cli.py` cobre o uso de diretório temporário portátil e privado
 na gravação dos logs recuperados por `events.read`.
 
@@ -788,17 +814,32 @@ destrói recursos potencialmente usados.
   (64 faixas, caminhos/títulos limitados, MP3 até 32 MiB), estados, seleção,
   progresso, seek, volume, shuffle/repeat e parser ID3v2.2–2.4 para título e
   artista. O app `cyberdeck.music` em `cyberdeck_music_app.{h,cpp}` registra o
-  comando de terminal `music` como app `background` (não participa da exclusividade
-  de foreground): `queue /diretorio` inicia scan assíncrono,
+  comando de terminal `music` como app foreground único, sujeito ao lifecycle e
+  exclusividade do runtime; `queue /diretorio` inicia scan assíncrono,
   `list`, `play [n]`, `pause`, `resume`, `stop`, `next`, `prev`, `seek
   <segundos>`, `volume`, `shuffle`, `repeat`, `status` e `help`. O scan limita a
-  64 MP3 regulares e consulta o secure-open do shell; mantém READ lease durante
+ 64 MP3 regulares e consulta o secure-open do shell; mantém READ lease durante
   enumeração e só publica uma fila completa após validar grant/lifecycle. Uma
   trava curta serializa a publicação final com stop/poweroff: quiesce fecha a
   admissão do scanner e marca cancelamento antes de aguardar o worker; uma
-  operação de secure-open já em voo não pode publicar resultado stale após esse
-  fence. Novos scans também são recusados quando o coordinator SD não está OPEN.
-  A enumeração e os waits continuam fora da UI.
+   operação de secure-open já em voo não pode publicar resultado stale após esse
+   fence. Novos scans também são recusados quando o coordinator SD não está OPEN.
+    A enumeração e os waits continuam fora da UI. REQ-PLAYER-01 acrescenta scan
+     recursivo lexicográfico de `/musica` (root=0, profundidade máxima 8), secure
+     opendir/open e máximo 64 com status truncado. Para manter memória de enumeração
+     bounded independentemente da quantidade de entradas de um diretório, seleciona
+     cada próximo nome lexicográfico por uma nova leitura do diretório; cada
+     `readdir` distingue EOF de erro via errno e qualquer erro/close failure aborta
+     antes da publicação. Fila e seleção antigas são limpas
+     ao admitir o scan. Pelo REQ-PLAYER-01 aprovado, `music` sem argumentos
+      abre/foca a interface dedicada e inicia nova busca `/musica`; os subcomandos,
+      incluindo `status` e `queue`, exigem o foreground ativo. `player` não cria
+      app separado. Manager/view/adapter em
+      `cyberdeck_music_manager.{h,cpp}` e `cyberdeck_music_view.{h,cpp}` isolam
+      input/render e executam close antes da liberação da view. Stop por Esc ou
+      troca cancela/junta scan e para playback; falha mantém foreground/grant/quota
+      ativos e bloqueia a troca, permitindo retry. `tests/host/keymap/player_traceability.md`
+     define os cenários de aceite foreground, falha, limites, segurança e regressão.
    - `cyberdeck_music_player.{h,cpp}` é o serviço FreeRTOS de playback em
     background: fila bounded de requisições e stack de worker em PSRAM byte-addressable
      (`xQueueCreateWithCaps`/`xTaskCreateStatic`); o TCB estático é alocado separadamente
@@ -842,7 +883,7 @@ destrói recursos potencialmente usados.
        interna dedicada (rollback se faltar RAM); `test_music_player` cobre as
        capabilities e rollback de queue, completion semaphore, TCB e worker task,
        além do lifecycle no host.
-   liberação após completion. Boot normal de 2026-10-27 confirmou LVGL/touch usando
+    liberação após completion. Boot normal de 2026-10-27 confirmou LVGL/touch usando
    buffers DMA PSRAM após Hosted/Wi-Fi. O mesmo boot revelou assert posterior em
    `xTaskCreateStaticPinnedToCore` (`portVALID_TCB_MEM`) porque o `StaticTask_t`
    estava dentro do `impl` alocado na PSRAM; agora o TCB é alocação interna dedicada,
@@ -856,11 +897,13 @@ destrói recursos potencialmente usados.
      `xQueueCreate` falhando com depth 8/item 268 B junto de falha na task BLE e
      socket HTTP; o motivo do esgotamento de memória interna permanece sistêmico e
      não é resolvido integralmente por esta realocação.
-   `test_music_decoder_stack_contract.py` verifica ownership/stack;
+    `test_music_decoder_stack_contract.py` verifica ownership/stack;
    `test_music_decoder_scratch.cpp` compara duas frames decodificadas com o
    wrapper upstream e scratch externo (PCM/status iguais, ASan/UBSan limpos).
-   Ambos estão no agregado e `BINS` inclui o novo binário; o contrato incremental
-    final espera 80 bins únicos. Host/build passaram; firmware corrigido SHA-256
+    Ambos estão no agregado e `BINS` inclui os novos binários. O alvo
+    `test_music_manager_bin` é um teste monolítico novo, fora dos 27 candidatos
+    per-TU da fixture incremental; assim o contrato preserva a fixture de 27 IDs/
+    176 TUs e verifica 81 bins únicos no total. Host/build passaram; firmware corrigido SHA-256
     `0bcb094320d7563f2d6b8d590a5220f417ba1b25f7ac3ff76550107b324c116d`
     gravado e verificado em `/dev/ttyACM0`. Boot com checkpoint, uptime 48→53 s,
     safe_mode=false, interrupted_boots=0, Wi-Fi com IP e sem erros RPC/RX/panic
@@ -869,7 +912,7 @@ destrói recursos potencialmente usados.
     e reiniciar ao tocar: a correção de stack foi insuficiente. Coredump está
     desabilitado (`sdkconfig`); sem log contemporâneo não há backtrace para
     localizar a falha restante. Nenhum novo play/flash após esse relato.
-   `cyberdeck_audio_output.{h,cpp}` integra
+    `cyberdeck_audio_output.{h,cpp}` integra
   `bsp_audio_codec_speaker_init`, codec ES8388, volume limitado a 50 e comuta
   amplificador do speaker conforme detecção do jack; o jack recebe saída do
   codec. A tabela `backend` é seam aditiva e instalável antes da primeira
@@ -893,7 +936,18 @@ destrói recursos potencialmente usados.
   confinamento e tipo por `stat`, então enumera diretamente com `opendir` no VFS
   FATFS (que não possui symlinks e não implementa fdopendir nem abertura de
   diretórios via `open(O_DIRECTORY)`). A abertura do arquivo de cada entrada
-  continua sendo revalidada pelo secure-open.
+  continua sendo revalidada pelo secure-open. A enumeração musical é bounded
+  por uma matriz de 64 tracks heap-backed e um scanner recursivo de profundidade
+  máxima 8; cada diretório escolhe incrementalmente o próximo nome ordenado sem
+  acumular entradas. O início da busca limpa a fila; erro real de `readdir` ou
+  `closedir` não publica tracks parcialmente descobertas. `test_music_app.cpp`
+  injeta falha de `readdir` depois de uma entrada e verifica que a fila fica sem
+  tracks parciais;
+   `test_music_scan_opendir_contract.py` guarda a branch ESP/FATFS e as ligações
+   manager/view/input/adapter da UI.
+  O manifesto único de `cyberdeck.music` declara `music` como comando principal
+  e `player` como alias para a mesma aplicação; o contrato e a fixture de
+  `test_shell_help.cpp` acompanham ambos sem duplicar o registro do app.
   Poweroff inclui estágio `music` após
   fechar admissão SD e antes do drain; `cyberdeck_music_poweroff_quiesce` cancela
   e aguarda scan e player.
@@ -908,14 +962,23 @@ destrói recursos potencialmente usados.
   REQ-MUSIC/AC-MUSIC/TEST-AUDIO; os casos de secure-open usam a produção real do
   shell em `test_local_shell.cpp` e exercitam recusa de symlink/traversal sem
   enfraquecer os flags `O_NOFOLLOW`.
-- `cyberdeck_header_view.{h,cpp}` adiciona botão global acionável enquanto há
-  playback; callback da TUI em `cyberdeck_ui.cpp` abre um painel no terminal e
-  Escape retorna ao conteúdo anterior. O painel é acrescentado após o scrollback
-  para permanecer visível no bottom-anchor sem ser gravado no histórico. Timer atualiza progresso/presença do
-  indicador e integra-se ao teardown/freeze da UI. Os comandos do shell seguem
-  o catálogo dinâmico de manifests de apps; não há view separada nem task de UI
-  dedicada.
-- Validação local do snapshot integrado: agregado host com flags coverage PASS;
+ - `cyberdeck_header_view.{h,cpp}` adiciona botão global acionável enquanto há
+   playback. O app foreground `cyberdeck.music` possui view dedicada e manager;
+   o timer atualiza metadados, estado, progresso e volume da mesma instância.
+   Touch oferece previous, play/pause, next, seek ±10 s e volume ±1; teclado
+   roteia Enter, setas, N/P e Esc. Esc/troca fazem stop/join antes de destruir a
+   view; em falha o foreground e seus grants são preservados para retry.
+   `test_music_manager` cobre input/close/ownership com callbacks host;
+   `test_app_runtime` cobre falha de teardown, incluindo estado running preservado
+   e revogação de grants somente após stop concluído. A view LVGL real e o áudio
+   continuam dependentes de validação manual.
+ - `tests/host/keymap/player_traceability.md` rastreia REQ-PLAYER-01 e os cenários
+   TEST-PLAYER-* de foreground, scan recursivo/seguro, limite 64, cancelamento,
+   controles e regressão. `test_music_app.cpp` cobre app/scan e ordenação; o
+   contrato `test_music_scan_opendir_contract.py` verifica a branch ESP/FATFS e
+   as ligações atuais manager/view/input/adapter sem se apresentar como prova de
+   comportamento LVGL.
+ - Validação local do snapshot integrado: agregado host com flags coverage PASS;
   gcovr 87.0% linhas / 94.8% funções / 59.0% branches; scope guard 73 TUs
    cobertas e 15 allowlisted; runtime recovery 23 checks; build ESP-IDF 6.1 PASS.
    A validação mais recente gravou o build com logs diagnósticos: boot/checkpoint,
@@ -957,6 +1020,12 @@ destrói recursos potencialmente usados.
    I2S/FATFS/codec. Playback, jack e controles permanecem pendentes.
    `tests/manual/music-player-validation.pt-BR.md`
   registra a ordem do gate recovery/Hosted antes do app e dos testes speaker/jack;
+  explicita que `music` sem argumentos é o único ponto de entrada (ativa o app
+  foreground, abre a surface e inicia o scan de `/musica`), que `app start`
+  isolado não abre a surface, que subcomandos exigem foreground ativo, que o
+  console e a ponte Serial-JTAG seguem vivos com o player aberto e a tabela de
+  controles (Enter, setas com seek de 10 s e volume 0..50, N/P, Esc -> shell via
+  stop/join);
   `version.txt=3` identifica o próximo firmware integrado.
 
 | Arquivo | Simbolos/funcao | Papel |
@@ -1069,8 +1138,10 @@ Foreground execution is exclusive: the runtime tracks `active_foreground`, and
 `switch_foreground` completes the previous app's teardown (including dependent
 apps) before starting the next. Command dispatch uses the same activation path;
 `start_all` does not eagerly start foreground apps. The shell/console owner stays
-protected from self-deactivation by the foreground switch API and by the existing
-`stops_console_owner` rule. `test_app_runtime` covers
+protected from self-deactivation by the foreground switch API and by
+`stops_console_owner`; explicit stop/restart reject owner-destroying cascades,
+and `stop_all` skips protected applications while stopping unrelated apps and
+reports an incomplete stop. `test_app_runtime` covers these paths as well as
 switch, failed teardown/start, restart and command-driven activation.
 The console owner itself cannot be reactivated through `switch_foreground` from
 its own command channel, so a shell command cannot tear down its only control
@@ -1085,7 +1156,7 @@ shortcuts remain interactive documentation, not shell commands.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/include/apps/runtime/cyberdeck_app_logger.h`, `components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp` | `cyberdeck_apps::logger`, `manifest`, `application`, `runtime`, `result`, `app_state`, `app_type` | Supervisor bounded de até 16 aplicações compiladas. O manifesto declara `api_version`, tipo, dependências, recursos, capacidades, stack, fila e comandos. Mantém estados `registered`/`starting`/`running`/`stopping`/`failed`, resolve dependências declaradas em ordem determinística, mede o tempo dos hooks, registra diagnóstico da última falha, expõe metadados em `app info` e implementa restart/stop-all. `manifest::owns_console` marca a aplicacao que possui o unico console de usuario, e `runtime::stops_console_owner(id)` percorre a arvore de dependentes com marcadores visitados (bounded contra ciclos) para recusar qualquer `app stop` cuja cascata em `stop_index` alcance o dono do console: dependentes sao parados antes do alvo, entao `app stop <dependencia do shell>` destruiria o console sem nunca nomea-lo e bloquearia toda a entrada ate um reboot. A API de lifecycle do supervisor (`stop_application`, `stop_all`, `restart_application`) nao e afetada, porque o bloqueio se aplica aos comandos que chegam pelo proprio console. O estado segue o retorno real do hook: como os hooks são síncronos e não podem ser preemptados, o estouro pós-retorno de `lifecycle_timeout_ms` é apenas diagnóstico (`start hook timeout`/`stop hook timeout`) e não troca o estado para `failed`, o que impede bloquear dependentes de um serviço lento. Os limites efetivos ficam nos joins cooperativos bounded dos serviços. `application::init()` e `application::teardown()` formam hooks completos com defaults compatíveis com `start()`/`stop()`. `runtime::set_logger()` injeta a porta de logging em cada aplicação registrada e `runtime::app_logger()` permite que compositores consumam o serviço sem incluir o backend de plataforma. O parser continua whitespace-only e limitado a 256 bytes/8 tokens. |
+| `components/cyberdeck/include/apps/runtime/cyberdeck_app_logger.h`, `components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp` | `cyberdeck_apps::logger`, `manifest`, `application`, `runtime`, `result`, `app_state`, `app_type` | Supervisor bounded de até 16 aplicações compiladas. O manifesto declara `api_version`, tipo, dependências, recursos, capacidades, stack, fila e comandos. Mantém estados `registered`/`starting`/`running`/`stopping`/`failed`, resolve dependências declaradas em ordem determinística, mede o tempo dos hooks, registra diagnóstico da última falha, expõe metadados em `app info` e implementa restart/stop-all. `manifest::owns_console` marca a aplicacao que possui o unico console de usuario, e `runtime::stops_console_owner(id)` percorre a arvore de dependentes com marcadores visitados (bounded contra ciclos) para recusar qualquer `app stop` cuja cascata em `stop_index` alcance o dono do console: dependentes sao parados antes do alvo, entao `app stop <dependencia do shell>` destruiria o console sem nunca nomea-lo e bloquearia toda a entrada ate um reboot. A protecao tambem se aplica a `stop_application` e `restart_application`; `stop_all` pula alvos protegidos, continua parando apps alheios e retorna false quando algo foi retido ou falhou. O estado segue o retorno real do hook: como os hooks são síncronos e não podem ser preemptados, o estouro pós-retorno de `lifecycle_timeout_ms` é apenas diagnóstico (`start hook timeout`/`stop hook timeout`) e não troca o estado para `failed`, o que impede bloquear dependentes de um serviço lento. Os limites efetivos ficam nos joins cooperativos bounded dos serviços. `application::init()` e `application::teardown()` formam hooks completos com defaults compatíveis com `start()`/`stop()`. `runtime::set_logger()` injeta a porta de logging em cada aplicação registrada e `runtime::app_logger()` permite que compositores consumam o serviço sem incluir o backend de plataforma. O parser continua whitespace-only e limitado a 256 bytes/8 tokens. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_window_manager.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_window_manager.cpp` | `cyberdeck_window_manager::manager`, `view_context`, `surface_state`, `view_status` | Politica pura e bounded da Fase 8: no maximo 8 superficies e 8 notificacoes FIFO, gera contextos opacos com geracao monotona, centraliza foco, invalida/quiesce superficies em teardown (inclusive foco e notificacoes), preserva ownership sem que uma nova superficie antecipe o fallback durante teardown e rejeita handles expirados, overflow e notificacoes oversized sem depender de LVGL, ESP-IDF ou FreeRTOS. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_app_facades.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_facades.cpp` | `display_facade`, `input_facade` e facades de network/BLE/Serial/Screenshot/event log/clock/bateria | Fachadas tipadas da Fase 9. Cada operacao revalida o grant; display e input usam exclusivamente `view_context` e o window manager, enquanto os demais recursos expõem somente presença autorizada, sem singleton ou handle de plataforma. A storage facade vive exclusivamente em `cyberdeck_app_storage.h`. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_app_storage.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp` | `storage_facade::bounded_read`, `read_result` | API SDK pública de leitura com buffer pertencente ao chamador, EOF/erro explícitos e limite de 12288 bytes; usa internamente a operação `cat` já confinada, sem expor detalhes de filesystem. |
@@ -1773,7 +1844,7 @@ próprio de 2 s para chamadas SD/VFS.
 | `cyberdeck_ui.cpp` + `cyberdeck_shell_utils.cpp` + `cyberdeck_wifi_audit.cpp` + `cyberdeck_wifi_audit_persistence.cpp` (contrato TDD do fluxo `wifi audit`/`wifi audit save`) | `test_wifi_audit_save.cpp` (comportamental host: renderização silenciosa em `collecting`, linha terminal exata em `ready`/`error`, `<missing>` somente no snapshot final, diretório, timestamp, colisão, sidecars, falhas, rollback e ACK; exercita a implementação de produção) e `test_wifi_audit_save_contract.py` (contrato estrutural de parser/UI, gate de `process_wifi_audit`, renderização once-only, GMT-3 e compatibilidade serial transitiva `exec_ui_type` -> `inject_text_segmented`/`inject_enter` -> `cyberdeck_keyboard_input`, sem hardware) |
 | `screenshot_bmp.cpp` | `test_screenshot_bmp.cpp` |
 | `cyberdeck_window_manager.cpp` + `cyberdeck_window_manager_adapter.cpp` + `cyberdeck_terminal_view.cpp` + `cyberdeck_ui.cpp` + `components/cyberdeck/CMakeLists.txt` + `tests/host/keymap/Makefile` (REQ/AC-8.1..8.7 / TEST-WM-01..07 + TEST-REG-8-BAR, Fase 8) | `test_window_manager.cpp` (comportamental host: superficies, foco, teardown, notificacoes, adaptador contra o shim LVGL completo e `bar_layout_scenario` para a regressão BUG-8-WM-BAR) e `test_window_manager_contract.py` (contrato estrutural: pureza dos headers, `view_context` opaca, LVGL somente no adaptador, `system_bar`/`content` pela raiz composta, linha fixa da barra e coluna flex sem altura explícita no content, teclado virtual em overlay, ordem teardown antes de `deinit`, guardas de limite/handles obsoletos e wiring CMake/Makefile/guard de cobertura) |
-| `cyberdeck_ui.cpp` + `cyberdeck_wifi_survey_export_controller.cpp` | `test_boot_sequence.py`, `test_keyboard_input_contract.py`, `test_ui_resource_contract.py`, `test_wifi_survey_integration_contract.py`, `test_wifi_survey_export_controller.cpp` (TEST-SURVEY-LIFECYCLE/EXPORT) | `test_ui_resource_contract` verifica estruturalmente init/deinit, ownership, 13 fases fail-closed, os 9 timers e preservação dos recursos app-lifetime de export; enumera rollback/teardown, mas não simula execução FreeRTOS. O contrato de survey verifica wait sequence-matched bounded, drain e delete depois de callback completion ou quarentena em timeout; não exercita runtime FreeRTOS, callback tardio real ou corrida de execução. O teste do controller exercita token, admissão, start e completion retida/publicada em host; inclui ainda `test_local_prompt_contract.py` e `test_wifi_enter_routing_contract.py`. |
+| `cyberdeck_ui.cpp` + `cyberdeck_wifi_survey_export_controller.cpp` | `test_boot_sequence.py`, `test_keyboard_input_contract.py`, `test_ui_resource_contract.py`, `test_wifi_survey_integration_contract.py`, `test_wifi_survey_export_controller.cpp` (TEST-SURVEY-LIFECYCLE/EXPORT) | `test_ui_resource_contract` verifica estruturalmente init/deinit, ownership, 14 fases fail-closed, os 9 timers e preservação dos recursos app-lifetime de export; inclui rollback de aquisição da music view, mas não simula execução FreeRTOS. O contrato de survey verifica wait sequence-matched bounded, drain e delete depois de callback completion ou quarentena em timeout; não exercita runtime FreeRTOS, callback tardio real ou corrida de execução. O teste do controller exercita token, admissão, start e completion retida/publicada em host; inclui ainda `test_local_prompt_contract.py` e `test_wifi_enter_routing_contract.py`. |
 | `main/app_main.cpp`, `cyberdeck_ui.cpp` | `test_boot_sequence.py` (ordem SD/UI, montagem física `/sdcard` e root virtual `/`) |
 | `imu_reader.cpp` | `imu_sensor_contract.py` (callback Sensor Hub, `sensor_handle_t` obrigatorio para `bsp_sensor_init`, proibicao especifica da leitura direta `imu_acquire_acce(`, timeout/fallback seguro, semaforo estatico nao destruido enquanto callback pode executar, rollback de registro/start/timer, ownership e teardown repetido de handler/sensor/timer, e continuidade da rotacao) |
 | `battery_status.cpp` + `ina226_reader.cpp` + `battery_protection.cpp` + contrato puro `contracts/cyberdeck_battery.h` | `test_battery_contract.cpp` (REQ-BAT-001/002: tensao `bus_voltage_mv`, janela `6000..8230`, saturacao, estados charging/discharging/neutral, zero/indeterminado e ausencia explicita), `test_battery_reader_contract.py` (REQ-BAT-001/002/004/005/006: `0x41`, `0x4527`/`0x0D55`, conversao do registro de tensao, task 1 s, mutex/snapshot, exclusoes, sensor-only, composicao pelo adaptador e nao-fatal; a UI consome a entrada de bateria apenas pelo seam de snapshot do adaptador, `battery_protection_get_policy_snapshot` ou `battery_protection_get_snapshot`, sempre declarado no header do adaptador, e nao pode conter nenhuma referencia direta ao reader INA226, seja chamada ou include), `test_battery_protection.cpp` + `test_battery_protection_contract.py` (politica e adaptador reais, sem hardware) |

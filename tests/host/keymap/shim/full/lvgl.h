@@ -70,7 +70,7 @@ struct _lv_obj_t {
 using lv_result_t = int;
 inline constexpr lv_result_t LV_RESULT_OK = 0, LV_RESULT_INVALID = -1;
 inline constexpr int LV_SIZE_CONTENT=-1;
-inline constexpr int LV_LABEL_LONG_CLIP=0;
+inline constexpr int LV_LABEL_LONG_CLIP=0, LV_LABEL_LONG_WRAP=1;
 inline constexpr const char *LV_SYMBOL_BLUETOOTH="BT", *LV_SYMBOL_CHARGE="CHG",
     *LV_SYMBOL_BATTERY_FULL="BAT", *LV_SYMBOL_MINUS="-", *LV_SYMBOL_PLAY="PLAY";
 inline lv_color_t lv_color_hex(std::uint32_t v) { return {v}; }
@@ -129,7 +129,7 @@ inline void lv_obj_set_style_pad_column(lv_obj_t*o,int v,int){if(o)o->pad_column
 inline void lv_obj_set_style_text_align(lv_obj_t*o,int v,int){if(o)o->text_align=v;} inline void lv_obj_set_style_arc_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_arc_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_bg_opa(lv_obj_t*o,int v,int){if(o)o->bg_opa=v;}
 inline void lv_obj_set_style_text_font(lv_obj_t*o,const lv_font_t*f,int){if(o)o->text_font=f;}
 inline void lv_obj_update_layout(lv_obj_t*){} inline void lv_obj_align(lv_obj_t*,int,int,int){} inline void lv_obj_add_state(lv_obj_t*,int){}
-inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline void lv_label_set_long_mode(lv_obj_t*o,int v){if(o)o->long_mode=v;}
+inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline const char *lv_label_get_text(const lv_obj_t*o){return o?o->text.c_str():nullptr;} inline void lv_label_set_long_mode(lv_obj_t*o,int v){if(o)o->long_mode=v;}
 inline void lv_textarea_set_one_line(lv_obj_t*,bool){} inline void lv_textarea_set_max_length(lv_obj_t*,std::uint32_t){} inline void lv_keyboard_set_textarea(lv_obj_t*,lv_obj_t*){}
 inline void lv_arc_set_bg_angles(lv_obj_t*,int,int){} inline void lv_arc_set_angles(lv_obj_t*,int,int){}
 inline void lv_obj_add_event_cb(lv_obj_t*o,lv_event_cb_t cb,int filter,void *user_data)

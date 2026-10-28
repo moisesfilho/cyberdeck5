@@ -100,6 +100,8 @@ FAIL_CLOSED_PHASES = (
     ("editor surface registration",
      (r"window_manager\s*\.\s*policy\s*\(\s*\)\s*\.\s*create\s*\(\s*2\s*,\s*s_editor_view_context",
       r"view_status\s*::\s*ok"), True),
+    ("music view",
+     (r"!\s*s_music_view\.create\s*\(",), True),
     ("header view",
      (r"!\s*s_header_view\.create\s*\(",), True),
     ("LVGL timers",

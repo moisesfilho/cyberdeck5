@@ -5,6 +5,7 @@
 #include "apps/bluetooth/cyberdeck_ble_types.h"
 #include "apps/editor/cyberdeck_editor_app.h"
 #include "apps/music/cyberdeck_music_app.h"
+#include "apps/music/cyberdeck_music_manager.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/shell/cyberdeck_cat_worker.h"
 #include "apps/shell/cyberdeck_edit_line.h"
@@ -26,6 +27,7 @@
 #include "platform/display/cyberdeck_battery_view.h"
 #include "platform/display/cyberdeck_clock.h"
 #include "platform/display/cyberdeck_editor_view.h"
+#include "platform/display/cyberdeck_music_view.h"
 #include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_screen_protection.h"
 #include "platform/display/cyberdeck_terminal_scrollback.h"
@@ -98,6 +100,8 @@ cyberdeck_terminal_filter s_ssh_output_filter;
 cyberdeck_ssh_line_composer s_ssh_line_composer;
 bool s_rendering = false;
 bool s_music_ui_active = false;
+cyberdeck_music_view::view s_music_view;
+cyberdeck_music_manager::manager s_music_manager;
 bool s_terminal_output_dirty = false;
 bool s_virtual_enter_handled = false;
 std::string s_last_clock_text;
@@ -282,6 +286,9 @@ void terminal_geometry_changed(lv_event_t *) {
     render_terminal();
 }
 void process_terminal_output(lv_timer_t *timer);
+void music_view_action(std::string_view action, void *context);
+bool music_manager_action(cyberdeck_music_manager::action action, void *context);
+bool music_manager_close(void *context);
 void process_music_status(lv_timer_t *timer);
 void editor_view_action(std::string_view action, void *context);
 void zero_string(std::string &s);
@@ -605,10 +612,13 @@ void destroy_ui_resource_handles() {
         (void)window_manager.policy().remove(s_editor_view_context);
         s_editor_view_context = {};
     }
+    s_music_manager.deactivate();
+    s_music_view.destroy();
     window_manager.deinit();
     s_header_view = {};
     s_terminal_view = {};
     s_editor_view.destroy();
+    s_music_ui_active = false;
     s_terminal = nullptr;
     s_keyboard = nullptr;
     s_wifi_audit.teardown();
@@ -814,6 +824,16 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
             return;
         }
     }
+    if (s_music_ui_active) {
+        if (text != nullptr && length == 1 &&
+            (text[0] == 'n' || text[0] == 'N' || text[0] == 'p' || text[0] == 'P')) {
+            (void)cyberdeck_music::global_application().player_command(
+                text[0] == 'n' || text[0] == 'N' ? "next" : "prev");
+        } else if (special_key) {
+            local_key(special_key);
+        }
+        return;
+    }
     if (text != nullptr && text[0] != '\0' && length != 0) {
         /* A modified key is an SSH escape sequence, not text.  The session
          * owns that decision; the UI only reports the modifier. */
@@ -903,10 +923,31 @@ void process_battery_protection(lv_timer_t *) {
 }
 
 void process_music_status(lv_timer_t *) {
-    s_header_view.update_music(cyberdeck_music::global_application().has_playback());
+    auto &music = cyberdeck_music::global_application();
+    s_header_view.update_music(music.has_playback());
+    const bool music_is_foreground = cyberdeck_apps::global_runtime().active_foreground() == "cyberdeck.music";
+    if (s_music_ui_active && !music_is_foreground) {
+        s_music_ui_active = false;
+        s_music_manager.deactivate();
+        s_music_view.destroy();
+    }
+    if (music.consume_player_request()) {
+        s_music_ui_active = true;
+        (void)s_music_manager.open();
+        if (!s_music_view.create(s_screen, music_view_action, nullptr)) {
+            s_music_ui_active = false;
+            s_music_manager.deactivate();
+            return;
+        }
+        s_music_view.set_visible(true);
+    }
     if (s_music_ui_active) {
-        s_terminal_output_dirty = true;
-        render_terminal();
+        const auto status = cyberdeck_music::global_application().player_command("status");
+        const auto tracks = cyberdeck_music::global_application().player_command("list");
+        std::string text = status.output;
+        text += tracks.output;
+        text += "Enter play/pause  ←/→ seek  ↑/↓ volume  N/P track  Esc close";
+        s_music_view.render(text);
     }
 }
 
@@ -1512,15 +1553,46 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view, 
     return output;
 }
 
-std::string music_tui_panel() {
-    const auto status = cyberdeck_music::global_application().execute("music", "status");
-    std::string panel = "[ MUSIC PLAYER / TERMINAL UI ]\n";
-    if (status.status == cyberdeck_apps::result_status::handled)
-        panel += status.output;
-    else
-        panel += "music service unavailable\n";
-    panel += "Escape: return to previous app\n";
-    return panel;
+bool music_manager_action(cyberdeck_music_manager::action action, void *) {
+    auto &app = cyberdeck_music::global_application();
+    cyberdeck_music::snapshot state{};
+    if (!app.player_snapshot(state))
+        return false;
+    switch (action) {
+    case cyberdeck_music_manager::action::toggle:
+        return app.player_command(state.state == cyberdeck_music::playback_state::playing ? "pause" :
+                                  state.state == cyberdeck_music::playback_state::paused ? "resume" : "play").status ==
+               cyberdeck_apps::result_status::handled;
+    case cyberdeck_music_manager::action::seek_back:
+    case cyberdeck_music_manager::action::seek_forward: {
+        const bool forward = action == cyberdeck_music_manager::action::seek_forward;
+        const std::uint32_t position = forward ? std::min(state.current.duration_ms, state.position_ms + 10000)
+                                               : (state.position_ms > 10000 ? state.position_ms - 10000 : 0);
+        return app.player_command("seek " + std::to_string(position / 1000)).status == cyberdeck_apps::result_status::handled;
+    }
+    case cyberdeck_music_manager::action::volume_up:
+    case cyberdeck_music_manager::action::volume_down: {
+        const int volume = std::clamp<int>(state.volume + (action == cyberdeck_music_manager::action::volume_up ? 1 : -1), 0, 50);
+        return app.player_command("volume " + std::to_string(volume)).status == cyberdeck_apps::result_status::handled;
+    }
+    case cyberdeck_music_manager::action::next: return app.player_command("next").status == cyberdeck_apps::result_status::handled;
+    case cyberdeck_music_manager::action::previous: return app.player_command("prev").status == cyberdeck_apps::result_status::handled;
+    }
+    return false;
+}
+
+bool music_manager_close(void *) {
+    return cyberdeck_apps::global_runtime().switch_foreground("cyberdeck.shell");
+}
+
+void music_view_action(std::string_view name, void *) {
+    if (name == "toggle") (void)s_music_manager.handle(cyberdeck_music_manager::key::enter);
+    else if (name == "seek_back") (void)s_music_manager.handle(cyberdeck_music_manager::key::left);
+    else if (name == "seek_forward") (void)s_music_manager.handle(cyberdeck_music_manager::key::right);
+    else if (name == "volume_up") (void)s_music_manager.handle(cyberdeck_music_manager::key::up);
+    else if (name == "volume_down") (void)s_music_manager.handle(cyberdeck_music_manager::key::down);
+    else if (name == "next") (void)s_music_manager.handle(cyberdeck_music_manager::key::next);
+    else if (name == "prev") (void)s_music_manager.handle(cyberdeck_music_manager::key::previous);
 }
 
 void render_terminal() {
@@ -1579,11 +1651,6 @@ void render_terminal() {
      * the complete bounded scrollback so a swipe can expose older lines; the
      * textual dump still reads directly from the model below. */
     std::string output = get_rendered_output(view, true);
-    if (s_music_ui_active) {
-        if (!output.empty() && output.back() != '\n')
-            output += '\n';
-        output += music_tui_panel();
-    }
     const std::string editor = view.text();
     std::string visual = output + editor;
     std::size_t cursor_byte = 0;
@@ -1829,6 +1896,15 @@ void terminal_insert(lv_event_t *event) {
         return;
     }
 
+    if (s_music_ui_active) {
+        if (inserted[1] == '\0' &&
+            (inserted[0] == 'n' || inserted[0] == 'N'))
+            (void)s_music_manager.handle(cyberdeck_music_manager::key::next);
+        else if (inserted[1] == '\0' && (inserted[0] == 'p' || inserted[0] == 'P'))
+            (void)s_music_manager.handle(cyberdeck_music_manager::key::previous);
+        return;
+    }
+
     /* Editing keys, passkey digits and multi-newline pastes are all session
      * decisions.  LVGL edits the textarea as part of this event, so the
      * session re-renders and the widget is restored afterwards. */
@@ -1850,6 +1926,12 @@ void terminal_changed(lv_event_t *) {
     // the session line/cursor are the single source of truth for editing.
     const size_t length = strlen(text);
     if (length > 0 && text[length - 1] == '\n') {
+        if (s_music_ui_active) {
+            s_virtual_enter_handled = false;
+            local_key(LV_KEY_ENTER);
+            render_terminal();
+            return;
+        }
         if (editor_input_active()) {
             (void)cyberdeck_editor::global_application().handle_key(cyberdeck_editor::key::enter);
             render_terminal();
@@ -2256,17 +2338,27 @@ void editor_local_key(uint32_t key) {
 }
 void local_key(uint32_t key) {
     if (s_music_ui_active && key == LV_KEY_ESC) {
-        s_music_ui_active = false;
+        if (s_music_manager.close()) {
+            s_music_ui_active = false;
+            s_music_view.destroy();
+        }
         render_terminal();
+        return;
+    }
+    if (s_music_ui_active) {
+        const auto mapped = key == LV_KEY_ENTER ? cyberdeck_music_manager::key::enter
+            : key == LV_KEY_LEFT ? cyberdeck_music_manager::key::left
+            : key == LV_KEY_RIGHT ? cyberdeck_music_manager::key::right
+            : key == LV_KEY_UP ? cyberdeck_music_manager::key::up
+            : key == LV_KEY_DOWN ? cyberdeck_music_manager::key::down : cyberdeck_music_manager::key::other;
+        (void)s_music_manager.handle(mapped);
         return;
     }
     s_shell_app.handle_key(translate_session_key(key));
 }
 
 void music_indicator_action(void *) {
-    s_music_ui_active = true;
-    s_terminal_output_dirty = true;
-    render_terminal();
+    (void)cyberdeck_apps::global_runtime().execute_line("music");
 }
 
 } // namespace
@@ -2286,11 +2378,6 @@ extern "C" esp_err_t cyberdeck_ui_term_dump(char *buffer, size_t capacity, size_
     }
     const cyberdeck_shell_console::line_view view = compose_console_line();
     std::string rendered = get_rendered_output(view, true);
-    if (s_music_ui_active) {
-        if (!rendered.empty() && rendered.back() != '\n')
-            rendered += '\n';
-        rendered += music_tui_panel();
-    }
     rendered += view.text();
     const std::string snapshot = rendered.size() > capacity ? truncate_left_utf8(rendered, capacity) : rendered;
     if (!snapshot.empty()) {
@@ -2377,6 +2464,11 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
         s_editor_view_context);
     s_screen = window_manager.screen();
     s_menu = window_manager.content();
+    s_music_manager.bind(music_manager_action, music_manager_close, nullptr);
+    if (!s_music_view.create(s_screen, music_view_action, nullptr)) {
+        destroy_ui_resource_handles();
+        return ESP_ERR_NO_MEM;
+    }
     style_base(s_menu, BLACK, WHITE);
     lv_obj_set_style_pad_all(s_menu, 0, 0);
     disable_scrolling(s_menu);

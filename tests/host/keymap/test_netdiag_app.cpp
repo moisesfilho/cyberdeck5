@@ -287,7 +287,8 @@ int main() {
     const auto retained_grant = app.app_grant();
     worker_wait_ok = false;
     check(!runtime.stop_application("cyberdeck.netdiag"), "stop timeout is surfaced");
-    check(!retained_grant.allows(cyberdeck_apps::resource::network), "stop revokes copied network grant immediately");
+    check(retained_grant.valid() && retained_grant.allows(cyberdeck_apps::resource::network),
+          "stop timeout preserves copied network grant while worker remains owned");
     check(app.running(), "timed-out stop preserves app state and worker ownership");
     check(!runtime.restart_application("cyberdeck.netdiag"), "restart rejected while prior worker is quarantined");
     const int creates_before_quarantine = worker_create_count;
@@ -304,6 +305,7 @@ int main() {
     const int waits_before_reap = worker_wait_count;
     check(runtime.restart_application("cyberdeck.netdiag"),
           "restart reaps completed worker and finalizes pending stop");
+    check(!retained_grant.valid(), "successful teardown revokes copied network grant");
     check(worker_wait_count == waits_before_reap + 1, "completed worker handle is reaped exactly once");
     check(app.running() && app.app_grant().allows(cyberdeck_apps::resource::network),
           "restart restores app with a fresh network grant");

@@ -321,8 +321,10 @@ def main() -> int:
     assert "constexpr size_t viewport_bytes = 4096;" in source
     term_dump = body(source, "extern \"C\" esp_err_t cyberdeck_ui_term_dump(")
     assert "std::string rendered = get_rendered_output(view, true);" in term_dump
-    assert "if (s_music_ui_active)" in term_dump
-    assert 'rendered += music_tui_panel();' in term_dump
+    # term.dump is the console-only text API. Music is rendered by its
+    # dedicated view and must not be overlaid into this console snapshot.
+    assert "s_music_ui_active" not in term_dump
+    assert "music_tui_panel()" not in term_dump
     assert "rendered += view.text();" in term_dump
     assert "truncate_left_utf8(rendered, capacity)" in term_dump
     assert "*out_bytes = snapshot.size();" in term_dump

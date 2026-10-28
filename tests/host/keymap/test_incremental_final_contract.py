@@ -24,7 +24,8 @@ def check() -> None:
     clean = model.rule("clean")
     aggregate = model.rule("test")
     assert clean and aggregate
-    assert len(bins) == len(set(bins)) == 80
+    assert len(bins) == len(set(bins)) == 81
+    assert "test_music_manager_bin" in bins
     assert len(baseline) == 27
 
     clean_dirs = set()

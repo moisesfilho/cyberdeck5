@@ -104,6 +104,7 @@ struct manifest {
     /* Help metadata is indexed alongside commands and never participates in
      * command dispatch. Empty metadata preserves the generic fallback. */
     std::array<command_help, k_max_commands> command_help_entries{};
+    bool commands_require_active_foreground = false;
 };
 
 enum class result_status {
@@ -146,13 +147,16 @@ public:
     bool register_application(application &app);
     result execute_line(std::string_view line);
     bool start_application(std::string_view id);
-    /* Stops the current foreground app and its dependents before starting the
-     * requested foreground app. The console owner is never stopped. */
+    /* Stops the current non-console foreground app before starting the target.
+     * The console owner and its dependency chain stay alive. */
     bool switch_foreground(std::string_view id);
     std::string_view active_foreground() const;
     bool stop_application(std::string_view id);
     bool restart_application(std::string_view id);
     bool start_all();
+    /* Stops unrelated applications but preserves the console owner and any
+     * dependency whose stop cascade would tear it down; returns false if any
+     * application was retained or failed to stop. */
     bool stop_all();
     void set_command_dispatch_ready(bool ready) {
         command_dispatch_ready_.store(ready, std::memory_order_release);

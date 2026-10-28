@@ -63,6 +63,7 @@ MANIFEST_FIELDS = (
     "lifecycle_timeout_ms", "api_version", "type", "capabilities",
     "capability_count", "stack_bytes", "queue_depth", "commands",
     "command_count", "owns_console", "command_help_entries",
+    "commands_require_active_foreground",
 )
 FIELD_ID = MANIFEST_FIELDS.index("id")
 FIELD_NAME = MANIFEST_FIELDS.index("name")
@@ -97,7 +98,8 @@ NETDIAG_USAGE = (
 )
 MUSIC_USAGE = (
     ("music queue <directory> | list | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
-     "MP3 playback from SD; volume is capped at 50\n"),
+      "MP3 playback from SD; volume is capped at 50\n"),
+    ("player", "open the music player surface\n"),
 )
 DEMO_USAGE = (
     ("demo", "arguments are not declared; extra arguments are currently ignored\n"),
@@ -149,9 +151,9 @@ EXPECTED_APPS = (
      "type": "foreground", "commands": ("netdiag",), "command": "",
      "usage": NETDIAG_USAGE, "owns_console": False},
     {"symbol": "&cyberdeck_music::global_application()", "source": "music",
-     "id": "cyberdeck.music", "name": "Music", "description": "Background local MP3 player",
-     "type": "background", "commands": ("music",), "command": "", "usage": MUSIC_USAGE,
-     "owns_console": False},
+     "id": "cyberdeck.music", "name": "Music", "description": "Foreground local MP3 player",
+     "type": "foreground", "commands": ("music", "player"), "command": "", "usage": MUSIC_USAGE,
+     "owns_console": False, "commands_require_active_foreground": True},
 )
 
 COMMAND_BEARING_COUNT = 4
@@ -380,8 +382,8 @@ def _normalise_type(token):
 def _literal_manifest(source, marker="k_manifest"):
     """Parse a positional `manifest` aggregate into a comparable mapping."""
     fields = _manifest_fields(_brace_body(source, marker))
-    if len(fields) not in (len(MANIFEST_FIELDS) - 1, len(MANIFEST_FIELDS)):
-        raise ContractError(f"{marker!r} has {len(fields)} fields, expected 19 or 20")
+    if len(fields) < len(MANIFEST_FIELDS) - 2 or len(fields) > len(MANIFEST_FIELDS):
+        raise ContractError(f"{marker!r} has {len(fields)} fields, expected 19 to 21")
     command_count = int(fields[FIELD_COMMAND_COUNT])
     commands = _string_list(fields[FIELD_COMMANDS])
     if command_count != len(commands):
@@ -396,8 +398,10 @@ def _literal_manifest(source, marker="k_manifest"):
         "commands": commands,
         "command_count": command_count,
         "owns_console": fields[FIELD_OWNS_CONSOLE].strip() == "true",
+        "commands_require_active_foreground": fields[MANIFEST_FIELDS.index("commands_require_active_foreground")].strip() == "true"
+        if len(fields) > MANIFEST_FIELDS.index("commands_require_active_foreground") else False,
         "entries": _help_entries(fields[FIELD_HELP_ENTRIES])
-        if len(fields) == len(MANIFEST_FIELDS) else (),
+        if len(fields) >= FIELD_HELP_ENTRIES + 1 else (),
     }
 
 
@@ -904,6 +908,9 @@ def main() -> int:
             require(parsed["commands"] == app["commands"], f"{app['id']}: unexpected command list")
             require(parsed["owns_console"] == app["owns_console"],
                     f"{app['id']}: unexpected owns_console")
+            if "commands_require_active_foreground" in app:
+                require(parsed["commands_require_active_foreground"] == app["commands_require_active_foreground"],
+                        f"{app['id']}: commands must require active foreground")
         command_bearing = [app for app in EXPECTED_APPS if manifests[app["id"]]["commands"]]
         commandless = [app for app in EXPECTED_APPS
                        if not manifests[app["id"]]["commands"]
@@ -976,6 +983,8 @@ def main() -> int:
                 "the shell fixture must mirror the real manifest")
         require("shell_manifest.owns_console = true;" in help_test,
                 "the shell fixture must mirror owns_console")
+        require("item.commands_require_active_foreground = true;" in help_test,
+                "the music fixture must require active foreground for player commands")
         require(_fixture_helper_version(help_test, "commandless_manifest") == service_version,
                 "the commandless fixture helper must mirror the production service version")
         require("cyberdeck_apps::demo_application demo;" in help_test,

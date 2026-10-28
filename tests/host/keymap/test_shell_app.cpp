@@ -158,11 +158,19 @@ public:
     command_app() = default;
 
     command_app(std::string_view id, std::string_view command,
-                std::initializer_list<std::string_view> commands)
+                std::initializer_list<std::string_view> commands,
+                cyberdeck_apps::app_type type = cyberdeck_apps::app_type::service,
+                bool requires_active_foreground = false, std::string_view dependency = {})
     {
         manifest_.id = id;
         manifest_.name = "Command app";
         manifest_.command = command;
+        manifest_.type = type;
+        manifest_.commands_require_active_foreground = requires_active_foreground;
+        if (!dependency.empty()) {
+            manifest_.dependencies[0] = dependency;
+            manifest_.dependency_count = 1;
+        }
         for (const std::string_view declared : commands) {
             if (manifest_.command_count == manifest_.commands.size()) break;
             manifest_.commands[manifest_.command_count++] = declared;
@@ -1005,13 +1013,32 @@ void supervisor_ownership_contract() {
     check(runtime.state("cyberdeck.event_log") == cyberdeck_apps::app_state::running,
           "a rejected cascade leaves the dependency running");
 
-    check(runtime.stop_application("cyberdeck.shell"),
-          "the supervisor stops the shell through its lifecycle API");
-    check(!shell.console_ready(), "the supervisor stop hook releases the console");
+    check(!runtime.stop_application("cyberdeck.shell"),
+          "the supervisor lifecycle API refuses to stop the console owner");
+    check(shell.running() && shell.console_ready(),
+          "a refused supervisor stop preserves the shell console");
     check(runtime.execute_line("app start cyberdeck.shell").status ==
               cyberdeck_apps::result_status::handled,
           "the shell can be started again");
     check(shell.console_ready(), "restarting rebuilds the console");
+
+    command_app serial_service("serial.test", "", {}, cyberdeck_apps::app_type::service, false,
+                               "cyberdeck.shell");
+    command_app music("music.test", "music", {}, cyberdeck_apps::app_type::foreground, true);
+    check(runtime.register_application(serial_service) && runtime.register_application(music),
+          "serial and music foreground fixtures register");
+    check(runtime.start_application("serial.test") && serial_service.running(),
+          "serial service runs with the real shell dependency");
+    check(shell.insert_physical_text("return", 6), "the existing shell session accepts input before switching");
+    cyberdeck_shell_session::session *const retained_session = shell.console();
+    check(runtime.execute_line("music").status == cyberdeck_apps::result_status::handled &&
+              runtime.active_foreground() == "music.test" && shell.console_ready() &&
+              shell.console() == retained_session && serial_service.running(),
+          "opening music preserves the real shell session and serial service");
+    check(runtime.switch_foreground("cyberdeck.shell") && !music.running() &&
+              shell.console() == retained_session && serial_service.running() &&
+              shell.compose_line({}).visible_line == "return",
+          "returning from music keeps the same usable shell session and serial service");
 
     /* Enumeracao bounded, usada pela politica de despacho. */
     check(runtime.at(0) == &event_log && runtime.at(1) == &shell &&

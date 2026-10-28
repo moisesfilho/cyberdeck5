@@ -229,7 +229,7 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_player_bin test_music_decoder_scratch_bin
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin
 
 MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
 MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
@@ -351,7 +351,7 @@ BATTERY_PROTECTION_MIG_OBJS := test_battery_protection/test.o test_battery_prote
 CAT_WORKER_MIG_OBJS := test_cat_worker/test.o test_cat_worker/cat_worker.o test_cat_worker/local_shell.o test_cat_worker/vfs_namespace.o test_cat_worker/sd_io_coordinator.o
 BLE_BACKGROUND_MIG_OBJS := test_ble_background/test.o test_ble_background/ble_background.o test_ble_background/ble_state_machine.o test_ble_background/ble_types.o
 KEYBOARD_DISPATCH_MIG_OBJS := test_keyboard_dispatch/test.o test_keyboard_dispatch/keyboard_dispatch.o
-DISPLAY_VIEWS_MIG_OBJS := test_display_views/test.o test_display_views/header_view.o test_display_views/terminal_view.o test_display_views/editor_view.o test_display_views/wifi_icon.o test_display_views/wifi_indicator.o test_display_views/battery_view.o
+DISPLAY_VIEWS_MIG_OBJS := test_display_views/test.o test_display_views/header_view.o test_display_views/terminal_view.o test_display_views/editor_view.o test_display_views/music_view.o test_display_views/wifi_icon.o test_display_views/wifi_indicator.o test_display_views/battery_view.o
 KNOWN_HOSTS_FILE_MIG_OBJS := test_known_hosts_file/test.o test_known_hosts_file/known_hosts_file.o test_known_hosts_file/sd_io_coordinator.o
 POWEROFF_MIG_OBJS := test_poweroff/test.o test_poweroff/poweroff.o
 MIGRATION_FINAL_OBJS := $(EDITOR_MODEL_MIG_OBJS) $(TIME_SYNC_MIG_OBJS) $(SHELL_UTILS_MIG_OBJS) $(SD_PACKAGE_MIG_OBJS) $(RESOURCE_CATALOG_MIG_OBJS) $(NETDIAG_DNS_ADAPTER_MIG_OBJS) $(NETDIAG_HTTPS_ADAPTER_MIG_OBJS) $(NETDIAG_APP_MIG_OBJS) $(SHELL_SESSION_MIG_OBJS) $(SHELL_HELP_MIG_OBJS) $(APP_RUNTIME_MIG_OBJS) $(RUNTIME_SDK_MIG_OBJS) $(STORAGE_FACADE_MIG_OBJS) $(PHASE9_CAPABILITIES_MIG_OBJS) $(DEMO_APP_MIG_OBJS) $(SHELL_APP_MIG_OBJS) $(WINDOW_MANAGER_MIG_OBJS) $(LOCAL_SHELL_MIG_OBJS) $(CAT_MULTILINE_MIG_OBJS) $(HELP_UNIFICATION_MIG_OBJS) $(BATTERY_PROTECTION_MIG_OBJS) $(CAT_WORKER_MIG_OBJS) $(BLE_BACKGROUND_MIG_OBJS) $(KEYBOARD_DISPATCH_MIG_OBJS) $(DISPLAY_VIEWS_MIG_OBJS) $(KNOWN_HOSTS_FILE_MIG_OBJS) $(POWEROFF_MIG_OBJS)
@@ -2353,6 +2353,10 @@ test_display_views/editor_view.o: ../../../components/cyberdeck/src/platform/dis
 	@mkdir -p $(@D)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 
+test_display_views/music_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_music_view.cpp ../../../components/cyberdeck/include/platform/display/cyberdeck_music_view.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
 test_display_views/wifi_icon.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_wifi_icon.cpp Makefile
 	@mkdir -p $(@D)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
@@ -2635,7 +2639,14 @@ $(MUSIC_APP_OBJ): $(MUSIC_APP_MAIN_SRC) $(MUSIC_APP_HDRS) Makefile
 test_music_app_bin: $(MUSIC_APP_TEST) $(MUSIC_APP_OBJ) $(MUSIC_APP_SOURCES) $(MUSIC_APP_HDRS) $(MUSIC_AUDIO_SHIMS) music_traceability.md Makefile
 	$(CXX) $(CXXFLAGS) -ffunction-sections -fdata-sections -pthread -Imusic_runtime_shim \
 		-I../../../components/cyberdeck/include $(MUSIC_APP_TEST) $(MUSIC_APP_OBJ) $(MUSIC_APP_SOURCES) \
-		-Wl,--wrap=lstat -Wl,--gc-sections -o $@
+		-Wl,--wrap=lstat -Wl,--wrap=readdir -Wl,--gc-sections -o $@
+
+.PHONY: test_music_manager
+test_music_manager: test_music_manager_bin
+	@./test_music_manager_bin
+
+test_music_manager_bin: test_music_manager.cpp ../../../components/cyberdeck/src/apps/music/cyberdeck_music_manager.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_manager.h Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $< ../../../components/cyberdeck/src/apps/music/cyberdeck_music_manager.cpp -o $@
 
 .PHONY: test_music_player
 test_music_player: test_music_player_bin
@@ -2668,6 +2679,7 @@ test: test-build
 	@$(MAKE) --no-print-directory test_music_model
 	@$(MAKE) --no-print-directory test_music_audio_output
 	@$(MAKE) --no-print-directory test_music_app
+	@$(MAKE) --no-print-directory test_music_manager
 	@$(MAKE) --no-print-directory test_music_player
 	@$(MAKE) --no-print-directory test_save_sidecar_recovery
 	@$(MAKE) --no-print-directory test_wifi_survey_export_controller

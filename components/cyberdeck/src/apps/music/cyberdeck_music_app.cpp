@@ -6,9 +6,11 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#include <functional>
 #include <memory>
 #include <new>
 #include <string>
@@ -22,7 +24,7 @@ constexpr cyberdeck_apps::manifest k_manifest{
     "cyberdeck.music",
     "Music",
     "1.0.0",
-    "Background local MP3 player",
+    "Foreground local MP3 player",
     "",
     {"cyberdeck.event_log"},
     1,
@@ -30,17 +32,19 @@ constexpr cyberdeck_apps::manifest k_manifest{
     1,
     5000,
     "1",
-    cyberdeck_apps::app_type::background,
+    cyberdeck_apps::app_type::foreground,
     {"storage"},
     1,
     8192,
     8,
-    {"music"},
-    1,
-    false,
+     {"music", "player"},
+     2,
+     false,
     {{{"music queue <directory> | list | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume "
        "<0-50> | shuffle | repeat | status",
-       "MP3 playback from SD; volume is capped at 50\n"}}}};
+        "MP3 playback from SD; volume is capped at 50\n"},
+        {"player", "open the music player surface\n"}}},
+    true};
 
 std::string_view trim(std::string_view value) {
     while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
@@ -184,10 +188,19 @@ bool application::scan_directory(std::string_view path) {
     bool expected = false;
     if (!scan_running_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
         return false;
+    {
+        std::lock_guard<std::mutex> queue_lock(queue_mutex_);
+        queue_.clear();
+        if (!player_.set_queue(nullptr, 0, 0)) {
+            scan_running_.store(false, std::memory_order_release);
+            return false;
+        }
+    }
     std::memcpy(scan_path_.data(), path.data(), path.size());
     scan_path_[path.size()] = '\0';
     scan_cancel_.store(false, std::memory_order_release);
     scan_succeeded_.store(false, std::memory_order_release);
+    scan_truncated_.store(false, std::memory_order_release);
     scan_attempted_.store(true, std::memory_order_release);
     scan_join_pending_.store(true, std::memory_order_release);
     if (xTaskCreate(scan_entry, "music_scan", 6144, this, 4, &scan_task_) != pdPASS) {
@@ -217,49 +230,96 @@ bool application::scan_directory_sync(std::string_view path) {
     if (!validate_directory_path(path))
         return false;
     const std::string virtual_dir(path);
-    DIR *dir = cyberdeck_local_shell_opendir("/sdcard", "/", virtual_dir);
-    if (dir == nullptr)
-        return false;
     std::unique_ptr<std::array<track, k_max_tracks>> tracks(new (std::nothrow) std::array<track, k_max_tracks>{});
-    if (!tracks) {
-        (void)closedir(dir);
+    if (!tracks)
         return false;
-    }
     std::size_t count = 0;
-    bool overflow = false;
-    while (dirent *entry = readdir(dir)) {
-        if (scan_cancel_.load(std::memory_order_acquire) || !app_grant().valid()) {
-            overflow = true;
-            break;
+    bool truncated = false;
+    bool scan_ok = true;
+    std::function<bool(std::string_view, std::size_t)> walk;
+    walk = [&](std::string_view directory, std::size_t depth) {
+        if (depth > 8 || scan_cancel_.load(std::memory_order_acquire) || !app_grant().valid())
+            return false;
+        std::string last_name;
+        for (;;) {
+            DIR *dir = cyberdeck_local_shell_opendir("/sdcard", "/", directory);
+            if (dir == nullptr)
+                return false;
+            std::string next_name;
+            bool read_failed = false;
+            for (;;) {
+                errno = 0;
+                dirent *entry = readdir(dir);
+                if (entry == nullptr) {
+                    read_failed = errno != 0;
+                    break;
+                }
+                if (scan_cancel_.load(std::memory_order_acquire) || !app_grant().valid()) {
+                    (void)closedir(dir);
+                    return false;
+                }
+                const std::string_view name(entry->d_name);
+                if (name.empty() || name == "." || name == ".." || name.size() > 128 || name <= last_name)
+                    continue;
+                if (next_name.empty() || name < next_name)
+                    next_name.assign(name);
+            }
+            const int close_result = closedir(dir);
+            if (read_failed || close_result != 0)
+                return false;
+            if (next_name.empty())
+                break;
+            last_name = next_name;
+            if (scan_cancel_.load(std::memory_order_acquire))
+                return false;
+            const std::string child = (directory == "/" ? "" : std::string(directory)) + "/" + next_name;
+            if (child.size() > k_max_path_bytes)
+                continue;
+            if (is_mp3_path(child)) {
+                std::size_t verified_size = 0;
+                const int descriptor = cyberdeck_local_shell_open_readonly("/sdcard", "/", child,
+                                                                            k_max_track_bytes, verified_size);
+                if (descriptor < 0)
+                    continue;
+                if (close(descriptor) != 0)
+                    continue;
+                track candidate{};
+                std::memcpy(candidate.path.data(), child.data(), child.size());
+                candidate.path[child.size()] = '\0';
+                candidate.size_bytes = static_cast<std::uint32_t>(verified_size);
+                const std::size_t title_bytes = std::min(next_name.size(), k_max_title_bytes);
+                std::memcpy(candidate.title.data(), next_name.data(), title_bytes);
+                candidate.title[title_bytes] = '\0';
+                if (count < tracks->size()) {
+                    (*tracks)[count++] = candidate;
+                } else {
+                    truncated = true;
+                    auto largest = std::max_element(tracks->begin(), tracks->end(),
+                        [](const track &left, const track &right) { return left.path < right.path; });
+                    if (candidate.path < largest->path)
+                        *largest = candidate;
+                }
+                continue;
+            }
+            if (depth < 8) {
+                DIR *child_dir = cyberdeck_local_shell_opendir("/sdcard", "/", child);
+                if (child_dir != nullptr) {
+                    if (closedir(child_dir) != 0)
+                        return false;
+                    if (!walk(child, depth + 1))
+                        return false;
+                    if (truncated)
+                        return true;
+                }
+            }
         }
-        const std::string_view name(entry->d_name);
-        if (name.empty() || name == "." || name == ".." || name.size() > 128)
-            continue;
-        const std::string virtual_path = (virtual_dir == "/" ? "" : virtual_dir) + "/" + std::string(name);
-        if (!is_mp3_path(virtual_path) || virtual_path.size() > k_max_path_bytes)
-            continue;
-        std::size_t verified_size = 0;
-        const int descriptor =
-            cyberdeck_local_shell_open_readonly("/sdcard", "/", virtual_path, k_max_track_bytes, verified_size);
-        if (descriptor < 0)
-            continue;
-        if (close(descriptor) != 0)
-            continue;
-        if (count == tracks->size()) {
-            overflow = true;
-            break;
-        }
-        track &item = (*tracks)[count++];
-        std::memcpy(item.path.data(), virtual_path.data(), virtual_path.size());
-        item.path[virtual_path.size()] = '\0';
-        item.size_bytes = static_cast<std::uint32_t>(verified_size);
-        const std::size_t title_bytes = std::min(name.size(), k_max_title_bytes);
-        std::memcpy(item.title.data(), name.data(), title_bytes);
-        item.title[title_bytes] = '\0';
-    }
-    const bool closed = closedir(dir) == 0;
-    if (overflow || !closed || count == 0 || !app_grant().valid())
+        return true;
+    };
+    scan_ok = walk(virtual_dir, 0);
+    if (!scan_ok || count == 0 || !app_grant().valid())
         return false;
+    std::sort(tracks->begin(), tracks->begin() + static_cast<std::ptrdiff_t>(count),
+              [](const track &left, const track &right) { return left.path < right.path; });
     std::lock_guard<std::mutex> publication_lock(scan_publication_mutex_);
     if (scan_cancel_.load(std::memory_order_acquire) || scan_quiescing_.load(std::memory_order_acquire) ||
         !app_grant().valid())
@@ -267,6 +327,8 @@ bool application::scan_directory_sync(std::string_view path) {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     if (!queue_.replace_queue(tracks->data(), count) || !player_.set_queue(tracks->data(), count, 0))
         return false;
+    scan_succeeded_.store(true, std::memory_order_release);
+    scan_truncated_.store(truncated, std::memory_order_release);
     return true;
 }
 
@@ -293,6 +355,8 @@ cyberdeck_apps::result application::status() const {
         text += "queue: scanning...\n";
     else if (scan_attempted_.load(std::memory_order_acquire))
         text += scan_succeeded_.load(std::memory_order_acquire) ? "queue: scan complete\n" : "queue: scan failed\n";
+    if (scan_truncated_.load(std::memory_order_acquire))
+        text += "queue: truncated at 64 tracks\n";
     text += "queue: " + std::to_string(queue_.status().track_count) + " tracks\n";
     text += "controls: queue /dir | play [n] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | "
             "shuffle | repeat\n";
@@ -300,13 +364,30 @@ cyberdeck_apps::result application::status() const {
 }
 
 cyberdeck_apps::result application::execute(std::string_view command, std::string_view args) {
+    if (command == "player") {
+        if (!running_ || !app_grant().valid())
+            return {cyberdeck_apps::result_status::rejected, "player: music service unavailable\n"};
+        if (!scan_directory("/musica"))
+            return {cyberdeck_apps::result_status::rejected, "player: scan unavailable\n"};
+        player_requested_.store(true, std::memory_order_release);
+        return {cyberdeck_apps::result_status::handled, "player: opening\n"};
+    }
     if (command != "music")
         return {};
     if (!running_ || !app_grant().valid())
         return {cyberdeck_apps::result_status::rejected, "music: service unavailable\n"};
     args = trim(args);
-    if (args.empty() || args == "status" || args == "help")
+    if (args.empty()) {
+        if (!scan_directory("/musica"))
+            return {cyberdeck_apps::result_status::rejected, "music: player unavailable or scan active\n"};
+        player_requested_.store(true, std::memory_order_release);
+        return {cyberdeck_apps::result_status::handled, "music: opening player\n"};
+    }
+    if (args == "status")
         return status();
+    if (args == "help")
+        return {cyberdeck_apps::result_status::handled,
+                "music [status|help|queue <directory>|list|play [index]|pause|resume|stop|next|prev|seek <seconds>|volume <0-50>|shuffle|repeat]\n"};
     if (args.rfind("queue ", 0) == 0) {
         if (!app_grant().allows(cyberdeck_apps::resource::storage))
             return {cyberdeck_apps::result_status::rejected, "music: storage unavailable\n"};

@@ -1,0 +1,60 @@
+# Player foreground — matriz de rastreabilidade
+
+## Contrato aprovado
+
+`music` sem argumentos ativa o app foreground `cyberdeck.music`, abre a view
+própria e inicia um scan recursivo de `/musica`. Subcomandos são despachados
+somente enquanto o player está foreground; `player` é alias da mesma instância.
+Manager, adapter e input fazem a mediação entre app/runtime, view e serviços. O
+console e a ponte serial permanecem vivos enquanto a view do player está ativa.
+Esc e troca de app cancelam/juntam o scan e param playback antes de liberar a
+view ou iniciar o próximo foreground. Falha/timeout de stop bloqueia a troca e
+mantém foreground, grant, quota e recursos vivos para retry. Reabertura inicia scan novo.
+Preservar scan recursivo seguro, controles, consumo de input e limites/casos
+negativos existentes.
+
+## REQ/AC e cenários
+
+| REQ / AC | TEST | Cenário e asserts obrigatórios | Alvo/seam comportamental |
+| --- | --- | --- | --- |
+| REQ-PLAYER-01 / AC-PLAYER-01 lazy | TEST-PLAYER-LAZY-START | Boot, registro e start lazy não criam scan nem playback; `music` explícito abre e inicia exatamente um scan. | `test_music_app` + `test_app_runtime`; manager/adapter real ou seam compartilhado. |
+| REQ-PLAYER-01 / AC-PLAYER-02 foreground único | TEST-PLAYER-OPEN-FOREGROUND | `music` ativa a mesma instância foreground; repetição não duplica app/scan. Console/sessão e Serial-JTAG permanecem vivos sob a view; nenhum modal/surface paralela. | `test_app_runtime` + `test_music_app`; adapter/runtime. |
+| REQ-PLAYER-01 / AC-PLAYER-03 comandos ativos | TEST-PLAYER-COMMANDS-ACTIVE | Todos comandos válidos, inclusive `status`/`queue`, chegam à instância ativa; argumentos inválidos são rejeitados sem efeitos. | `test_music_app` + `test_shell_app`; dispatch/adapter. |
+| REQ-PLAYER-01 / AC-PLAYER-04 comandos inativos | TEST-PLAYER-COMMANDS-INACTIVE | Antes de abrir e após Esc/stop, `status`, `queue` e comando mutável não são executados, não iniciam serviço nem reabrem UI. | `test_music_app` + `test_app_runtime`; dispatch real. |
+| REQ-PLAYER-01 / AC-PLAYER-05 stop/cancel/join | TEST-PLAYER-STOP-CANCEL | Reter scan em secure-open; stop solicita cancelamento e não retorna antes de worker/join. Não publica resultado parcial nem libera lease/handle cedo; playback recebe stop. Cobrir também stop sem scan. | `test_music_app`; worker/adapter real com gate determinístico. |
+| REQ-PLAYER-01 / AC-PLAYER-06 view e input | TEST-PLAYER-VIEW-INPUT | View tem ciclo create/render/input/destroy próprio; eventos de teclado/touch traduzem para ações do player. Input não reconhecido é consumido e não altera/executa linha do shell. Teardown destrói view após quiescência. | `test_display_views` compila o TU real `cyberdeck_music_view.cpp` no shim LVGL e valida ciclo/render/visibilidade; `test_music_manager` verifica política de input/close; contrato scanner verifica wiring. Touch/teclado LVGL real segue manual. |
+| REQ-PLAYER-01 / AC-PLAYER-07 Esc | TEST-PLAYER-ESC-STOP | Esc ativo aciona close uma vez; cancel/join e stop precedem liberação da view/foreground. Falha mantém ownership; Esc inativo não repete ações. | `test_music_manager` + `test_app_runtime`; contrato estrutural complementar; hardware manual. |
+| REQ-PLAYER-01 / AC-PLAYER-08 switch e ordem | TEST-PLAYER-SWITCH-ORDER | Troca para outro app observa stop+join concluídos antes do start destino; console owner e dependentes são preservados e destino recebe ownership/input. | `test_app_runtime` + novo teste adapter/runtime com eventos ordenados. |
+| REQ-PLAYER-01 / AC-PLAYER-09 stop failure | TEST-PLAYER-STOP-FAIL-BLOCK | Falha/timeout de stop/join bloqueia switch; player segue foreground, running e com worker/lease/view válidos; destino não inicia. Retry após sanar falha completa a troca. | `test_app_runtime` (falha lifecycle) + novo teste adapter/runtime com injeção de falha. |
+| REQ-PLAYER-01 / AC-PLAYER-10 reopen | TEST-PLAYER-REOPEN-RESCAN | Depois de stop completo, reabrir inicia exatamente um scan; fixture alterada aparece e callback/dado do ciclo anterior não contamina a sessão nova. | `test_music_app`; app/adapter real. |
+| REQ-PLAYER-01 / AC-PLAYER-11 scan íntegro | TEST-PLAYER-SCAN-BOUNDS-SECURITY | Manter ordem lexicográfica, MP3 válido, rejeição de symlink/traversal/não-regular/secure-open, depth 8 e limite 64/truncation; readdir/closedir falho, cancelamento/root ausente não publica parcial. | `test_music_app` + `test_music_scan_opendir_contract`; negativos e limites preservados. |
+| REQ-PLAYER-01 / AC-PLAYER-12 controles | TEST-PLAYER-CONTROLS | Touch e teclas Enter, setas, N/P acionam toggle/play-pause, prev/next, seek e volume na instância ativa; limites de volume/seek e input não reconhecido. | `test_display_views` valida os sete callbacks reais da view; `test_music_manager` cobre política de input e `test_music_player` efeitos. Manual Tab5 pendente. |
+| REQ-PLAYER-01 / AC-PLAYER-13 regressão | TEST-PLAYER-REGRESSION | Preservar testes existentes de model, decoder, áudio, player, app, segurança, bounds, help e runtime; novas suites entram nos alvos focados/agregado sem remover nem afrouxar asserts. | Alvos focados existentes e Makefile; suíte ampla fica para reviewer. |
+
+## Mapeamento concreto e limites
+
+- Já existentes no Makefile: `test_music_app` (app/scan comportamental),
+  `test_music_player` (worker/player e falhas de inicialização),
+  `test_music_model`, `test_music_audio_output`,
+  `test_music_decoder_scratch`, `test_music_decoder_stack_contract`,
+  `test_music_scan_opendir_contract`, `test_app_runtime`, `test_shell_app`,
+  `test_window_manager` e `test_display_views`.
+- `test_app_runtime` cobre exclusividade, ordem e falha de teardown; em falha a
+  aplicação permanece `running` e grant/quota válidos até retry bem-sucedido.
+  `test_music_app` cobre scan/commands/lifecycle de domínio;
+  `test_music_manager` cobre consumo de teclas, retenção após falha de close e
+  Escape inativo sem ação duplicada. O teste do manager usa callbacks host e não
+  prova execução física da view.
+- `test_music_scan_opendir_contract.py` verifica a branch ESP/FATFS e os pontos
+  de integração atuais manager/view/input/adapter, preservando asserções de
+  ownership, comandos, controles, cancelamento e segurança. Não prova
+  comportamento LVGL.
+- `test_display_views` links the production music-view TU, covering create,
+  rendering, visibility, all seven callback labels/context, destroy/recreate,
+  and scope-guard coverage. Shim callbacks do not replace physical input tests.
+- Testes host que só usam fakes/contratos não provam a execução física de LVGL,
+  touch/teclado, codec ou áudio. `manual_validation: pending` até validar no
+  Tab5 Esc, troca de app, controles e playback parado sem scan ativo.
+- Executar somente alvos criados/alterados; comandos exatos devem ser registrados
+  depois que os novos alvos/seams forem implementados. Não executar suíte global
+  nem cobertura nesta etapa de especificação.

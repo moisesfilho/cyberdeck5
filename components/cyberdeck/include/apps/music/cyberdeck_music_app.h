@@ -20,6 +20,9 @@ class application final : public cyberdeck_apps::application {
     bool running() const override { return running_; }
     cyberdeck_apps::result execute(std::string_view command, std::string_view args) override;
     bool has_playback() const;
+    bool player_snapshot(snapshot &out) const { return player_.status(out); }
+    cyberdeck_apps::result player_command(std::string_view args) { return execute("music", args); }
+    bool consume_player_request() { return player_requested_.exchange(false, std::memory_order_acq_rel); }
     bool poweroff_quiesce(std::uint32_t timeout_ms);
   private:
     bool scan_directory(std::string_view path);
@@ -37,6 +40,8 @@ class application final : public cyberdeck_apps::application {
     std::atomic<bool> scan_running_{false};
     std::atomic<bool> scan_succeeded_{false};
     std::atomic<bool> scan_attempted_{false};
+    std::atomic<bool> scan_truncated_{false};
+    std::atomic<bool> player_requested_{false};
     std::atomic<bool> scan_join_pending_{false};
     std::atomic<bool> scan_quiescing_{false};
     bool running_ = false;

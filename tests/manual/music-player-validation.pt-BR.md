@@ -46,28 +46,48 @@ best-effort e não substitui `sys.info` nem altera o latch.
    mode reaparecer ou `sys.info` não responder, pare. Não iniciar o player nem
    atribuir a falha ao decoder/áudio; preserve a captura para diagnóstico.
 
-## 2. App, scan e uma tentativa de reprodução
+## 2. Abertura, scan e uma tentativa de reprodução
 
 Pré-condição: boot normal comprovado e sem reboot/WDT durante a captura.
 
+`music` sem argumentos é o único ponto de entrada do player: ativa o app
+foreground `cyberdeck.music`, abre a surface dedicada e inicia um scan recursivo
+de `/musica` (profundidade máxima 8, ordem lexicográfica, limite de 64 faixas).
+Não é necessário — e não basta — `app start cyberdeck.music`: o start isolado
+apenas sobe o app, sem abrir a surface nem iniciar o scan. `player` é alias do
+mesmo fluxo.
+
+Subcomandos (`music status|list|play|...`) só são aceitos enquanto o player é o
+foreground ativo; fora disso a resposta é
+`app: command requires active foreground`.
+
+O console e a ponte Serial-JTAG permanecem vivos com o player aberto. Isso é
+requisito do contrato: `ui.type`, `term.dump` e `sys.info` devem continuar
+respondendo enquanto a surface está na tela.
+
 ```text
 sys.info
-ui.type "app start cyberdeck.music"
-term.dump
-ui.type "app info cyberdeck.music"
-term.dump
-ui.type "music queue /musica"
-term.dump
+ui.type "music"
+term.dump          # esperado: music: opening player
+ui.dump            # surface do player com status, lista e alvos de toque
 ui.type "music status"
-term.dump
+term.dump          # esperado: queue: scan complete + queue: N tracks
 ui.type "music list"
-term.dump
+term.dump          # lista limitada a 16 de 64 faixas
 ```
 
-`cyberdeck.music` tem `auto_start=false`, portanto o start explícito é
-necessário. Confirme `state=running`, scan concluído e a faixa real
-`01 - The Kid (Kid Cosmic Theme).mp3`. Se o app ou a faixa não forem
-confirmados, não enviar play.
+Aguarde `queue: scan complete` em `music status` antes de qualquer outro comando
+de fila. Com o scan em andamento, `music` e `music queue <dir>` são rejeitados com
+`scan unavailable or another scan is active`; não repetir durante a coleta. A
+surface mostra o mesmo status, até 16 faixas e a linha de controles; `music
+status` acrescenta `queue: truncated at 64 tracks` quando o limite é atingido.
+
+Não use `music queue /musica` no fluxo normal: esse já é o diretório padrão do
+scan. `queue <diretório>` serve apenas para trocar a origem depois que o scan
+anterior terminou.
+
+Confirme a faixa real `01 - The Kid (Kid Cosmic Theme).mp3`. Se a fila não for
+confirmada, não enviar play.
 
 Envie exatamente uma vez:
 
@@ -83,7 +103,33 @@ Registre estado/progresso/`error_stage`, saída do codec e uptime. `playing` ou
 PCM escrito não provam áudio audível. Se surgir erro, WDT, reboot, serviço
 indisponível ou uptime reiniciado, pare; sem replay/recovery adicional.
 
-## 3. Aceite acústico e controles (observador humano)
+## 3. Surface, controles e aceite acústico
+
+A surface contém o bloco de status, até 16 faixas e sete alvos de toque:
+`Previous`, `Play/Pause`, `Next`, `Seek -10s`, `Seek +10s`, `Volume -`,
+`Volume +`.
+
+Mapeamento de teclado (físico e virtual):
+
+| Tecla | Efeito |
+| --- | --- |
+| Enter | play/pause, alternando conforme o estado atual |
+| ← / → | seek −10 s / +10 s |
+| ↑ / ↓ | volume +1 / −1 (faixa 0..50) |
+| N / P | próxima / anterior |
+| Esc | fecha o player: foreground volta ao shell com stop/join e halt do playback |
+
+Validação obrigatória:
+
+- toque: `ui.tap "Play/Pause"`, `ui.tap "Next"`, `ui.tap "Volume +"` e conferir o
+  efeito em `music status`/`ui.dump`;
+- teclado: Enter, ←/→, ↑/↓, N/P e Esc. Esc deve retornar ao shell **na mesma
+  sessão** (prompt/linha anterior preservados) e sem desmontar a ponte serial;
+- `sys.info` antes e depois de cada bloco: uptime crescente, sem reboot/panic/WDT;
+- reabrir com `music` inicia novo scan e não restaura a fila anterior;
+- trocar de app com o player aberto encerra via stop/join; falha de stop mantém o
+  player ativo e bloqueia a troca de foreground;
+- scan cancelado ou falho não pode publicar fila parcial.
 
 Somente após a tentativa estável e com confirmação humana:
 

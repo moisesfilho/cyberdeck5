@@ -3,16 +3,47 @@
 **Estado:** implementação integrada e validada em host/build; aceite físico
 pendente. Não declarar release até reproduzir áudio real e validar speaker/jack.
 
+## REQ-PLAYER-01 — superfície TUI dedicada
+
+`music` sem argumentos ativa o único app foreground `cyberdeck.music` e apresenta
+sua view dedicada. A troca encerra o foreground anterior antes de ativar o player;
+Esc retorna ao shell somente após stop/join bem-sucedido. `music status` continua
+sendo a consulta explícita; `music help` lista os comandos. O alias legado
+`player` ativa a mesma instância e não cria outro app. Subcomandos só são
+despachados enquanto o player está foreground. Abrir inicia scan recursivo seguro
+em `/musica`, ordenado lexicograficamente por caminho (root=0,
+profundidade máxima 8), bounded a 64 faixas com indicação de truncamento. A fila
+é esvaziada ao aceitar o scan; resultados só substituem a fila ao completar todo
+o scan. A faixa já ativa mantém seu request/cópia durante enumeração; EOF segue
+normalmente. Cancelamento/falha não restaura fila anterior nem publica parcial.
+Enumeração percorre filhos em ordem lexicográfica com memória independente da
+quantidade de entradas: seleciona o próximo nome por reabertura e nova leitura do
+diretório. Erro de `readdir` (distinto de EOF) ou de `closedir` aborta o scan,
+sem publicar uma fila parcial.
+Controles: touch, Enter play/pause, ←/→ seek, ↑/↓ volume, N/P next/previous e
+Esc solicita stop e retorna ao shell sem conservar playback ativo. Falha ou
+timeout de stop preserva foreground, grant, quota e recursos vivos para retry.
+O scan limpa a fila assim que é admitido; publica somente
+ao concluir, conserva a faixa ativa/request em andamento, falha com fila vazia e
+marca truncamento sem exceder 64 itens.
+
+Host comportamental `test_music_app` cobre abertura pela raiz `/musica`, scan
+recursivo/seguro/ordenado e limite de profundidade, truncamento, fila limpa em
+falha/cancelamento, playback ativo e comandos legados; contrato focado verifica
+roteamento da superfície e controles. Build firmware e aceite físico ficam a
+cargo da validação independente/roteiro manual. Nenhum flash foi executado nesta
+implementação.
+
 ## Acompanhamento: execução exclusiva e telemetria de memória — 2026-10-25
 
-- Runtime: aplicações `foreground` passam a compartilhar uma única propriedade
-  ativa. `switch_foreground(id)` encerra dependentes e aguarda teardown antes de
-  iniciar a próxima; dispatch de comandos usa o mesmo caminho. Falha de teardown
-  impede ativação subsequente. `start_all()` deixa apps foreground lazy, sem
-  iniciá-las durante boot. Apps `background`/`service` continuam com política
-  atual; `cyberdeck.music` permanece background para que o comando/player possa
-  operar sem desmontar o shell. A aplicação de foreground exclusiva cobre
-  superfícies de usuário, não transforma services em multitarefa exclusiva.
+- Runtime: aplicações `foreground` compartilham uma única propriedade ativa.
+  `switch_foreground(id)` encerra o foreground anterior quando isso não remover
+  o console; o shell e seus dependentes permanecem vivos ao abrir outro app.
+  Dispatch de comandos usa a mesma política. Falha de teardown impede ativação
+  subsequente. `start_all()` deixa apps foreground lazy, sem iniciá-las durante
+  boot. `cyberdeck.music` segue foreground, enquanto a view do console é
+  substituída sem destruir a sessão/ponte serial. A recusa explícita de parar o
+  owner do console via comando `app stop` permanece inalterada.
 - `sys.info` passa a expor `internal_free`, `internal_largest`, `dma_free`,
   `dma_largest` e `psram_free`, mantendo `free_heap` e aceitando JSON legado sem
   os campos novos. Isso permite distinguir pressão/fragmentação DMA de PSRAM.
@@ -30,9 +61,11 @@ pendente. Não declarar release até reproduzir áudio real e validar speaker/ja
   `esp_hosted_init`/`connect_to_slave` nessa captura; sem Wi-Fi/serviços e sem
   teste de foreground ou playback.
 - Foi detectado também que `switch_foreground` poderia desmontar a aplicação
-  que possui o console. A API agora recusa reativar esse owner; teste de runtime
-  (195 checks), contrato system-apps e build ESP-IDF passaram. Não validado em
-  dispositivo porque o boot permanece em safe mode.
+  que possui o console: o fallback de foreground tentava parar o shell durante
+  o próprio dispatch de `music`, invalidando a sessão chamadora antes do retorno.
+  A ativação agora preserva o owner e dependentes; o bloqueio explícito de parar
+  o owner pelo comando `app stop` segue vigente. Cobertura de runtime verifica
+  a sessão viva após o retorno do dispatch; validação física permanece pendente.
 - Instrumentação persistente adicionada ao recovery: ring journal NVS separado
   em `cyberdeck_rec/diag` (1900 B), com leitura do blob anterior e estados
   anterior/posterior de `boot_begin`, `clear` e `checkpoint`; `events.read`

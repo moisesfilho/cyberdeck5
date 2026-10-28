@@ -1,6 +1,7 @@
 #include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_terminal_view.h"
 #include "platform/display/cyberdeck_editor_view.h"
+#include "platform/display/cyberdeck_music_view.h"
 
 #include <algorithm>
 #include <array>
@@ -19,6 +20,17 @@ static int geometry_events = 0;
 static void geometry_changed(lv_event_t *) { ++geometry_events; }
 static std::string editor_action;
 static void editor_changed(std::string_view action, void *) { editor_action = std::string(action); }
+struct music_action_log {
+    std::vector<std::string> actions;
+    void *expected_context{};
+    int context_calls{};
+};
+static void record_music_action(std::string_view action, void *context)
+{
+    auto *log = static_cast<music_action_log *>(context);
+    log->actions.emplace_back(action);
+    if (context == log->expected_context) ++log->context_calls;
+}
 
 static void assert_visible_lines_fit(const cyberdeck_terminal_view::view &terminal,
                                      int32_t width)
@@ -478,6 +490,58 @@ int main()
     assert(std::string(status_label->text).size() <= 256);
     assert(std::string(status_label->text).find(" | UTF-16BE") != std::string::npos);
     assert(std::string(status_label->text).find('\n') == std::string::npos);
+
+    /* REQ-PLAYER-01 / AC-PLAYER-06,12: execute the production music view TU
+     * through the same full LVGL shim as the other display surfaces. */
+    cyberdeck_music_view::view music_view;
+    assert(!music_view.create(nullptr, record_music_action, nullptr));
+    assert(!music_view.visible());
+    music_action_log music_log;
+    music_log.expected_context = &music_log;
+    assert(music_view.create(&screen, record_music_action, &music_log));
+    assert(music_view.create(&screen, record_music_action, &music_log));
+    assert(screen.children.back()->children.size() == 8);
+    auto *music_surface = screen.children.back();
+    assert(music_surface->width == LV_PCT(94) && music_surface->height == LV_PCT(72));
+    assert(music_surface->hidden && !music_view.visible());
+    const std::array<std::string, 7> music_labels{
+        "Previous", "Play/Pause", "Next", "Seek -10s", "Seek +10s",
+        "Volume -", "Volume +"};
+    const std::array<std::string, 7> music_actions{
+        "prev", "toggle", "next", "seek_back", "seek_forward",
+        "volume_down", "volume_up"};
+    for (std::size_t i = 0; i < music_labels.size(); ++i) {
+        auto *button = music_surface->children[i + 1];
+        assert(button->text == music_labels[i]);
+        assert(button->event_callbacks.size() == 1);
+        lv_shim_emit_event(button, LV_EVENT_CLICKED);
+        assert(music_log.actions.back() == music_actions[i]);
+    }
+    assert(music_log.actions.size() == 7 && music_log.context_calls == 7);
+    music_surface->children[1]->text = "unrecognized";
+    lv_shim_emit_event(music_surface->children[1], LV_EVENT_CLICKED);
+    assert(music_log.actions.size() == 7);
+    music_surface->children[1]->text = music_labels[0];
+    cyberdeck_music_view::view no_music_callback;
+    assert(no_music_callback.create(&screen, nullptr, nullptr));
+    auto *no_callback_surface = screen.children.back();
+    lv_shim_emit_event(no_callback_surface->children[1], LV_EVENT_CLICKED);
+    no_music_callback.destroy();
+    music_view.render("Now playing: track.mp3");
+    assert(music_surface->children[0]->text == "Now playing: track.mp3");
+    music_view.render("");
+    assert(music_surface->children[0]->text.empty());
+    music_view.set_visible(true);
+    assert(music_view.visible() && !music_surface->hidden);
+    music_view.set_visible(false);
+    assert(!music_view.visible() && music_surface->hidden);
+    music_view.destroy();
+    assert(!music_view.visible());
+    music_view.destroy();
+    assert(!music_view.create(nullptr, record_music_action, &music_log));
+    assert(music_view.create(&screen, record_music_action, &music_log));
+    assert(music_view.visible() == false);
+    music_view.destroy();
 
     /* TEST-EDIT-FOOTER-HOST/CONTRACT: keyboard inset and orientation resize
      * recalculate the footer without overlap or stale document slots. */
