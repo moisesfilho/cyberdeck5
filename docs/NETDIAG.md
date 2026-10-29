@@ -57,9 +57,8 @@ o mesmo host autoassinado gerou `No matching trusted root certificate found`,
 terminou em `https_failed` em 576 ms, sem HTTP status. Isso comprova rejeição
 TLS negativa para o certificado autoassinado; certificado expirado, captura de
 pacotes e todas as corridas de teardown não foram validados exaustivamente.
-Qualquer commit posterior
-requer CI no novo
-estado. O GCC/gcov 15.2 local mede branches diferentemente (57,4% no mesmo
-agregado).
+O Quality Gate remoto citado acima é evidência histórica dos commits indicados;
+não há registro de execução para commits posteriores. O GCC/gcov 15.2 local mede
+branches diferentemente (57,4% no mesmo agregado).
 Sem comandos automáticos, scans,
 ICMP/ping, exportação ou tráfego implícito.

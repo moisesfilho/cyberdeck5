@@ -157,4 +157,4 @@ dispositivo; não houve captura de pacotes, e o caso de certificado expirado
 continua caracterizado somente por timeout. A integração em `develop`
 (`46af301`) passou no agregado host, cobertura, scope guard, TSan, análises
 estáticas e build ESP-IDF locais; não se declara execução integral do roteiro
-manual Serial-JTAG nem CI remota do commit de merge.
+manual Serial-JTAG nem execução de CI remota para o commit de merge.
