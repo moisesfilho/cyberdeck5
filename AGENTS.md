@@ -71,12 +71,20 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 
 ## Validacao de firmware no dispositivo
 
-- Como este projeto produz firmware para um dispositivo específico, valide cada
-  implementação no dispositivo de teste conectado, realizando o flash do
-  firmware compilado quando o dispositivo estiver disponível.
-- Confirme o comportamento no hardware com os testes pertinentes e registre o
-  resultado. Se o dispositivo não estiver disponível, informe que a validação
-  física permanece pendente.
+- Ordem padrão: implementação -> testes focados -> validação no dispositivo
+  conectado (quando segura e autorizada) -> revisão final ampla. Faça o flash do
+  firmware compilado somente como parte da validação aprovada, não para substituir
+  a inspeção/diagnóstico da implementação.
+- Confirme no hardware os critérios de aceite pertinentes e registre build/hash,
+  comandos e efeito observado. Não encaminhe a revisão final ampla antes desta
+  etapa quando ela puder ser realizada com segurança; testes host/build não
+  substituem o comportamento físico.
+- Se o dispositivo estiver indisponível, o teste for inseguro ou houver bloqueio
+  explícito/inconclusivo, documente a razão e mantenha a validação física pendente.
+  O reviewer ainda pode concluir os gates locais finais, mas não aprova hardware
+  nem permite marcar a tarefa como completa.
+- Não repita uma interação física que causou reboot, panic ou comportamento
+  perigoso antes de analisar evidências e obter autorização apropriada.
 - Não faça flash automaticamente apenas para investigar um problema; o flash
   como etapa de validação da implementação é esperado quando o dispositivo
   estiver disponível.
