@@ -420,7 +420,7 @@ cyberdeck_apps::manifest music_usage_manifest()
     item.command_count = 2;
     item.commands_require_active_foreground = true;
     item.command_help_entries[0] = {
-        "music queue <directory> | list | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
+        "music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
         "MP3 playback from SD; volume is capped at 50\n"};
     item.command_help_entries[1] = {"player", "open the music player surface\n"};
     return item;
@@ -801,7 +801,7 @@ int main()
             "music [app]\n"
             "  Music (cyberdeck.music) version 1.0.0\n"
             "  Foreground local MP3 player\n"
-            "  usage: music queue <directory> | list | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status\n"
+            "  usage: music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status\n"
             "  MP3 playback from SD; volume is capped at 50\n"
             "  usage: player\n"
             "  open the music player surface\n";

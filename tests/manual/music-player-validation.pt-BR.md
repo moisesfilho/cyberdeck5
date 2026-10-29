@@ -4,6 +4,12 @@
 **Porta usual:** `/dev/ttyACM0`
 **Firmware integrado atual:** `version.txt` (confirmar hash da imagem no registro)
 
+**Ordem de gates:** testes focados independentes precedem a validação deste
+roteiro; para mudanças de interface/dispositivo, a validação no Tab5 deve ocorrer
+antes da revisão final ampla, quando segura e autorizada. Se bloqueada/deferida,
+registre a limitação e mantenha o gate físico pendente; revisão host não prova
+comportamento no dispositivo.
+
 Este roteiro não autoriza repetir recuperação sem limite. Registre horário,
 versão/hash, porta, resposta NDJSON, logs seriais e `sys.info` antes/depois.
 Qualquer safe mode, ausência de resposta, reboot inesperado, panic ou WDT encerra
@@ -46,7 +52,17 @@ best-effort e não substitui `sys.info` nem altera o latch.
    mode reaparecer ou `sys.info` não responder, pare. Não iniciar o player nem
    atribuir a falha ao decoder/áudio; preserve a captura para diagnóstico.
 
-## 2. Abertura, scan e uma tentativa de reprodução
+## 2. Abertura, scan e inspeção — modo estrito sem playback
+
+**Escopo desta rodada:** abrir o player, consultar status/lista e inspecionar a
+surface. Não reproduza áudio. São permitidos somente `music` sem argumentos,
+`music status`, `music list` e inspeção não interativa por `term.dump`, `ui.dump`
+ou captura de tela. Não envie `music play`, `play`, `resume` ou qualquer comando
+equivalente; não toque em `Play/Pause`, `Next` ou outro controle de playback; não
+pressione fisicamente/virtualmente Enter, N, P ou Space no player, nem execute
+qualquer ação que possa iniciar ou retomar a reprodução. Use `ui.type` somente
+para os três comandos permitidos acima; não digite no campo Command. Se o
+foco/estado tornar uma ação ambígua, não a execute.
 
 Pré-condição: boot normal comprovado e sem reboot/WDT durante a captura.
 
@@ -69,57 +85,79 @@ respondendo enquanto a surface está na tela.
 sys.info
 ui.type "music"
 term.dump          # esperado: music: opening player
-ui.dump            # surface do player com status, lista e alvos de toque
+ui.dump            # surface do player com status, lista rolável e controles
 ui.type "music status"
 term.dump          # esperado: queue: scan complete + queue: N tracks
 ui.type "music list"
-term.dump          # lista limitada a 16 de 64 faixas
+term.dump          # lista limitada a 64 faixas
 ```
 
 Aguarde `queue: scan complete` em `music status` antes de qualquer outro comando
 de fila. Com o scan em andamento, `music` e `music queue <dir>` são rejeitados com
 `scan unavailable or another scan is active`; não repetir durante a coleta. A
-surface mostra o mesmo status, até 16 faixas e a linha de controles; `music
+surface mostra o status, lista rolável de até 64 faixas e controles; `music
 status` acrescenta `queue: truncated at 64 tracks` quando o limite é atingido.
 
 Não use `music queue /musica` no fluxo normal: esse já é o diretório padrão do
-scan. `queue <diretório>` serve apenas para trocar a origem depois que o scan
-anterior terminou.
+scan. Nesta rodada, não use `queue <diretório>` nem qualquer comando além de
+`music`, `music status` e `music list`. Registre o resultado do scan e a
+identidade das faixas somente como inspeção; não tente reproduzi-las.
 
-Confirme a faixa real `01 - The Kid (Kid Cosmic Theme).mp3`. Se a fila não for
-confirmada, não enviar play.
+Após consultar status/lista, use apenas dumps/captura para inspecionar a surface,
+o header e o estado visual. Se surgir erro, WDT, reboot, serviço indisponível ou
+uptime reiniciado, pare; não repita nem tente playback.
 
-Envie exatamente uma vez:
+## 3. Surface e inspeção visual — sem acionar controles
 
-```text
-ui.type "music play 1"
-term.dump
-ui.type "music status"
-term.dump
-sys.info
+A surface contém status, lista rolável de até 64 faixas e controles de toque:
+`Previous`, `Play/Pause`, `Next`, `Seek -10s`, `Seek +10s`, `Volume -`,
+`Volume +` e `Command`. A lista deve mostrar scrollbar quando exceder o painel;
+inspecione a lista e seus limites por `ui.dump`/captura, sem interagir com ela.
+Em portrait e landscape, confirme que os labels permanecem dentro de seus
+controles/linhas; nomes excessivos podem terminar em pontos, mas não devem
+invadir outros widgets nem aumentar a altura da linha. Somente a lista deve
+rolar verticalmente.
+
+Com o player aberto, confirme que o header global permanece visível e fixo.
+Não faça arrastes, gestos, toques ou navegação por teclado nesta rodada. A
+validação limita-se à inspeção passiva da surface, header, lista e controles.
+
+Não abra o campo `Command` nem use o mapa de teclado nesta rodada: Enter executa
+ações no contexto do player, e N/P/Space ou controles de tela podem disparar
+reprodução. Evite toda entrada interativa no player após as consultas `status` e
+`list` autorizadas acima.
+
+### 3.1. Captura de tela e entrada durante a inspeção
+
+Com a surface do player aberta, **Enter inicia playback** (play/pause): ele não
+serve para "acordar" a tela. Se a proteção de tela apagar o display, religue com
+injeção vazia (`ui.type ""`) e só então retome a inspeção — esse evento é
+consumido apenas para religar e não executa comando.
+
+A inspeção visual pode usar `screen.dump` pela ponte serial ou o endpoint HTTP
+`GET /screenshot`:
+
+```bash
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out /tmp/player.bmp
+curl -s -o /tmp/player-http.bmp http://<ip>/screenshot   # IP de wifi.status
 ```
 
-Registre estado/progresso/`error_stage`, saída do codec e uptime. `playing` ou
-PCM escrito não provam áudio audível. Se surgir erro, WDT, reboot, serviço
-indisponível ou uptime reiniciado, pare; sem replay/recovery adicional.
-
-## 3. Surface, controles e aceite acústico
-
-A surface contém o bloco de status, até 16 faixas e sete alvos de toque:
-`Previous`, `Play/Pause`, `Next`, `Seek -10s`, `Seek +10s`, `Volume -`,
-`Volume +`.
+As duas vias entregam o mesmo BMP bottom-up (`biHeight > 0`); não é preciso
+inverter a imagem. Compare `sys.info` antes e depois de cada captura: uptime
+reiniciado ou contadores zerados indicam reboot e encerram o cenário.
 
 Mapeamento de teclado (físico e virtual):
 
 | Tecla | Efeito |
 | --- | --- |
-| Enter | play/pause, alternando conforme o estado atual |
+| Enter | play/pause, alternando conforme o estado atual — **proibido nesta rodada** |
 | ← / → | seek −10 s / +10 s |
 | ↑ / ↓ | volume +1 / −1 (faixa 0..50) |
-| N / P | próxima / anterior |
+| N / P | próxima / anterior — **proibido nesta rodada** |
 | Esc | fecha o player: foreground volta ao shell com stop/join e halt do playback |
 
-Validação obrigatória:
+Os itens de interação abaixo estão fora do escopo desta rodada e não devem ser
+executados:
 
 - toque: `ui.tap "Play/Pause"`, `ui.tap "Next"`, `ui.tap "Volume +"` e conferir o
   efeito em `music status`/`ui.dump`;
@@ -131,7 +169,17 @@ Validação obrigatória:
   player ativo e bloqueia a troca de foreground;
 - scan cancelado ou falho não pode publicar fila parcial.
 
-Somente após a tentativa estável e com confirmação humana:
+**Estado deste ciclo:** não enviar Escape nem fazer nova ação física. O reboot
+reportado após Esc ainda não tem causa demonstrada. Os logs `music: stop
+stage=cancel_scan`, `scan_join_complete`, `player_stop` (ou `stop failed
+stage=...`) são evidência diagnóstica para uma rodada autorizada futura; host
+tests não provam ausência de reboot no Tab5.
+
+### Fora do escopo desta rodada: autorização explícita obrigatória
+
+Os testes acústicos/de playback abaixo só podem ser executados em outra rodada,
+após autorização explícita. A confirmação “Sim, sem playback” vale somente para
+a rodada atual e não autoriza nenhum desses passos.
 
 - verificar áudio audível no speaker integrado;
 - verificar inserção/remoção de fone e rota pelo jack de 3,5 mm;

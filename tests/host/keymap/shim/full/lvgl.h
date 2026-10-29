@@ -29,7 +29,7 @@ struct lv_indev_t { int type{}; lv_point_t point{}; };
  * installs: a fresh object scrolls in every direction, shows an automatic
  * scrollbar and chains scrolling to its parent.  A recorded value of 0 therefore
  * means production disabled it, not that the shim defaulted to it. */
-inline constexpr int LV_DIR_NONE=0, LV_DIR_ALL=1, LV_SCROLLBAR_MODE_OFF=0,
+inline constexpr int LV_DIR_NONE=0, LV_DIR_ALL=1, LV_DIR_VER=2, LV_SCROLLBAR_MODE_OFF=0,
     LV_SCROLLBAR_MODE_AUTO=3,
     LV_LAYOUT_FLEX=1, LV_LAYOUT_NONE=0, LV_FLEX_FLOW_ROW=0, LV_FLEX_FLOW_COLUMN=1,
     LV_FLEX_ALIGN_START=0,
@@ -46,7 +46,7 @@ struct shim_event_cb { lv_event_cb_t callback{}; int filter{}; void *user_data{}
 
 struct _lv_obj_t {
     _lv_obj_t *parent{}; std::vector<_lv_obj_t *> children; std::string text;
-    int32_t width{}, height{}, x{}, y{}; bool hidden{};
+    int32_t width{}, height{}, x{}, y{}, slider_value{}; bool hidden{};
     const lv_font_t *text_font{}; int32_t text_align{-1}; int32_t long_mode{-1};
     int32_t flex_main{-1}, flex_cross{-1}, flex_track{-1};
     /* -1 means the shim never saw a background/arc color applied, so "the bar is
@@ -70,7 +70,9 @@ struct _lv_obj_t {
 using lv_result_t = int;
 inline constexpr lv_result_t LV_RESULT_OK = 0, LV_RESULT_INVALID = -1;
 inline constexpr int LV_SIZE_CONTENT=-1;
-inline constexpr int LV_LABEL_LONG_CLIP=0, LV_LABEL_LONG_WRAP=1;
+inline constexpr int LV_LABEL_LONG_CLIP=0, LV_LABEL_LONG_WRAP=1,
+    LV_LABEL_LONG_MODE_DOTS=2;
+inline constexpr int LV_ANIM_OFF=0;
 inline constexpr const char *LV_SYMBOL_BLUETOOTH="BT", *LV_SYMBOL_CHARGE="CHG",
     *LV_SYMBOL_BATTERY_FULL="BAT", *LV_SYMBOL_MINUS="-", *LV_SYMBOL_PLAY="PLAY";
 inline lv_color_t lv_color_hex(std::uint32_t v) { return {v}; }
@@ -83,6 +85,7 @@ inline void lv_obj_center(lv_obj_t *) {}
 inline lv_obj_t *lv_label_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_arc_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_textarea_create(lv_obj_t *p) { return lv_obj_create(p); }
+inline lv_obj_t *lv_slider_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_keyboard_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline void lv_obj_delete(lv_obj_t *o) { delete o; }
 /* LVGL 9 keeps the v8 spelling alive through its API map; mirror it so the
@@ -99,7 +102,9 @@ inline void lv_obj_set_x(lv_obj_t*o,int32_t v){if(o)o->x=v;} inline void lv_obj_
 inline void lv_obj_set_pos(lv_obj_t*o,int32_t x,int32_t y){if(o){o->x=x;o->y=y;}}
 inline int32_t lv_font_get_line_height(const lv_font_t*f){return f?f->line_height:0;}
 inline void lv_obj_set_hidden(lv_obj_t*o,bool v){if(o)o->hidden=v;} inline bool lv_obj_is_hidden(const lv_obj_t*o){return o&&o->hidden;} inline bool lv_obj_has_flag(lv_obj_t*o,int){return o&&o->hidden;}
+inline void lv_obj_move_foreground(lv_obj_t*o){if(!o||!o->parent)return;auto&children=o->parent->children;const auto found=std::find(children.begin(),children.end(),o);if(found!=children.end()){children.erase(found);children.push_back(o);}}
 inline void lv_obj_add_flag(lv_obj_t*, int) {}
+inline void lv_obj_set_clickable(lv_obj_t*, bool) {}
 inline void lv_obj_clear_flag(lv_obj_t*, int) {}
 /* LVGL 9 keeps ignore_layout as a property behind a dedicated setter, because
  * `lv_obj_add_flag(obj, LV_OBJ_FLAG_IGNORE_LAYOUT)` is LV_DEPRECATED there.
@@ -130,10 +135,13 @@ inline void lv_obj_set_style_text_align(lv_obj_t*o,int v,int){if(o)o->text_align
 inline void lv_obj_set_style_text_font(lv_obj_t*o,const lv_font_t*f,int){if(o)o->text_font=f;}
 inline void lv_obj_update_layout(lv_obj_t*){} inline void lv_obj_align(lv_obj_t*,int,int,int){} inline void lv_obj_add_state(lv_obj_t*,int){}
 inline void lv_label_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline const char *lv_label_get_text(const lv_obj_t*o){return o?o->text.c_str():nullptr;} inline void lv_label_set_long_mode(lv_obj_t*o,int v){if(o)o->long_mode=v;}
-inline void lv_textarea_set_one_line(lv_obj_t*,bool){} inline void lv_textarea_set_max_length(lv_obj_t*,std::uint32_t){} inline void lv_keyboard_set_textarea(lv_obj_t*,lv_obj_t*){}
+inline void lv_textarea_set_one_line(lv_obj_t*,bool){} inline void lv_textarea_set_max_length(lv_obj_t*,std::uint32_t){} inline void lv_textarea_set_placeholder_text(lv_obj_t*,const char*){} inline void lv_textarea_set_text(lv_obj_t*o,const char*t){if(o)o->text=t?t:"";} inline const char *lv_textarea_get_text(const lv_obj_t*o){return o?o->text.c_str():nullptr;} inline void lv_textarea_set_cursor_pos(lv_obj_t*,int32_t){} inline void lv_keyboard_set_textarea(lv_obj_t*,lv_obj_t*){}
+inline void lv_slider_set_range(lv_obj_t*,int,int){} inline void lv_slider_set_value(lv_obj_t*o,int v,int){if(o)o->slider_value=v;} inline int lv_slider_get_value(const lv_obj_t*o){return o?o->slider_value:0;}
 inline void lv_arc_set_bg_angles(lv_obj_t*,int,int){} inline void lv_arc_set_angles(lv_obj_t*,int,int){}
 inline void lv_obj_add_event_cb(lv_obj_t*o,lv_event_cb_t cb,int filter,void *user_data)
 {if(o&&cb)o->event_callbacks.push_back({cb,filter,user_data});}
+inline void lv_obj_remove_event_cb(lv_obj_t*o,lv_event_cb_t cb)
+{if(o)o->event_callbacks.erase(std::remove_if(o->event_callbacks.begin(),o->event_callbacks.end(),[cb](const shim_event_cb&entry){return entry.callback==cb;}),o->event_callbacks.end());}
 inline lv_obj_t *lv_event_get_target(lv_event_t *e){return e?e->target:nullptr;}
 inline void *lv_event_get_user_data(lv_event_t *e){return e?e->user_data:nullptr;}
 inline void lv_shim_emit_event(lv_obj_t *o, int filter)

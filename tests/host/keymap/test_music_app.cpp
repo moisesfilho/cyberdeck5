@@ -1,6 +1,7 @@
 #include "apps/music/cyberdeck_music_app.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/shell/cyberdeck_local_shell.h"
+#include "platform/display/cyberdeck_music_command_input.h"
 #include "freertos/task.h"
 
 #include <atomic>
@@ -34,6 +35,15 @@ bool release_scan_open = false;
 std::atomic<bool> fail_next_readdir_after_entry{false};
 bool readdir_failure_entered = false;
 bool release_readdir_failure = false;
+struct command_app_probe {
+    cyberdeck_music::application *app;
+    int dispatches = 0;
+};
+std::string dispatch_music_command(std::string_view command, void *context) {
+    auto &probe = *static_cast<command_app_probe *>(context);
+    ++probe.dispatches;
+    return probe.app->player_command(command).output;
+}
 #define CHECK(condition) do { \
     ++checks; \
     if (!(condition)) { ++failures; std::cerr << "FAIL " << __LINE__ << ": " #condition "\n"; } \
@@ -44,7 +54,13 @@ class fake_player final : public cyberdeck_music::player_interface {
     bool start(cyberdeck_sd_io::coordinator *value, cyberdeck_apps::grant access) override {
         ++starts; storage = value; grant_valid = access.valid(); active = start_result; return active;
     }
-    bool stop(std::uint32_t timeout) override { ++stops; last_timeout = timeout; active = false; return stop_result; }
+    bool stop(std::uint32_t timeout) override {
+        ++stops;
+        last_timeout = timeout;
+        if (stop_result)
+            active = false;
+        return stop_result;
+    }
     bool play(std::string_view path) override { played.emplace_back(path); return active && command_result; }
     bool pause() override { ++pauses; return active && command_result; }
     bool resume() override { ++resumes; return active && command_result; }
@@ -185,6 +201,19 @@ int main() {
         return music.execute("music", "status").output.find("queue: scan complete") != std::string::npos;
     }, std::chrono::seconds(2)));
     CHECK(music.execute("music", "status").status == cyberdeck_apps::result_status::handled);
+    cyberdeck_music_command_input::controller command_input;
+    command_app_probe command_probe{&music};
+    command_input.open();
+    command_input.insert_text("music status");
+    CHECK(command_input.handle(cyberdeck_music_command_input::key::enter, dispatch_music_command, &command_probe,
+                               nullptr, nullptr) == cyberdeck_music_command_input::key_result::executed);
+    CHECK(command_probe.dispatches == 1 &&
+          command_input.feedback().find("queue: scan complete") != std::string_view::npos);
+    CHECK(player.played.empty());
+    CHECK(music.execute("music", "select 1").status == cyberdeck_apps::result_status::handled);
+    CHECK(player.played.empty());
+    CHECK(player.selected_track == 0);
+    CHECK(music.execute("music", "select 0").status == cyberdeck_apps::result_status::rejected);
 
     CHECK(music.execute("other", "status").status == cyberdeck_apps::result_status::not_handled);
     result = music.execute("music", "help");
@@ -324,7 +353,7 @@ int main() {
     player.state.current.duration_ms = 12000;
     player.state.volume = 27;
     player.state.current.title = {'T','r','a','c','k','\0'};
-    player.state.current.artist = {'A','r','t','i','s','t','\0'};
+    player.state.current.artist = {'A', 'r', 't', 'i', 's', 't', '\0'};
     player.state.shuffle = true;
     player.state.repeat = cyberdeck_music::repeat_mode::one;
     CHECK(music.has_playback());
@@ -421,16 +450,58 @@ int main() {
     player.stop_result = true;
     CHECK(music.poweroff_quiesce(100));
     CHECK(player.stops == 3 && player.last_timeout <= 100);
+    CHECK(runtime.stop_application("cyberdeck.music"));
+    CHECK(runtime.start_application("cyberdeck.music"));
 
-    const auto music_grant = music.app_grant();
+    {
+        std::lock_guard<std::mutex> lock(scan_gate_mutex);
+        hold_scan_open = true;
+        scan_open_entered = false;
+        release_scan_open = false;
+    }
+    CHECK(music.execute("music", "queue /music").status == cyberdeck_apps::result_status::handled);
+    {
+        std::unique_lock<std::mutex> lock(scan_gate_mutex);
+        CHECK(scan_gate_changed.wait_for(lock, std::chrono::seconds(2), [] { return scan_open_entered; }));
+    }
+    CHECK(storage.active_leases() == 1);
+    const int stops_before_escape = player.stops;
+    player.stop_result = false;
+    std::atomic<bool> escape_stop_done{false};
+    std::atomic<bool> escape_stop_result{true};
+    std::thread escape_stop([&] {
+        escape_stop_result.store(runtime.stop_application("cyberdeck.music"), std::memory_order_release);
+        escape_stop_done.store(true, std::memory_order_release);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(!escape_stop_done.load(std::memory_order_acquire));
+    CHECK(player.stops == stops_before_escape);
+    CHECK(storage.active_leases() == 1);
+    {
+        std::lock_guard<std::mutex> lock(scan_gate_mutex);
+        release_scan_open = true;
+    }
+    scan_gate_changed.notify_all();
+    CHECK(wait_until([&] { return escape_stop_done.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+    escape_stop.join();
+    CHECK(!escape_stop_result.load(std::memory_order_acquire));
+    CHECK(player.stops == stops_before_escape + 1);
+    CHECK(music.running() && runtime.active_foreground() == "cyberdeck.music");
+    CHECK(storage.active_leases() == 0 && player.queue_count == 0);
+    player.stop_result = true;
+    CHECK(runtime.stop_application("cyberdeck.music"));
+    CHECK(!music.running() && runtime.active_foreground().empty());
+
+    CHECK(runtime.start_application("cyberdeck.music"));
+    const auto retried_music_grant = music.app_grant();
     player.stop_result = false;
     CHECK(!runtime.stop_application("cyberdeck.music"));
     CHECK(music.running() && runtime.active_foreground() == "cyberdeck.music");
-    CHECK(music_grant.valid() && music_grant.allows(cyberdeck_apps::resource::storage) &&
-          !music_grant.allows(cyberdeck_apps::resource::input));
+    CHECK(retried_music_grant.valid() && retried_music_grant.allows(cyberdeck_apps::resource::storage) &&
+          !retried_music_grant.allows(cyberdeck_apps::resource::input));
     player.stop_result = true;
     CHECK(runtime.stop_application("cyberdeck.music"));
-    CHECK(!music.running() && runtime.active_foreground().empty() && !music_grant.valid() && player.stops == 5);
+    CHECK(!music.running() && runtime.active_foreground().empty() && !retried_music_grant.valid());
     CHECK(!music.execute("music", "pause").output.empty());
 
     write_file(fs::path(scan_root) / "musica" / "reopened.mp3", "reopened-data");

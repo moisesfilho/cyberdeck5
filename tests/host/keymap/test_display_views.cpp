@@ -8,6 +8,7 @@
 #include <cassert>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 /* The host fixture only supplies the font symbol.  Its metrics are not a
@@ -86,6 +87,7 @@ static void touch_swipe(cyberdeck_terminal_view::view &terminal, lv_indev_t &tou
 int main()
 {
     lv_obj_t screen{};
+    lv_obj_set_size(&screen, 720, 1280);
     cyberdeck_header_view::view header;
     assert(!header.create(nullptr));
     assert(header.create(&screen));
@@ -493,53 +495,360 @@ int main()
 
     /* REQ-PLAYER-01 / AC-PLAYER-06,12: execute the production music view TU
      * through the same full LVGL shim as the other display surfaces. */
+    lv_obj_set_size(&screen, 720, 1280);
+    lv_obj_set_layout(&screen, LV_LAYOUT_FLEX);
+    lv_obj_t music_root{};
+    lv_obj_set_size(&music_root, 720, 1280);
+    lv_obj_set_scroll_dir(&music_root, LV_DIR_NONE);
+    lv_obj_set_scroll_chain(&music_root, false);
+    lv_obj_set_scrollbar_mode(&music_root, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_t system_bar{};
+    system_bar.parent = &music_root;
+    lv_obj_set_pos(&system_bar, 12, 12);
+    lv_obj_set_size(&system_bar, 696, 42);
+    lv_obj_set_scroll_dir(&system_bar, LV_DIR_NONE);
+    lv_obj_set_scroll_chain(&system_bar, false);
+    lv_obj_set_scrollbar_mode(&system_bar, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_t music_content{};
+    music_content.parent = &music_root;
+    lv_obj_set_pos(&music_content, 12, 65);
+    lv_obj_set_size(&music_content, 696, 1203);
+    lv_obj_set_scroll_dir(&music_content, LV_DIR_NONE);
+    lv_obj_set_scroll_chain(&music_content, false);
+    lv_obj_set_scrollbar_mode(&music_content, LV_SCROLLBAR_MODE_OFF);
     cyberdeck_music_view::view music_view;
     assert(!music_view.create(nullptr, record_music_action, nullptr));
     assert(!music_view.visible());
     music_action_log music_log;
     music_log.expected_context = &music_log;
-    assert(music_view.create(&screen, record_music_action, &music_log));
-    assert(music_view.create(&screen, record_music_action, &music_log));
-    assert(screen.children.back()->children.size() == 8);
-    auto *music_surface = screen.children.back();
-    assert(music_surface->width == LV_PCT(94) && music_surface->height == LV_PCT(72));
+    assert(music_view.create(&music_content, record_music_action, &music_log));
+    assert(music_view.create(&music_content, record_music_action, &music_log));
+    auto *music_surface = music_content.children.back();
+    assert(music_surface->width > 0 && music_surface->height > 0);
+    assert(music_surface->parent == &music_content);
+    assert(lv_obj_is_ignore_layout(music_surface));
+    assert(music_surface->x == 0 && music_surface->y == 0);
+    assert(music_surface->children.size() == 3);
     assert(music_surface->hidden && !music_view.visible());
+    auto *now_playing = music_surface->children[1];
+    auto *browser = music_surface->children[2];
+    auto *music_status_label = now_playing->children[1];
+    auto *progress = now_playing->children[3];
+    auto *controls = now_playing->children[6];
+    assert(music_surface->color == 0x000000);
+    assert(now_playing->color == 0x0A0A0A && browser->color == 0x0A0A0A);
+    const auto assert_not_scrollable = [](const lv_obj_t *object) {
+        assert(lv_obj_get_scroll_dir(object) == LV_DIR_NONE);
+        assert(lv_obj_get_scrollbar_mode(object) == LV_SCROLLBAR_MODE_OFF);
+        assert(!object->scroll_chain);
+    };
+    assert_not_scrollable(&music_content);
+    assert_not_scrollable(&music_root);
+    assert_not_scrollable(&system_bar);
+    assert_not_scrollable(music_surface);
+    assert_not_scrollable(music_surface->children[0]);
+    assert_not_scrollable(now_playing);
+    for (std::size_t index = 0; index < now_playing->children.size(); ++index)
+        assert_not_scrollable(now_playing->children[index]);
+    assert_not_scrollable(browser->children[0]);
+    assert_not_scrollable(controls);
+    assert(controls->children.size() == 8);
+    for (const auto *button : controls->children) {
+        const auto *label = button->children[0];
+        assert(button->width >= 44 && button->height >= 44);
+        assert(label->x >= 0 && label->y >= 0);
+        assert(label->x + label->width <= button->width);
+        assert(label->y + label->height <= button->height);
+        assert(label->long_mode == LV_LABEL_LONG_MODE_DOTS);
+        assert(lv_shim_text_width(&cyberdeck_font, label->text) <= label->width);
+    }
+    assert(browser->scroll_dir == LV_DIR_VER);
+    assert(browser->scrollbar_mode == LV_SCROLLBAR_MODE_AUTO);
+    assert(!browser->scroll_chain);
+    for (std::size_t index = 1; index < browser->children.size(); ++index)
+        assert_not_scrollable(browser->children[index]);
     const std::array<std::string, 7> music_labels{
-        "Previous", "Play/Pause", "Next", "Seek -10s", "Seek +10s",
-        "Volume -", "Volume +"};
+        "Previous", "Play / Pause", "Next", "−10s", "+10s", "Vol −", "Vol +"};
     const std::array<std::string, 7> music_actions{
         "prev", "toggle", "next", "seek_back", "seek_forward",
         "volume_down", "volume_up"};
     for (std::size_t i = 0; i < music_labels.size(); ++i) {
-        auto *button = music_surface->children[i + 1];
-        assert(button->text == music_labels[i]);
+        auto *button = controls->children[i];
+        assert(button->children[0]->text == music_labels[i]);
         assert(button->event_callbacks.size() == 1);
         lv_shim_emit_event(button, LV_EVENT_CLICKED);
         assert(music_log.actions.back() == music_actions[i]);
     }
     assert(music_log.actions.size() == 7 && music_log.context_calls == 7);
-    music_surface->children[1]->text = "unrecognized";
-    lv_shim_emit_event(music_surface->children[1], LV_EVENT_CLICKED);
-    assert(music_log.actions.size() == 7);
-    music_surface->children[1]->text = music_labels[0];
-    cyberdeck_music_view::view no_music_callback;
-    assert(no_music_callback.create(&screen, nullptr, nullptr));
-    auto *no_callback_surface = screen.children.back();
-    lv_shim_emit_event(no_callback_surface->children[1], LV_EVENT_CLICKED);
-    no_music_callback.destroy();
+    auto *command_button = controls->children[7];
+    assert(command_button->children[0]->text == "Command");
+    assert(command_button->color == 0x000000);
+    lv_shim_emit_event(command_button, LV_EVENT_CLICKED);
+    assert(music_log.actions.back() == "command_open");
+    music_view.set_command_open(true);
+    const auto *command_field = now_playing->children[5];
+    assert(!command_field->hidden);
+    assert(command_field->x >= 0 && command_field->y >= 0);
+    assert(command_field->x + command_field->width <= now_playing->width);
+    assert(command_field->y + command_field->height <= now_playing->height);
+    const auto overlaps = [](const lv_obj_t *left, const lv_obj_t *right) {
+        return left->x < right->x + right->width && right->x < left->x + left->width &&
+               left->y < right->y + right->height && right->y < left->y + left->height;
+    };
+    const std::array<const lv_obj_t *, 4> fixed_content{
+        now_playing->children[1], progress, now_playing->children[4], command_field};
+    for (const auto *fixed_item : fixed_content)
+        assert(!overlaps(fixed_item, controls));
+    const std::array<const lv_obj_t *, 6> information_and_controls{
+        now_playing->children[1], progress, now_playing->children[2],
+        now_playing->children[4], command_field, controls};
+    for (std::size_t left = 0; left < information_and_controls.size(); ++left) {
+        const auto *item = information_and_controls[left];
+        assert(item->x >= 0 && item->y >= 0);
+        assert(item->x + item->width <= now_playing->width);
+        assert(item->y + item->height <= now_playing->height);
+        for (std::size_t right_index = left + 1;
+             right_index < information_and_controls.size(); ++right_index)
+            assert(!overlaps(item, information_and_controls[right_index]));
+    }
+    for (std::size_t left = 0; left < controls->children.size(); ++left)
+        for (std::size_t right_index = left + 1;
+             right_index < controls->children.size(); ++right_index)
+            assert(!overlaps(controls->children[left], controls->children[right_index]));
+    music_view.set_command_text("help");
+    assert(music_view.command_open() && music_view.command_text() == "help");
+    music_view.set_command_text(std::string(120, 'x'));
+    assert(music_view.command_text().size() == 96);
+    music_view.set_command_text("help");
+    music_view.set_command_cursor(99);
+    music_view.set_command_open(false);
+    lv_shim_emit_event(browser->children[1], LV_EVENT_CLICKED);
+    assert(music_log.actions.size() == 9 && music_log.actions.back() == "select");
+    assert(music_view.selected_track() == 0);
     music_view.render("Now playing: track.mp3");
-    assert(music_surface->children[0]->text == "Now playing: track.mp3");
+    assert(music_status_label->text == "Now playing: track.mp3");
     music_view.render("");
-    assert(music_surface->children[0]->text.empty());
+    assert(music_status_label->text.empty());
+    music_view.render("state: paused\nqueue: 2 tracks\ntrack: 1/2\nmusic queue:\n1. first.mp3\n2. second.mp3\n");
+    assert(music_status_label->text == "state: paused\ntrack: 1/2");
+    /* REQ-PLAYER-LAYOUT-READABLE: more status content than the three-line
+     * viewport must be bounded, and the rendered label itself stays within
+     * the now-playing card in both dimensions. */
+    music_view.render("state: playing\ntrack: 1/64\nLong readable track title\nartist: Example\nextra status row\n");
+    assert(music_status_label->text ==
+           "state: playing\ntrack: 1/64\nLong readable track title");
+    assert(music_status_label->height == 3 * lv_font_get_line_height(&cyberdeck_font));
+    assert(music_status_label->x >= 0 && music_status_label->y >= 0);
+    assert(music_status_label->x + music_status_label->width <= now_playing->width);
+    assert(music_status_label->y + music_status_label->height <= now_playing->height);
+    music_view.render("state: paused\ntrack: 1/2\nmusic queue:\n1. first.mp3\n2. second.mp3\n");
+    assert(browser->children[1]->hidden == false);
+    assert(browser->children[1]->children[0]->text == "first.mp3");
+    assert(browser->children[2]->children[0]->text == "second.mp3");
+    std::string full_queue = "state: paused\nprogress: 50s / 100s\nmusic queue:\n";
+    for (int index = 1; index <= 64; ++index)
+        full_queue += std::to_string(index) + ". track-" + std::to_string(index) + ".mp3\n";
+    music_view.render(full_queue);
+    assert(!browser->children[64]->hidden);
+    assert(browser->children[64]->children[0]->text == "track-64.mp3");
+    assert(browser->children[64]->children[0]->width == browser->children[64]->width);
+    assert(browser->children[64]->children[0]->long_mode == LV_LABEL_LONG_MODE_DOTS);
+    const std::string long_track_name(180, 'W');
+    music_view.render("music queue:\n1. " + long_track_name + "\n");
+    const auto *long_track_label = browser->children[1]->children[0];
+    assert(long_track_label->text == long_track_name);
+    assert(long_track_label->width < lv_shim_text_width(&cyberdeck_font, long_track_label->text));
+    assert(long_track_label->long_mode == LV_LABEL_LONG_MODE_DOTS);
+    music_view.render(full_queue);
+    assert(progress->slider_value == 500);
+    assert(browser->children[64]->y + browser->children[64]->height > browser->height);
+    lv_shim_emit_event(progress, LV_EVENT_RELEASED);
+    assert(music_log.actions.back() == "seek_ratio");
+    for (std::size_t index = 0; index < 64; ++index) {
+        const auto *row = browser->children[index + 1];
+        assert(row->y >= 0 && row->height > 0);
+        if (index > 0) assert(row->y >= browser->children[index]->y + browser->children[index]->height);
+    }
+    assert(browser->children[1]->y + browser->children[1]->height <= browser->height);
+    assert(browser->children[64]->y < 64 * 32);
+    assert(now_playing->x >= 0 && now_playing->y >= 0);
+    assert(now_playing->x + now_playing->width <= music_surface->width);
+    assert(now_playing->y + now_playing->height <= music_surface->height);
+    assert(browser->x >= 0 && browser->y >= 0);
+    assert(browser->x + browser->width <= music_surface->width);
+    assert(browser->y + browser->height <= music_surface->height);
+    for (const auto *button : controls->children) {
+        assert(button->x >= 0 && button->y >= 0);
+        assert(button->x + button->width <= controls->width);
+        assert(button->y + button->height <= controls->height);
+    }
+    const int portrait_y = browser->y;
+    music_view.set_command_open(true);
+    lv_obj_set_size(&music_content, 696, 1203);
+    lv_shim_emit_event(&music_content, LV_EVENT_SIZE_CHANGED);
+    assert(music_surface->width == 696 && music_surface->height == 1203);
+    assert(browser->x == 4 && browser->y > now_playing->y);
+    assert(browser->y >= now_playing->y + now_playing->height);
+    assert(now_playing->x + now_playing->width <= music_surface->width);
+    assert(browser->x + browser->width <= music_surface->width);
+    assert(now_playing->y + now_playing->height <= music_surface->height);
+    assert(browser->y + browser->height <= music_surface->height);
+    music_view.render("music queue:\n1. " + long_track_name + "\n");
+    assert(browser->children[1]->children[0]->text == long_track_name);
+    assert(browser->children[1]->children[0]->width <
+           lv_shim_text_width(&cyberdeck_font, long_track_name));
+    for (const auto *button : controls->children)
+        assert(button->width >= 44 && button->height >= 44);
+    assert(command_field->x >= 0 && command_field->y >= 0);
+    assert(command_field->x + command_field->width <= now_playing->width);
+    assert(command_field->y + command_field->height <= now_playing->height);
+    assert(!overlaps(command_field, controls));
+    lv_obj_set_size(&music_root, 1280, 720);
+    lv_obj_set_pos(&music_content, 12, 65);
+    lv_obj_set_size(&music_content, 1256, 643);
+    lv_shim_emit_event(&music_content, LV_EVENT_SIZE_CHANGED);
+    lv_obj_set_size(&system_bar, 1256, 42);
+    assert(music_surface->x == 0 && music_surface->y == 0);
+    assert(music_surface->width == 1256 && music_surface->height == 643);
+    lv_shim_emit_event(music_surface, LV_EVENT_SIZE_CHANGED);
+    assert(browser->y <= portrait_y);
+    assert(browser->x > now_playing->x && browser->y == now_playing->y);
+    assert(browser->x >= now_playing->x + now_playing->width);
+    assert(browser->x + browser->width <= 1256 && browser->y + browser->height <= 643);
+    music_view.render("music queue:\n1. " + long_track_name + "\n");
+    assert(browser->children[1]->children[0]->text == long_track_name);
+    assert(browser->children[1]->children[0]->width <
+           lv_shim_text_width(&cyberdeck_font, long_track_name));
+    music_view.render(full_queue);
+    assert(command_field->x + command_field->width <= now_playing->width);
+    assert(command_field->y + command_field->height <= now_playing->height);
+    assert(!overlaps(command_field, controls));
+    for (const auto *button : controls->children) {
+        const auto *label = button->children[0];
+        assert(button->width >= 44 && button->height >= 44);
+        assert(label->x >= 0 && label->y >= 0);
+        assert(label->x + label->width <= button->width);
+        assert(label->y + label->height <= button->height);
+        assert(label->long_mode == LV_LABEL_LONG_MODE_DOTS);
+    }
+    const auto absolute_position = [](const lv_obj_t *object) {
+        int x = 0;
+        int y = 0;
+        for (auto *parent = object; parent; parent = parent->parent) {
+            x += parent->x;
+            y += parent->y;
+        }
+        return std::pair<int, int>{x, y};
+    };
+    for (const auto *panel : {now_playing, browser}) {
+        const auto [x, y] = absolute_position(panel);
+        assert(x >= 0 && y >= 0);
+        assert(x >= 12 && y >= 65);
+        assert(y >= system_bar.y + system_bar.height);
+        assert(x + panel->width <= 1268 && y + panel->height <= 708);
+    }
+    for (const auto *button : controls->children) {
+        const auto [x, y] = absolute_position(button);
+        assert(x >= 0 && y >= 0);
+        assert(x >= 12 && y >= 65);
+        assert(x + button->width <= 1268 && y + button->height <= 708);
+        const auto [label_x, label_y] = absolute_position(button->children[0]);
+        assert(label_x >= 0 && label_y >= 0);
+        assert(label_x >= 12 && label_y >= 65);
+        assert(label_x + button->children[0]->width <= 1268);
+        assert(label_y + button->children[0]->height <= 708);
+    }
+    auto *landscape_list = browser;
+    for (std::size_t index = 0; index < controls->children.size(); ++index) {
+        const auto *button = controls->children[index];
+        assert(button->x >= 0 && button->y >= 0);
+        assert(button->x + button->width <= controls->width);
+        assert(button->y + button->height <= controls->height);
+    }
+    /* REQ-PLAYER-LAYOUT-READABLE: repeat the complete information/control
+     * matrix in landscape; the portrait matrix above cannot catch regressions
+     * caused by the denser horizontal arrangement. */
+    const std::array<const lv_obj_t *, 6> landscape_information_and_controls{
+        now_playing->children[1], progress, now_playing->children[2],
+        now_playing->children[4], command_field, controls};
+    for (std::size_t left = 0; left < landscape_information_and_controls.size(); ++left) {
+        const auto *item = landscape_information_and_controls[left];
+        assert(item->x >= 0 && item->y >= 0);
+        assert(item->x + item->width <= now_playing->width);
+        assert(item->y + item->height <= now_playing->height);
+        for (std::size_t right_index = left + 1;
+             right_index < landscape_information_and_controls.size(); ++right_index)
+            assert(!overlaps(item, landscape_information_and_controls[right_index]));
+    }
+    const auto *landscape_title = music_surface->children[0];
+    assert(landscape_title->x + landscape_title->width <= music_surface->width);
+    assert(landscape_title->y + landscape_title->height <= music_surface->height);
+    assert(!overlaps(landscape_title, now_playing));
+    assert(!overlaps(landscape_title, browser));
+    for (std::size_t index = 1; index <= 64; ++index) {
+        const auto *row = browser->children[index];
+        const auto *label = row->children[0];
+        assert(label->x >= 0 && label->y >= 0);
+        assert(label->x + label->width <= row->width);
+        assert(label->y + label->height <= row->height);
+        assert(label->long_mode == LV_LABEL_LONG_MODE_DOTS);
+    }
+    /* Exercise the reverse resize as well; return to landscape for subsequent
+     * list-scroll and callback assertions. */
+    lv_obj_set_size(&music_content, 696, 1203);
+    lv_shim_emit_event(&music_content, LV_EVENT_SIZE_CHANGED);
+    assert(browser->y > now_playing->y);
+    assert(browser->y >= now_playing->y + now_playing->height);
+    assert(now_playing->x + now_playing->width <= music_surface->width);
+    assert(browser->x + browser->width <= music_surface->width);
+    assert(now_playing->y + now_playing->height <= music_surface->height);
+    assert(browser->y + browser->height <= music_surface->height);
+    for (const auto *button : controls->children)
+        assert(button->width >= 44 && button->height >= 44);
+    assert(!overlaps(command_field, controls));
+    lv_obj_set_size(&music_content, 1256, 643);
+    lv_shim_emit_event(&music_content, LV_EVENT_SIZE_CHANGED);
+    assert(browser->x >= now_playing->x + now_playing->width);
+    assert(browser->scroll_dir == LV_DIR_VER);
+    assert(!browser->scroll_chain);
+    music_view.set_command_open(false);
+    assert(browser->scrollbar_mode == LV_SCROLLBAR_MODE_AUTO);
+    assert_not_scrollable(music_surface);
+    assert_not_scrollable(now_playing);
+    assert_not_scrollable(controls);
+    assert_not_scrollable(&music_content);
+    for (std::size_t index = 1; index < browser->children.size(); ++index)
+        assert_not_scrollable(browser->children[index]);
+    assert(browser->children[64]->y + browser->children[64]->height > browser->height);
+    music_view.render("state: paused\ntrack: 2/64\nprogress: 50s / 100s\nmusic queue:\n1. track-1.mp3\n2. track-2.mp3\n");
+    lv_shim_emit_event(landscape_list->children[2], LV_EVENT_CLICKED);
+    assert(music_log.actions.back() == "select");
+    assert(music_view.selected_track() == 1);
+    const auto callback_count = music_log.actions.size();
+    music_view.set_command_open(true);
+    lv_shim_emit_event(controls->children[1], LV_EVENT_CLICKED);
+    lv_shim_emit_event(landscape_list->children[1], LV_EVENT_CLICKED);
+    assert(music_log.actions.size() == callback_count);
+    music_view.set_command_open(false);
+    cyberdeck_music_view::view no_music_callback;
+    assert(no_music_callback.create(&music_content, nullptr, nullptr));
+    auto *no_callback_surface = music_content.children.back();
+    lv_shim_emit_event(no_callback_surface->children[2]->children[1], LV_EVENT_CLICKED);
+    no_music_callback.destroy();
+    auto *terminal_overlay = lv_obj_create(&music_content);
+    assert(terminal_overlay != nullptr);
+    assert(music_content.children.back() == terminal_overlay);
+    assert(music_content.children.back() != music_surface);
     music_view.set_visible(true);
     assert(music_view.visible() && !music_surface->hidden);
+    assert(music_content.children.back() == music_surface);
     music_view.set_visible(false);
     assert(!music_view.visible() && music_surface->hidden);
     music_view.destroy();
     assert(!music_view.visible());
     music_view.destroy();
     assert(!music_view.create(nullptr, record_music_action, &music_log));
-    assert(music_view.create(&screen, record_music_action, &music_log));
+    assert(music_view.create(&music_content, record_music_action, &music_log));
     assert(music_view.visible() == false);
     music_view.destroy();
 

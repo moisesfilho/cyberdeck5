@@ -40,7 +40,7 @@ constexpr cyberdeck_apps::manifest k_manifest{
      {"music", "player"},
      2,
      false,
-    {{{"music queue <directory> | list | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume "
+     {{{"music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume "
        "<0-50> | shuffle | repeat | status",
         "MP3 playback from SD; volume is capped at 50\n"},
         {"player", "open the music player surface\n"}}},
@@ -147,18 +147,25 @@ bool application::start() {
 bool application::stop() {
     if (!running_)
         return true;
+    ESP_LOGI(k_tag, "stop stage=cancel_scan");
     {
         std::lock_guard<std::mutex> lock(scan_publication_mutex_);
         scan_quiescing_.store(true, std::memory_order_release);
         scan_cancel_.store(true, std::memory_order_release);
     }
     if (scan_join_pending_.load(std::memory_order_acquire)) {
-        if (xSemaphoreTake(scan_done_, pdMS_TO_TICKS(5000)) != pdTRUE)
+        if (xSemaphoreTake(scan_done_, pdMS_TO_TICKS(5000)) != pdTRUE) {
+            ESP_LOGE(k_tag, "stop failed stage=scan_join");
             return false;
+        }
         scan_join_pending_.store(false, std::memory_order_release);
+        ESP_LOGI(k_tag, "stop stage=scan_join_complete");
     }
-    if (!player_.stop(5000))
+    ESP_LOGI(k_tag, "stop stage=player_stop");
+    if (!player_.stop(5000)) {
+        ESP_LOGE(k_tag, "stop failed stage=player_stop");
         return false;
+    }
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         queue_.clear();
@@ -168,6 +175,7 @@ bool application::stop() {
         scan_done_ = nullptr;
     }
     running_ = false;
+    ESP_LOGI(k_tag, "stop result=complete");
     return true;
 }
 
@@ -387,7 +395,7 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
         return status();
     if (args == "help")
         return {cyberdeck_apps::result_status::handled,
-                "music [status|help|queue <directory>|list|play [index]|pause|resume|stop|next|prev|seek <seconds>|volume <0-50>|shuffle|repeat]\n"};
+                "music [status|help|queue <directory>|list|select <index>|play [index]|pause|resume|stop|next|prev|seek <seconds>|volume <0-50>|shuffle|repeat]\n"};
     if (args.rfind("queue ", 0) == 0) {
         if (!app_grant().allows(cyberdeck_apps::resource::storage))
             return {cyberdeck_apps::result_status::rejected, "music: storage unavailable\n"};
@@ -398,15 +406,25 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
     if (args == "list") {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         std::string text = "music queue:\n";
-        const std::size_t count = std::min<std::size_t>(queue_.status().track_count, 16);
+        const std::size_t count = std::min<std::size_t>(queue_.status().track_count, k_max_tracks);
         for (std::size_t index = 0; index < count; ++index) {
             const track *item = queue_.at(index);
             if (item != nullptr)
                 text += std::to_string(index + 1) + ". " + item->title.data() + "\n";
         }
         if (queue_.status().track_count > count)
-            text += "... list limited to 16 of 64 tracks\n";
+            text += "... list limited to 64 tracks\n";
         return {cyberdeck_apps::result_status::handled, std::move(text)};
+    }
+    if (args.rfind("select ", 0) == 0) {
+        std::uint32_t index = 0;
+        if (!parse_unsigned(trim(args.substr(7)), k_max_tracks, index) || index == 0)
+            return {cyberdeck_apps::result_status::rejected, "music: invalid track index\n"};
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        if (!queue_.select(index - 1))
+            return {cyberdeck_apps::result_status::rejected, "music: invalid track index\n"};
+        player_.select(index - 1);
+        return {cyberdeck_apps::result_status::handled, "music: track selected\n"};
     }
     if (args == "pause" || args == "resume" || args == "stop") {
         const bool ok = args == "pause" ? player_.pause() : args == "resume" ? player_.resume() : player_.halt();

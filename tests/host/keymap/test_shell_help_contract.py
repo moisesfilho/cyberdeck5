@@ -97,7 +97,7 @@ NETDIAG_USAGE = (
      "URL: https, at most 512 bytes; no userinfo, fragment, whitespace, or explicit port in authority\n"),
 )
 MUSIC_USAGE = (
-    ("music queue <directory> | list | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
+    ("music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
       "MP3 playback from SD; volume is capped at 50\n"),
     ("player", "open the music player surface\n"),
 )

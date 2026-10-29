@@ -1,7 +1,67 @@
 # Plano 03 — Player de áudio local
 
-**Estado:** implementação integrada e validada em host/build; aceite físico
-pendente. Não declarar release até reproduzir áudio real e validar speaker/jack.
+**Estado:** implementação integrada; aceite físico do player/layout/teclado ainda
+pendente. O fluxo de trabalho é testes focados -> validação no Tab5 do
+comportamento-alvo -> revisão final ampla. A revisão ampla não substitui o teste
+físico. Se o dispositivo/cenário estiver indisponível ou inseguro, os gates locais
+podem ser finalizados, mas a validação física permanece pending e a tarefa não
+pode ser declarada concluída. O aceite acústico de speaker/jack requer autorização
+explícita separada.
+
+## REQ-MUSIC-UI-01..04 — surface responsiva e comandos
+
+- A surface nativa ocupa a tela disponível em portrait/landscape, usa somente a
+  paleta monocromática do tema, status/progresso, controles e lista rolável de até
+  64 faixas. A seleção na lista atualiza a faixa selecionada sem iniciar playback.
+- O browser restringe o scroll ao eixo vertical, mantém as 64 linhas existentes
+  em slots bounded e mostra scrollbar automática quando a lista excede o painel.
+  O slider opera em permille e o adapter converte a posição para segundos inteiros
+  exigidos pelo comando `seek` (sem confundir milissegundos com segundos).
+- O botão Command abre um campo na mesma surface. Teclado físico e virtual editam
+  somente esse campo; Enter despacha o subcomando diretamente ao app de música
+  (aceita `help` e `music help`), nunca ao shell. Enquanto aberto, controles de
+  playback/lista ficam inativos. Esc fecha primeiro o campo e, em novo Esc, o
+  player; nenhum input da surface pode alterar a linha da shell.
+- Criação, resize, callbacks, destruição e recriação são bounded; controles e
+  conteúdo permanecem dentro da área disponível em ambas as orientações.
+- Cobertura host: `test_display_views` executa a TU LVGL real sob o shim e testa
+  callbacks, bounds, lista completa, resize, lifecycle e cores grayscale;
+  `test_music_command_controller` executa o controller compartilhado pela UI,
+  cobrindo edição bounded, dispatch único, feedback e prioridade de Esc;
+  `test_music_app` integra o seam ao parser real via `music status`, sem playback;
+  `test_music_scan_opendir_contract.py` mantém cobertura estrutural complementar.
+  O ledger `tests/host/keymap/player_traceability.md` e o roteiro manual definem
+  os cenários independentes restantes.
+
+## Ordem de validação e revisão
+
+Para mudanças do player que dependem de LVGL, display, touch ou teclado real, o
+reviewer não deve executar a suíte completa antes da oportunidade de validar a
+implementação no Tab5. Ordem normal: implementação e testes focados; validação
+física do comportamento-alvo conforme `tests/manual/music-player-validation.pt-BR.md`;
+correções motivadas pelo resultado; então reviewer final e suíte/gates amplos. Se
+a validação no dispositivo for bloqueada, insegura ou deferida pelo usuário, o
+developer documenta o motivo antes da revisão final; o reviewer pode fechar gates
+locais, mas registra o gate físico pendente e não aprova comportamento de hardware.
+
+## Ajuste de layout e diagnóstico de Esc — ciclo 1
+
+- `REQ-PLAYER-LAYOUT-READABLE / AC-LIST-AND-CONTROLS-FIT`: status limitado a
+  três linhas; labels têm bounds explícitos e truncagem LVGL por pontos quando
+  necessário. Os nomes completos permanecem no conteúdo do label, sem invadir
+  botões ou outras linhas. Os oito botões têm área mínima de 44x44 px, os blocos
+  de status/progresso/tempo/volume/Command/controles não se sobrepõem, e a lista
+  mantém seu scroll vertical isolado. Alteração de ciclo 1 restrita a visual/layout;
+  ações, semântica, lifecycle, comandos e playback permanecem inalterados.
+- `REQ-PLAYER-ESC-STABLE / AC-ESC-NO-REBOOT`: stop registra estágios de
+  cancelamento/join/stop e falhas, sem assumir causa para o reboot físico. Host
+  cobre cancelamento de scan, ausência de publicação parcial, lease preservada
+  até completar o scan, bloqueio em falha de stop e retry. Nenhuma nova ação
+  física de Escape/playback foi executada; AC-ESC-NO-REBOOT permanece pendente
+  de investigação/validação independente.
+- Evidência focada associada: `TEST-MUSIC-UI-LAYOUT-PORTRAIT/LANDSCAPE`,
+  `TEST-PLAYER-ESC-STOP`, `TEST-PLAYER-STOP-FAIL-BLOCK` e
+  `TEST-PLAYER-REGRESSION`, mapeados em `player_traceability.md`.
 
 ## REQ-PLAYER-01 — superfície TUI dedicada
 

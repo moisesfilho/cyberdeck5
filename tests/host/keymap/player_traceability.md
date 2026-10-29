@@ -17,6 +17,7 @@ negativos existentes.
 
 | REQ / AC | TEST | Cenário e asserts obrigatórios | Alvo/seam comportamental |
 | --- | --- | --- | --- |
+| REQ-PLAYER-01 / AC-01, AC-06 open/input readiness | TEST-MUSIC-OPEN-INPUT-RACE-01..03 | Enter durante abertura é consumido sem toggle/play; após view pronta um Enter segue funcionando. Abrir sem input cria exatamente uma view e um scan, sem playback; falha de create desativa manager e não deixa view parcial/controles ativos. UI roteia input pelo foreground music antes do status timer e a surface visível sobe à frente da textarea da shell. | `test_music_manager`, `test_music_app`, `test_display_views` e `test_music_scan_opendir_contract.py`. |
 | REQ-PLAYER-01 / AC-PLAYER-01 lazy | TEST-PLAYER-LAZY-START | Boot, registro e start lazy não criam scan nem playback; `music` explícito abre e inicia exatamente um scan. | `test_music_app` + `test_app_runtime`; manager/adapter real ou seam compartilhado. |
 | REQ-PLAYER-01 / AC-PLAYER-02 foreground único | TEST-PLAYER-OPEN-FOREGROUND | `music` ativa a mesma instância foreground; repetição não duplica app/scan. Console/sessão e Serial-JTAG permanecem vivos sob a view; nenhum modal/surface paralela. | `test_app_runtime` + `test_music_app`; adapter/runtime. |
 | REQ-PLAYER-01 / AC-PLAYER-03 comandos ativos | TEST-PLAYER-COMMANDS-ACTIVE | Todos comandos válidos, inclusive `status`/`queue`, chegam à instância ativa; argumentos inválidos são rejeitados sem efeitos. | `test_music_app` + `test_shell_app`; dispatch/adapter. |
@@ -30,6 +31,23 @@ negativos existentes.
 | REQ-PLAYER-01 / AC-PLAYER-11 scan íntegro | TEST-PLAYER-SCAN-BOUNDS-SECURITY | Manter ordem lexicográfica, MP3 válido, rejeição de symlink/traversal/não-regular/secure-open, depth 8 e limite 64/truncation; readdir/closedir falho, cancelamento/root ausente não publica parcial. | `test_music_app` + `test_music_scan_opendir_contract`; negativos e limites preservados. |
 | REQ-PLAYER-01 / AC-PLAYER-12 controles | TEST-PLAYER-CONTROLS | Touch e teclas Enter, setas, N/P acionam toggle/play-pause, prev/next, seek e volume na instância ativa; limites de volume/seek e input não reconhecido. | `test_display_views` valida os sete callbacks reais da view; `test_music_manager` cobre política de input e `test_music_player` efeitos. Manual Tab5 pendente. |
 | REQ-PLAYER-01 / AC-PLAYER-13 regressão | TEST-PLAYER-REGRESSION | Preservar testes existentes de model, decoder, áudio, player, app, segurança, bounds, help e runtime; novas suites entram nos alvos focados/agregado sem remover nem afrouxar asserts. | Alvos focados existentes e Makefile; suíte ampla fica para reviewer. |
+
+## REQ-MUSIC-UI-01..04 / AC-MUSIC-UI-01..04
+
+| REQ / AC | TEST | Cenário e asserts | Alvo/seam comportamental |
+| --- | --- | --- | --- |
+| REQ-MUSIC-UI-01 / AC-MUSIC-UI-01 | TEST-MUSIC-UI-LAYOUT-PORTRAIT / LANDSCAPE | Surface usa espaço disponível, lista e controles ficam dentro dos bounds, layout recalcula no `LV_EVENT_SIZE_CHANGED`; paleta grayscale. | `test_display_views`: TU real, 720x1280, 1280x720, resize, bounds/assertions. |
+| REQ-MUSIC-UI-02 / AC-MUSIC-UI-02 | TEST-MUSIC-UI-ACTIONS-BOUNDS / LIST-NAVIGATION | Sete ações visuais chamam callback real; oito botões incluem Command; 64 linhas têm scroll vertical e permanecem alcançáveis; selecionar faixa não dispara playback; ações e lista não operam enquanto comando está aberto. | `test_display_views`; `test_music_app` testa `select <index>` válido/inválido sem play. |
+| REQ-MUSIC-UI-03 / AC-MUSIC-UI-03 | TEST-MUSIC-UI-COMMAND-OPEN/EDIT/SUBMIT/ERROR/ESC/KEY-ISOLATION/SHELL-PRESERVE | Overlay Command abre na mesma surface; texto bounded, Enter encaminha só ao app, aceita subcomando com/sem prefixo `music`, erros retornam ao painel; primeiro Esc fecha campo, segundo fecha player; input sem overlay é consumido sem alterar shell. | `test_display_views`, `test_music_app`, `test_music_manager`, `test_music_command_controller` e contrato de integração `test_music_scan_opendir_contract.py`; execução física fica manual. |
+| REQ-MUSIC-UI-03 / AC-MUSIC-UI-03 behavioral dispatch | TEST-MUSIC-COMMAND-CONTROLLER | Controller compilado pela produção e host cobre cursor/inserção/backspace/delete, limite 96, dispatch Enter exatamente uma vez, erro visível e Escape prioritário; integração host envia `music status` pelo parser real do app. O controller possui exclusivamente callback do app, não uma rota de shell. | `test_music_command_controller` + integração em `test_music_app`; seam compartilhado `cyberdeck_music_command_input`. |
+| REQ-MUSIC-UI-04 / AC-MUSIC-UI-04 | TEST-MUSIC-UI-DESTROY-RECREATE / STOP-JOIN / SCAN-ATOMIC | Preservar lifecycle existente: view não sobrevive teardown, callbacks não duplicam em reabertura, stop/join precedem liberação; scan continua sem publicar parcial. | `test_display_views` e cenários existentes `test_music_app`/`test_app_runtime`; nenhum playback disparado pelos novos testes. |
+| REQ-MUSIC-UI-05 / AC-MUSIC-UI-05 | TEST-MUSIC-UI-SCROLL-ISOLATION | Player aberto mantém system bar fixa e separada do content; superfície, cards, controles, parent e faixas não rolam horizontalmente nem encadeiam scroll; somente a lista rola verticalmente com scrollbar automática. | `test_display_views` exercita flags LVGL reais da view e geometria root/bar/content; `test_ui_resource_contract.py` protege o wiring do content e o scroll desligado no parent. |
+| REQ-PLAYER-LAYOUT-READABLE / AC-LIST-AND-CONTROLS-FIT | TEST-MUSIC-UI-LAYOUT-PORTRAIT / LANDSCAPE | Status limitado a três linhas; nomes/labels preservam conteúdo e truncam visualmente por pontos sem clipping vertical; oito botões têm no mínimo 44x44 px; blocos de informação, Command e controles não se sobrepõem; 64 faixas ficam bounded e somente a lista rola em portrait, landscape e resize nos dois sentidos. | `test_display_views` executa TU LVGL real, verifica bounds dos painéis/cartões/labels/botões, matriz de não-sobreposição em portrait/landscape, truncagem e resize portrait→landscape→portrait→landscape. Shim verifica propriedades/layout, não renderização física dos pixels. |
+| REQ-PLAYER-ESC-STABLE / AC-ESC-NO-REBOOT | TEST-PLAYER-ESC-STOP / STOP-FAIL-BLOCK / REGRESSION | Stop cancela scan e aguarda sua conclusão antes de chamar stop do player; scan cancelado não publica parcial nem libera lease cedo; falha de player-stop preserva foreground/grant para retry; Esc repetido inativo não repete close. Logs identificam estágios de stop para diagnóstico; a causa física do reboot não é presumida. | `test_music_app`, `test_music_manager` e `test_app_runtime`; stop-stage logs no adapter/app. Reboot físico permanece manual/pending. |
+
+O slider reporta posição em permille; o adaptador converte para milissegundos e
+envia segundos inteiros ao parser do app. `test_music_scan_opendir_contract.py`
+protege essa conversão contra seek incorreto por fator 1000.
 
 ## Mapeamento concreto e limites
 
@@ -50,8 +68,9 @@ negativos existentes.
   ownership, comandos, controles, cancelamento e segurança. Não prova
   comportamento LVGL.
 - `test_display_views` links the production music-view TU, covering create,
-  rendering, visibility, all seven callback labels/context, destroy/recreate,
-  and scope-guard coverage. Shim callbacks do not replace physical input tests.
+  rendering, visibility, all seven callback labels/context, scroll isolation,
+  root/system-bar/content geometry, destroy/recreate and scope-guard coverage.
+  Shim callbacks do not replace physical input tests.
 - Testes host que só usam fakes/contratos não provam a execução física de LVGL,
   touch/teclado, codec ou áudio. `manual_validation: pending` até validar no
   Tab5 Esc, troca de app, controles e playback parado sem scan ativo.

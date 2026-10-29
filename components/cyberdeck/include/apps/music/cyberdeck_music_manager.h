@@ -12,6 +12,7 @@ class manager final {
     using close_callback = bool (*)(void *context);
     void bind(action_callback perform, close_callback close, void *context);
     bool open();
+    bool activate();
     bool close();
     bool handle(key value);
     void deactivate();
@@ -21,5 +22,6 @@ class manager final {
     close_callback close_ = nullptr;
     void *context_ = nullptr;
     bool active_ = false;
+    bool ready_ = false;
 };
 } // namespace cyberdeck_music_manager

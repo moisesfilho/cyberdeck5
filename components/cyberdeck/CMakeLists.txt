@@ -59,6 +59,7 @@ idf_component_register(
              "src/apps/network/cyberdeck_netdiag_https_adapter.cpp"
          "src/platform/display/cyberdeck_editor_view.cpp"
          "src/platform/display/cyberdeck_music_view.cpp"
+         "src/platform/display/cyberdeck_music_command_input.cpp"
         "src/apps/demo/cyberdeck_demo_app.cpp"
           "src/apps/system/cyberdeck_system_apps.cpp"
           "src/apps/system/cyberdeck_time_sync.cpp"

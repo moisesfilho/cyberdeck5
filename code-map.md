@@ -1,5 +1,15 @@
 # cyberdeck5 Code Map
 
+## Ordem de validacao e revisao
+
+Para mudancas dependentes do hardware, concluir testes focados e validação no
+Tab5 antes de solicitar a revisão final ampla, se o dispositivo estiver disponível
+e o cenário for seguro/autorizado. Se não for possível, registrar o bloqueio e
+manter `manual_validation: pending`; os gates host/build não demonstram
+comportamento físico. O roteiro do player está em
+`tests/manual/music-player-validation.pt-BR.md`; a sequência e as exceções seguem
+`agent-toolkit/workflows/developer-workflow.md`.
+
 ## Validacao de firmware
 
 Como o projeto produz firmware para um dispositivo específico, implementações
@@ -122,9 +132,11 @@ de TUs/flags e ordem de link à fixture imutável
 `tests/host/keymap/incremental_final_baseline.json` extraída das receitas no
 commit `59f4758`, verifica 176 depfiles, `BINS`, wrappers, agregado e limpeza;
 o alvo `test_incremental_final_contract` roda no agregado após o build.
-Os contratos `test_shell_help_contract.py`, `test_window_manager_contract.py`
-e `test_coverage_scope_guard.py` verificam as ligações por objeto/depfile após
-a migração, sem exigir a receita monolítica antiga.
+`test_shell_help_contract.py` reconcilia metadados aprovados de help, incluindo
+`music select <index>`, com manifests de produção e fixtures comportamentais.
+Os contratos `test_window_manager_contract.py` e `test_coverage_scope_guard.py`
+verificam as ligações por objeto/depfile após a migração, sem exigir a receita
+monolítica antiga.
 
 O progresso é de 59/59 candidatos originalmente monolíticos elegíveis;
 nenhum permanece pendente.
@@ -816,7 +828,7 @@ destrói recursos potencialmente usados.
   artista. O app `cyberdeck.music` em `cyberdeck_music_app.{h,cpp}` registra o
   comando de terminal `music` como app foreground único, sujeito ao lifecycle e
   exclusividade do runtime; `queue /diretorio` inicia scan assíncrono,
-  `list`, `play [n]`, `pause`, `resume`, `stop`, `next`, `prev`, `seek
+  `list`, `select <n>`, `play [n]`, `pause`, `resume`, `stop`, `next`, `prev`, `seek
   <segundos>`, `volume`, `shuffle`, `repeat`, `status` e `help`. O scan limita a
  64 MP3 regulares e consulta o secure-open do shell; mantém READ lease durante
   enumeração e só publica uma fila completa após validar grant/lifecycle. Uma
@@ -835,9 +847,18 @@ destrói recursos potencialmente usados.
       abre/foca a interface dedicada e inicia nova busca `/musica`; os subcomandos,
       incluindo `status` e `queue`, exigem o foreground ativo. `player` não cria
       app separado. Manager/view/adapter em
-      `cyberdeck_music_manager.{h,cpp}` e `cyberdeck_music_view.{h,cpp}` isolam
-      input/render e executam close antes da liberação da view. Stop por Esc ou
-      troca cancela/junta scan e para playback; falha mantém foreground/grant/quota
+       `cyberdeck_music_manager.{h,cpp}` e `cyberdeck_music_view.{h,cpp}` isolam
+        input/render. A view ocupa o display, reajusta layout em `LV_EVENT_SIZE_CHANGED`,
+        mostra status/progresso, controles e lista rolável bounded a 64 itens; status
+        ocupa até três linhas; labels de faixa/controle têm dimensões fixas e
+        `LV_LABEL_LONG_MODE_DOTS` preserva o texto da origem sem invadir widgets
+        vizinhos. O scroll permanece exclusivo da lista; Command
+       usa textarea na mesma surface e o roteador da UI encaminha exclusivamente ao
+       parser do app, consumindo texto fora do overlay para preservar a linha shell.
+       Seleção altera índice sem iniciar reprodução; stop por Esc ou
+       troca cancela/junta scan e para playback; `application::stop()` registra
+       estágios cancel_scan, scan_join_complete, player_stop e falhas sem expor
+       caminhos; falha mantém foreground/grant/quota
       ativos e bloqueia a troca, permitindo retry. `tests/host/keymap/player_traceability.md`
      define os cenários de aceite foreground, falha, limites, segurança e regressão.
    - `cyberdeck_music_player.{h,cpp}` é o serviço FreeRTOS de playback em
@@ -968,7 +989,13 @@ destrói recursos potencialmente usados.
    Touch oferece previous, play/pause, next, seek ±10 s e volume ±1; teclado
    roteia Enter, setas, N/P e Esc. Esc/troca fazem stop/join antes de destruir a
    view; em falha o foreground e seus grants são preservados para retry.
-   `test_music_manager` cobre input/close/ownership com callbacks host;
+    `test_music_manager` cobre input/close/ownership com callbacks host;
+    `test_music_app` retém secure-open durante close para provar cancel/join antes
+    do stop, ausência de publicação parcial, preservação do foreground/grant em
+    falha e retry. `test_display_views` verifica bounds, truncagem visual e
+    geometrias portrait/landscape. REQ-PLAYER-LAYOUT-READABLE e
+    REQ-PLAYER-ESC-STABLE, incluindo `AC-ESC-NO-REBOOT`, estão em
+    `player_traceability.md`; nenhum teste host prova ausência de reboot físico.
    `test_app_runtime` cobre falha de teardown, incluindo estado running preservado
    e revogação de grants somente após stop concluído. A view LVGL real e o áudio
    continuam dependentes de validação manual.
@@ -1018,8 +1045,11 @@ destrói recursos potencialmente usados.
      aceita nem aplicada automaticamente. Os marcos de
    codec ainda não foram exercitados no hardware; cobertura host não prova
    I2S/FATFS/codec. Playback, jack e controles permanecem pendentes.
-   `tests/manual/music-player-validation.pt-BR.md`
-  registra a ordem do gate recovery/Hosted antes do app e dos testes speaker/jack;
+    `tests/manual/music-player-validation.pt-BR.md`
+   registra a ordem do gate recovery/Hosted e, para a rodada aprovada de abertura,
+   restringe a validação a `music`, `music status`, `music list` e inspeção passiva;
+   playback, comandos/teclas/controles que o iniciem e testes speaker/jack ficam
+   proibidos sem autorização explícita em outra rodada;
   explicita que `music` sem argumentos é o único ponto de entrada (ativa o app
   foreground, abre a surface e inicia o scan de `/musica`), que `app start`
   isolado não abre a surface, que subcomandos exigem foreground ativo, que o
@@ -1169,7 +1199,7 @@ shortcuts remain interactive documentation, not shell commands.
 | `tests/host/keymap/test_sd_package.cpp` + `tests/host/keymap/sd_package_traceability.md` + `tests/host/keymap/Makefile` | `test_sd_package`, `REQ-COV-01`/`AC-COV-01` | Teste comportamental liga o TU real `cyberdeck_sd_package.cpp`; cobre vetores FNV-1a de referência, entradas nulas/vazias, tipos media_type aceitos/rejeitados e regras independentes de `validate`, incluindo limites de tamanho e checksum. Alvo `make test_sd_package` com cobertura está listado em `BINS`/`clean` e incluído em `make test`, evitando execução de binário stale; cobertura focada: 26/26 branches. A matriz rastreia requisitos aos cenários TEST-SDP. |
 | `tests/host/keymap/test_resource_catalog.cpp` + `tests/host/keymap/resource_catalog_traceability.md` + `tests/host/keymap/Makefile` | `test_resource_catalog`, requisitos de catálogo de recursos | Teste comportamental liga o TU real `cyberdeck_resource_catalog.cpp`; cobre lookup bounded por índice/ID, metadados, checksum e ausência fail-closed. Alvo com cobertura está listado em `BINS`/`clean` e incluído em `make test`, evitando execução de binário stale; cobertura focada: 16/16 branches. A matriz registra a rastreabilidade e os limites da evidência host. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_app_quota.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp` | `quota_limits`, `quota_usage`, `quota` | Quotas explícitas e fixas para resources/grants, stack, fila, bounded read, logger, output e lifecycle. O runtime reserva resources/grants por manifesto no registro e em cada ciclo de start; `revoke()` é chamado em arrays de 16 aplicações antes e depois do teardown, incluindo falhas de init/start, com geração monotônica para invalidar ciclos anteriores. |
-| `components/cyberdeck/include/platform/display/cyberdeck_window_manager_adapter.h`, `components/cyberdeck/src/platform/display/cyberdeck_window_manager_adapter.cpp` | `cyberdeck_window_manager_adapter::adapter`, `global` | Unico adaptador dono da raiz LVGL composta pelo screen, barra de sistema persistente e area de conteudo; a barra e chrome preto sem borda, padding ou rolagem, com 42 px fixos, enquanto a politica pura continua separada e cada app recebe somente `view_context`. A UI existente usa a area de conteudo e registra a superficie do shell, removendo-a antes do teardown para invalidar callbacks tardios. |
+| `components/cyberdeck/include/platform/display/cyberdeck_window_manager_adapter.h`, `components/cyberdeck/src/platform/display/cyberdeck_window_manager_adapter.cpp` | `cyberdeck_window_manager_adapter::adapter`, `global` | Unico adaptador dono da raiz LVGL composta pelo screen, barra de sistema persistente e area de conteudo; root e barra têm rolagem, scrollbar e chaining desligados, a barra e chrome preto sem borda/padding com 42 px fixos, enquanto a politica pura continua separada e cada app recebe somente `view_context`. A UI existente usa a area de conteudo e registra a superficie do shell, removendo-a antes do teardown para invalidar callbacks tardios. |
 | `components/cyberdeck/include/apps/demo/cyberdeck_demo_app.h`, `components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp` | `cyberdeck_apps::demo_application` | Aplicação headless de prova, registrada junto aos system apps, com manifesto, lifecycle e comando `demo`. |
 | `components/cyberdeck/include/apps/system/cyberdeck_system_apps.h`, `components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp` | `cyberdeck_system_apps_register`, `cyberdeck_system_apps_start_logging`, `cyberdeck_system_apps_start`, `cyberdeck_system_apps_start_safe_mode`, `service_application`, `event_log_logger`, `make_manifest` | Registro fixo dos system apps do Tab5, incluindo `cyberdeck.event_log`. O adaptador `event_log_logger` implementa a porta `cyberdeck_apps::logger` e encaminha ao backend persistente; o supervisor injeta essa porta ao registrar as aplicações. `cyberdeck_system_apps_start_logging` inicia o logger antes do restante do boot, `cyberdeck_system_apps_start` delega a ordem dos demais apps ao supervisor via `start_all`, e `cyberdeck_system_apps_start_safe_mode` tenta toda a superfície permitida (event log, shell e Serial-JTAG), registra cada falha no recovery e retorna erro sem abortar nem iniciar serviços proibidos. `make_manifest` declara tipo, dependências, recursos, capacidades, stack, fila e orçamento de lifecycle por app (Wi-Fi usa 8 s, pois `wifi_mgr_start()` leva ~2,7 s para subir o radio C6 e o storage SD). SSH, BLE, Serial e Screenshot possuem stop idempotente com joins bounded; Wi-Fi expõe `wifi_mgr_stop()` com join dos dois workers, cancelamento de timers/callbacks e quarentena fail-safe. |
 | `components/cyberdeck/include/apps/system/cyberdeck_time_sync.h`, `components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp` + `tests/host/keymap/time_sync_traceability.md` | `cyberdeck_time_sync_start`, `cyberdeck_time_sync_stop`, `cyberdeck_time_sync_boot_ready` | System app assíncrono `cyberdeck.time_sync`, dependente de Wi-Fi: após o checkpoint de boot e somente com conexão + IP agenda uma única tentativa por token, primeiro em `https://timeapi.io/api/time/current/zone?timeZone=UTC`, com fallback em `https://worldtimeapi.org/api/timezone/Etc/UTC` somente para falha de transporte/HTTP/corpo/parser. Ambas usam CA bundle oficial, timeout independente de 4000 ms e corpo bounded a 2048 bytes; a primeira valida JSON com `year`, `month`, `day`, `hour`, `minute`, `seconds`, `timeZone == UTC`, tipos numéricos e data válida, enquanto o fallback preserva `timezone == Etc/UTC` e `utc_datetime` com fração opcional. Nenhum caminho altera o clock antes da validação; somente `settimeofday` bem-sucedido produz o evento `time_sync`/`success` depois do `fsync` real em `events.log`, sem fallback após tentativa válida de atualização. A task assíncrona (stack de 16384 bytes), criada com `xTaskCreateWithCaps` e encerrada com `vTaskDeleteWithCaps`, callback, token por conexão e teardown são idempotentes/quiescentes; stop é observado entre as duas tentativas e o orçamento de lifecycle cobre ambas sem bloquear boot. O caminho crítico usa fila durável prioritária bounded, retry limitado e diagnóstico de backpressure; a projeção textual é best-effort. A matriz em `time_sync_traceability.md` mantém REQ/AC -> TEST, distinguindo host de TEST-TIME-10 manual. | REQ-TIMELOG-01..04, AC-TIMELOG-01..04 |

@@ -8,6 +8,12 @@ void manager::bind(action_callback perform, close_callback close, void *context)
 }
 bool manager::open() {
     active_ = true;
+    ready_ = false;
+    return true;
+}
+bool manager::activate() {
+    if (!active_) return false;
+    ready_ = true;
     return true;
 }
 bool manager::close() {
@@ -17,11 +23,14 @@ bool manager::close() {
     if (close_ == nullptr || !close_(context_))
         return false;
     active_ = false;
+    ready_ = false;
     return true;
 }
 bool manager::handle(key value) {
     if (!active_)
         return false;
+    if (!ready_)
+        return true;
     if (value == key::escape)
         return close();
     if (perform_ == nullptr)
@@ -39,5 +48,8 @@ bool manager::handle(key value) {
     }
     return true;
 }
-void manager::deactivate() { active_ = false; }
+void manager::deactivate() {
+    active_ = false;
+    ready_ = false;
+}
 } // namespace cyberdeck_music_manager

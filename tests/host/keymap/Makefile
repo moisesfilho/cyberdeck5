@@ -229,7 +229,7 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin
 
 MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
 MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
@@ -257,6 +257,7 @@ MUSIC_APP_SOURCES := \
 	music_runtime_shim/music_freertos_shim.cpp
 
 MUSIC_APP_HDRS := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_app.h \
+	../../../components/cyberdeck/include/platform/display/cyberdeck_music_command_input.h \
 	../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h \
 	../../../components/cyberdeck/include/apps/music/cyberdeck_music_player.h \
 	../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h \
@@ -265,6 +266,8 @@ MUSIC_APP_HDRS := ../../../components/cyberdeck/include/apps/music/cyberdeck_mus
 	../../../components/cyberdeck/include/platform/audio/cyberdeck_audio_output.h \
 	../../../components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h
 MUSIC_PLAYER_TEST := test_music_player.cpp
+MUSIC_COMMAND_INPUT_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_music_command_input.cpp
+MUSIC_COMMAND_INPUT_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_music_command_input.h
 MUSIC_PLAYER_SOURCES := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp \
@@ -2115,7 +2118,6 @@ test_resource_sd_quota_contract: test_resource_sd_quota_contract.py os_transform
 test_display_lock_contract: test_display_lock_contract.py ../../../main/app_main.cpp $(SERIAL_BRIDGE_SRC) Makefile
 	$(PYTHON) test_display_lock_contract.py
 
-imu_sensor_contract: imu_sensor_contract.py ../../../components/cyberdeck/src/platform/sensors/imu_reader.cpp
 	$(PYTHON) imu_sensor_contract.py
 
 # Structural host-side TDD contract for the physical keyboard/UI seam.  The
@@ -2636,9 +2638,9 @@ $(MUSIC_APP_OBJ): $(MUSIC_APP_MAIN_SRC) $(MUSIC_APP_HDRS) Makefile
 		-I../../../components/cyberdeck/include -Dcyberdeck_local_shell_opendir=music_test_secure_opendir \
 		-Dcyberdeck_local_shell_open_readonly=music_test_secure_open -MMD -MP -MF $@.d -c $< -o $@
 
-test_music_app_bin: $(MUSIC_APP_TEST) $(MUSIC_APP_OBJ) $(MUSIC_APP_SOURCES) $(MUSIC_APP_HDRS) $(MUSIC_AUDIO_SHIMS) music_traceability.md Makefile
+test_music_app_bin: $(MUSIC_APP_TEST) $(MUSIC_APP_OBJ) $(MUSIC_APP_SOURCES) $(MUSIC_COMMAND_INPUT_SRC) $(MUSIC_APP_HDRS) $(MUSIC_AUDIO_SHIMS) music_traceability.md Makefile
 	$(CXX) $(CXXFLAGS) -ffunction-sections -fdata-sections -pthread -Imusic_runtime_shim \
-		-I../../../components/cyberdeck/include $(MUSIC_APP_TEST) $(MUSIC_APP_OBJ) $(MUSIC_APP_SOURCES) \
+		-I../../../components/cyberdeck/include $(MUSIC_APP_TEST) $(MUSIC_APP_OBJ) $(MUSIC_APP_SOURCES) $(MUSIC_COMMAND_INPUT_SRC) \
 		-Wl,--wrap=lstat -Wl,--wrap=readdir -Wl,--gc-sections -o $@
 
 .PHONY: test_music_manager
@@ -2672,6 +2674,13 @@ test_music_decoder_scratch: test_music_decoder_scratch_bin
 test_music_decoder_scratch_bin: test_music_decoder_scratch.cpp ../../../components/cyberdeck/third_party/minimp3/minimp3.h Makefile
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck $< -o $@
 
+.PHONY: test_music_command_controller
+test_music_command_controller: test_music_command_controller_bin
+	@./test_music_command_controller_bin
+
+test_music_command_controller_bin: test_music_command_controller.cpp $(MUSIC_COMMAND_INPUT_SRC) $(MUSIC_COMMAND_INPUT_HDR) music_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_music_command_controller.cpp $(MUSIC_COMMAND_INPUT_SRC) -o $@
+
 test: test-build
 	@$(MAKE) --no-print-directory test_esp_hosted_cpu_staging
 	@$(MAKE) --no-print-directory test_music_decoder_stack_contract
@@ -2681,6 +2690,7 @@ test: test-build
 	@$(MAKE) --no-print-directory test_music_app
 	@$(MAKE) --no-print-directory test_music_manager
 	@$(MAKE) --no-print-directory test_music_player
+	@$(MAKE) --no-print-directory test_music_command_controller
 	@$(MAKE) --no-print-directory test_save_sidecar_recovery
 	@$(MAKE) --no-print-directory test_wifi_survey_export_controller
 	@$(MAKE) --no-print-directory test_netdiag_controller

@@ -36,8 +36,11 @@ int main() {
     input.bind(fixture::perform, fixture::close, &state);
     check(!input.handle(key::enter), "inactive input is not consumed");
     input.open();
-    check(input.handle(key::enter) && input.handle(key::left) && input.handle(key::right) &&
-          input.handle(key::up) && input.handle(key::down) && input.handle(key::next) && input.handle(key::previous),
+    check(input.handle(key::enter) && input.handle(key::enter) && state.actions.empty(),
+          "repeated Enter while the player view is opening is consumed without playback");
+    check(input.activate(), "successfully created player view activates input");
+    check(input.handle(key::enter) && input.handle(key::left) && input.handle(key::right) && input.handle(key::up) &&
+              input.handle(key::down) && input.handle(key::next) && input.handle(key::previous),
           "active controls are consumed");
     check(state.actions.size() == 7, "active controls map to seven player actions");
     state.close_ok = false;
@@ -49,6 +52,11 @@ int main() {
     const int before = static_cast<int>(state.order.size());
     check(!input.handle(key::escape) && static_cast<int>(state.order.size()) == before,
           "repeated inactive escape does not stop or switch twice");
+    input.open();
+    input.deactivate();
+    const auto actions_before_failed_open = state.actions.size();
+    check(!input.handle(key::enter) && state.actions.size() == actions_before_failed_open,
+          "failed view creation leaves no active controls or playback");
     std::printf("music manager: %s\n", failures == 0 ? "PASS" : "FAIL");
     return failures == 0 ? 0 : 1;
 }

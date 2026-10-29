@@ -24,8 +24,18 @@ def check() -> None:
     clean = model.rule("clean")
     aggregate = model.rule("test")
     assert clean and aggregate
-    assert len(bins) == len(set(bins)) == 81
+    assert len(bins) == len(set(bins)) == 82
     assert "test_music_manager_bin" in bins
+    music_controller = "test_music_command_controller"
+    music_controller_bin = music_controller + "_bin"
+    assert music_controller_bin in bins
+    assert music_controller in model.phony()
+    controller_wrapper = model.rule_resolved(music_controller)
+    assert controller_wrapper and music_controller_bin in expand_vars(
+        controller_wrapper["prereqs_raw"], model
+    ).split()
+    assert any(music_controller in line for line in model.rule("test")["recipe"])
+    assert any("$(BINS)" in line for line in model.rule("clean")["recipe"])
     assert len(baseline) == 27
 
     clean_dirs = set()

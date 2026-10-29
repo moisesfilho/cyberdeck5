@@ -424,6 +424,9 @@ void adapter_scenario()
     check(adapter.init(), "the adapter builds the composed root");
     check(adapter.ready(), "the adapter is ready after a successful init");
     check(adapter.screen() == root, "the adapter exposes the LVGL root it owns");
+    check(lv_obj_get_scroll_dir(root) == LV_DIR_NONE &&
+              lv_obj_get_scrollbar_mode(root) == LV_SCROLLBAR_MODE_OFF && !root->scroll_chain,
+          "the application root cannot scroll or receive chained scroll gestures");
     check(adapter.system_bar() != nullptr, "the persistent system bar exists");
     check(adapter.content() != nullptr, "the content area exists");
     check(adapter.system_bar() != adapter.content(), "the system bar is not the content area");

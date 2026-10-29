@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string_view>
+#include <array>
 
 struct _lv_obj_t;
 using lv_obj_t = _lv_obj_t;
@@ -15,14 +16,42 @@ class view final {
     void destroy();
     void set_visible(bool visible);
     bool visible() const { return surface_ != nullptr && visible_; }
+    bool exists() const { return surface_ != nullptr; }
     void render(std::string_view text);
+    void set_command_open(bool open);
+    bool command_open() const;
+    void set_command_text(std::string_view text);
+    void set_command_cursor(std::size_t position);
+    std::string_view command_text() const;
+    std::size_t selected_track() const { return selected_track_; }
+    int progress_value() const;
 
   private:
     static void clicked(lv_event_t *event);
+    static void selected(lv_event_t *event);
+    static void progress_released(lv_event_t *event);
+    static void resized(lv_event_t *event);
+    static void parent_resized(lv_event_t *event);
+    void layout();
+    lv_obj_t *parent_ = nullptr;
     lv_obj_t *surface_ = nullptr;
+    lv_obj_t *title_ = nullptr;
+    lv_obj_t *now_title_ = nullptr;
+    lv_obj_t *browser_title_ = nullptr;
     lv_obj_t *status_ = nullptr;
+    lv_obj_t *now_playing_ = nullptr;
+    lv_obj_t *time_ = nullptr;
+    lv_obj_t *volume_ = nullptr;
+    lv_obj_t *progress_ = nullptr;
+    lv_obj_t *command_ = nullptr;
+    lv_obj_t *list_ = nullptr;
+    lv_obj_t *controls_ = nullptr;
+    std::array<lv_obj_t *, 64> tracks_{};
+     std::array<lv_obj_t *, 8> buttons_{};
     callback callback_ = nullptr;
     void *context_ = nullptr;
     bool visible_ = false;
+    bool command_open_ = false;
+    std::size_t selected_track_ = 0;
 };
 } // namespace cyberdeck_music_view

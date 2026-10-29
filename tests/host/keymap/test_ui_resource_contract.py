@@ -116,6 +116,14 @@ def main() -> int:
     source = UI.read_text(encoding="utf-8")
     init = function_body(source, "extern \"C\" esp_err_t cyberdeck_ui_init(")
     cleanup = function_body(source, "void destroy_ui_resource_handles(")
+    music_create_calls = re.findall(r"s_music_view\.create\(([^,]+),", source)
+    require(music_create_calls == ["s_menu", "s_menu"],
+            "music view must be layered inside the shell content area")
+    require("disable_scrolling(s_menu);" in init,
+            "the shared content parent must not scroll or chain events into the global root")
+    require("s_menu = window_manager.content();" in init and
+            "s_header_view.create(window_manager.system_bar())" in init,
+            "music content and fixed system bar must remain distinct root regions")
     require("ssh_stopped = cyberdeck_apps::service_ports::ssh_disconnect_and_wait(k_ssh_disconnect_timeout_ms)" in cleanup,
             "cleanup must join SSH before deleting its event queue")
     require(cleanup.index("ssh_disconnect_and_wait") < cleanup.index("vQueueDelete(s_ssh_event_queue)"),
