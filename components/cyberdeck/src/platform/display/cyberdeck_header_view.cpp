@@ -168,6 +168,13 @@ bool view::create(lv_obj_t *parent)
     lv_obj_set_style_bg_color(s_music_button, kBlack, 0);
     lv_obj_set_style_bg_opa(s_music_button, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_music_button, 0, 0);
+    lv_obj_set_style_radius(s_music_button, 0, 0);
+    lv_obj_set_style_outline_width(s_music_button, 0, 0);
+    /* The default theme is light (`CONFIG_LV_THEME_DEFAULT_DARK` is unset), so
+     * every `lv_btn` inherits a grey drop shadow even with a transparent fill.
+     * Left alone it paints a capsule around the glyph. */
+    lv_obj_set_style_shadow_width(s_music_button, 0, 0);
+    lv_obj_set_style_shadow_opa(s_music_button, LV_OPA_TRANSP, 0);
     lv_obj_set_style_pad_all(s_music_button, 0, 0);
     lv_obj_set_hidden(s_music_button, true);
     lv_obj_add_event_cb(s_music_button, music_clicked, LV_EVENT_CLICKED, this);

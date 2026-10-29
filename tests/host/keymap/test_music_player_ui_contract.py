@@ -38,6 +38,7 @@ from lv_symbol_map import load_symbols, map_issues, parse_map, render_json
 ROOT = Path(__file__).resolve().parents[3]
 DISPLAY = ROOT / "components/cyberdeck/src/platform/display"
 VIEW = DISPLAY / "cyberdeck_music_view.cpp"
+HEADER = DISPLAY / "cyberdeck_header_view.cpp"
 COMMAND_INPUT = DISPLAY / "cyberdeck_music_command_input.cpp"
 APP = ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp"
 FONT = DISPLAY / "cyberdeck_font.c"
@@ -334,6 +335,33 @@ def track_create_issues(source: str) -> list[str]:
         issues.append("track row keeps the theme padding that clips the glyph")
     if "lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS)" not in loop:
         issues.append("track label must keep LV_LABEL_LONG_MODE_DOTS")
+    # The default (light) theme rounds `btn` and paints a grey drop shadow, which
+    # leaks as a bright arc at the row corners; both must be zeroed explicitly.
+    for setter, value in (("radius", "0"), ("outline_width", "0"),
+                          ("shadow_width", "0"), ("shadow_opa", "LV_OPA_TRANSP")):
+        if not re.search(rf"lv_obj_set_style_{setter}\(\s*track\s*,\s*{value}\s*,\s*0\s*\)", loop):
+            issues.append(f"track row must zero lv_obj_set_style_{setter}(track, {value}, 0)")
+    return issues
+
+
+def header_music_issues(source: str) -> list[str]:
+    issues: list[str] = []
+    try:
+        create = function_body(source, "bool view::create(")
+    except (AssertionError, ValueError):
+        return ["header view create function not found"]
+    begin = create.find("s_music_button = lv_btn_create(right)")
+    end = create.find("lv_obj_add_event_cb(s_music_button", begin if begin >= 0 else 0)
+    if begin < 0 or end < 0:
+        return ["header music button creation block not found"]
+    block = create[begin:end]
+    for setter, value in (("radius", "0"), ("outline_width", "0"),
+                          ("shadow_width", "0"), ("shadow_opa", "LV_OPA_TRANSP")):
+        if not re.search(rf"lv_obj_set_style_{setter}\(\s*s_music_button\s*,\s*{value}\s*,\s*0\s*\)", block):
+            issues.append(
+                f"header music button must zero lv_obj_set_style_{setter}(s_music_button, {value}, 0)")
+    if not re.search(r"lv_obj_set_size\(\s*s_music_button\s*,\s*26\s*,\s*36\s*\)", create):
+        issues.append("header music button must keep the 26x36 target")
     return issues
 
 
@@ -581,15 +609,42 @@ def main() -> int:
 
     view_source = VIEW.read_text(encoding="utf-8")
     require(track_create_issues(view_source) == [],
-            "track rows must zero every theme padding channel")
+            "track rows must zero every theme padding and chrome channel")
     require(track_layout_issues(view_source) == [],
             "track labels must be inset and vertically centred inside the row")
+
+    header_source = HEADER.read_text(encoding="utf-8")
+    require(header_music_issues(header_source) == [],
+            "the header music button must zero the theme radius and shadow")
 
     # Mutation proof: the legacy implementation must be rejected by the same
     # checks, so the contract cannot pass vacuously.
     legacy_padding = view_source.replace("        lv_obj_set_style_pad_row(track, 0, 0);\n", "")
     require(track_create_issues(legacy_padding) != [],
             "mutation without pad_row must be rejected")
+    legacy_radius = view_source.replace("        lv_obj_set_style_radius(track, 0, 0);\n", "")
+    require(track_create_issues(legacy_radius) != [],
+            "mutation restoring the theme radius on a track row must be rejected")
+    legacy_shadow = view_source.replace("        lv_obj_set_style_shadow_width(track, 0, 0);\n", "")
+    require(track_create_issues(legacy_shadow) != [],
+            "mutation restoring the theme shadow on a track row must be rejected")
+    legacy_shadow_opa = view_source.replace(
+        "        lv_obj_set_style_shadow_opa(track, LV_OPA_TRANSP, 0);\n", "")
+    require(track_create_issues(legacy_shadow_opa) != [],
+            "mutation leaving the shadow opaque on a track row must be rejected")
+
+    legacy_header_shadow = header_source.replace(
+        "    lv_obj_set_style_shadow_width(s_music_button, 0, 0);\n", "")
+    require(header_music_issues(legacy_header_shadow) != [],
+            "mutation restoring the theme shadow on the header button must be rejected")
+    legacy_header_radius = header_source.replace(
+        "    lv_obj_set_style_radius(s_music_button, 0, 0);\n", "")
+    require(header_music_issues(legacy_header_radius) != [],
+            "mutation restoring the theme radius on the header button must be rejected")
+    legacy_header_size = header_source.replace(
+        "    lv_obj_set_size(s_music_button, 26, 36);", "    lv_obj_set_size(s_music_button, 26, 44);")
+    require(header_music_issues(legacy_header_size) != [],
+            "mutation that grows the header target must be rejected")
     legacy_position = view_source.replace(
         "        lv_obj_set_pos(label, kTrackInset, track_label_y);\n"
         "        lv_obj_set_size(label, std::max(1, browser_inner_width - kTrackInset * 2), track_label_height);",
@@ -609,8 +664,9 @@ def main() -> int:
     if failures:
         return 1
     print("PASS: player UI literals and rendered LV_SYMBOL_* stay inside the real "
-          "cyberdeck_font coverage, the controls hint is ASCII and shared, and "
-          "track rows zero the theme padding with an inset, centred label")
+          "cyberdeck_font coverage, the controls hint is ASCII and shared, track "
+          "rows and the header button zero the theme padding, radius and shadow, "
+          "and the track label stays inset and centred")
     return 0
 
 

@@ -1,4 +1,5 @@
 #include "apps/music/cyberdeck_music_app.h"
+#include "apps/music/cyberdeck_music_metadata.h"
 #include "apps/music/cyberdeck_music_player.h"
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "esp_log.h"
@@ -289,8 +290,6 @@ bool application::scan_directory_sync(std::string_view path) {
                                                                             k_max_track_bytes, verified_size);
                 if (descriptor < 0)
                     continue;
-                if (close(descriptor) != 0)
-                    continue;
                 track candidate{};
                 std::memcpy(candidate.path.data(), child.data(), child.size());
                 candidate.path[child.size()] = '\0';
@@ -298,6 +297,9 @@ bool application::scan_directory_sync(std::string_view path) {
                 const std::size_t title_bytes = std::min(next_name.size(), k_max_title_bytes);
                 std::memcpy(candidate.title.data(), next_name.data(), title_bytes);
                 candidate.title[title_bytes] = '\0';
+                read_metadata(descriptor, verified_size, candidate);
+                if (close(descriptor) != 0)
+                    continue;
                 if (count < tracks->size()) {
                     (*tracks)[count++] = candidate;
                 } else {

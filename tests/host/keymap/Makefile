@@ -245,8 +245,11 @@ MUSIC_AUDIO_SHIMS := music_runtime_shim/bsp/m5stack_tab5.h \
 MUSIC_APP_TEST := test_music_app.cpp
 MUSIC_APP_MAIN_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp
 MUSIC_APP_OBJ := test_music_app/music_app.o
+MUSIC_METADATA_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_metadata.cpp
+MUSIC_METADATA_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_metadata.h
 MUSIC_APP_SOURCES := \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
+	$(MUSIC_METADATA_SRC) \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp \
@@ -259,6 +262,7 @@ MUSIC_APP_SOURCES := \
 MUSIC_APP_HDRS := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_app.h \
 	../../../components/cyberdeck/include/platform/display/cyberdeck_music_command_input.h \
 	../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h \
+	$(MUSIC_METADATA_HDR) \
 	../../../components/cyberdeck/include/apps/music/cyberdeck_music_player.h \
 	../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h \
 	../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_storage.h \
@@ -270,6 +274,7 @@ MUSIC_COMMAND_INPUT_SRC := ../../../components/cyberdeck/src/platform/display/cy
 MUSIC_COMMAND_INPUT_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_music_command_input.h
 MUSIC_PLAYER_SOURCES := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
+	$(MUSIC_METADATA_SRC) \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp \
@@ -2690,7 +2695,7 @@ test_music_manager_bin: test_music_manager.cpp ../../../components/cyberdeck/src
 test_music_player: test_music_player_bin
 	@./test_music_player_bin
 
-test_music_player_bin: $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) $(MUSIC_PLAYER_SHIMS) $(MUSIC_APP_HDRS) $(MUSIC_AUDIO_HDR) music_traceability.md Makefile
+test_music_player_bin: $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) $(MUSIC_PLAYER_SHIMS) $(MUSIC_APP_HDRS) $(MUSIC_METADATA_HDR) $(MUSIC_AUDIO_HDR) music_traceability.md Makefile
 	$(CXX) $(CXXFLAGS) -Wno-error=stringop-truncation -ffunction-sections -fdata-sections -pthread -Imusic_runtime_shim \
 		-I../../../components/cyberdeck/include -I../../../components/cyberdeck $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) \
 		-Wl,--wrap=close -Wl,--wrap=read -Wl,--gc-sections -o $@

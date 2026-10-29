@@ -44,6 +44,36 @@ void append_syncsafe(std::string &out, std::uint32_t value) {
     out.push_back(static_cast<char>(value & 0x7f));
 }
 
+/* Strict UTF-8 validation: `copy_text` feeds LVGL, which decodes by code point,
+ * so every parsed title/artist must be a decodable sequence. */
+bool valid_utf8(std::string_view text) {
+    for (std::size_t i = 0; i < text.size();) {
+        const auto lead = static_cast<unsigned char>(text[i]);
+        if (lead < 0x80) {
+            ++i;
+            continue;
+        }
+        const std::size_t bytes = lead >= 0xc2 && lead <= 0xdf   ? 2
+                                  : lead >= 0xe0 && lead <= 0xef ? 3
+                                  : lead >= 0xf0 && lead <= 0xf4 ? 4
+                                                                 : 0;
+        if (bytes == 0 || i + bytes > text.size())
+            return false;
+        for (std::size_t j = 1; j < bytes; ++j)
+            if ((static_cast<unsigned char>(text[i + j]) & 0xc0) != 0x80)
+                return false;
+        if (bytes >= 3) {
+            const auto second = static_cast<unsigned char>(text[i + 1]);
+            if (bytes == 3 && ((lead == 0xe0 && second < 0xa0) || (lead == 0xed && second >= 0xa0)))
+                return false;
+            if (bytes == 4 && ((lead == 0xf0 && second < 0x90) || (lead == 0xf4 && second >= 0x90)))
+                return false;
+        }
+        i += bytes;
+    }
+    return true;
+}
+
 void append_frame(std::string &tag, unsigned version, std::string_view id, std::string_view text) {
     const std::string payload = std::string(1, '\x03') + std::string(text);
     tag.append(id);
@@ -221,12 +251,66 @@ void test_id3_text_encoding_and_limits() {
     auto utf8 = make_tag(4, "Caf\xc3\xa9", "Beyonc\xc3\xa9");
     track parsed{};
     CHECK(cyberdeck_music::parse_id3v2(utf8, parsed));
+    /* LVGL decodes UTF-8 (`CONFIG_LV_TXT_ENC_UTF8`) and looks the glyph up by
+     * code point, so valid sequences stay verbatim: `Caf\xc3\xa9` renders as
+     * `Café`. A Latin-1 byte would be read as a 3-byte lead and swallow the
+     * following character. */
     CHECK(std::string_view(parsed.title.data()) == "Caf\xc3\xa9");
     CHECK(std::string_view(parsed.artist.data()) == "Beyonc\xc3\xa9");
+    CHECK(valid_utf8(parsed.title.data()) && valid_utf8(parsed.artist.data()));
 
+    auto utf8_punctuation = make_tag(4, "\xe2\x80\x9cHi\xe2\x80\x9d", "\xe2\x80\x93x\xe2\x80\x94y\xe2\x80\xa6");
+    CHECK(cyberdeck_music::parse_id3v2(utf8_punctuation, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "\"Hi\"");
+    CHECK(std::string_view(parsed.artist.data()) == "-x-y...");
+
+    auto utf8_apostrophes = make_tag(4, "It\xe2\x80\x99s", "a\xe2\x80\x98" "b");
+    CHECK(cyberdeck_music::parse_id3v2(utf8_apostrophes, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "It's");
+    CHECK(std::string_view(parsed.artist.data()) == "a'b");
+
+    auto utf8_outside_font = make_tag(4, "\xe6\xbc\xa2", "\xf0\x9f\x8e\xb5");
+    CHECK(cyberdeck_music::parse_id3v2(utf8_outside_font, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "?");
+    CHECK(std::string_view(parsed.artist.data()) == "?");
+
+    /* U+00A0 renders as a space; U+00FF stays a two-byte UTF-8 sequence. */
+    auto utf8_latin1_supplement = make_tag(4, "\xc2\xa0" "A\xc3\xbf", "b");
+    CHECK(cyberdeck_music::parse_id3v2(utf8_latin1_supplement, parsed));
+    CHECK(std::string_view(parsed.title.data()) == " A\xc3\xbf");
+    CHECK(valid_utf8(parsed.title.data()));
+
+    /* An ellipsis is three glyphs: the bounded buffer must drop it instead of
+     * writing past the last byte or splitting it. */
+    auto ellipsis_limit = make_tag(
+        4, std::string(k_max_title_bytes - 2, 'a') + "\xe2\x80\xa6", "artist");
+    CHECK(cyberdeck_music::parse_id3v2(ellipsis_limit, parsed));
+    CHECK(std::strlen(parsed.title.data()) == k_max_title_bytes);
+    CHECK(std::string_view(parsed.title.data()).substr(k_max_title_bytes - 2) == "..");
+    CHECK(parsed.title.back() == '\0');
+
+    /* Truncation is per code point: a two-byte `ç` that does not fit is dropped
+     * whole, so the output never ends with a dangling lead byte. */
+    auto split_limit = make_tag(
+        4, std::string(k_max_title_bytes - 1, 'a') + "\xc3\xa7", "artist");
+    CHECK(cyberdeck_music::parse_id3v2(split_limit, parsed));
+    CHECK(std::strlen(parsed.title.data()) == k_max_title_bytes - 1);
+    CHECK(std::string_view(parsed.title.data()) == std::string(k_max_title_bytes - 1, 'a'));
+    CHECK(valid_utf8(parsed.title.data()));
+
+    /* A sequence that fits exactly is kept, with the NUL one byte later. */
+    auto exact_limit = make_tag(
+        4, std::string(k_max_title_bytes - 2, 'a') + "\xc3\xa7", "artist");
+    CHECK(cyberdeck_music::parse_id3v2(exact_limit, parsed));
+    CHECK(std::strlen(parsed.title.data()) == k_max_title_bytes);
+    CHECK(std::string_view(parsed.title.data()).substr(k_max_title_bytes - 2) == "\xc3\xa7");
+    CHECK(parsed.title[k_max_title_bytes] == '\0');
+
+    /* Malformed input becomes '?', never a truncated or ambiguous sequence. */
     auto invalid_utf8 = make_tag(3, std::string("ok\xc0\xaf", 4), "artist");
     CHECK(cyberdeck_music::parse_id3v2(invalid_utf8, parsed));
-    CHECK(std::string_view(parsed.title.data()) == "ok");
+    CHECK(std::string_view(parsed.title.data()) == "ok??");
+    CHECK(valid_utf8(parsed.title.data()));
 
     auto long_text = make_tag(3, std::string(k_max_title_bytes + 20, 't'),
                               std::string(k_max_artist_bytes + 20, 'a'));
@@ -258,6 +342,23 @@ void test_id3_legacy_text_encodings() {
     CHECK(cyberdeck_music::parse_id3v2(latin1, parsed));
     CHECK(std::string_view(parsed.title.data()) == "A B?");
 
+    /* ISO-8859-1 bytes are transcoded to UTF-8: accented letters become two
+     * bytes, U+00A0 becomes a space and C1 controls become '?'. */
+    auto latin1_accents = make_encoded_tag(0, std::string("\x7f\x9f\xa0\xc0\xff", 5));
+    CHECK(cyberdeck_music::parse_id3v2(latin1_accents, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "?? \xc3\x80\xc3\xbf");
+    CHECK(valid_utf8(parsed.title.data()));
+
+    auto latin1_cafe = make_encoded_tag(0, std::string("Caf\xe9", 4));
+    CHECK(cyberdeck_music::parse_id3v2(latin1_cafe, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "Caf\xc3\xa9");
+    CHECK(valid_utf8(parsed.title.data()));
+
+    auto latin1_space = make_encoded_tag(0, std::string("S\xe3o Paulo", 9));
+    CHECK(cyberdeck_music::parse_id3v2(latin1_space, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "S\xc3\xa3o Paulo");
+    CHECK(valid_utf8(parsed.title.data()));
+
     auto utf16_be = make_encoded_tag(1, std::string("\xfe\xff\0A\0B\0\0", 8));
     CHECK(cyberdeck_music::parse_id3v2(utf16_be, parsed));
     CHECK(std::string_view(parsed.title.data()) == "AB");
@@ -270,6 +371,21 @@ void test_id3_legacy_text_encodings() {
     CHECK(cyberdeck_music::parse_id3v2(utf16_le, parsed));
     CHECK(std::string_view(parsed.title.data()) == "AB");
 
+    /* Code units are transcoded to UTF-8: Latin-1 accents become two bytes,
+     * typographic punctuation becomes ASCII and an ellipsis becomes three dots. */
+    auto utf16_accent = make_encoded_tag(2, std::string("A\0\xe9\0", 4));
+    CHECK(cyberdeck_music::parse_id3v2(utf16_accent, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "A\xc3\xa9");
+    CHECK(valid_utf8(parsed.title.data()));
+
+    auto utf16_punctuation = make_encoded_tag(2, std::string("\x18\x20\x26\x20", 4));
+    CHECK(cyberdeck_music::parse_id3v2(utf16_punctuation, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "'...");
+
+    auto utf16_space = make_encoded_tag(2, std::string("\xa0\x00", 2));
+    CHECK(cyberdeck_music::parse_id3v2(utf16_space, parsed));
+    CHECK(std::string_view(parsed.title.data()) == " ");
+
     auto unsupported = make_encoded_tag(4, "ignored");
     CHECK(cyberdeck_music::parse_id3v2(unsupported, parsed));
     CHECK(parsed.title[0] == '\0');
@@ -278,9 +394,22 @@ void test_id3_legacy_text_encodings() {
     CHECK(cyberdeck_music::parse_id3v2(utf16_odd_tail, parsed));
     CHECK(std::string_view(parsed.title.data()) == "A");
 
-    auto utf16_surrogate = make_encoded_tag(2, std::string("\x00\xd8", 2));
+    /* U+00D8 is a printable Latin-1 glyph and must reach LVGL as UTF-8; a lone
+     * or paired surrogate is outside the font and becomes '?'. */
+    auto utf16_latin1_byte = make_encoded_tag(2, std::string("\xd8\x00", 2));
+    CHECK(cyberdeck_music::parse_id3v2(utf16_latin1_byte, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "\xc3\x98");
+    CHECK(valid_utf8(parsed.title.data()));
+
+    auto utf16_surrogate = make_encoded_tag(2, std::string("\x00\xd8\x00\x00", 4));
     CHECK(cyberdeck_music::parse_id3v2(utf16_surrogate, parsed));
     CHECK(std::string_view(parsed.title.data()) == "?");
+
+    /* U+1F600 arrives as a surrogate pair; it has no glyph, so one '?'. */
+    auto utf16_surrogate_pair = make_encoded_tag(2, std::string("\x3d\xd8\x00\xde", 4));
+    CHECK(cyberdeck_music::parse_id3v2(utf16_surrogate_pair, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "?");
+    CHECK(valid_utf8(parsed.title.data()));
 
     auto empty_utf16 = make_encoded_tag(1, "");
     CHECK(cyberdeck_music::parse_id3v2(empty_utf16, parsed));
@@ -288,11 +417,20 @@ void test_id3_legacy_text_encodings() {
 
     auto invalid_utf8_continuation = make_tag(4, std::string("\xe2(A", 3), "artist");
     CHECK(cyberdeck_music::parse_id3v2(invalid_utf8_continuation, parsed));
-    CHECK(parsed.title[0] == '\0');
+    CHECK(std::string_view(parsed.title.data()) == "?(A");
+    CHECK(valid_utf8(parsed.title.data()));
 
+    /* A truncated multi-byte sequence collapses to a single '?' (maximal
+     * subpart), never to a dangling lead byte. */
     auto truncated_utf8 = make_tag(4, std::string("\xe2\x82", 2), "artist");
     CHECK(cyberdeck_music::parse_id3v2(truncated_utf8, parsed));
-    CHECK(parsed.title[0] == '\0');
+    CHECK(std::string_view(parsed.title.data()) == "?");
+    CHECK(valid_utf8(parsed.title.data()));
+
+    auto overlong_utf8 = make_tag(4, std::string("\xe0\x80\xaf", 3), "artist");
+    CHECK(cyberdeck_music::parse_id3v2(overlong_utf8, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "?");
+    CHECK(valid_utf8(parsed.title.data()));
 }
 
 void test_clear_and_empty_state() {

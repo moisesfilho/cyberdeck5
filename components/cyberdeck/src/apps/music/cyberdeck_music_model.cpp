@@ -33,6 +33,57 @@ std::uint32_t frame_size(const unsigned char *p, std::size_t count, std::uint8_t
     return (std::uint32_t(p[0]) << 24) | (std::uint32_t(p[1]) << 16) | (std::uint32_t(p[2]) << 8) | p[3];
 }
 
+/* Encodes one code point as UTF-8 inside the `cyberdeck_font` repertoire.
+ * `CONFIG_LV_TXT_ENC_UTF8` makes LVGL decode the text and look the glyph up by
+ * code point, so a raw Latin-1 byte (e.g. 0xE9) would be read as the lead of a
+ * three-byte sequence and swallow the next character. The font covers printable
+ * ASCII and U+00A0-U+00FF; everything outside becomes '?' and the typographic
+ * marks it does not cover are transliterated. Returns false when the bounded
+ * buffer has no room for the whole sequence, so the caller stops instead of
+ * writing a partial, undecodable code point. */
+bool append_codepoint(char *target, std::size_t &out, std::size_t max, std::uint32_t codepoint) {
+    char encoded[3]{};
+    std::size_t length = 0;
+    switch (codepoint) {
+    case 0x2018:
+    case 0x2019:
+        encoded[length++] = '\'';
+        break;
+    case 0x201c:
+    case 0x201d:
+        encoded[length++] = '"';
+        break;
+    case 0x2013:
+    case 0x2014:
+        encoded[length++] = '-';
+        break;
+    case 0x2026: {
+        /* Three ASCII dots carry no UTF-8 continuation, so filling the remaining
+         * room (instead of dropping the whole ellipsis) is safe. */
+        const std::size_t dots = std::min<std::size_t>(3, max - out);
+        for (std::size_t i = 0; i < dots; ++i)
+            target[out++] = '.';
+        return dots == 3;
+    }
+    default:
+        if (codepoint < 0x20 || codepoint == 0xa0)
+            encoded[length++] = ' ';
+        else if (codepoint <= 0x7e)
+            encoded[length++] = static_cast<char>(codepoint);
+        else if (codepoint >= 0xa1 && codepoint <= 0xff) {
+            encoded[length++] = static_cast<char>(0xc0 | (codepoint >> 6));
+            encoded[length++] = static_cast<char>(0x80 | (codepoint & 0x3f));
+        } else
+            encoded[length++] = '?';
+        break;
+    }
+    if (out + length > max)
+        return false;
+    for (std::size_t i = 0; i < length; ++i)
+        target[out++] = encoded[i];
+    return true;
+}
+
 void copy_text(std::array<char, k_max_title_bytes + 1> &dst, std::array<char, k_max_artist_bytes + 1> *artist,
                const unsigned char *data, std::size_t length) {
     if (length < 1)
@@ -46,7 +97,8 @@ void copy_text(std::array<char, k_max_title_bytes + 1> &dst, std::array<char, k_
             const unsigned char c = data[i];
             if (c == 0)
                 break;
-            target[out++] = c < 0x20 ? ' ' : c < 0x7f ? static_cast<char>(c) : '?';
+            if (!append_codepoint(target, out, max, c))
+                break;
         }
     } else if (encoding == 3) {
         for (std::size_t i = 1; i < length && out < max;) {
@@ -54,7 +106,8 @@ void copy_text(std::array<char, k_max_title_bytes + 1> &dst, std::array<char, k_
             if (lead == 0)
                 break;
             if (lead < 0x80) {
-                target[out++] = lead < 0x20 ? ' ' : static_cast<char>(lead);
+                if (!append_codepoint(target, out, max, lead))
+                    break;
                 ++i;
                 continue;
             }
@@ -62,32 +115,52 @@ void copy_text(std::array<char, k_max_title_bytes + 1> &dst, std::array<char, k_
                                       : lead >= 0xe0 && lead <= 0xef ? 3
                                       : lead >= 0xf0 && lead <= 0xf4 ? 4
                                                                      : 0;
-            if (bytes == 0 || i + bytes > length || out + bytes > max)
-                break;
-            bool valid = true;
+            /* Consume the maximal subpart of a malformed sequence so each
+             * broken character yields one '?' instead of one per stray byte. */
+            std::size_t span = 0;
+            if (bytes != 0) {
+                span = 1;
+                while (span < bytes && i + span < length && (data[i + span] & 0xc0) == 0x80)
+                    ++span;
+            }
+            bool valid = bytes != 0 && span == bytes;
+            if (valid && bytes == 3 && ((lead == 0xe0 && data[i + 1] < 0xa0) || (lead == 0xed && data[i + 1] >= 0xa0)))
+                valid = false;
+            if (valid && bytes == 4 && ((lead == 0xf0 && data[i + 1] < 0x90) || (lead == 0xf4 && data[i + 1] >= 0x90)))
+                valid = false;
+            if (!valid) {
+                if (!append_codepoint(target, out, max, '?'))
+                    break;
+                i += span == 0 ? 1 : span;
+                continue;
+            }
+            std::uint32_t codepoint = bytes == 2 ? (lead & 0x1fU) : bytes == 3 ? (lead & 0x0fU) : (lead & 0x07U);
             for (std::size_t j = 1; j < bytes; ++j)
-                valid = valid && (data[i + j] & 0xc0) == 0x80;
-            if (bytes == 3 && lead == 0xe0)
-                valid = valid && data[i + 1] >= 0xa0;
-            if (bytes == 3 && lead == 0xed)
-                valid = valid && data[i + 1] < 0xa0;
-            if (bytes == 4 && lead == 0xf0)
-                valid = valid && data[i + 1] >= 0x90;
-            if (bytes == 4 && lead == 0xf4)
-                valid = valid && data[i + 1] < 0x90;
-            if (!valid)
+                codepoint = (codepoint << 6) | (data[i + j] & 0x3fU);
+            i += bytes;
+            if (!append_codepoint(target, out, max, codepoint))
                 break;
-            for (std::size_t j = 0; j < bytes; ++j)
-                target[out++] = static_cast<char>(data[i++]);
         }
     } else if ((encoding == 1 || encoding == 2) && length >= 3) {
-        bool little = encoding == 2 || (data[1] == 0xff && data[2] == 0xfe);
+        const bool little = encoding == 2 || (data[1] == 0xff && data[2] == 0xfe);
+        const auto unit_at = [&](std::size_t index) {
+            return little ? (std::uint32_t(data[index]) | (std::uint32_t(data[index + 1]) << 8))
+                          : ((std::uint32_t(data[index]) << 8) | std::uint32_t(data[index + 1]));
+        };
         std::size_t i = encoding == 1 ? 3 : 1;
         for (; i + 1 < length && out < max; i += 2) {
-            const unsigned char c = little ? data[i] : data[i + 1];
-            if (c == 0 && (little ? data[i + 1] : data[i]) == 0)
+            std::uint32_t codepoint = unit_at(i);
+            if (codepoint == 0)
                 break;
-            target[out++] = c >= 0x20 && c < 0x7f ? static_cast<char>(c) : '?';
+            if (codepoint >= 0xd800 && codepoint <= 0xdbff && i + 3 < length) {
+                const std::uint32_t low = unit_at(i + 2);
+                if (low >= 0xdc00 && low <= 0xdfff) {
+                    codepoint = 0x10000 + ((codepoint - 0xd800) << 10) + (low - 0xdc00);
+                    i += 2;
+                }
+            }
+            if (!append_codepoint(target, out, max, codepoint))
+                break;
         }
     }
     target[out] = '\0';

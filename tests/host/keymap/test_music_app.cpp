@@ -128,6 +128,31 @@ void write_file(const fs::path &path, std::string_view content) {
     std::ofstream output(path, std::ios::binary);
     output.write(content.data(), static_cast<std::streamsize>(content.size()));
 }
+
+/* Minimal ID3v2.3 tag with a UTF-8 TIT2 frame, enough to prove the scan fills
+ * the track title from metadata instead of the file name. */
+std::string id3_title_tag(std::string_view title) {
+    std::string payload(1, static_cast<char>(3));
+    payload.append(title);
+    std::string frame = "TIT2";
+    const auto frame_size = static_cast<std::uint32_t>(payload.size());
+    frame.push_back(static_cast<char>((frame_size >> 24) & 0xff));
+    frame.push_back(static_cast<char>((frame_size >> 16) & 0xff));
+    frame.push_back(static_cast<char>((frame_size >> 8) & 0xff));
+    frame.push_back(static_cast<char>(frame_size & 0xff));
+    frame.append(2, '\0');
+    frame += payload;
+    std::string tag = "ID3";
+    tag.push_back(static_cast<char>(3));
+    tag.append(2, '\0');
+    const auto tag_size = static_cast<std::uint32_t>(frame.size());
+    tag.push_back(static_cast<char>((tag_size >> 21) & 0x7f));
+    tag.push_back(static_cast<char>((tag_size >> 14) & 0x7f));
+    tag.push_back(static_cast<char>((tag_size >> 7) & 0x7f));
+    tag.push_back(static_cast<char>(tag_size & 0x7f));
+    tag += frame;
+    return tag;
+}
 }
 
 DIR *music_test_secure_opendir(const char *root, const char *cwd, std::string_view path) {
@@ -267,6 +292,7 @@ int main() {
     write_file(too_deep / "too-deep.mp3", "too-deep-data");
     write_file(music_dir / "ignored.txt", "not audio");
     write_file(music_dir / "empty.mp3", "");
+    write_file(music_dir / "tagged.mp3", id3_title_tag("Caf\xc3\xa9"));
     fs::create_directory(music_dir / "directory.mp3");
     write_file(fs::path(scan_root) / "outside.mp3", "outside");
     fs::create_symlink(fs::path(scan_root) / "outside.mp3", music_dir / "link.mp3");
@@ -277,11 +303,17 @@ int main() {
         const auto current = music.execute("music", "status");
         return current.output.find("queue: scan complete") != std::string::npos;
     }, std::chrono::seconds(2)));
-    CHECK(player.queue_updates == 4 && player.queue_count == 3);
-    CHECK(player.last_queue.size() == 3);
+    CHECK(player.queue_updates == 4 && player.queue_count == 4);
+    CHECK(player.last_queue.size() == 4);
     CHECK(std::string_view(player.last_queue[0].path.data()) == "/music/Beta.MP3");
     CHECK(std::string_view(player.last_queue[1].path.data()) == "/music/alpha.mp3");
     CHECK(std::string_view(player.last_queue[2].path.data()) == "/music/nested/inside.mp3");
+    CHECK(std::string_view(player.last_queue[3].path.data()) == "/music/tagged.mp3");
+    /* ID3 title for a tagged file, file-name fallback (with its extension) for
+     * the rest. */
+    CHECK(std::string_view(player.last_queue[3].title.data()) == "Caf\xc3\xa9");
+    CHECK(std::string_view(player.last_queue[1].title.data()) == "alpha.mp3");
+    CHECK(music.execute("music", "list").output.find("Caf\xc3\xa9") != std::string::npos);
     CHECK(music.execute("music", "list").output.find("alpha.mp3") != std::string::npos);
     CHECK(music.execute("music", "list").output.find("Beta.MP3") != std::string::npos);
     CHECK(music.execute("music", "list").output.find("inside.mp3") != std::string::npos);
@@ -309,11 +341,18 @@ int main() {
     CHECK(wait_until([&] {
         const auto current = music.execute("music", "status").output;
         return current.find("queue: scan complete") != std::string::npos &&
-               current.find("queue: 5 tracks") != std::string::npos;
+               current.find("queue: 6 tracks") != std::string::npos;
     }, std::chrono::seconds(2)));
-    CHECK(player.queue_updates == 6 && player.queue_count == 5);
-    CHECK(player.last_queue.size() == 5);
+    CHECK(player.queue_updates == 6 && player.queue_count == 6);
+    CHECK(player.last_queue.size() == 6);
     CHECK(std::string_view(player.last_queue[0].path.data()) == "/music/Beta.MP3");
+    /* The recursive root scan reaches the tagged fixture too, and the ID3 title
+     * survives the queue replacement the same way the file-name fallback does. */
+    CHECK(std::string_view(player.last_queue[3].path.data()) == "/music/tagged.mp3");
+    CHECK(std::string_view(player.last_queue[3].title.data()) == "Caf\xc3\xa9");
+    CHECK(std::string_view(player.last_queue[4].path.data()) == "/musica/opening.mp3");
+    CHECK(std::string_view(player.last_queue[5].path.data()) == "/root-track.mp3");
+    CHECK(std::string_view(player.last_queue[5].title.data()) == "root-track.mp3");
     CHECK(player.state.state == cyberdeck_music::playback_state::playing);
     CHECK(player.played.size() == play_requests_before_scan);
     CHECK(music.execute("music", "list").output.find("root-track.mp3") != std::string::npos);

@@ -135,6 +135,12 @@ int main()
     const auto *music_button = right->children[3];
     assert(music_button->hidden);
     assert(music_button->width == 26 && music_button->height == 36);
+    /* The light default theme rounds and shadows every `lv_btn`; the transparent
+     * header button must opt out of both or the body paints a capsule. */
+    assert(music_button->radius == 0);
+    assert(music_button->outline_width == 0);
+    assert(music_button->shadow_width == 0);
+    assert(music_button->shadow_opa == 0);
     assert(music_button->children.size() == 1);
     /* The button label is painted with the shared font, which is the premise
      * the glyph-coverage contract relies on (`lv_obj_center` is a no-op in the
@@ -180,8 +186,9 @@ int main()
     assert(lv_font_get_line_height(battery_percentage->text_font) ==
            lv_font_get_line_height(clock->text_font));
     /* REQ-HEADER-FONT-03 / AC-HEADER-FONT-01: bitmap A4 fonts use the real
-     * supported overlay emulation. The full shim exposes no outline API, so
-     * an outline-based implementation cannot compile this contract. */
+     * supported overlay emulation. The shim only records `outline_width` so a
+     * zeroed theme chrome can be asserted; it has no outline renderer, so an
+     * outline-based bold emulation is still not covered here. */
     assert(right->children[2]->children.size() == 3);
     const auto *battery_percentage_bold = right->children[2]->children[2];
     assert(battery_percentage_bold->text == "87%");
@@ -569,8 +576,15 @@ int main()
     assert(browser->scroll_dir == LV_DIR_VER);
     assert(browser->scrollbar_mode == LV_SCROLLBAR_MODE_AUTO);
     assert(!browser->scroll_chain);
-    for (std::size_t index = 1; index < browser->children.size(); ++index)
+    for (std::size_t index = 1; index < browser->children.size(); ++index) {
         assert_not_scrollable(browser->children[index]);
+        /* Library rows are `lv_btn` instances; the theme radius/shadow would
+         * leak as a light arc at the row corners. */
+        assert(browser->children[index]->radius == 0);
+        assert(browser->children[index]->outline_width == 0);
+        assert(browser->children[index]->shadow_width == 0);
+        assert(browser->children[index]->shadow_opa == 0);
+    }
     const std::array<std::string, 7> music_labels{
         "Previous", "Play / Pause", "Next", "-10s", "+10s", "Vol -", "Vol +"};
     const std::array<std::string, 7> music_actions{

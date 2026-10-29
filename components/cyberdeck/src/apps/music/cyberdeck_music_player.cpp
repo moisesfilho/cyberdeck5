@@ -1,4 +1,5 @@
 #include "apps/music/cyberdeck_music_player.h"
+#include "apps/music/cyberdeck_music_metadata.h"
 #include "apps/runtime/cyberdeck_app_storage.h"
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "platform/audio/cyberdeck_audio_output.h"
@@ -28,7 +29,6 @@ namespace cyberdeck_music {
 namespace {
 constexpr char k_tag[] = "music";
 constexpr std::size_t k_io_size = 4096;
-constexpr std::size_t k_id3_metadata_limit = 64 * 1024;
 /* Queue items contain a bounded path and are not passed to peripherals or
  * DMA. Keep their bulk storage in PSRAM when available; queue control remains
  * allocated by FreeRTOS with the required internal-memory capabilities. */
@@ -82,29 +82,6 @@ const char *failure_stage_name(error_stage stage) {
         return "io";
     }
     return "unknown";
-}
-
-void read_metadata(int fd, std::size_t size, track &item) {
-    unsigned char header[10]{};
-    if (pread(fd, header, sizeof(header), 0) != static_cast<ssize_t>(sizeof(header)) ||
-        std::memcmp(header, "ID3", 3) != 0)
-        return;
-    const std::size_t tag_size =
-        (std::size_t(header[6]) << 21) | (std::size_t(header[7]) << 14) | (std::size_t(header[8]) << 7) | header[9];
-    const std::size_t read_size = std::min<std::size_t>(size, std::min<std::size_t>(tag_size + 10, k_id3_metadata_limit + 10));
-    std::unique_ptr<char[]> bytes(new (std::nothrow) char[read_size]);
-    if (!bytes || read_size < 10)
-        return;
-    const ssize_t count = pread(fd, bytes.get(), read_size, 0);
-    if (count < 10)
-        return;
-    track decoded = item;
-    if (parse_id3v2(std::string_view(bytes.get(), static_cast<std::size_t>(count)), decoded)) {
-        if (decoded.title[0] != 0)
-            item.title = decoded.title;
-        if (decoded.artist[0] != 0)
-            item.artist = decoded.artist;
-    }
 }
 } // namespace
 

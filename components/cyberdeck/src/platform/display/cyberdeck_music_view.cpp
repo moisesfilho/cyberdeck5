@@ -119,6 +119,12 @@ bool view::create(lv_obj_t *parent, callback on_action, void *context) {
         style(label, kWhite);
         lv_obj_set_style_bg_color(track, kSurface, 0);
         lv_obj_set_style_border_width(track, 0, 0);
+        /* The default (light) theme also rounds and shadows every `lv_btn`;
+         * the row must stay a flat rectangle inside the library card. */
+        lv_obj_set_style_radius(track, 0, 0);
+        lv_obj_set_style_outline_width(track, 0, 0);
+        lv_obj_set_style_shadow_width(track, 0, 0);
+        lv_obj_set_style_shadow_opa(track, LV_OPA_TRANSP, 0);
         /* The default theme pads `btn` (PAD_SMALL/PAD_DEF), shrinking the
          * content area below the glyph height and clipping the track name. */
         lv_obj_set_style_pad_all(track, 0, 0);

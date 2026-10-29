@@ -62,6 +62,10 @@ struct _lv_obj_t {
     int32_t border_width{-1}, pad_top{-1}, pad_bottom{-1}, pad_left{-1},
         pad_right{-1}, pad_row{-1}, pad_column{-1}, flex_grow{-1}, layout{-1},
         flex_flow{-1};
+    /* The default LVGL light theme paints `btn` with a radius and a grey drop
+     * shadow; recording them lets a host scenario prove the widget zeroed both
+     * instead of inheriting the theme chrome. */
+    int32_t radius{-1}, shadow_width{-1}, shadow_opa{-1}, outline_width{-1};
     /* Scroll state, defaulted as `lv_obj_constructor()` leaves a new object. */
     int32_t scroll_dir{LV_DIR_ALL}, scrollbar_mode{LV_SCROLLBAR_MODE_AUTO};
     bool scroll_chain{true};
@@ -130,7 +134,7 @@ inline void lv_obj_set_style_bg_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color
 /* `lv_obj_set_style_pad_all()` sets the four sides only, exactly as LVGL 9 does
  * (it delegates to the per-side setters and leaves pad_row/pad_column alone). */
 inline void lv_obj_set_style_pad_all(lv_obj_t*o,int v,int){if(o){o->pad_left=o->pad_right=o->pad_top=o->pad_bottom=v;}}
-inline void lv_obj_set_style_pad_column(lv_obj_t*o,int v,int){if(o)o->pad_column=v;} inline void lv_obj_set_style_pad_row(lv_obj_t*o,int v,int){if(o)o->pad_row=v;} inline void lv_obj_set_style_pad_left(lv_obj_t*o,int v,int){if(o)o->pad_left=v;} inline void lv_obj_set_style_pad_right(lv_obj_t*o,int v,int){if(o)o->pad_right=v;} inline void lv_obj_set_style_pad_top(lv_obj_t*o,int v,int){if(o)o->pad_top=v;} inline void lv_obj_set_style_pad_bottom(lv_obj_t*o,int v,int){if(o)o->pad_bottom=v;} inline void lv_obj_set_style_radius(lv_obj_t*,int,int){}
+inline void lv_obj_set_style_pad_column(lv_obj_t*o,int v,int){if(o)o->pad_column=v;} inline void lv_obj_set_style_pad_row(lv_obj_t*o,int v,int){if(o)o->pad_row=v;} inline void lv_obj_set_style_pad_left(lv_obj_t*o,int v,int){if(o)o->pad_left=v;} inline void lv_obj_set_style_pad_right(lv_obj_t*o,int v,int){if(o)o->pad_right=v;} inline void lv_obj_set_style_pad_top(lv_obj_t*o,int v,int){if(o)o->pad_top=v;} inline void lv_obj_set_style_pad_bottom(lv_obj_t*o,int v,int){if(o)o->pad_bottom=v;} inline void lv_obj_set_style_radius(lv_obj_t*o,int v,int){if(o)o->radius=v;} inline void lv_obj_set_style_outline_width(lv_obj_t*o,int v,int){if(o)o->outline_width=v;} inline void lv_obj_set_style_shadow_width(lv_obj_t*o,int v,int){if(o)o->shadow_width=v;} inline void lv_obj_set_style_shadow_opa(lv_obj_t*o,int v,int){if(o)o->shadow_opa=v;}
 inline void lv_obj_set_style_text_align(lv_obj_t*o,int v,int){if(o)o->text_align=v;} inline void lv_obj_set_style_arc_width(lv_obj_t*,int,int){} inline void lv_obj_set_style_arc_color(lv_obj_t*o,lv_color_t c,int){if(o)o->color=c.value;} inline void lv_obj_set_style_arc_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_opa(lv_obj_t*,int,int){} inline void lv_obj_set_style_bg_opa(lv_obj_t*o,int v,int){if(o)o->bg_opa=v;}
 inline void lv_obj_set_style_text_font(lv_obj_t*o,const lv_font_t*f,int){if(o)o->text_font=f;}
 inline void lv_obj_update_layout(lv_obj_t*){} inline void lv_obj_align(lv_obj_t*,int,int,int){} inline void lv_obj_add_state(lv_obj_t*,int){}

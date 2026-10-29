@@ -49,6 +49,7 @@ idf_component_register(
          "src/apps/runtime/cyberdeck_window_manager.cpp"
          "src/apps/editor/cyberdeck_editor_model.cpp"
          "src/apps/music/cyberdeck_music_model.cpp"
+         "src/apps/music/cyberdeck_music_metadata.cpp"
          "src/apps/music/cyberdeck_music_player.cpp"
          "src/apps/music/cyberdeck_music_app.cpp"
          "src/apps/music/cyberdeck_music_manager.cpp"

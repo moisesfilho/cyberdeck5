@@ -187,7 +187,11 @@ dispatch único/erro/escape/limites; `test_music_app` integra o mesmo seam com
 `application::player_command("status")` real. `player_traceability.md` rastreia
 TEST-MUSIC-COMMAND-CONTROLLER; roteiro manual cobre teclado real e preservação
 da shell. A view de música usa somente cores grayscale e o teste LVGL real
-confirma seus estilos.
+confirma seus estilos. Como o tema default está em modo light
+(`CONFIG_LV_THEME_DEFAULT_DARK` não é setado), todo `lv_btn` herda `radius` 8–16
+e um shadow cinza; as linhas da biblioteca e o botão de música do header zeram
+`radius`, `outline_width`, `shadow_width` e `shadow_opa` (`LV_OPA_TRANSP`) para
+não desenhar a cápsula/arcos claros. Os botões de controle de 44 px não mudam.
 Os literais de UI do player ficam restritos à cobertura de `cyberdeck_font`
 (`0x20–0x7E`, `0xA0–0xFF` e o bloco esparso de ícones `0xF067–0xF293`): rótulos de
 seek/volume e o separador título/artista usam ASCII, porque U+2212 MINUS SIGN,
@@ -227,12 +231,17 @@ na linha (o tema `styles.btn` aplica `PAD_SMALL`/`PAD_DEF` e cortava a base do
 glifo), rótulo com altura derivada de `row_height`/`lv_font_get_line_height`,
 centrado por `(row_height - track_label_height) / 2` e com inset horizontal de
 6 px, mantendo `LV_LABEL_LONG_MODE_DOTS`, a altura de linha e os botões de 44 px.
+Como o tema default é light, o alvo também exige `radius`, `outline_width`,
+`shadow_width` e `shadow_opa` (`LV_OPA_TRANSP`) zerados na linha e no botão de
+música do header, com provas de mutação para cada canal.
 O contrato rejeita por mutação U+2212/U+2014 reintroduzidos, as setas na dica de
 controles, `LV_SYMBOL_PLAY` renderizado (inclusive dentro do handler do teclado
 virtual, num render que compartilha statement com a comparação, num ternário e em
-função irmã do mesmo TU) e o padrão antigo
-`pos(0,0)` com largura cheia; `test_display_views` também verifica no shim que as
-64 linhas têm padding zerado e rótulo deslocado/centrado.
+função irmã do mesmo TU), o padrão antigo
+`pos(0,0)` com largura cheia, a volta do radius/shadow do tema e um alvo de header
+fora de 26x36; `test_display_views` também verifica no shim que as
+64 linhas têm padding e chrome zerados, com rótulo deslocado/centrado, e que o
+botão do header mantém 26x36 e o clique.
 O manager fica em estado de abertura após `open()` e só aceita ações depois de
 `activate()`, chamado após criar/renderizar a view; input antecipado é consumido
 sem playback. A UI roteia teclado físico/virtual pelo foreground de música já
@@ -952,13 +961,31 @@ destrói recursos potencialmente usados.
   `src/apps/music/cyberdeck_music_model.cpp` definem os limites bounded da fila
   (64 faixas, caminhos/títulos limitados, MP3 até 32 MiB), estados, seleção,
   progresso, seek, volume, shuffle/repeat e parser ID3v2.2–2.4 para título e
-  artista. O app `cyberdeck.music` em `cyberdeck_music_app.{h,cpp}` registra o
+  artista. `copy_text` grava o texto no repertório real de `cyberdeck_font`
+  (0x20–0x7E e 0xA0–0xFF): a saída é sempre UTF-8 válido, porque o LVGL
+  (`CONFIG_LV_TXT_ENC_UTF8`) decodifica por codepoint e um byte Latin-1 cru
+  seria lido como lead de 3 bytes e engoliria o caractere seguinte. Sequências
+  UTF-8 válidas passam verbatim; ISO-8859-1 e UTF-16 são transcodificados para
+  UTF-8; aspas/dashes tipográficos e ellipsis viram ASCII, U+00A0 vira espaço e
+  o resto vira `?`, sempre respeitando `k_max_title_bytes`/`k_max_artist_bytes`,
+  sem dividir sequência multi-byte e sem perder a terminação NUL.
+  `include/apps/music/cyberdeck_music_metadata.h` e
+  `src/apps/music/cyberdeck_music_metadata.cpp` expõem
+  `cyberdeck_music::read_metadata(fd, size, track&)`, extraído do player e
+  compartilhado com o scan: `pread` do header de 10 bytes, só segue com `ID3`,
+  buffer no heap (`std::nothrow`), leitura limitada a 64 KiB + 10 e substituição
+  de título/artista apenas quando a ID3 traz valor. O app
+  `cyberdeck.music` em `cyberdeck_music_app.{h,cpp}` registra o
   comando de terminal `music` como app foreground único, sujeito ao lifecycle e
   exclusividade do runtime; `queue /diretorio` inicia scan assíncrono,
   `list`, `select <n>`, `play [n]`, `pause`, `resume`, `stop`, `next`, `prev`, `seek
   <segundos>`, `volume`, `shuffle`, `repeat`, `status` e `help`. O scan limita a
  64 MP3 regulares e consulta o secure-open do shell; mantém READ lease durante
-  enumeração e só publica uma fila completa após validar grant/lifecycle. Uma
+  enumeração e só publica uma fila completa após validar grant/lifecycle. Para
+  cada arquivo admitido, o descritor já aberto é usado para ler a ID3 antes do
+  `close`, então `track.title` recebe o título real e cai no nome do arquivo
+  (com extensão) quando a tag falta ou não traz `TIT2`; não há buffer grande na
+  stack da task `music_scan`. Uma
   trava curta serializa a publicação final com stop/poweroff: quiesce fecha a
   admissão do scanner e marca cancelamento antes de aguardar o worker; uma
    operação de secure-open já em voo não pode publicar resultado stale após esse
@@ -1009,7 +1036,9 @@ destrói recursos potencialmente usados.
   descarta requests pendentes, enfileira wake sentinel e aguarda completion mesmo
    quando a fila estava cheia. Tags ID3 maiores que o limite de extração de
    metadados continuam sendo puladas sem alocar seu conteúdo integral; tamanhos
-   syncsafe são validados contra o tamanho do arquivo. O snapshot registra
+   syncsafe são validados contra o tamanho do arquivo. A extração de metadados
+   fica em `cyberdeck_music_metadata.{h,cpp}` e é chamada tanto pelo player ao
+   abrir a faixa quanto pelo scan antes do `close` do descritor. O snapshot registra
    estágio de falha bounded (`open`, `id3`, `decode`, `codec_start`,
    `codec_write`, `read`, `io`); `music status` mostra `error_stage` apenas em
     estado error. Publicação é protegida pelo mutex e geração do playback. Logs
@@ -1094,7 +1123,9 @@ destrói recursos potencialmente usados.
   acumular entradas. O início da busca limpa a fila; erro real de `readdir` ou
   `closedir` não publica tracks parcialmente descobertas. `test_music_app.cpp`
   injeta falha de `readdir` depois de uma entrada e verifica que a fila fica sem
-  tracks parciais;
+  tracks parciais; a fixture `tagged.mp3` (ID3v2.3 com `TIT2` UTF-8) prova que
+  `track.title` vem da ID3 no primeiro scan e sobrevive ao scan recursivo da raiz,
+  enquanto os outros arquivos mantêm o nome com extensão como fallback;
    `test_music_scan_opendir_contract.py` guarda a branch ESP/FATFS e as ligações
    manager/view/input/adapter da UI.
   O manifesto único de `cyberdeck.music` declara `music` como comando principal
@@ -1104,13 +1135,15 @@ destrói recursos potencialmente usados.
   fechar admissão SD e antes do drain; `cyberdeck_music_poweroff_quiesce` cancela
   e aguarda scan e player.
 - Os testes adicionados ao Makefile incluem `test_music_model.cpp` para a lógica
-  pura, `test_music_app.cpp` para comandos/scan com portas injetadas,
+  pura (incluindo a transcodificação UTF-8 de acentos/pontuação de `copy_text`),
+  `test_music_app.cpp` para comandos/scan com portas injetadas,
   `test_music_player.cpp` para fila, cancelamento, leases, lifecycle worker e
   shims `music_runtime_shim/freertos/idf_additions.h` e
   `music_runtime_shim/music_freertos_shim.cpp` suportam fault injection de
   semáforo binário e criação de task estática para cobrir rollback de startup; e
   `test_music_audio_output.cpp` para volume, mute, falhas e roteamento via backend
-  codec injetável. `music_traceability.md` relaciona esses cenários a
+  codec injetável. `MUSIC_METADATA_SRC`/`MUSIC_METADATA_HDR` entram em
+  `MUSIC_APP_SOURCES`/`MUSIC_PLAYER_SOURCES` e nas dependências dos dois alvos. `music_traceability.md` relaciona esses cenários a
   REQ-MUSIC/AC-MUSIC/TEST-AUDIO; os casos de secure-open usam a produção real do
   shell em `test_local_shell.cpp` e exercitam recusa de symlink/traversal sem
   enfraquecer os flags `O_NOFOLLOW`.
@@ -1194,12 +1227,12 @@ destrói recursos potencialmente usados.
 | `tests/host/keymap/test_shell_session.cpp` + `tests/host/keymap/test_shell_help.cpp` + `tests/host/keymap/test_shell_help_contract.py` + `tests/host/keymap/help_traceability.md` + `tests/host/keymap/shim/esp_err.h`, `shim/esp_wifi_types.h`, `shim/freertos/FreeRTOS.h` | `test_shell_help`, `test_shell_help_contract`; REQ-HELP-01..05 | Testa `handle_key`/`execute_line`/insercao de texto com um `host` falso: edicao e historico, comandos locais, portas de tela/Wi-Fi/bateria/log/SSH, tokens de conexao, passe com varios newlines, buffer de passkey e `help` dinamico via runtime real (eco `/$ help`, saida completa exata e ordenacao legacy/app, tags, manifests registrados incluindo lifecycle parado, omissao sem command, deduplicacao, precedencia legacy e ordem deterministica). `test_shell_help.cpp` cobre `<comando> help` para comandos legacy e manifests de app, incluindo desconhecido, sem execução/despacho, preservação da ajuda geral e flags; rastreia `REQ-HELP-DETAILS`. `test_shell_help_contract.py` reconcilia a registry real de 11 apps e manifests reais com fixtures/goldens comportamentais: três apps com commands, sete sem commands, wiring e uso declarado; é inspeção estrutural, não execução do firmware. `help_traceability.md` mapeia REQ-HELP-01..05 para cenários e evidências. Ambos os alvos estão no agregado `test`; os shims sao minimos e nao espelham logica de producao. |
 | `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, `shell_session_host`, `compose_console_line`, `get_rendered_output`, `render_terminal`, `local_key`, callbacks de SSH/Wi-Fi/BLE/cat, `refresh_battery_status` | Fachada LVGL 9: constrói e atualiza widgets, usa as APIs dedicadas `lv_obj_set_hidden`/`lv_obj_set_scroll_chain` para visibilidade e rolagem, mantém o pump de eventos e renderiza, mas não decide o que cada tecla faz. O estado de sessão (linha/cursor, histórico, SSID pendente, chave SSH pendente, buffer de passkey) e o roteamento de teclas/comandos vivem em `cyberdeck_shell_session::session`; a UI implementa a interface `host` (output, BLE, Wi-Fi, SSH, cat, shell local) e traduz `lv_key_t` para `cyberdeck_shell_session::key`. A construção visual do header e do terminal contínuo/teclado fica nos componentes `cyberdeck_header_view` e `cyberdeck_terminal_view`; a fila de entrada física fica no dispatcher `cyberdeck_keyboard_dispatch`; o pump de eventos BLE (`on_ble_event`/`process_ble_events`/`ble_submit_actions`) permanece na UI e delega o agendamento background ao `cyberdeck_ble_background::scheduler`. O scrollback fica no modelo UTF-8 bounded `cyberdeck_terminal_scrollback::model`; a view envia somente uma janela limitada aos slots de linha reutilizáveis e compõe scrollback, prompt/editor e cursor na mesma superfície. O textarea permanece oculto como alvo do teclado virtual e não duplica estado visual. Saída SSH marca repaint pendente e é coalescida pelo timer LVGL de 100 ms; caminhos interativos continuam com flush imediato. Os eventos SSH usam slots de armazenamento estático fora da stack, contadores de descarte saturantes separados para dados e estados e geração para descartar eventos stale; a geração esperada é invalidada no teardown. Callbacks SSH apenas publicam eventos e não adquirem lock direto do display. Init possui 13 fases de aquisição fail-closed, rollback em falhas parciais e 9 timers LVGL cancelados no teardown antes da árvore; o init é idempotente. O worker de exportação do survey e suas filas bounded de capacidade 1 têm lifecycle app-lifetime e são preservados no teardown/reinit; a task usa stack 8192 e não retém ponteiros de UI/controller. Completion fica na fila até o pump LVGL consumi-la e é aplicada pelo controller somente ao token correspondente; busy mantém nova admissão fechada enquanto a completion não for consumida. Payload/path são limpos após uso ou falha. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h`, `components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp` | `cyberdeck_shell_session::session`, `cyberdeck_shell_session::host`, `session::execute_line`, `CYBERDECK_CMD_WIFI_SURVEY*`; REQ-SURVEY-01..02,06,08 / AC-01..02,06,08 | Sessão de shell sem LVGL decide comandos de survey: duração 10–120 s (default 30), início exclusivo, cancelamento, bloqueio de `wifi search` durante amostragem, aviso de impacto potencial na conexão e exportação com confirmação separada para IDs masked (default) ou unmasked. Efeitos passam pelas portas `host` da UI. O controller rejeita solicitação nova enquanto um job está ativo sem substituir a confirmação existente; falhas de job admitido encerram estado somente para o token atual. O catálogo puro `cyberdeck_shell_help.h` formata comandos legacy em ordem com tags `[terminal]`, usage/descrição e parâmetros explicados em linhas próprias; entradas dinâmicas `[app]` seguem ao fim sem duplicar comandos legacy e usam cabeçalho próprio com descrição indentada na linha seguinte. `help` sem argumento mantém esse catálogo; `<comando> help` resolve primeiro o catálogo legacy e depois comandos declarados em manifests registrados, mostrando apenas metadados disponíveis (nome, ID, versão, descrição) sem iniciar app nem despachar comando; não resolvido gera erro explícito. `-h`/`--help` permanecem no dispatch existente. `test_shell_session.cpp` cobre parsing/fluxo shell e permanece no alvo `test_shell_session` e agregado `test`. |
-| `components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_header_view.h` | `cyberdeck_header_view::view` | Componente visual do header: cria a grade 30/40/30 e os widgets Bluetooth, Wi-Fi e bateria; aplica exatamente `cyberdeck_font` monoespaciada aos labels de título, relógio, Bluetooth e bateria, mantendo a métrica/line-height compartilhada. A bateria possui três labels — ícone, percentual base e overlay do percentual — e o overlay usa a mesma fonte, é ignorado pelo flex layout e deslocado 1 px para emulação real de negrito; acompanha texto/visibilidade sem alterar fonte, estados, ordem semântica ou geometria; usa `lv_obj_set_hidden` para ocultação e desativa rolagem; recebe somente estado/presentation já resolvidos e não conhece serviços, NVS, I2C ou modelos BLE/Wi-Fi. O botão de música (26x36, transparente, callback `dispatch_music_action`) mantém a centralização e o mesmo `cyberdeck_font`, mas desenha o glifo ASCII `>` porque `LV_SYMBOL_PLAY` (U+F04B) está fora da cobertura e aparecia como caixa. Rastreia `REQ-HEADER-FONT-01..03`/`AC-HEADER-FONT-01`. |
+| `components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_header_view.h` | `cyberdeck_header_view::view` | Componente visual do header: cria a grade 30/40/30 e os widgets Bluetooth, Wi-Fi e bateria; aplica exatamente `cyberdeck_font` monoespaciada aos labels de título, relógio, Bluetooth e bateria, mantendo a métrica/line-height compartilhada. A bateria possui três labels — ícone, percentual base e overlay do percentual — e o overlay usa a mesma fonte, é ignorado pelo flex layout e deslocado 1 px para emulação real de negrito; acompanha texto/visibilidade sem alterar fonte, estados, ordem semântica ou geometria; usa `lv_obj_set_hidden` para ocultação e desativa rolagem; recebe somente estado/presentation já resolvidos e não conhece serviços, NVS, I2C ou modelos BLE/Wi-Fi. O botão de música (26x36, transparente, callback `dispatch_music_action`) mantém a centralização e o mesmo `cyberdeck_font`, mas desenha o glifo ASCII `>` porque `LV_SYMBOL_PLAY` (U+F04B) está fora da cobertura e aparecia como caixa; como o tema default é light, ele zera `radius`, `outline_width`, `shadow_width` e `shadow_opa` para não pintar a cápsula cinza em volta do glifo. Rastreia `REQ-HEADER-FONT-01..03`/`AC-HEADER-FONT-01`. |
   | `components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_terminal_view.h` | `cyberdeck_terminal_view::view`, `cyberdeck_terminal_view::callbacks`, `view::render`, `view::toggle_cursor`, `view::deinit`, `view::begin_touch`, `view::scroll_from_touch`, `view::viewport_capacity` | Componente visual do terminal e teclado virtual: cria uma superfície contínua com labels reutilizáveis, calcula reflow UTF-8 bounded, quebra palavras longas somente em fronteiras de codepoint e mantém cada label dentro da largura disponível, além de manter offset de scroll por linhas com clamp ao viewport. `render(text,cursor_byte)` posiciona um overlay de bloco piscante pelo avanço da fonte `cyberdeck_font`, seguindo as mesmas métricas de reflow e fronteiras UTF-8; sobre glyph inverte as cores e no fim ocupa o espaço seguinte. O cursor só pisca quando sua posição está dentro da janela visível; ao navegar scrollback é ocultado e o repaint preserva seu byte para reposicioná-lo ao voltar ao bottom. `deinit` encerra o timer de blink antes da destruição da view. Gesto vertical de pointer/touch na superfície navega o offset; o estado inicia e permanece ancorado no fim quando já estava no fim, e nova saída afastada preserva a posição até o clamp seguro. O textarea fica oculto e serve apenas como alvo LVGL do teclado virtual; toque no terminal não escreve nem altera o foco de edição. `term.dump` não passa por esta janela visual. `test_display_views.cpp` identifica o overlay por estilo e a linha editável por texto explícito (sem auto-comparação do cursor), cobrindo scroll/blink, fonte `cyberdeck_font`, retorno à posição correta, UTF-8/reflow e remoção do timer; `TEST-CURSOR-05` rastreia `REQ-LAT-04` (`TEST-LAT04-08/09`). `test_lat03_contract.py` e `test_lat04_contract.py` mantêm os contratos estruturais da superfície e do cursor. |
 | `components/cyberdeck/src/platform/display/cyberdeck_terminal_scrollback.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_terminal_scrollback.h` | `cyberdeck_terminal_scrollback::model` | Modelo puro de scrollback bounded em 12288 bytes, com poda em fronteira UTF-8. Mantém a saída completa para `term.dump`; a view navega esse snapshot por touch em uma janela de labels reutilizáveis, sem alterar prompt/editor/cursor. |
 | `tests/host/keymap/test_terminal_scrollback.cpp` + `tests/host/keymap/test_lat03_contract.py` | TEST-LAT03-01..11 | Teste host do modelo real para limites 12287/12288/12289, clear, append fragmentado/corte UTF-8 e viewport 4096 com ASan/UBSan; contrato estrutural fixa textarea somente para prompt/editor, menus/ANSI/SSH, `term.dump`, cursor/senha/Enter e a regressão FIFO/wake. Os harnesses LAT04 de prompt e gap SSH também extraem a UI contra o modelo `cyberdeck_terminal_scrollback::model`, cobrindo append, `text()` completo e `viewport()` sem perda. |
 | `tests/host/keymap/test_ssh_output_gap.py` | TEST-SSH-01..05 | Fixture host que extrai a costura SSH da UI e a compila com os TUs reais de filtro/compositor/console/scrollback e todas as dependências SDK do runtime: catálogo, pacote SD, quota, storage e logger. |
-| `tests/host/keymap/test_display_views.cpp` + `tests/host/keymap/shim/full/lvgl.h` | `test_display_views` | Harness host compartilhado para `cyberdeck_header_view`, `cyberdeck_terminal_view` e `cyberdeck_editor_view`, com shim LVGL completo. O TU real do editor é compilado com cobertura e permanece elegível no scope guard; o cenário verifica criação, render bounded/UTF-8, cursor, gesto e teardown. `TEST-CURSOR-01..04` cobre bloco visível/invertido, blink manual/timer e restauração de visibilidade após ocultação por blink, offsets início/meio/fim, UTF-8 com posição após codepoint, newline, wrap de margem e posição inválida/ausente; shim expõe cores e timers determinísticos sem reimplementar o algoritmo de produção. Rastreabilidade de `REQ-HEADER-FONT-01..03`/`AC-HEADER-FONT-01`: verifica `cyberdeck_font` compartilhada e line-height relacional, modo clip do relógio, os três labels da bateria (ícone, percentual base e overlay), overlay de negrito do percentual em 1 px ignorado pelo layout e ausência de API de outline no shim. Também verifica texto, visibilidade, ordem e geometria exercitados pelo cenário do header. Cobre `REQ-LAYOUT-01/AC-LAYOUT-01/02` com `border_width=0` somente na superfície visível e preservação do cromo do textarea oculto. Simula ponteiro LVGL para `TEST-TERM-SCROLL-01..06`: gesto vertical invertido (baixo -> linhas antigas, cima -> bottom anchor), clamp nos extremos, UTF-8, input prompt/editor oculto e nova saída/resize. |
+| `tests/host/keymap/test_display_views.cpp` + `tests/host/keymap/shim/full/lvgl.h` | `test_display_views` | Harness host compartilhado para `cyberdeck_header_view`, `cyberdeck_terminal_view` e `cyberdeck_editor_view`, com shim LVGL completo. O TU real do editor é compilado com cobertura e permanece elegível no scope guard; o cenário verifica criação, render bounded/UTF-8, cursor, gesto e teardown. `TEST-CURSOR-01..04` cobre bloco visível/invertido, blink manual/timer e restauração de visibilidade após ocultação por blink, offsets início/meio/fim, UTF-8 com posição após codepoint, newline, wrap de margem e posição inválida/ausente; shim expõe cores e timers determinísticos sem reimplementar o algoritmo de produção. Rastreabilidade de `REQ-HEADER-FONT-01..03`/`AC-HEADER-FONT-01`: verifica `cyberdeck_font` compartilhada e line-height relacional, modo clip do relógio, os três labels da bateria (ícone, percentual base e overlay), overlay de negrito do percentual em 1 px ignorado pelo layout e registro de `outline_width` no shim (sem renderização de outline). Também verifica texto, visibilidade, ordem e geometria exercitados pelo cenário do header, e que o botão de música (26x36, clique preservado) e todas as linhas da biblioteca zeram `radius`, `outline_width`, `shadow_width` e `shadow_opa` no shim. Cobre `REQ-LAYOUT-01/AC-LAYOUT-01/02` com `border_width=0` somente na superfície visível e preservação do cromo do textarea oculto. Simula ponteiro LVGL para `TEST-TERM-SCROLL-01..06`: gesto vertical invertido (baixo -> linhas antigas, cima -> bottom anchor), clamp nos extremos, UTF-8, input prompt/editor oculto e nova saída/resize. |
 | `tests/host/keymap/test_lat04_contract.py` | TEST-LAT04-01..09 | Contrato estrutural da superfície contínua: slots fixos bounded, bottom-anchor/overflow via `test_display_views`, textarea oculto, sincronização de cursor/editor, modos de sessão, resize/clear/`term.dump`, ownership de teclado e regressões LAT03. O alvo é executado no agregado `make test` imediatamente após `test_lat03_contract`. |
 | `components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp`, `components/cyberdeck/include/platform/input/cyberdeck_keyboard_dispatch.h` | `cyberdeck_keyboard_dispatch::dispatcher` | Infraestrutura de entrada física: copia snapshots, mantém fila bounded de capacidade 8, serializa enqueue/rollback com mutex, agenda processamento no contexto LVGL e desperta explicitamente a task do port após o agendamento; não interpreta comandos nem conhece sessões da UI. |
 | `tests/host/keymap/test_keyboard_dispatch.cpp` + `tests/host/keymap/shim/full/` | `test_keyboard_dispatch` | Exercita o dispatcher host com shims completos de LVGL/FreeRTOS: callbacks ficam agendados ate o pump, wake explicito e FIFO sao observados, a capacidade 8 descarta o nono evento sem duplicacao, rollback de falha do `lv_async_call` preserva sobreviventes e `stop` libera pendentes sem double-free (ASan/UBSan). |
