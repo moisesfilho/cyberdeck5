@@ -151,8 +151,8 @@ Mapeamento de teclado (físico e virtual):
 | Tecla | Efeito |
 | --- | --- |
 | Enter | play/pause, alternando conforme o estado atual — **proibido nesta rodada** |
-| ← / → | seek −10 s / +10 s |
-| ↑ / ↓ | volume +1 / −1 (faixa 0..50) |
+| ← / → | seek -10 s / +10 s |
+| ↑ / ↓ | volume +1 / -1 (faixa 0..50) |
 | N / P | próxima / anterior — **proibido nesta rodada** |
 | Esc | fecha o player: foreground volta ao shell com stop/join e halt do playback |
 

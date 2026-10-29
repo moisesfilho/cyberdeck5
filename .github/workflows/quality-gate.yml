@@ -165,6 +165,18 @@ jobs:
           fi
           python3 tools/prepare_esp_hosted_cpu_staging.py verify
           rm -rf build-warmup
+      - name: Verify LVGL symbol code point map
+        id: lv-symbol-drift
+        working-directory: tests/host/keymap
+        run: |
+          # The aggregate host run happens before the ESP-IDF warm-up, so the
+          # contract resolves `LV_SYMBOL_*` from the versioned
+          # lv_symbol_codepoints.json. Here managed_components/ exists, so the
+          # map is re-parsed against the pinned lv_symbol_def.h and any drift
+          # fails the gate. The strict variant fails when the header is absent,
+          # so a warm-up that did not materialize managed_components/ cannot
+          # leave this step green without actually checking drift.
+          make verify_lv_symbol_codepoints_strict
       - name: Build firmware
         id: firmware-build
         run: |
@@ -178,6 +190,7 @@ jobs:
             echo '| --- | --- |'
             echo '| ESP-Hosted CPU-staging | ${{ steps.hosted-staging.outcome }} |'
             echo '| ESP-IDF 6.1 build | ${{ steps.firmware-build.outcome }} |'
+            echo '| LVGL symbol map drift (strict) | ${{ steps.lv-symbol-drift.outcome }} |'
             echo '| Host aggregate and coverage | ${{ steps.host-coverage.outcome }} |'
             echo '| App grant ThreadSanitizer | ${{ steps.app-grant-tsan.outcome }} |'
             echo '| Global host C++ coverage | line >=80%; functions >=90%; branches >=50% |'

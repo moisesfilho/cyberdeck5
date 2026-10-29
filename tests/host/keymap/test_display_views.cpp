@@ -136,6 +136,10 @@ int main()
     assert(music_button->hidden);
     assert(music_button->width == 26 && music_button->height == 36);
     assert(music_button->children.size() == 1);
+    /* The button label is painted with the shared font, which is the premise
+     * the glyph-coverage contract relies on (`lv_obj_center` is a no-op in the
+     * shim, so the centring itself is not asserted here). */
+    assert(music_button->children[0]->text_font == &cyberdeck_font);
     assert(!music_button->children[0]->text.empty());
     int music_action_calls = 0;
     const auto music_action = [](void *context) { ++*static_cast<int *>(context); };
@@ -789,8 +793,9 @@ int main()
     for (std::size_t index = 1; index <= 64; ++index) {
         const auto *row = browser->children[index];
         const auto *label = row->children[0];
-        /* REQ-PLAYER-TRACK-ROW: the theme pads `btn`, so the row must zero pad
-         * all sides and pad_row/pad_column explicitly or the glyph is clipped. */
+        /* REQ-PLAYER-LAYOUT-READABLE / AC-LIST-AND-CONTROLS-FIT: the theme pads
+         * `btn`, so the row must zero pad all sides and pad_row/pad_column
+         * explicitly or the glyph is clipped. */
         assert(row->pad_top == 0 && row->pad_bottom == 0);
         assert(row->pad_left == 0 && row->pad_right == 0);
         assert(row->pad_row == 0 && row->pad_column == 0);

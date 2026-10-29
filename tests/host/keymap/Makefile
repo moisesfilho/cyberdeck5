@@ -2120,11 +2120,31 @@ test_display_lock_contract: test_display_lock_contract.py ../../../main/app_main
 
 .PHONY: test_music_player_ui_contract
 test_music_player_ui_contract: test_music_player_ui_contract.py \
+		lv_symbol_map.py lv_symbol_codepoints.json \
 		../../../components/cyberdeck/src/platform/display/cyberdeck_music_view.cpp \
 		../../../components/cyberdeck/src/platform/display/cyberdeck_music_command_input.cpp \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp \
 		../../../components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp \
 		../../../components/cyberdeck/src/platform/display/cyberdeck_font.c Makefile
 	$(PYTHON) test_music_player_ui_contract.py
+
+# Drift gate between the versioned `LV_SYMBOL_*` map and the pinned LVGL header.
+# Deliberately NOT part of the aggregate `test`: `managed_components/` is
+# gitignored and only materializes after a CMake warm-up, so the aggregate must
+# stay runnable in a clean checkout. CI runs the strict variant after "Prepare
+# ESP-Hosted CPU-staging"; without the header the local target prints SKIP and
+# exits 0.
+.PHONY: verify_lv_symbol_codepoints
+verify_lv_symbol_codepoints: lv_symbol_map.py lv_symbol_codepoints.json Makefile
+	$(PYTHON) lv_symbol_map.py --verify
+
+# Strict variant used by CI: an absent `lv_symbol_def.h` is a failure instead of
+# SKIP, so a warm-up that does not materialize `managed_components/` cannot turn
+# this gate into a green no-op.
+.PHONY: verify_lv_symbol_codepoints_strict
+verify_lv_symbol_codepoints_strict: lv_symbol_map.py lv_symbol_codepoints.json Makefile
+	$(PYTHON) lv_symbol_map.py --verify --strict
 
 .PHONY: test_lvgl_dispatch_state
 test_lvgl_dispatch_state: test_lvgl_dispatch_state_bin

@@ -174,7 +174,10 @@ bool view::create(lv_obj_t *parent)
     lv_obj_t *music_icon = lv_label_create(s_music_button);
     if (music_icon == nullptr)
         return false;
-    lv_label_set_text(music_icon, LV_SYMBOL_PLAY);
+    /* ASCII on purpose: `cyberdeck_font` only covers 0x20-0x7E, 0xA0-0xFF and
+     * the sparse Font Awesome block, so LV_SYMBOL_PLAY (U+F04B) would render
+     * as a missing-glyph box. */
+    lv_label_set_text(music_icon, ">");
     style_base(music_icon, kBlack, kWhite);
     apply_header_font(music_icon);
     lv_obj_center(music_icon);

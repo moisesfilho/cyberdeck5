@@ -3,29 +3,66 @@
 
 The player renders with `cyberdeck_font`, generated with
 `-r 0x20-0x7e,0xa0-0xff` plus the sparse Font Awesome block 0xF067..0xF293.
-Any other code point in a UI literal renders as a missing-glyph box, so the
-first contract scans the player UI literals only: track/ID3 content is dynamic
-data and never comes from a literal.
+Any other code point renders as a missing-glyph box, so this contract derives
+the real coverage from the font source itself and rejects both flavours of the
+defect: uncovered code points inside UI literals and `LV_SYMBOL_*` macros whose
+glyph is not part of the font. Track/ID3 content is dynamic data and never comes
+from a literal, so only literals are scanned.
 
 `styles.btn` from the LVGL default theme applies `pad_ver = PAD_SMALL` and
 `pad_hor = PAD_DEF`, which shrinks the content area below the glyph height and
 clips track names. `lv_obj_set_style_pad_all()` does not touch
 `pad_row`/`pad_column`, so both must be zeroed explicitly.
+
+`LV_SYMBOL_*` comparisons are exempt from the font coverage only when the token
+is an argument of a `strcmp` family call that also compares a variable assigned
+from `lv_keyboard_get_button_text()`; that text is painted by LVGL's keyboard
+font, not by `cyberdeck_font`. Everything else — including a render sharing a
+statement with a comparison — is checked against the real font cmaps.
+
+Code points come only from the versioned `lv_symbol_codepoints.json`. The LVGL
+header lives in the gitignored `managed_components/`, which does not exist when
+the aggregate runs in CI before the ESP-IDF warm-up; reading it here turned every
+push red with `FileNotFoundError`. Keeping the map in the tree also keeps the
+contract meaningful against the pinned LVGL 9.6 symbols it was written for, and
+`verify_lv_symbol_codepoints` (outside the aggregate) re-parses the header and
+fails on drift whenever `managed_components` is materialized.
 """
 
 from pathlib import Path
 import re
 import sys
 
-ROOT = Path(__file__).resolve().parents[3]
-VIEW = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_music_view.cpp"
-COMMAND_INPUT = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_music_command_input.cpp"
-APP = ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp"
-FONT = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_font.c"
+from lv_symbol_map import load_symbols, map_issues, parse_map, render_json
 
-# Ranges generated into `cyberdeck_font`; the icon block is deliberately not
-# accepted here because no player label uses a symbol glyph.
-ALLOWED_RANGES = ((0x20, 0x7E), (0xA0, 0xFF))
+ROOT = Path(__file__).resolve().parents[3]
+DISPLAY = ROOT / "components/cyberdeck/src/platform/display"
+VIEW = DISPLAY / "cyberdeck_music_view.cpp"
+COMMAND_INPUT = DISPLAY / "cyberdeck_music_command_input.cpp"
+APP = ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp"
+FONT = DISPLAY / "cyberdeck_font.c"
+SYMBOL_MAP = Path(__file__).resolve().with_name("lv_symbol_codepoints.json")
+
+# Player controls hint. ASCII only: U+2190..U+2193 have no glyph in the font.
+MUSIC_HINT = ("Enter play/pause  left/right seek  up/down volume  N/P track  "
+              "Esc close")
+
+# Macros used (or reserved for the header) by the UI that must stay covered.
+REQUIRED_COVERED_SYMBOLS = (
+    "LV_SYMBOL_PLUS",
+    "LV_SYMBOL_MINUS",
+    "LV_SYMBOL_CHARGE",
+    "LV_SYMBOL_WIFI",
+    "LV_SYMBOL_BLUETOOTH",
+    "LV_SYMBOL_BATTERY_FULL",
+    "LV_SYMBOL_BATTERY_3",
+    "LV_SYMBOL_BATTERY_2",
+    "LV_SYMBOL_BATTERY_1",
+    "LV_SYMBOL_BATTERY_EMPTY",
+)
+
+# Ranges generated into `cyberdeck_font`; kept as a sanity check of the parser.
+DOCUMENTED_RANGES = ((0x20, 0x7E), (0xA0, 0xFF))
 UNCOVERED_SAMPLES = {
     0x2013: "EN DASH",
     0x2014: "EM DASH",
@@ -76,29 +113,85 @@ def ui_literals(source: str) -> list[str]:
     return re.findall(r'"((?:[^"\\\n]|\\.)*)"', strip_comments(source))
 
 
-def uncovered_literals(source: str) -> list[tuple[int, str]]:
-    """Return `(codepoint, literal)` for every code point outside the font."""
+def uncovered_literals(source: str, covered: set[int]) -> list[tuple[int, str]]:
+    """Return `(codepoint, literal)` for every code point without a glyph."""
     offenders: list[tuple[int, str]] = []
     for literal in ui_literals(source):
         for char in literal:
             code = ord(char)
-            if any(low <= code <= high for low, high in ALLOWED_RANGES):
+            if code in covered:
                 continue
             offenders.append((code, literal))
     return offenders
 
 
-def font_ranges() -> list[tuple[int, int]]:
-    generated = FONT.read_text(encoding="utf-8")
-    return [
-        (int(start, 0), int(start, 0) + int(length) - 1)
-        for start, length in re.findall(
-            r"range_start = (\d+), \.range_length = (\d+)", generated)
-    ]
+def font_coverage(generated: str) -> set[int]:
+    """Resolve the real glyph coverage from the generated `lv_font_t` tables.
+
+    `unicode_list_*` holds offsets relative to `range_start` for sparse cmaps,
+    which is exactly how LVGL resolves `LV_FONT_FMT_TXT_CMAP_SPARSE_TINY`.
+    """
+    lists: dict[str, list[int]] = {
+        name: [int(value, 0) for value in re.findall(r"0x[0-9A-Fa-f]+|\d+", body)]
+        for name, body in re.findall(
+            r"static const uint16_t (unicode_list_\w+)\[\] = \{([^}]*)\}", generated)
+    }
+    cmaps = re.search(r"lv_font_fmt_txt_cmap_t cmaps\[\] =\s*\{(.*?)\n\};",
+                      generated, re.S)
+    if not cmaps:
+        raise AssertionError("font cmap table not found")
+    covered: set[int] = set()
+    entries = re.findall(r"\{([^{}]*)\}", cmaps.group(1))
+    if not entries:
+        raise AssertionError("font cmap table is empty")
+    for entry in entries:
+        fields = dict(re.findall(r"\.(\w+) = ([^,]+)", entry))
+        start = int(fields["range_start"], 0)
+        kind = fields["type"].strip()
+        if kind.endswith("FORMAT0_TINY") or kind.endswith("FORMAT0_FULL"):
+            length = int(fields["range_length"], 0)
+            covered |= set(range(start, start + length))
+        elif kind.endswith("SPARSE_TINY") or kind.endswith("SPARSE_FULL"):
+            name = fields["unicode_list"].strip()
+            if name not in lists:
+                raise AssertionError(f"missing unicode list: {name}")
+            length = int(fields["list_length"], 0)
+            covered |= {start + offset for offset in lists[name][:length]}
+        else:
+            raise AssertionError(f"unsupported font cmap type: {kind}")
+    return covered
 
 
-def block_after(source: str, marker: str) -> str:
-    start = source.index(marker) + len(marker)
+COMPARE_CALLS = ("strcmp", "strncmp", "strcasecmp", "strncasecmp")
+
+
+def code_only(source: str) -> str:
+    """Blank literal bytes so braces/parens inside strings cannot nest wrongly."""
+    out = list(source)
+    index = 0
+    length = len(source)
+    while index < length:
+        char = source[index]
+        if char not in "\"'":
+            index += 1
+            continue
+        quote = char
+        index += 1
+        while index < length:
+            if source[index] == "\\":
+                width = min(2, length - index)
+                out[index:index + width] = " " * width
+                index += 2
+                continue
+            if source[index] == quote:
+                index += 1
+                break
+            out[index] = " "
+            index += 1
+    return "".join(out)
+
+
+def block_span(source: str, start: int) -> tuple[int, int]:
     brace = source.index("{", start)
     depth = 0
     for index in range(brace, len(source)):
@@ -107,8 +200,120 @@ def block_after(source: str, marker: str) -> str:
         elif source[index] == "}":
             depth -= 1
             if depth == 0:
-                return source[brace + 1:index]
-    raise AssertionError(f"unclosed block after: {marker}")
+                return brace + 1, index
+    raise AssertionError("unclosed block")
+
+
+def enclosing_function(source: str, index: int) -> str:
+    """Body of the innermost function definition that contains `index`.
+
+    Fail-closed: an unresolved definition returns "" instead of the whole file,
+    otherwise one `lv_keyboard_get_button_text()` anywhere would exempt every
+    comparison in the translation unit. Control-flow blocks are excluded from
+    the candidate set and a candidate only wins when its braces really span the
+    token, so the exemption cannot leak to a sibling function.
+    """
+    code = code_only(source)
+    definition = re.compile(
+        r"(?m)^[ \t]*(?!if\b|for\b|while\b|switch\b|catch\b|else\b)"
+        r"[A-Za-z_][\w:<>,\*&\s]*\b[A-Za-z_]\w*\s*\([^;{}]*\)\s*"
+        r"(?:const\s*)?\{")
+    for match in reversed([match for match in definition.finditer(code)
+                           if match.start() <= index]):
+        try:
+            low, high = block_span(code, match.end() - 1)
+        except AssertionError:
+            continue
+        if low <= index < high:
+            return code[low:high]
+    return ""
+
+
+def call_around(source: str, index: int) -> tuple[str, str]:
+    """`(callee, argument_text)` of the innermost call containing `index`."""
+    depth = 0
+    opener = -1
+    for cursor in range(index - 1, -1, -1):
+        char = source[cursor]
+        if char == ")":
+            depth += 1
+        elif char == "(":
+            if depth == 0:
+                opener = cursor
+                break
+            depth -= 1
+    if opener < 0:
+        return "", ""
+    depth = 0
+    closer = -1
+    for cursor in range(opener, len(source)):
+        char = source[cursor]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                closer = cursor
+                break
+    arguments = source[opener + 1:closer] if closer > 0 else ""
+    cursor = opener - 1
+    while cursor >= 0 and source[cursor].isspace():
+        cursor -= 1
+    end = cursor + 1
+    while cursor >= 0 and (source[cursor].isalnum() or source[cursor] == "_"):
+        cursor -= 1
+    return source[cursor + 1:end], arguments
+
+
+def keyboard_text_variables(body: str) -> set[str]:
+    """Names assigned from `lv_keyboard_get_button_text(...)` in `body`."""
+    return set(re.findall(
+        r"\b(\w+)\s*=\s*lv_keyboard_get_button_text\s*\(", body))
+
+
+def scan_symbols(label: str, source: str, symbols: dict[str, int],
+                 covered: set[int]) -> tuple[list[str], set[str]]:
+    """Check rendered `LV_SYMBOL_*` uses; return `(issues, rendered names)`.
+
+    A symbol compared against virtual-keyboard button text is painted by LVGL's
+    own keyboard font, so it is out of scope for `cyberdeck_font`. The
+    exemption is granted only when the token is an argument of a `strcmp`
+    family call that also compares a variable assigned from
+    `lv_keyboard_get_button_text()` inside the same function body. A hardcoded
+    symbol allowlist, a `strcmp` on any other operand, and a render that merely
+    shares a statement with a comparison all stay flagged.
+    """
+    code = code_only(strip_comments(source))
+    issues: list[str] = []
+    rendered: set[str] = set()
+    for match in re.finditer(r"\bLV_SYMBOL_[A-Z0-9_]+\b", code):
+        name = match.group(0)
+        if name not in symbols:
+            issues.append(f"{label}: {name} is not defined by "
+                      "lv_symbol_codepoints.json")
+            continue
+        callee, arguments = call_around(code, match.start())
+        if callee in COMPARE_CALLS:
+            body = enclosing_function(code, match.start())
+            variables = keyboard_text_variables(body)
+            if any(re.search(rf"\b{re.escape(variable)}\b", arguments)
+                   for variable in variables):
+                continue
+            issues.append(
+                f"{label}: {name} is compared without the virtual keyboard "
+                "button text; validate the glyph against cyberdeck_font")
+            continue
+        rendered.add(name)
+        if symbols[name] not in covered:
+            issues.append(
+                f"{label}: {name} (U+{symbols[name]:04X}) has no glyph in "
+                "cyberdeck_font")
+    return issues, rendered
+
+
+def block_after(source: str, marker: str) -> str:
+    low, high = block_span(source, source.index(marker) + len(marker))
+    return source[low:high]
 
 
 def function_body(source: str, name: str) -> str:
@@ -172,6 +377,15 @@ def track_layout_issues(source: str) -> list[str]:
     return issues
 
 
+def raises(call) -> bool:
+    """True when `call` rejects its input instead of returning a value."""
+    try:
+        call()
+    except (AssertionError, ValueError):
+        return True
+    return False
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -179,34 +393,191 @@ def main() -> int:
         if not condition:
             failures.append(message)
 
-    ranges = font_ranges()
-    require(all(any(low <= sample <= high for low, high in ranges)
-                for sample in (0x20, 0x7E, 0xA0, 0xFF)),
+    covered = font_coverage(FONT.read_text(encoding="utf-8"))
+    documented_samples = tuple(
+        sample for low, high in DOCUMENTED_RANGES
+        for sample in (low, (low + high) // 2, high))
+    require(all(sample in covered for sample in documented_samples),
             "font coverage must contain the ASCII and Latin-1 ranges used by the player")
-    require(not any(low <= code <= high for low, high in ranges
-                    for code in UNCOVERED_SAMPLES),
+    require(not any(code in covered for code in UNCOVERED_SAMPLES),
             "the uncovered sample code points must stay outside the font coverage")
 
-    for path in (VIEW, COMMAND_INPUT, APP):
-        for code, literal in uncovered_literals(path.read_text(encoding="utf-8")):
+    try:
+        symbols = load_symbols(SYMBOL_MAP)
+    except (AssertionError, ValueError) as error:
+        failures.append(f"lv_symbol_codepoints.json is invalid: {error}")
+        symbols = {}
+    coherence = map_issues(symbols)
+    require(not coherence,
+            "lv_symbol_codepoints.json must stay coherent: "
+            + "; ".join(coherence))
+    missing = [name for name in REQUIRED_COVERED_SYMBOLS
+               if symbols.get(name) not in covered]
+    require(not missing,
+            "these symbols must stay covered by cyberdeck_font: "
+            + ", ".join(f"{name} (U+{symbols.get(name, 0):04X})" for name in missing))
+    require(symbols.get("LV_SYMBOL_PLAY") not in covered,
+            "LV_SYMBOL_PLAY (U+F04B) must stay outside the font; use ASCII '>'")
+
+    # Non-vacuity: the versioned map and its coherence checks must stay live, so
+    # a truncated or hand-edited JSON cannot silently weaken the symbol scan.
+    require(map_issues({}) != [], "an empty symbol map must be rejected")
+    require(map_issues({"LV_SYMBOL_BOGUS": 0x0041}) != [],
+            "a symbol outside the Font Awesome block must be rejected")
+    require(map_issues({"not_a_symbol": 0xF001}) != [],
+            "a malformed symbol name must be rejected")
+    require(map_issues({"LV_SYMBOL_BULLET": 0xF001}) != [],
+            "LV_SYMBOL_BULLET must keep its plain Unicode code point")
+    duplicate = ('{"symbols": {"LV_SYMBOL_OK": {"codepoint": 61452, '
+                 '"hex": "U+F00C"}, "LV_SYMBOL_OK": {"codepoint": 61452, '
+                 '"hex": "U+F00C"}}}')
+    require(raises(lambda: parse_map(duplicate)),
+            "a duplicated symbol name must be rejected")
+    empty_hex = ('{"symbols": {"LV_SYMBOL_OK": {"codepoint": 61452, '
+                 '"hex": ""}}}')
+    require(raises(lambda: parse_map(empty_hex)),
+            "an empty hex label must be rejected")
+    wrong_hex = ('{"symbols": {"LV_SYMBOL_OK": {"codepoint": 61452, '
+                 '"hex": "U+F00D"}}}')
+    require(raises(lambda: parse_map(wrong_hex)),
+            "a hex label disagreeing with the code point must be rejected")
+    require(parse_map(render_json(symbols)) == symbols,
+            "the map must round-trip through its own generator")
+
+    literal_sources = sorted(DISPLAY.glob("*.cpp")) + [APP]
+    require({VIEW, COMMAND_INPUT} <= set(literal_sources),
+            "the literal scan must include the player view and command input sources")
+    for path in literal_sources:
+        for code, literal in uncovered_literals(path.read_text(encoding="utf-8"),
+                                                covered):
             name = UNCOVERED_SAMPLES.get(code, "uncovered code point")
             failures.append(
-                f"{path.name}: U+{code:04X} ({name}) in UI literal {literal!r} renders as a box")
+                f"{path.name}: U+{code:04X} ({name}) in UI literal {literal!r} "
+                "renders as a box")
 
-    # Non-vacuity: the scanner must reject the two defects that were observed
-    # in the screenshot evidence and must ignore comments.
+    ui_source = DISPLAY.joinpath("cyberdeck_ui.cpp").read_text(encoding="utf-8")
+    require(ui_source.count("text += kMusicControlsHint;") == 2,
+            "both player render branches must reuse the shared kMusicControlsHint")
+    require(ui_source.count(MUSIC_HINT) == 1,
+            "the player controls hint must be defined once, not duplicated")
+
+    symbol_sources = [path for path in literal_sources
+                      if "LV_SYMBOL_" in path.read_text(encoding="utf-8")]
+    rendered: set[str] = set()
+    for path in symbol_sources:
+        issues, found = scan_symbols(path.name, path.read_text(encoding="utf-8"),
+                                     symbols, covered)
+        failures.extend(issues)
+        rendered |= found
+    require({"LV_SYMBOL_BLUETOOTH", "LV_SYMBOL_CHARGE",
+             "LV_SYMBOL_BATTERY_FULL", "LV_SYMBOL_MINUS"} <= rendered,
+            "the symbol scan must see the rendered header glyphs, not an empty set")
+
+    # Non-vacuity: the scanner must reject the two defects observed in this
+    # round and must ignore comments.
     historic = 'const char *a = "-10s";'
-    require(uncovered_literals(historic) == [],
+    require(uncovered_literals(historic, covered) == [],
             "scanner must accept ASCII replacements")
     minus = 'const char *a = "\u221210s"; const char *b = "Vol \u2212";'
-    require(sorted({code for code, _ in uncovered_literals(minus)}) == [0x2212],
+    require(sorted({code for code, _ in uncovered_literals(minus, covered)}) == [0x2212],
             "scanner must reject U+2212 MINUS SIGN")
     dash = 'text += " \u2014 " + std::string(artist);'
-    require([code for code, _ in uncovered_literals(dash)] == [0x2014],
+    require([code for code, _ in uncovered_literals(dash, covered)] == [0x2014],
             "scanner must reject U+2014 EM DASH")
+    arrow_hint = ('text += "Enter play/pause  \u2190/\u2192 seek  \u2191/\u2193 '
+                  'volume  N/P track  Esc close";')
+    require(sorted({code for code, _ in uncovered_literals(arrow_hint, covered)})
+            == [0x2190, 0x2191, 0x2192, 0x2193],
+            "scanner must reject the arrow-glyph controls hint")
+    play_issues, _ = scan_symbols(
+        "mutation.cpp", "lv_label_set_text(icon, LV_SYMBOL_PLAY);", symbols, covered)
+    require(play_issues != [],
+            "mutation rendering LV_SYMBOL_PLAY must be rejected")
+    keyboard_issues, _ = scan_symbols(
+        "mutation.cpp",
+        "void changed(void) {\n"
+        "    const char *text = lv_keyboard_get_button_text(keyboard, button);\n"
+        "    if (strcmp(text, LV_SYMBOL_LEFT) == 0) return;\n"
+        "}\n", symbols, covered)
+    require(keyboard_issues == [],
+            "virtual keyboard button text must stay out of the font contract")
+    stray_issues, _ = scan_symbols(
+        "mutation.cpp",
+        "void changed(void) {\n"
+        "    if (strcmp(label, LV_SYMBOL_LEFT) == 0) return;\n"
+        "}\n", symbols, covered)
+    require(stray_issues != [],
+            "a symbol comparison outside the keyboard path must be rejected")
+
+    # The keyboard exemption must stay narrow: only the compared token is
+    # exempt, never a render that shares a function/statement with it.
+    inside_keyboard = (
+        "void changed(void) {\n"
+        "    const char *text = lv_keyboard_get_button_text(keyboard, button);\n"
+    )
+    abuse_render, _ = scan_symbols(
+        "mutation.cpp",
+        inside_keyboard + "    lv_label_set_text(icon, LV_SYMBOL_PLAY);\n}\n",
+        symbols, covered)
+    require(abuse_render != [],
+            "a rendered symbol inside the virtual keyboard handler must still "
+            "be validated against cyberdeck_font")
+    abuse_same_statement, _ = scan_symbols(
+        "mutation.cpp",
+        inside_keyboard
+        + '    if (strcmp(text, "x") == 0) lv_label_set_text(icon, LV_SYMBOL_PLAY);\n'
+        "}\n", symbols, covered)
+    require(abuse_same_statement != [],
+            "a render sharing a statement with a keyboard-text comparison must "
+            "not inherit the exemption")
+    abuse_ternary, _ = scan_symbols(
+        "mutation.cpp",
+        inside_keyboard
+        + '    lv_label_set_text(icon, strcmp(text, "x") == 0 ? LV_SYMBOL_PLAY '
+        ": LV_SYMBOL_CHARGE);\n}\n", symbols, covered)
+    require(abuse_ternary != [],
+            "a symbol rendered by a ternary next to a keyboard comparison must "
+            "not inherit the exemption")
+    abuse_other_operand, _ = scan_symbols(
+        "mutation.cpp",
+        inside_keyboard
+        + "    if (strcmp(other, LV_SYMBOL_PLAY) == 0) return;\n"
+        "}\n", symbols, covered)
+    require(abuse_other_operand != [],
+            "a comparison on an unrelated operand inside the keyboard handler "
+            "must not inherit the exemption")
+    abuse_member_function, _ = scan_symbols(
+        "mutation.cpp",
+        "void changed(void) {\n"
+        "    const char *text = lv_keyboard_get_button_text(keyboard, button);\n"
+        "}\n"
+        "class Panel {\n"
+        "    void draw(void) {\n"
+        "        if (strcmp(text, LV_SYMBOL_PLAY) == 0) return;\n"
+        "    }\n"
+        "};\n", symbols, covered)
+    require(abuse_member_function != [],
+            "the keyboard exemption must not leak to another function of the "
+            "same translation unit")
+    abuse_string_mention, _ = scan_symbols(
+        "mutation.cpp",
+        'void draw(void) {\n'
+        '    log_line("lv_keyboard_get_button_text( was removed");\n'
+        "    if (strcmp(text, LV_SYMBOL_PLAY) == 0) return;\n"
+        "}\n", symbols, covered)
+    require(abuse_string_mention != [],
+            "a mere mention of the keyboard accessor in a string must not grant "
+            "the exemption")
+    covered_render, _ = scan_symbols(
+        "mutation.cpp", "lv_label_set_text(icon, LV_SYMBOL_CHARGE);", symbols, covered)
+    require(covered_render == [],
+            "a rendered symbol with a real glyph must not be reported")
     commented = '// historical label: "\u221210s" and " \u2014 "\nconst char *a = "-";'
-    require(uncovered_literals(commented) == [],
+    require(uncovered_literals(commented, covered) == [],
             "scanner must ignore code points that only appear in comments")
+    require(uncovered_literals(
+        '/* was LV_SYMBOL_PLAY */ lv_label_set_text(icon, ">");', covered) == [],
+        "a commented LV_SYMBOL_PLAY must not become a literal")
 
     view_source = VIEW.read_text(encoding="utf-8")
     require(track_create_issues(view_source) == [],
@@ -237,8 +608,9 @@ def main() -> int:
         print(f"FAIL: {failure}")
     if failures:
         return 1
-    print("PASS: player UI literals stay inside the font coverage and track rows "
-          "zero the theme padding with an inset, centred label")
+    print("PASS: player UI literals and rendered LV_SYMBOL_* stay inside the real "
+          "cyberdeck_font coverage, the controls hint is ASCII and shared, and "
+          "track rows zero the theme padding with an inset, centred label")
     return 0
 
 
