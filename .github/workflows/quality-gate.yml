@@ -137,6 +137,34 @@ jobs:
       - uses: espressif/install-esp-idf-action@8fc05d1470d5591417e7a3707a1f2bec178db4ae # branch v1 tip (immutable commit)
         with:
           version: v6.1
+      - name: Prepare ESP-Hosted CPU-staging
+        id: hosted-staging
+        run: |
+          # managed_components/ is gitignored, so the pinned ESP-Hosted sources
+          # only exist after a CMake configure downloads them. That is why the
+          # patch is applied after this warm-up configure and not before it: the
+          # warm-up materializes the component, then the real patch is applied
+          # so the fail-closed verify in CMakeLists.txt stays enabled.
+          warmup_log="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/hosted-warmup.log"
+          if idf.py -B build-warmup reconfigure > "$warmup_log" 2>&1; then
+            warmup_status=0
+          else
+            warmup_status=$?
+          fi
+          if [ "$warmup_status" -ne 0 ]; then
+            # Tolerate the warm-up rc only for the expected staging error, and
+            # only when the component was actually downloaded; any other
+            # failure must abort with its log.
+            if [ ! -d managed_components/espressif__esp_hosted ] \
+              || ! grep -q 'ESP-Hosted CPU-staging is missing or changed' "$warmup_log"; then
+              cat "$warmup_log"
+              echo "Warm-up configure failed for an unexpected reason (rc=$warmup_status)." >&2
+              exit 1
+            fi
+            python3 tools/prepare_esp_hosted_cpu_staging.py apply
+          fi
+          python3 tools/prepare_esp_hosted_cpu_staging.py verify
+          rm -rf build-warmup
       - name: Build firmware
         id: firmware-build
         run: |
@@ -148,6 +176,7 @@ jobs:
           {
             echo '| Check | Result |'
             echo '| --- | --- |'
+            echo '| ESP-Hosted CPU-staging | ${{ steps.hosted-staging.outcome }} |'
             echo '| ESP-IDF 6.1 build | ${{ steps.firmware-build.outcome }} |'
             echo '| Host aggregate and coverage | ${{ steps.host-coverage.outcome }} |'
             echo '| App grant ThreadSanitizer | ${{ steps.app-grant-tsan.outcome }} |'
