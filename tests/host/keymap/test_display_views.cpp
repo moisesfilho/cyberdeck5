@@ -568,7 +568,7 @@ int main()
     for (std::size_t index = 1; index < browser->children.size(); ++index)
         assert_not_scrollable(browser->children[index]);
     const std::array<std::string, 7> music_labels{
-        "Previous", "Play / Pause", "Next", "−10s", "+10s", "Vol −", "Vol +"};
+        "Previous", "Play / Pause", "Next", "-10s", "+10s", "Vol -", "Vol +"};
     const std::array<std::string, 7> music_actions{
         "prev", "toggle", "next", "seek_back", "seek_forward",
         "volume_down", "volume_up"};
@@ -651,7 +651,8 @@ int main()
     music_view.render(full_queue);
     assert(!browser->children[64]->hidden);
     assert(browser->children[64]->children[0]->text == "track-64.mp3");
-    assert(browser->children[64]->children[0]->width == browser->children[64]->width);
+    assert(browser->children[64]->children[0]->width == browser->children[64]->width - 12);
+    assert(browser->children[64]->children[0]->x == 6);
     assert(browser->children[64]->children[0]->long_mode == LV_LABEL_LONG_MODE_DOTS);
     const std::string long_track_name(180, 'W');
     music_view.render("music queue:\n1. " + long_track_name + "\n");
@@ -788,9 +789,14 @@ int main()
     for (std::size_t index = 1; index <= 64; ++index) {
         const auto *row = browser->children[index];
         const auto *label = row->children[0];
-        assert(label->x >= 0 && label->y >= 0);
-        assert(label->x + label->width <= row->width);
-        assert(label->y + label->height <= row->height);
+        /* REQ-PLAYER-TRACK-ROW: the theme pads `btn`, so the row must zero pad
+         * all sides and pad_row/pad_column explicitly or the glyph is clipped. */
+        assert(row->pad_top == 0 && row->pad_bottom == 0);
+        assert(row->pad_left == 0 && row->pad_right == 0);
+        assert(row->pad_row == 0 && row->pad_column == 0);
+        assert(label->x >= 6 && label->x + label->width <= row->width - 6);
+        assert(label->y >= 0 && label->y + label->height <= row->height);
+        assert(label->height <= row->height);
         assert(label->long_mode == LV_LABEL_LONG_MODE_DOTS);
     }
     /* Exercise the reverse resize as well; return to landscape for subsequent

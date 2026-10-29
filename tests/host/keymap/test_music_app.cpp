@@ -361,7 +361,7 @@ int main() {
     CHECK(result.status == cyberdeck_apps::result_status::handled);
     CHECK(result.output.find("state: playing") != std::string::npos);
     CHECK(result.output.find("track: 1/2") != std::string::npos);
-    CHECK(result.output.find("Track — Artist") != std::string::npos);
+    CHECK(result.output.find("Track - Artist") != std::string::npos);
     CHECK(result.output.find("progress: 4s / 12s") != std::string::npos);
     CHECK(result.output.find("volume: 27  shuffle: on  repeat: one") != std::string::npos);
     player.state.state = cyberdeck_music::playback_state::error;

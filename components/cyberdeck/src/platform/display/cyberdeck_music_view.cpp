@@ -10,7 +10,7 @@ extern const lv_font_t cyberdeck_font;
 namespace cyberdeck_music_view {
 namespace {
 constexpr const char *kActions[] = {"prev", "toggle", "next", "seek_back", "seek_forward", "volume_down", "volume_up", "command_open"};
-constexpr const char *kLabels[] = {"Previous", "Play / Pause", "Next", "−10s", "+10s", "Vol −", "Vol +", "Command"};
+constexpr const char *kLabels[] = {"Previous", "Play / Pause", "Next", "-10s", "+10s", "Vol -", "Vol +", "Command"};
 constexpr int kMinimumButtonSize = 44;
 const lv_color_t kBlack = lv_color_hex(0x000000);
 const lv_color_t kSurface = lv_color_hex(0x0A0A0A);
@@ -119,6 +119,11 @@ bool view::create(lv_obj_t *parent, callback on_action, void *context) {
         style(label, kWhite);
         lv_obj_set_style_bg_color(track, kSurface, 0);
         lv_obj_set_style_border_width(track, 0, 0);
+        /* The default theme pads `btn` (PAD_SMALL/PAD_DEF), shrinking the
+         * content area below the glyph height and clipping the track name. */
+        lv_obj_set_style_pad_all(track, 0, 0);
+        lv_obj_set_style_pad_row(track, 0, 0);
+        lv_obj_set_style_pad_column(track, 0, 0);
         lv_obj_set_clickable(track, true);
         lv_obj_add_event_cb(track, selected, LV_EVENT_CLICKED, this);
     }
@@ -320,12 +325,16 @@ void view::layout() {
         lv_obj_set_size(label, button_width, button_height);
     }
     const int row_height = line;
+    constexpr int kTrackInset = 6;
+    const int track_label_height =
+        std::min(row_height, static_cast<int>(lv_font_get_line_height(&cyberdeck_font)));
+    const int track_label_y = (row_height - track_label_height) / 2;
     for (std::size_t i = 0; i < tracks_.size(); ++i) {
         lv_obj_set_pos(tracks_[i], 8, line + 12 + static_cast<int>(i) * row_height);
         lv_obj_set_size(tracks_[i], browser_inner_width, row_height);
         lv_obj_t *label = lv_obj_get_child(tracks_[i], 0);
-        lv_obj_set_pos(label, 0, 0);
-        lv_obj_set_size(label, browser_inner_width, row_height);
+        lv_obj_set_pos(label, kTrackInset, track_label_y);
+        lv_obj_set_size(label, std::max(1, browser_inner_width - kTrackInset * 2), track_label_height);
     }
 }
 

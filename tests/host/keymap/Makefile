@@ -2118,6 +2118,14 @@ test_resource_sd_quota_contract: test_resource_sd_quota_contract.py os_transform
 test_display_lock_contract: test_display_lock_contract.py ../../../main/app_main.cpp $(SERIAL_BRIDGE_SRC) Makefile
 	$(PYTHON) test_display_lock_contract.py
 
+.PHONY: test_music_player_ui_contract
+test_music_player_ui_contract: test_music_player_ui_contract.py \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_music_view.cpp \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_music_command_input.cpp \
+		../../../components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_font.c Makefile
+	$(PYTHON) test_music_player_ui_contract.py
+
 .PHONY: test_lvgl_dispatch_state
 test_lvgl_dispatch_state: test_lvgl_dispatch_state_bin
 	@./test_lvgl_dispatch_state_bin
@@ -2826,6 +2834,8 @@ test: test-build
 	@$(MAKE) --no-print-directory test_window_manager_contract
 	@echo "==> Executando contrato de lock do display"
 	@$(MAKE) --no-print-directory test_display_lock_contract
+	@echo "==> Executando contrato de UI do player de musica"
+	@$(MAKE) --no-print-directory test_music_player_ui_contract
 	@echo "==> Executando contrato dos system apps"
 	@$(MAKE) --no-print-directory test_system_apps_contract
 	@$(MAKE) --no-print-directory test_screenshot_lifecycle_contract

@@ -188,6 +188,22 @@ dispatch único/erro/escape/limites; `test_music_app` integra o mesmo seam com
 TEST-MUSIC-COMMAND-CONTROLLER; roteiro manual cobre teclado real e preservação
 da shell. A view de música usa somente cores grayscale e o teste LVGL real
 confirma seus estilos.
+Os literais de UI do player ficam restritos à cobertura de `cyberdeck_font`
+(`0x20–0x7E`, `0xA0–0xFF` e o bloco esparso de ícones `0xF067–0xF293`): rótulos de
+seek/volume e o separador título/artista usam ASCII, porque U+2212 MINUS SIGN,
+U+2014 EM DASH e as setas U+2190–U+2193 não têm glifo e renderizam caixa.
+`tests/host/keymap/test_music_player_ui_contract.py` (alvo `.PHONY` sem artefato
+`_bin`, presente no agregado `test`) decodifica os literais de
+`cyberdeck_music_view.cpp`, `cyberdeck_music_command_input.cpp` e
+`cyberdeck_music_app.cpp` ignorando comentários e conteúdo dinâmico de faixas, e
+fixa o layout das linhas da biblioteca: `pad_all`/`pad_row`/`pad_column` zerados
+na linha (o tema `styles.btn` aplica `PAD_SMALL`/`PAD_DEF` e cortava a base do
+glifo), rótulo com altura derivada de `row_height`/`lv_font_get_line_height`,
+centrado por `(row_height - track_label_height) / 2` e com inset horizontal de
+6 px, mantendo `LV_LABEL_LONG_MODE_DOTS`, a altura de linha e os botões de 44 px.
+O contrato rejeita por mutação U+2212/U+2014 reintroduzidos e o padrão antigo
+`pos(0,0)` com largura cheia; `test_display_views` também verifica no shim que as
+64 linhas têm padding zerado e rótulo deslocado/centrado.
 O manager fica em estado de abertura após `open()` e só aceita ações depois de
 `activate()`, chamado após criar/renderizar a view; input antecipado é consumido
 sem playback. A UI roteia teclado físico/virtual pelo foreground de música já

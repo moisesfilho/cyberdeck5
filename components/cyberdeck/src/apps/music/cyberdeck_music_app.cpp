@@ -353,7 +353,7 @@ cyberdeck_apps::result application::status() const {
     if (info.current.title[0] != '\0')
         text += "\n" + std::string(info.current.title.data());
     if (info.current.artist[0] != '\0')
-        text += " — " + std::string(info.current.artist.data());
+        text += " - " + std::string(info.current.artist.data());
     text += "\nprogress: " + std::to_string(info.position_ms / 1000) + "s / " +
             std::to_string(info.current.duration_ms / 1000) + "s";
     text += "\nvolume: " + std::to_string(info.volume) + "  shuffle: ";
