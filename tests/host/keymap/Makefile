@@ -229,7 +229,7 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin
 
 MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
 MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
@@ -2118,6 +2118,14 @@ test_resource_sd_quota_contract: test_resource_sd_quota_contract.py os_transform
 test_display_lock_contract: test_display_lock_contract.py ../../../main/app_main.cpp $(SERIAL_BRIDGE_SRC) Makefile
 	$(PYTHON) test_display_lock_contract.py
 
+.PHONY: test_lvgl_dispatch_state
+test_lvgl_dispatch_state: test_lvgl_dispatch_state_bin
+	@./test_lvgl_dispatch_state_bin
+
+test_lvgl_dispatch_state_bin: test_lvgl_dispatch_state.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_lvgl_dispatch_state.cpp ../../../components/cyberdeck/include/platform/display/cyberdeck_lvgl_dispatch_state.h Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_lvgl_dispatch_state.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_lvgl_dispatch_state.cpp -o $@
+
+imu_sensor_contract: imu_sensor_contract.py ../../../components/cyberdeck/src/platform/sensors/imu_reader.cpp
 	$(PYTHON) imu_sensor_contract.py
 
 # Structural host-side TDD contract for the physical keyboard/UI seam.  The
@@ -2682,6 +2690,7 @@ test_music_command_controller_bin: test_music_command_controller.cpp $(MUSIC_COM
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_music_command_controller.cpp $(MUSIC_COMMAND_INPUT_SRC) -o $@
 
 test: test-build
+	@$(MAKE) --no-print-directory test_lvgl_dispatch_state
 	@$(MAKE) --no-print-directory test_esp_hosted_cpu_staging
 	@$(MAKE) --no-print-directory test_music_decoder_stack_contract
 	@$(MAKE) --no-print-directory test_music_decoder_scratch

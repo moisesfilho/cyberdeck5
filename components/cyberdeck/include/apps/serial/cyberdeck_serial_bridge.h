@@ -153,6 +153,10 @@ bool screen_chunk_bounds(int height, std::uint32_t chunk_index, std::uint32_t *o
 bool screen_dump_init(const char *rid, int width, int height, const std::uint16_t *rgb565,
                       std::size_t pixel_count, std::size_t *out_total_bmp_bytes,
                       std::uint32_t *out_total_crc, std::uint32_t *out_total_chunks);
+bool screen_dump_init_strided(const char *rid, int width, int height, const std::uint16_t *rgb565,
+                              std::size_t source_stride_bytes, std::size_t source_bytes,
+                              std::size_t *out_total_bmp_bytes, std::uint32_t *out_total_crc,
+                              std::uint32_t *out_total_chunks);
 inline bool screen_dump_init(const std::string &rid, int width, int height, const std::uint16_t *rgb565,
                              std::size_t pixel_count, std::size_t *out_total_bmp_bytes,
                              std::uint32_t *out_total_crc, std::uint32_t *out_total_chunks)

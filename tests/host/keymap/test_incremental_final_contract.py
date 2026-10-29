@@ -24,7 +24,7 @@ def check() -> None:
     clean = model.rule("clean")
     aggregate = model.rule("test")
     assert clean and aggregate
-    assert len(bins) == len(set(bins)) == 82
+    assert len(bins) == len(set(bins)) == 83
     assert "test_music_manager_bin" in bins
     music_controller = "test_music_command_controller"
     music_controller_bin = music_controller + "_bin"
@@ -35,6 +35,15 @@ def check() -> None:
         controller_wrapper["prereqs_raw"], model
     ).split()
     assert any(music_controller in line for line in model.rule("test")["recipe"])
+    lvgl_dispatch = "test_lvgl_dispatch_state"
+    lvgl_dispatch_bin = lvgl_dispatch + "_bin"
+    assert lvgl_dispatch_bin in bins
+    assert lvgl_dispatch in model.phony()
+    dispatch_wrapper = model.rule_resolved(lvgl_dispatch)
+    assert dispatch_wrapper and lvgl_dispatch_bin in expand_vars(
+        dispatch_wrapper["prereqs_raw"], model
+    ).split()
+    assert any(lvgl_dispatch in line for line in model.rule("test")["recipe"])
     assert any("$(BINS)" in line for line in model.rule("clean")["recipe"])
     assert len(baseline) == 27
 

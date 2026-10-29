@@ -58,11 +58,12 @@ void build_bmp_bytes(int w,int h,const std::vector<uint16_t>& fb, std::vector<ui
     std::memcpy(out.data(), &hdr, sizeof(hdr));
     size_t stride = screenshot_bmp_calc_stride(w);
     uint8_t* pix = out.data()+SCREENSHOT_BMP_HEADER_SIZE;
-    for(int y=0;y<h;++y){
+    for(int file_row=0;file_row<h;++file_row){
+        const int image_y = h - 1 - file_row;
         for(int x=0;x<w;++x){
-            uint16_t px = fb[y*w + x];
+            uint16_t px = fb[image_y*w + x];
             uint8_t bgr[3]; screenshot_bmp_rgb565_to_bgr888(px,bgr);
-            size_t off = (size_t)y*stride + (size_t)x*3;
+            size_t off = (size_t)file_row*stride + (size_t)x*3;
             pix[off+0]=bgr[0]; pix[off+1]=bgr[1]; pix[off+2]=bgr[2];
         }
         // padding already zero
@@ -132,9 +133,7 @@ void test_chunk_no_gaps_and_crc_end(){
         }
     }
     CHECK_EQ(reassembled.size(), bmp.size());
-    // Byte-identical vs oracle (top-down) — note: oracle uses same stride/header helpers as production; serial bridge must reuse those.
-    // If production uses bottom-up row order, this still passes because build_bmp_bytes uses header+stride correctly; bottom-up vs top-down would differ.
-    // To avoid fragility, validate header and deterministic reassembly instead of strict pixel order when header matches:
+    // The oracle maps BMP row r to framebuffer row height-1-r per BMP spec.
     {
         screenshot_bmp_header_t hdr{}; screenshot_bmp_fill_header(&hdr, W, H);
         CHECK(std::memcmp(reassembled.data(), &hdr, sizeof(hdr))==0);
@@ -189,6 +188,93 @@ void test_invalid_dimensions_rejected(){
     CHECK(!cyberdeck_serial::screen_dump_init("r-bad",10,10, short_fb.data(), short_fb.size(), &tb,&tcrc,&nchk));
 }
 
+void test_strided_snapshot_serialization(){
+    constexpr int width = 3;
+    constexpr int height = 2;
+    constexpr size_t stride = 8;
+    const uint16_t source[] = {0xF800, 0x07E0, 0x001F, 0xAAAA,
+                               0xFFFF, 0x0000, 0x8410, 0xBBBB};
+    size_t total = 0;
+    uint32_t total_crc = 0;
+    uint32_t chunks = 0;
+    CHECK(cyberdeck_serial::screen_dump_init_strided("strided", width, height, source,
+                                                     stride, sizeof(source), &total,
+                                                     &total_crc, &chunks));
+    std::vector<uint16_t> compact = {source[0], source[1], source[2],
+                                     source[4], source[5], source[6]};
+    std::vector<uint8_t> expected;
+    build_bmp_bytes(width, height, compact, expected);
+    std::vector<uint8_t> actual;
+    for (uint32_t index = 0; index < chunks; ++index) {
+        std::vector<uint8_t> chunk;
+        uint32_t chunk_crc = 0;
+        bool is_last = false;
+        CHECK(cyberdeck_serial::screen_dump_get_chunk("strided", index, chunk, chunk_crc, is_last));
+        actual.insert(actual.end(), chunk.begin(), chunk.end());
+        CHECK(chunk_crc == oracle_crc32(chunk.data(), chunk.size()));
+    }
+    CHECK_EQ(total, expected.size());
+    CHECK_EQ(actual.size(), expected.size());
+    CHECK(std::memcmp(actual.data(), expected.data(), expected.size()) == 0);
+    CHECK(total_crc == oracle_crc32(expected.data(), expected.size()));
+    CHECK(!cyberdeck_serial::screen_dump_init_strided("bad-stride", width, height, source,
+                                                       4, sizeof(source), &total, &total_crc, &chunks));
+    CHECK(!cyberdeck_serial::screen_dump_init_strided("short-source", width, height, source,
+                                                       stride, stride + 5, &total, &total_crc, &chunks));
+}
+
+void test_bottom_up_orientation_odd_height_with_source_padding(){
+    constexpr int width = 3;
+    constexpr int height = 3;
+    constexpr size_t source_stride = 8;
+    const uint16_t source[] = {
+        0xF800, 0xF800, 0xF800, 0xAAAA,
+        0x07E0, 0x07E0, 0x07E0, 0xBBBB,
+        0x001F, 0x001F, 0x001F, 0xCCCC,
+    };
+    size_t total = 0;
+    uint32_t crc = 0;
+    uint32_t chunks = 0;
+    CHECK(cyberdeck_serial::screen_dump_init_strided("orientation", width, height, source,
+                                                      source_stride, sizeof(source), &total,
+                                                      &crc, &chunks));
+    std::vector<uint8_t> actual;
+    for (uint32_t index = 0; index < chunks; ++index) {
+        std::vector<uint8_t> chunk;
+        uint32_t chunk_crc = 0;
+        bool is_last = false;
+        CHECK(cyberdeck_serial::screen_dump_get_chunk("orientation", index, chunk,
+                                                       chunk_crc, is_last));
+        actual.insert(actual.end(), chunk.begin(), chunk.end());
+    }
+
+    constexpr size_t bmp_stride = 12;
+    const size_t pixel_offset = SCREENSHOT_BMP_HEADER_SIZE;
+    screenshot_bmp_header_t actual_header{};
+    std::memcpy(&actual_header, actual.data(), sizeof(actual_header));
+    CHECK(actual_header.biHeight == static_cast<uint32_t>(height));
+    const uint8_t *first_file_pixel = actual.data() + pixel_offset;
+    const uint8_t *last_file_pixel = actual.data() + pixel_offset + (height - 1) * bmp_stride;
+    uint8_t bottom_row_bgr[3];
+    uint8_t top_row_bgr[3];
+    screenshot_bmp_rgb565_to_bgr888(0x001F, bottom_row_bgr);
+    screenshot_bmp_rgb565_to_bgr888(0xF800, top_row_bgr);
+    CHECK(std::memcmp(first_file_pixel, bottom_row_bgr, sizeof(bottom_row_bgr)) == 0);
+    CHECK(std::memcmp(last_file_pixel, top_row_bgr, sizeof(top_row_bgr)) == 0);
+    CHECK(actual[pixel_offset + 9] == 0 && actual[pixel_offset + 10] == 0 &&
+          actual[pixel_offset + 11] == 0);
+
+    const std::vector<uint16_t> compact = {
+        source[0], source[1], source[2], source[4], source[5], source[6],
+        source[8], source[9], source[10],
+    };
+    std::vector<uint8_t> expected;
+    build_bmp_bytes(width, height, compact, expected);
+    CHECK_EQ(total, expected.size());
+    CHECK(std::memcmp(actual.data(), expected.data(), expected.size()) == 0);
+    CHECK(crc == oracle_crc32(actual.data(), actual.size()));
+}
+
 } // namespace
 int main(){
     test_crc_ieee_vectors();
@@ -196,6 +282,8 @@ int main(){
     test_chunk_no_gaps_and_crc_end();
     test_byte_identical_after_chunk_reassembly_various_sizes();
     test_invalid_dimensions_rejected();
+    test_strided_snapshot_serialization();
+    test_bottom_up_orientation_odd_height_with_source_padding();
     if(s_failures==0){ std::printf("PASS: serial_screen_dump (%d checks)\n",s_checks); return 0; }
     std::printf("FAIL: %d de %d checks falharam\n",s_failures,s_checks); return 1;
 }

@@ -37,6 +37,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "platform/display/cyberdeck_ui.h"
+#include "platform/display/cyberdeck_lvgl_dispatch.h"
 #include <cstdarg>
 #endif
 
@@ -582,8 +583,8 @@ void rgb565_to_bgr888_local(std::uint16_t px, std::uint8_t out3[3])
     out3[2] = static_cast<std::uint8_t>((r5 << 3) | (r5 >> 2));
 }
 
-/* Mesmo layout byte a byte de screenshot_bmp_fill_header (top-down storage,
- * biHeight positivo), preenchido localmente para nao depender do objeto. */
+/* Mesmo layout de screenshot_bmp_fill_header, preenchido localmente para nao
+ * depender do objeto. */
 void fill_header_local(screenshot_bmp_header_t *hdr, int width, int height)
 {
     std::memset(hdr, 0, sizeof(*hdr));
@@ -994,6 +995,29 @@ bool screen_dump_init(const char *rid, int width, int height, const std::uint16_
                       std::size_t pixel_count, std::size_t *out_total_bmp_bytes,
                       std::uint32_t *out_total_crc, std::uint32_t *out_total_chunks)
 {
+    if (width <= 0) {
+        if (out_total_bmp_bytes != nullptr) *out_total_bmp_bytes = 0;
+        if (out_total_crc != nullptr) *out_total_crc = 0;
+        if (out_total_chunks != nullptr) *out_total_chunks = 0;
+        return false;
+    }
+    if (pixel_count > SIZE_MAX / sizeof(std::uint16_t)) {
+        if (out_total_bmp_bytes != nullptr) *out_total_bmp_bytes = 0;
+        if (out_total_crc != nullptr) *out_total_crc = 0;
+        if (out_total_chunks != nullptr) *out_total_chunks = 0;
+        return false;
+    }
+    const auto row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint16_t);
+    return screen_dump_init_strided(rid, width, height, rgb565, row_bytes,
+                                    pixel_count * sizeof(std::uint16_t), out_total_bmp_bytes,
+                                    out_total_crc, out_total_chunks);
+}
+
+bool screen_dump_init_strided(const char *rid, int width, int height, const std::uint16_t *rgb565,
+                              std::size_t source_stride_bytes, std::size_t source_bytes,
+                              std::size_t *out_total_bmp_bytes, std::uint32_t *out_total_crc,
+                              std::uint32_t *out_total_chunks)
+{
     if (out_total_bmp_bytes != nullptr) {
         *out_total_bmp_bytes = 0;
     }
@@ -1010,8 +1034,11 @@ bool screen_dump_init(const char *rid, int width, int height, const std::uint16_
     if (width <= 0 || height <= 0) {
         return false;
     }
-    const auto expected = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-    if (expected == 0 || pixel_count < expected) {
+    const auto row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint16_t);
+    const auto preceding_rows = static_cast<std::size_t>(height - 1);
+    if (source_stride_bytes < row_bytes ||
+        preceding_rows > (SIZE_MAX - row_bytes) / source_stride_bytes ||
+        source_bytes < preceding_rows * source_stride_bytes + row_bytes) {
         return false;
     }
     const std::size_t total = screen_bmp_size(width, height);
@@ -1019,8 +1046,7 @@ bool screen_dump_init(const char *rid, int width, int height, const std::uint16_
         return false;
     }
 
-    /* BMP top-down: linha y=0 do framebuffer primeiro, header com biHeight
-     * positivo — paridade byte a byte com o oracle do teste. */
+    /* biHeight positivo exige pixels BMP em ordem bottom-up. */
     std::vector<std::uint8_t> bmp(total, 0);
     screenshot_bmp_header_t hdr{};
     fill_header_local(&hdr, width, height);
@@ -1028,9 +1054,11 @@ bool screen_dump_init(const char *rid, int width, int height, const std::uint16_
 
     const std::size_t stride = bmp_stride_local(static_cast<std::size_t>(width));
     std::uint8_t *pixels = bmp.data() + SCREENSHOT_BMP_HEADER_SIZE;
-    for (int y = 0; y < height; ++y) {
-        const std::uint16_t *src = rgb565 + static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
-        std::uint8_t *dst = pixels + static_cast<std::size_t>(y) * stride;
+    for (int row = 0; row < height; ++row) {
+        const int source_y = height - 1 - row;
+        const auto *src = reinterpret_cast<const std::uint16_t *>(
+            reinterpret_cast<const std::uint8_t *>(rgb565) + static_cast<std::size_t>(source_y) * source_stride_bytes);
+        std::uint8_t *dst = pixels + static_cast<std::size_t>(row) * stride;
         for (int x = 0; x < width; ++x) {
             std::uint8_t bgr[3];
             rgb565_to_bgr888_local(src[x], bgr);
@@ -1505,43 +1533,80 @@ void dump_obj(lv_obj_t *obj, std::string &out, int &count, bool &truncated)
 
 /* ---- captura de tela ---- */
 struct capture {
-    lv_draw_buf_t *snap = nullptr;
-    std::vector<std::uint16_t> packed;
+    const lv_draw_buf_t *snap = nullptr;
     int width = 0;
     int height = 0;
 };
 
+constexpr std::size_t k_snapshot_max_bytes = static_cast<std::size_t>(BSP_LCD_H_RES) * BSP_LCD_V_RES *
+                                             sizeof(std::uint16_t);
+constexpr std::size_t k_snapshot_alignment_slack = 64;
+lv_draw_buf_t s_snapshot_draw_buf{};
+void *s_snapshot_storage = nullptr;
+bool s_snapshot_draw_buf_initialized = false;
+lv_result_t s_snapshot_result = LV_RESULT_INVALID;
+int s_snapshot_width = 0;
+int s_snapshot_height = 0;
+
+bool ensure_snapshot_storage()
+{
+    if (s_snapshot_storage == nullptr) {
+        s_snapshot_storage = heap_caps_malloc(k_snapshot_max_bytes + k_snapshot_alignment_slack,
+                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    return s_snapshot_storage != nullptr;
+}
+
+bool initialize_snapshot_draw_buf()
+{
+    if (s_snapshot_draw_buf_initialized) return true;
+    if (lv_draw_buf_init(&s_snapshot_draw_buf, BSP_LCD_H_RES, BSP_LCD_V_RES,
+                         LV_COLOR_FORMAT_RGB565, 0, s_snapshot_storage,
+                         k_snapshot_max_bytes + k_snapshot_alignment_slack) != LV_RESULT_OK) {
+        heap_caps_free(s_snapshot_storage);
+        s_snapshot_storage = nullptr;
+        return false;
+    }
+    s_snapshot_draw_buf_initialized = true;
+    return true;
+}
+
+void capture_screen_on_lvgl(void *)
+{
+    s_snapshot_result = lv_snapshot_take_to_draw_buf(lv_screen_active(), LV_COLOR_FORMAT_RGB565,
+                                                      &s_snapshot_draw_buf);
+    if (s_snapshot_result == LV_RESULT_OK) {
+        s_snapshot_width = s_snapshot_draw_buf.header.w;
+        s_snapshot_height = s_snapshot_draw_buf.header.h;
+    }
+}
+
 bool capture_screen(capture &out)
 {
-    if (!bsp_display_lock(pdMS_TO_TICKS(1000))) {
-        return false;
-    }
-    out.snap = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
-    if (out.snap == nullptr) {
+    if (!ensure_snapshot_storage()) return false;
+    // Descriptor setup is serialized with LVGL mutations by the dispatcher lock.
+    if (!bsp_display_lock(pdMS_TO_TICKS(1000))) return false;
+    if (!initialize_snapshot_draw_buf()) {
         bsp_display_unlock();
         return false;
     }
-    out.width = out.snap->header.w;
-    out.height = out.snap->header.h;
-    if (out.snap->header.cf != LV_COLOR_FORMAT_RGB565 || out.width <= 0 || out.height <= 0 ||
-        out.snap->header.stride < static_cast<std::uint32_t>(out.width) * sizeof(std::uint16_t)) {
-        lv_draw_buf_destroy(out.snap);
-        out.snap = nullptr;
-        bsp_display_unlock();
-        return false;
-    }
-    /* screen_dump_init espera RGB565 compacto (y*w+x); repack se o stride
-     * do snapshot tiver padding. */
-    const auto packed_stride = static_cast<std::size_t>(out.width) * sizeof(std::uint16_t);
-    out.packed.resize(static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height));
-    const auto *base = static_cast<const std::uint8_t *>(out.snap->data);
-    for (int y = 0; y < out.height; ++y) {
-        std::memcpy(out.packed.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width),
-                    base + static_cast<std::size_t>(y) * out.snap->header.stride, packed_stride);
-    }
-    lv_draw_buf_destroy(out.snap);
-    out.snap = nullptr;
     bsp_display_unlock();
+    // Reset before run() so a capture that never executes cannot leak a previous
+    // frame's metadata. A callback detached by an earlier call may still write
+    // here, but that is benign: admission is only re-armed after the detached
+    // callback finished (it releases the slot on finish), so its late write
+    // lands before the new callback, which is the last writer for this call.
+    s_snapshot_result = LV_RESULT_INVALID;
+    s_snapshot_width = 0;
+    s_snapshot_height = 0;
+    if (!cyberdeck_lvgl_dispatch::run(capture_screen_on_lvgl, &s_snapshot_draw_buf, 2000) ||
+        s_snapshot_result != LV_RESULT_OK) return false;
+
+    out.snap = &s_snapshot_draw_buf;
+    out.width = s_snapshot_width;
+    out.height = s_snapshot_height;
+    if (out.snap->header.cf != LV_COLOR_FORMAT_RGB565 || out.width <= 0 || out.height <= 0 ||
+        out.snap->header.stride < static_cast<std::uint32_t>(out.width) * sizeof(std::uint16_t)) return false;
     return true;
 }
 
@@ -1607,9 +1672,25 @@ device_result exec_screen_dump(const request &req)
     std::size_t total = 0;
     std::uint32_t crc = 0;
     std::uint32_t chunks = 0;
-    if (!screen_dump_init(req.rid.c_str(), cap.width, cap.height, cap.packed.data(), cap.packed.size(), &total,
-                          &crc, &chunks)) {
+    if (!screen_dump_init_strided(req.rid.c_str(), cap.width, cap.height,
+                                  reinterpret_cast<const std::uint16_t *>(cap.snap->data),
+                                  cap.snap->header.stride, cap.snap->data_size,
+                                  &total, &crc, &chunks)) {
         d.result = err_result(req, dispatch_error::internal, "bmp invalido");
+        return d;
+    }
+
+    std::vector<std::uint8_t> first_chunk;
+    std::uint32_t first_chunk_crc = 0;
+    bool first_chunk_is_last = false;
+    if (chunks == 0 || !screen_dump_get_chunk(req.rid.c_str(), 0, first_chunk,
+                                               first_chunk_crc, first_chunk_is_last)) {
+        send_frame(build_error_envelope(req.rid, dispatch_error::internal, "chunk falhou"));
+        return d;
+    }
+
+    if (stop_requested()) {
+        send_frame(build_error_envelope(req.rid, dispatch_error::internal, "cancelado"));
         return d;
     }
 
@@ -1634,7 +1715,11 @@ device_result exec_screen_dump(const request &req)
         std::vector<std::uint8_t> bytes;
         std::uint32_t chunk_crc = 0;
         bool is_last = false;
-        if (!screen_dump_get_chunk(req.rid.c_str(), i, bytes, chunk_crc, is_last)) {
+        if (i == 0) {
+            bytes = std::move(first_chunk);
+            chunk_crc = first_chunk_crc;
+            is_last = first_chunk_is_last;
+        } else if (!screen_dump_get_chunk(req.rid.c_str(), i, bytes, chunk_crc, is_last)) {
             failed = true;
             break;
         }
@@ -1651,6 +1736,7 @@ device_result exec_screen_dump(const request &req)
     }
     if (failed) {
         send_frame(build_error_envelope(req.rid, dispatch_error::internal, "chunk falhou"));
+        return d;
     }
     send_frame(frame_event(req, "end"));
     /* Todos os frames ja foram escritos; envelope vazio = nada a escrever. */

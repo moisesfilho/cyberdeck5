@@ -18,6 +18,54 @@ compilado quando disponível. Consulte `AGENTS.md` para o procedimento Serial-JT
 e registre a validação física como pendente quando o dispositivo não estiver
 disponível.
 
+## Captura LVGL compartilhada
+
+`components/cyberdeck/include/platform/display/cyberdeck_lvgl_dispatch.h` e
+`src/platform/display/cyberdeck_lvgl_dispatch.cpp` expõem `run(fn, ctx,
+timeout_ms)`: serializam callers com deadline, adquirem/liberam o display lock
+antes da espera, e usam a máquina atômica host-testável
+`cyberdeck_lvgl_dispatch_state.{h,cpp}`. `Job::status` é uma única palavra
+atômica com o `State` nos 3 bits baixos e o token nos demais, então o claim do
+callback (`start`) compara estado+token num só CAS e um callback stale nunca
+reivindica um slot cancelado e rearmado. `Payload{fn, ctx}` é copiado para o
+`Job` por `queue()` antes do CAS de release e só é lido por
+`claimed_payload()` depois do claim bem-sucedido; não existe mais estado
+compartilhado de callback lido fora desse caminho. Timeout cancela somente
+trabalho ainda QUEUED; trabalho RUNNING é detachado e a liberação da admissão
+tem um único dono por transição: `cancel`/`finish` em RUNNING → chamador,
+detach (`running`→`detached`) e `finish` em DETACHED → callback, e um detach
+repetido em slot DETACHED também responde callback (o primeiro detach já
+transferiu a liberação; devolver chamador liberaria a admissão duas vezes).
+`cyberdeck_lvgl_dispatch_state.cpp` fixa com `static_assert` que o `State` ocupa
+exatamente os 3 bits de `k_state_bits` (`idle` == 0, `cancelled` == máscara), e
+`run()` documenta que não pode ser chamado da própria task LVGL: o callback só
+roda nessa task, então o chamador esperaria o budget inteiro, detacharia e
+retornaria false. O contexto
+precisa permanecer válido até conclusão do callback, inclusive após timeout.
+Latência máxima de uma chamada: display lock 1000 ms + budget compartilhado de
+`timeout_ms` (admissão + conclusão) + `k_detach_grace_ms` (250 ms), ou seja
+3250 ms com `timeout_ms` 2000. `test_lvgl_dispatch_state` cobre
+cancelamento/rearm com callback antigo tardio, detach com liberação única,
+callback duplicado/fora de ordem e timeout RUNNING com rearm rejeitado; também
+fixa (TEST-LVGL-DISPATCH-06) que um slot CANCELADO sem rearm rejeita o callback
+stale que chega com o token antigo correspondente, (07) que um segundo detach em
+slot DETACHED mantém a liberação com o callback e (08) o truncamento consistente
+do token nos 29 bits em `queue`/`start`. Os consumers Serial-JTAG (`cyberdeck_serial_bridge.cpp`) e HTTP
+(`cyberdeck_display_port.cpp`) executam snapshot somente em callback LVGL e
+reutilizam draw buffers persistentes; HTTP copia o frame para memória própria
+apenas após sucesso. Ambos zeram
+`s_snapshot_result`/`s_snapshot_error`/`s_snapshot_width`/`s_snapshot_height`
+antes de `run()`; uma escrita atrasada de callback detachado anterior é
+corrida benigna documentada no código, porque a admissão só é rearmada depois
+do `finish` desse callback, logo o callback novo é o último escritor do valor
+observado. `test_display_lock_contract.py` protege despacho, lifetime,
+erros/cleanup e stacks 8192/6144; o teste comportamental de BMP Serial continua
+em `test_serial_screen_dump.cpp`. O contrato também fixa o formato do callback
+compartilhado (TEST-DISPLAY-LOCK-06..08): `start` antes de `claimed_payload`, um
+claim que falha retorna antes de `finish`/liberação, uma única liberação
+condicionada a `AdmissionOwner::callback`, ausência de payload em globais e o
+budget documentado (1000 + timeout + 250 = 3250 ms).
+
 ## Testes host
 
 `tests/host/keymap/Makefile` mantém os alvos focados e o agregado `test`.
@@ -109,13 +157,47 @@ alocação de TCB e criação de task, verificando rollback da inicialização.
 integrar o stop falho do player ao runtime (foreground/grant retidos até retry)
 e reabertura com novo scan/fixture. Também confirma que grants permanecem
 válidos durante teardown pendente e são revogados após teardown bem-sucedido.
-`test_display_views` agora também links o TU real
-`cyberdeck_music_view.cpp` com o shim LVGL completo; cobre criação, renderização,
-visibilidade, os sete callbacks/contexto e destroy/recreate. Isso prova o
-dispatch da superfície no shim, não touch/teclado físico, que continua no roteiro
-manual. O shim completo fornece `LV_LABEL_LONG_WRAP` e `lv_label_get_text` para
-corresponder às APIs usadas pelo TU. O TU está incluído no scope guard sem
-allowlist.
+`test_display_views` também linka o TU real `cyberdeck_music_view.cpp` com o shim
+LVGL completo; cobre layout 720x1280/1280x720 e resize por
+`LV_EVENT_SIZE_CHANGED`, bounds de surface/controles/lista, scroll vertical das
+64 faixas e isolamento do scroll: surface, cards, controles, parent content e
+itens da lista ficam sem scroll/scrollbar/chain, enquanto somente a lista tem
+`LV_DIR_VER`/scrollbar automático sem chaining. Os oito botões têm no mínimo
+44x44 px nas duas orientações; labels com truncagem por pontos permanecem dentro
+dos botões, e a matriz de conteúdo/controles sem sobreposição é verificada em
+ambas. Resize percorre portrait→landscape→portrait→landscape. Nomes de faixa longos ficam
+visualmente limitados ao slot, mantendo o texto completo no label. A fixture modela root, system bar
+e content como irmãos, verificando parent da view e bounds absolutos sem
+sobreposição do header. Também cobre progresso, callback de seleção/comando,
+  bloqueio de controles com Command aberto e destroy/recreate. O slider usa permille; a integração converte
+para segundos do comando `seek`, protegido por `test_music_scan_opendir_contract.py`.
+O caso REQ-PLAYER-LAYOUT-READABLE também fixa que status com mais de três linhas
+retém somente as três primeiras, limita a altura e mantém a label dentro do card.
+A surface de música é explicitamente excluída do layout do pai e ancorada em
+  (0,0) dentro do content_ da shell, para não herdar o deslocamento do fluxo flex
+  nem cobrir header/área inferior; o teste modela content_ deslocado e calcula
+  bounds físicos absolutos de painéis, botões e labels em paisagem.
+Input físico/virtual real continua no roteiro manual. O shim implementa as APIs de
+scroll/slider/textarea usadas pelo TU; o TU permanece no scope guard sem allowlist.
+O controller puro `cyberdeck_music_command_input.{h,cpp}` é compartilhado pela
+UI (`cyberdeck_ui.cpp`) e pelo host (`test_music_command_controller`): mantém
+campo aberto/feedback, edição UTF-8 bounded a 96 bytes, cursor, Backspace/Delete,
+Enter por callback exclusivo do app e prioridade de Escape. O alvo focal cobre
+dispatch único/erro/escape/limites; `test_music_app` integra o mesmo seam com
+`application::player_command("status")` real. `player_traceability.md` rastreia
+TEST-MUSIC-COMMAND-CONTROLLER; roteiro manual cobre teclado real e preservação
+da shell. A view de música usa somente cores grayscale e o teste LVGL real
+confirma seus estilos.
+O manager fica em estado de abertura após `open()` e só aceita ações depois de
+`activate()`, chamado após criar/renderizar a view; input antecipado é consumido
+sem playback. A UI roteia teclado físico/virtual pelo foreground de música já
+ativo antes do pump de 250 ms, evitando que Enter precoce caia na shell. Ao ficar
+visível, a surface é movida à frente da textarea criada posteriormente;
+`test_display_views` cria um irmão terminal posterior, confirma que ele começa
+no topo e que a surface passa ao último filho após ficar visível. O shim host de
+`lv_obj_move_foreground` modela essa reordenação removendo e anexando o objeto.
+O contrato `test_music_scan_opendir_contract.py`
+protege o roteamento e `test_music_manager` cobre Enter pendente sem ação e após ativação.
 O runtime conserva estado foreground, grant
 e quota quando teardown falha, para que stop/join possa ser repetido sem liberar
 recursos vivos; somente teardown bem-sucedido revoga o grant e registra o app
@@ -184,7 +266,7 @@ devem ser revisitados contra o código vigente antes de cada implementação.
   `cat /.poweroff-sync` retornou `1`. Usuário confirma cenários bateria-only,
   bateria+USB e cabo externo; canário/hash verificados nos dois primeiros.
   Fault/timeout têm cobertura host. Não há implementação pendente conhecida; ver
-  `poweroff-implementation-plan.md` para o caveat de CI remoto do delta local.
+  `poweroff-implementation-plan.md` para o histórico de validação local e do CI remoto.
 - Rodada com canário: cancelamentos `Y`/`yes` passaram; arquivo descartável de
   1272 bytes foi gravado e lido antes do shutdown (hash esperado
   `860367d95a4c84b3790ddf5306fc5d2807cfbce37e2c1e9128dfa4b18c96cc14`). Após
@@ -214,8 +296,8 @@ devem ser revisitados contra o código vigente antes de cada implementação.
   build ESP-IDF/linker PASS. Quality Gate remoto PASS no commit b0ce47f.
   Stack PSRAM foi admitida, BLE avançou sem assert, e o usuário confirmou
   desligamento físico e pós-relight correto. A barreira `.poweroff-sync` persistiu.
-  A evidência local deste snapshot não conclui o gate de CI remoto; aguardar o
-  resultado do Quality Gate para o delta atual.
+  O Quality Gate remoto do commit `b0ce47f` (run `38476339304`) é evidência
+  histórica; este snapshot também tem evidências locais registradas no plano.
 
 - `tools/poweroff_link_guard.py` verifica no cross-reference map GNU que
   `ff.c.obj` realmente chama os hooks `__wrap_ff_disk_write/ioctl` do poweroff,
@@ -287,7 +369,7 @@ devem ser revisitados contra o código vigente antes de cada implementação.
 - Validação local em 13/out/2026: agregado com coverage e gates gcovr
   80/94/59 passam (86.9% linhas, 95.3% funções, 61.0% branches); guard confirma
   59 TUs cobertas e 16 hardware allowlisted. Build ESP-IDF passa. O plano
-  separa essa evidência local da aceitação global/CI remota e do corte físico.
+  registra a evidência local, o resultado remoto histórico e a validação de corte físico.
 - `text_log_task` aguarda completion do proprietário binário antes de parar e
   reconsulta a fila após observar completion, evitando perder publicação que
   correu com o timeout de receive. `quiesce-race` força um receive textual
@@ -799,8 +881,8 @@ destrói recursos potencialmente usados.
      antes de gcovr/guard. Com GCC/gcov 13.4 local, o agregado passa o mínimo
      de 59% branches (59,3%); o toolchain 15.2 mede branches de modo diferente.
       Os commits `dbe3a94` (`38916411814`) e `8e41338` (tentativa 2 de
-      `38918012957`) passaram no Quality Gate remoto; commits posteriores
-      ainda dependem de CI no novo estado. `netdiag_traceability.md` registra
+       `38918012957`) passaram no Quality Gate remoto; não há registro de novas
+       execuções para commits posteriores. `netdiag_traceability.md` registra
        a validação Serial-JTAG direcionada no Tab5 (status, DNS, TCP, HTTPS 200,
        405 final, `/head` funcional, redirect rejeitado, rate limit e
        cancelamento); uma captura serial posterior confirmou `Failed to verify
@@ -922,9 +1004,13 @@ destrói recursos potencialmente usados.
    `test_music_decoder_scratch.cpp` compara duas frames decodificadas com o
    wrapper upstream e scratch externo (PCM/status iguais, ASan/UBSan limpos).
     Ambos estão no agregado e `BINS` inclui os novos binários. O alvo
-    `test_music_manager_bin` é um teste monolítico novo, fora dos 27 candidatos
-    per-TU da fixture incremental; assim o contrato preserva a fixture de 27 IDs/
-    176 TUs e verifica 81 bins únicos no total. Host/build passaram; firmware corrigido SHA-256
+    `test_music_manager_bin` e `test_music_command_controller_bin` são testes
+    monolíticos fora dos 27 candidatos per-TU da fixture incremental; o mesmo
+    vale para `test_lvgl_dispatch_state_bin`, apensado ao final de `BINS +=`
+    para preservar o formato `BINS := test_shell_help_bin ...` exigido pelos
+    contratos de shell-help e BLE-background. Assim o
+    contrato preserva a fixture de 27 IDs/176 TUs e verifica 83 bins únicos no
+    total. Host/build passaram; firmware corrigido SHA-256
     `0bcb094320d7563f2d6b8d590a5220f417ba1b25f7ac3ff76550107b324c116d`
     gravado e verificado em `/dev/ttyACM0`. Boot com checkpoint, uptime 48→53 s,
     safe_mode=false, interrupted_boots=0, Wi-Fi com IP e sem erros RPC/RX/panic
@@ -1693,29 +1779,67 @@ de report map, notificações ou injeção de teclas.
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
 | `components/cyberdeck/src/apps/screenshot/screenshot_server.cpp` | `screenshot_server_init`, `screenshot_server_set_display_port`, `screenshot_server_wifi_state`, `screenshot_frame_t` | Servidor `GET /screenshot` na porta 80, iniciado/parado por estado Wi-Fi. Serializa BMP a partir de um frame RGB565 bounded recebido pela porta de display; nao inclui LVGL/BSP nem captura a tela diretamente. |
-| `components/cyberdeck/include/platform/display/cyberdeck_display_port.h`, `components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp` | `cyberdeck_display_capture`, `cyberdeck_display_release` | Adapter exclusivo de LVGL/BSP para a porta de display do Screenshot; faz lock, snapshot, copia bounded do frame e libera recursos. |
+| `components/cyberdeck/include/platform/display/cyberdeck_display_port.h`, `components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp` | `cyberdeck_display_capture`, `cyberdeck_display_release` | Adapter exclusivo de LVGL/BSP da porta de display do Screenshot; delega o snapshot a `cyberdeck_lvgl_dispatch::run` (lock/despacho pertencem ao dispatcher), copia o frame bounded e libera recursos. Nao adquire display lock proprio. |
 | `components/cyberdeck/src/apps/screenshot/screenshot_bmp.cpp` | geracao de BMP | Converte framebuffer RGB565 em BMP 24-bit bottom-up com stride/padding. |
 
-O endpoint serializa requisicoes, usa lock de display somente durante o
-snapshot e aceita apenas peers locais: loopback, 10/8, link-local, ULA,
-IPv6 local e IPv4-mapped em IPv6.
+O endpoint serializa requisicoes, captura pelo adapter de display (o
+`cyberdeck_lvgl_dispatch` adquire o display lock somente durante o snapshot) e
+aceita apenas peers locais: loopback, 10/8, link-local, ULA, IPv6 local e
+IPv4-mapped em IPv6.
 
 ### Ponte manual USB Serial-JTAG NDJSON (REQ-002/003/005/006/007/008/009)
 
 `tests/host/keymap/test_display_lock_contract.py` (TEST-DISPLAY-LOCK-01..05)
 is the host structural contract for fail-closed display-lock acquisition during
-boot, and for keeping `screen.dump` snapshot, copy, and destruction under the
-display lock. It also checks that `ui.dump` traverses LVGL only in its locked
-branch; it is directed by `test_display_lock_contract` in the host Makefile.
+boot, dispatching the `screen.dump` snapshot through the shared
+`cyberdeck_lvgl_dispatch::run` with a bounded admission semaphore and completion
+wait, explicit `queued`/`running`/`detached` state with a single owner for the
+admission release (cancel/detach instead of the old generation/rearm handshake),
+and using persistent scratch/stride
+serialization without a packed-frame copy. TEST-DISPLAY-LOCK-06..08 additionally
+pin the shared dispatcher callback shape (claim before payload read, early return
+before finish/release on a failed claim, a single conditional admission release,
+no payload globals) and the documented 3250 ms budget. It also checks that
+`ui.dump`
+traverses LVGL only in its locked branch and `serial_brg` retains its 8192-byte
+stack; it is directed by `test_display_lock_contract` in the host Makefile.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
- | `components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h` | `cyberdeck_serial::k_max_ndjson_line=4096`, `k_max_rid_len=64`, `k_screen_chunk_bytes=1024`, `k_fs_write_max_bytes=2048`, `dispatch_error`, `request/response/dispatch_result`, `SysInfo/WifiNet`, `LineAssembler`, `crc32/screen_bmp_size/screen_chunk_bounds/screen_dump_*`, `sys_info_* / wifi_scan_* / handle_* / dispatch_one / build_envelope`, `bridge_start`/`bridge_stop` (`#ifdef ESP_PLATFORM`) | Contrato NDJSON bounded e lifecycle da task `serial_brg`: start aguarda prontidão, stop solicita saída e faz join bounded sem desmontar driver, hook global ou sincronização compartilhada. `sys.info` acrescenta heap interno/DMA/PSRAM, inclusive maior bloco interno e DMA; campos são opcionais ao decodificar respostas para compatibilidade. `fs.write` seguro com path confinado, 2048 decoded, Base64 canonico, commit por temp unico no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename (replace atomico no host; no-clobber no ESP/FATFS) e NDJSON errors. Header puro (sem `esp_err.h`). |
-| `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp` | parser JSON proprio (`parse_value` classifica e decodifica cada valor numa unica passada: string vira `kind::string` com `s` decodificado e `raw` literal com aspas), dispatch, sessao BMP/CRC, LineAssembler; `term.dump` reutiliza a API textual bounded da UI, com JSON escaping e envelope <=3500; `fs.write` (campos `path/data_b64/size` no `k_request_fields`, tipo conhecido `fs.write`, validacao rid/type/path/data_b64/size, path safety traversal/symlink/directory/parent, 2048, Base64 strict canonico `b64_decode_canonical`, temp unico `.fswrite.<sequencia>.tmp` no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename sem unlink do destino, CRC; no ESP exige `O_NOFOLLOW` e limita `/sdcard` ao VFS FATFS sem symlink/openat, valida parents e o descriptor temporario, rejeita overwrite existente porque nao ha garantia de replace atomico, e preserva o destino em falha de rename; no host a raiz logica `/sdcard` e reancorada em sandbox `/tmp/cyberdeck5_sd` via `CYBERDECK_SD_ROOT`); `sys.info` reporta heap total, interno, DMA e PSRAM, incluindo maior bloco livre interno/DMA; device: task `serial_brg` com handle real, handshake de prontidao, stop cooperativo/join bounded e estado fail-safe, driver USB Serial-JTAG, `esp_log_set_vprintf` com mutex, hooks UI/wifi/screen/fs | Dispatch NDJSON sem alocacao >4096, validacao UTF-8/rid/type, `screen.dump` byte-identical em chunks 1024 com CRC IEEE e flag `end`, feeder tolerante a logs/fragmentacao, `sys.info`/`wifi` e `term.dump`; `fs.write` com validacao completa, commit seguro e erros tipados `invalid_path`/`invalid_payload`/`io_error`. A captura LVGL de `screen.dump` mantém snapshot, cópia e destruição sob o lock do display. Autocontido em relacao a `screenshot_bmp_*` fora de `ESP_PLATFORM`: os tres testes que nao linkam `screenshot_bmp.cpp` nao veem undefined de funcoes externas (stride/size/header/conv sao espelhados localmente com formulas identicas). |
+  | `components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h` | `cyberdeck_serial::k_max_ndjson_line=4096`, `k_max_rid_len=64`, `k_screen_chunk_bytes=1024`, `k_fs_write_max_bytes=2048`, `dispatch_error`, `request/response/dispatch_result`, `SysInfo/WifiNet`, `LineAssembler`, `crc32/screen_bmp_size/screen_chunk_bounds/screen_dump_init[_strided]/screen_dump_*`, `sys_info_* / wifi_scan_* / handle_* / dispatch_one / build_envelope`, `bridge_start`/`bridge_stop` (`#ifdef ESP_PLATFORM`) | Contrato NDJSON bounded e lifecycle da task `serial_brg`: start aguarda prontidão, stop solicita saída e faz join bounded sem desmontar driver, hook global ou sincronização compartilhada. `screen_dump_init_strided` aceita stride e tamanho do frame-fonte, eliminando a necessidade de compactar a cópia RGB565. `sys.info` acrescenta heap interno/DMA/PSRAM, inclusive maior bloco interno e DMA; campos são opcionais ao decodificar respostas para compatibilidade. `fs.write` seguro com path confinado, 2048 decoded, Base64 canonico, commit por temp unico no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename (replace atomico no host; no-clobber no ESP/FATFS) e NDJSON errors. Header puro (sem `esp_err.h`). |
+| `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp` | parser JSON proprio (`parse_value` classifica e decodifica cada valor numa unica passada: string vira `kind::string` com `s` decodificado e `raw` literal com aspas), dispatch, sessao BMP/CRC, LineAssembler; `term.dump` reutiliza a API textual bounded da UI, com JSON escaping e envelope <=3500; `fs.write` (campos `path/data_b64/size` no `k_request_fields`, tipo conhecido `fs.write`, validacao rid/type/path/data_b64/size, path safety traversal/symlink/directory/parent, 2048, Base64 strict canonico `b64_decode_canonical`, temp unico `.fswrite.<sequencia>.tmp` no mesmo diretorio, criado com O_CREAT|O_EXCL e removido apenas apos create bem-sucedido, +rename sem unlink do destino, CRC; no ESP exige `O_NOFOLLOW` e limita `/sdcard` ao VFS FATFS sem symlink/openat, valida parents e o descriptor temporario, rejeita overwrite existente porque nao ha garantia de replace atomico, e preserva o destino em falha de rename; no host a raiz logica `/sdcard` e reancorada em sandbox `/tmp/cyberdeck5_sd` via `CYBERDECK_SD_ROOT`); `sys.info` reporta heap total, interno, DMA e PSRAM, incluindo maior bloco livre interno/DMA; device: task `serial_brg` com handle real, handshake de prontidao, stop cooperativo/join bounded e estado fail-safe, driver USB Serial-JTAG, `esp_log_set_vprintf` com mutex, hooks UI/wifi/screen/fs | Dispatch NDJSON sem alocacao >4096, validacao UTF-8/rid/type, `screen.dump` byte-identical em chunks 1024 com CRC IEEE e flag `end`, feeder tolerante a logs/fragmentacao, `sys.info`/`wifi` e `term.dump`; `fs.write` com validacao completa, commit seguro e erros tipados `invalid_path`/`invalid_payload`/`io_error`. `screen.dump` captura com scratch reutilizável (`capture_screen` zera os metadados e entrega `capture_screen_on_lvgl` a `cyberdeck_lvgl_dispatch::run`); a serialização direta por stride ocorre depois do unlock, sem cópia packed. Autocontido em relacao a `screenshot_bmp_*` fora de `ESP_PLATFORM`: os tres testes que nao linkam `screenshot_bmp.cpp` nao veem undefined de funcoes externas (stride/size/header/conv sao espelhados localmente com formulas identicas). |
 | `tools/cyberdeck_cli.py` | `CyberdeckSession`, `open_session/connect`, `exchange`, comandos `ping/sys.info/wifi.status/wifi.scan/ui.click/ui.tap/ui.type/ui.dump/term.dump/ui.clear/screen.shot/screen.dump/fs.write`, `build_request` com `--data/--data-b64/--input/--stdin/--size/stdin`, `validate_fs_write_path`, `decode_b64_canonical`, `read_fs_write_input`, `FS_WRITE_MAX_BYTES=2048`, encoding Base64 canonico | Cliente NDJSON host: correlacao por `rid` (sem campo `action`), descarte de logs/frames nao-JSON, `term.dump` como resposta unica com snapshot textual bounded, validacao de dump (contiguidade, Base64 canonico, `size`/`chunks`/`crc32` do `start`); `fs.write` com CLI seguro (build_request, input/stdin, 2048, strict canonical, recusa eager de path invalido); pyserial opcional com mensagem clara. |
 | `components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp` | O helper de truncamento UTF-8 de `term.dump` pertence ao bloco `ESP_PLATFORM`, pois somente o caminho do dispositivo o utiliza. |
 | `main/app_main.cpp` | `cyberdeck_serial::bridge_start()` | Inicia a ponte ao fim do boot, apos `wifi_mgr_start()`; falha loga aviso sem abortar o boot (ordem do `test_boot_sequence.py` preservada). |
 | `components/cyberdeck/CMakeLists.txt` | SRCS + REQUIRES `esp_driver_usb_serial_jtag`, `esp_app_format`, `esp_timer`, `esp_system` | Composicao do componente. |
+
+`screen.dump` mantém um scratch RGB565 persistente em PSRAM com capacidade de
+720x1280 (dimensões BSP); sua alocação ocorre antes do lock e o descriptor é
+inicializado sob lock. `capture_screen` zera `s_snapshot_result`,
+`s_snapshot_width` e `s_snapshot_height` antes de entregar
+`capture_screen_on_lvgl` ao `cyberdeck_lvgl_dispatch::run(..., 2000)`: o
+snapshot só executa na thread LVGL e a admissão do dispatcher (semáforo binário
+de dono único, token monotônico na máquina de estados host-testável) garante que
+um callback tardio não altere a captura nova. O próprio dispatcher possui a
+admissão: `cancel`/`finish`/detach têm um único dono por transição, o timeout
+cancela somente trabalho QUEUED (RUNNING é detachado) e o slot só é rearmado
+depois do `finish` do callback detachado, então a escrita tardia de metadados
+acontece antes do callback novo, que é o último escritor do valor. O budget de
+2000 ms é compartilhado entre admissão e conclusão (mais o display lock de
+1000 ms e `k_detach_grace_ms`). O serializer lê o stride do
+snapshot sem alocar uma cópia RGB565 compacta e serializa as linhas BMP
+bottom-up, conforme `biHeight` positivo. O primeiro chunk é obtido e
+validado antes do frame `start`; falha no índice 0 ou cancelamento após obter
+chunk 0 e antes do `start` produz somente erro explícito, sem anunciar início
+de sucesso. Falha/cancelamento durante chunks envia erro e
+não emite evento `end` de sucesso. O BMP, os chunks, CRC e protocolo permanecem
+inalterados. Esta redução de alocações não estabelece uma cobertura host da
+thread LVGL real nem garantia sobre scanout. `test_serial_screen_dump` usa
+oracle independente orientado pela spec e verifica `biHeight > 0` e pixels
+sentinela nas primeiras/últimas linhas com altura ímpar e stride-fonte padded,
+além de rejeitar stride/fonte insuficientes;
+`test_display_lock_contract.py` fixa a pré-validação do primeiro chunk, a checagem
+de cancelamento antes do `start` e os retornos sem frame `start` nesses ramos.
 
 Os quatro alvos `test_serial_*` + `test_fs_write_*` do `tests/host/keymap/Makefile` cobrem a
 camada host-testavel: `screen_bmp_size` tem paridade com

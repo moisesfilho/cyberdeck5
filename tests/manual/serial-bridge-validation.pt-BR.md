@@ -126,6 +126,32 @@ Atalhos/gestos exigem teclado ou toque físico; repita abrir/fechar/reabrir e
 desconectar/reconectar Serial-JTAG para confirmar estado limpo e ausência de
 callbacks tardios.
 
+### 4.3. Armadilhas de validação via ponte (29/out/2026)
+
+Registradas em validação real; valem para qualquer cenário executado pela ponte.
+
+- **Tela apagada engole `ui.type`.** Com a proteção de tela ativa,
+  `on_keyboard_event` chama `screen_off_turn_on()` e **retorna**: o texto e o
+  Enter injetados são consumidos apenas para religar a tela e o comando não
+  executa. Sempre religue antes (injeção vazia, ex. `ui.type ""`) e confirme com
+  `term.dump` que o comando realmente rodou; `ok:true` do `ui.type` não prova
+  execução.
+- **`ui.type` com o player aberto dispara playback.** `ui.type` sempre envia um
+  Enter no fim; no app `music` um Enter vazio é play/pause. Não injete Enter com
+  a surface do player aberta se o playback não estiver autorizado. Para dumps
+  longos, considere `screen timeout 0` **antes** de abrir o player e restaure
+  (`screen timeout 2`) depois.
+- **`screen.dump` é lento** (~30–40 s para 720×1280). O caminho alternativo é o
+  endpoint HTTP: use o IP de `wifi.status` e
+  `curl -s -o out.bmp http://<ip>/screenshot` (~7 s, HTTP 200, mesmo BMP).
+- **BMP é bottom-up** (`biHeight > 0`). Decodificadores conformes à spec
+  renderizam corretamente; não aplique `-flip` nem trate a imagem como invertida.
+- **Diagnóstico de panic.** O panic sai na UART/USB Serial-JTAG e um segundo
+  leitor concorrente (ex.: `cat /dev/ttyACM0`) rouba bytes do protocolo. Use o
+  wrapper de leitura única ou mantenha o monitor sem rodar CLI ao mesmo tempo.
+  `coredump` está desabilitado (`CONFIG_ESP_COREDUMP_ENABLE_TO_NONE`), então o
+  texto do panic é a única evidência — preserve-o.
+
 ## 5. `term.dump`: snapshot textual do terminal
 
 `term.dump` nao recebe argumentos de comando. A requisicao NDJSON e
@@ -314,6 +340,9 @@ por aceitação de `ui.type`: validar resultado, readback e uptime.
 | D4 | Dump com log pesado intercalado | Chunks continuam sequenciais; validacao de CRC nao falha por causa de logs |  |  |
 | D5 | Dump duas vezes seguidas | Sessao anterior encerrada corretamente; segunda captura consistente (rid novo) |  |  |
 | D6 | `screen.dump` durante rotacao da tela | Sem crash; se falhar, erro tipado + frame `end` quando a sessao ja comecou |  |  |
+
+Custo, alternativa HTTP (`GET /screenshot`) e orientação bottom-up do BMP estão
+em 4.3.
 
 ## 8. Integracao de boot e concorrencia
 
