@@ -394,8 +394,15 @@ def check_serial_transitive_path(serial: str) -> None:
             "text injection must reach cyberdeck_keyboard_input")
     require("cyberdeck_keyboard_input" in enter and "LV_KEY_ENTER" in enter,
             "ui.type must submit through the physical-keyboard Enter seam")
-    require("screen_off_" not in strip_comments(serial),
-            "screen commands must flow through ui.type, not a serial-only side channel")
+    require("screen_off_turn_off" not in strip_comments(serial) and
+            "screen_off_set_timeout_minutes" not in strip_comments(serial),
+            "screen state-changing commands must flow through ui.type, not a serial-only side channel")
+    # A ponte ganhou screen.status/screen.wake (saida explicita da protecao para
+    # validacao remota); ela so pode usar o seam de producao para ler o estado e
+    # religar, nunca reimplementar a protecao. Ver test_serial_screen_guard_contract.py.
+    require("screen_off_is_active()" in strip_comments(serial) and
+            "screen_off_turn_on()" in strip_comments(serial),
+            "screen.status/screen.wake must use the production screen_off adapter")
 
     serial_test = strip_comments(SERIAL_TEST.read_text(encoding="utf-8"))
     for command in ("screen on", "screen off", "screen timeout 0",

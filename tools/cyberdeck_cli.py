@@ -8,6 +8,10 @@ Modelada em tools/tab5_cli.py do tab5-os, com o protocolo desta ponte:
                {"rid": "...", "ok": false, "error": "...", "error_code": "..."}
 - screen.dump: frames {"rid","ok","event":"start|chunk|end", ...} com chunks
   Base64 canonico, size/chunks/crc32 declarados no start e validados aqui.
+- Protecao de tela: com a tela apagada (screen.status -> off=true) os comandos
+  que leem/operam a UI (ui.click, ui.tap, ui.type, ui.clear, ui.dump, term.dump,
+  screen.shot, screen.dump) falham com error_code "screen_off"; use screen.wake
+  antes. ping/sys.info/wifi.*/events.read/fs.write seguem funcionando.
 
 O mesmo stream USB Serial-JTAG carrega ESP_LOG e a resposta da ponte: linhas
 que nao forem JSON ou nao casarem com o `rid` sao descartadas (tolerancia a
@@ -287,6 +291,10 @@ def build_request(args) -> dict:
         return {"type": "screen.shot"}
     if args.command == "screen.dump":
         return {"type": "screen.dump"}
+    if args.command == "screen.status":
+        return {"type": "screen.status"}
+    if args.command == "screen.wake":
+        return {"type": "screen.wake"}
     if args.command == "fs.write":
         validate_fs_write_path(args.path)
         data = read_fs_write_input(args)
@@ -464,6 +472,14 @@ def make_parser() -> argparse.ArgumentParser:
     sub.add_parser("screen.shot", help="metadados do frame atual (BMP)")
     p_dump = sub.add_parser("screen.dump", help="stream BMP em chunks com CRC32 (REQ-006/007)")
     p_dump.add_argument("--out", help="grava o BMP reconstituido no arquivo")
+    sub.add_parser(
+        "screen.status",
+        help="estado da protecao de tela ({\"off\":<bool>}); funciona com a tela apagada",
+    )
+    sub.add_parser(
+        "screen.wake",
+        help="religa a tela se a protecao estiver ativa ({\"woke\":<bool>})",
+    )
     p_fs = sub.add_parser(
         "fs.write",
         help="grava ate 2048 bytes Base64 em /sdcard (atomico; REQ-001..REQ-011)",

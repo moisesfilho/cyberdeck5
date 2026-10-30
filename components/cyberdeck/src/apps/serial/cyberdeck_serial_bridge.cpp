@@ -38,6 +38,7 @@
 #include "lvgl.h"
 #include "platform/display/cyberdeck_ui.h"
 #include "platform/display/cyberdeck_lvgl_dispatch.h"
+#include "platform/display/screen_off.h"
 #include <cstdarg>
 #endif
 
@@ -543,6 +544,8 @@ std::string error_name(dispatch_error err)
         return "invalid_payload";
     case dispatch_error::io_error:
         return "io_error";
+    case dispatch_error::screen_off:
+        return "screen_off";
     }
     return "internal";
 }
@@ -701,7 +704,8 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
 
     static const char *const k_known[] = {"ping",       "ui.echo",     "ui.clear",  "ui.click",  "ui.tap",
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
-                                           "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear"};
+                                           "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear",
+                                           "screen.status", "screen.wake"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -913,6 +917,32 @@ std::string handle_wifi_scan(const std::string &rid, const std::vector<WifiNet> 
     r.ok = true;
     r.result_json = wifi_scan_to_json(nets);
     return build_envelope(r);
+}
+
+/* ================================================================== */
+/* Guarda da protecao de tela (screen.status / screen.wake)            */
+/* ================================================================== */
+
+bool ui_command_needs_screen_on(const std::string &type)
+{
+    /* Lista fechada, documentada no header. Um tipo novo que leia/opere a
+     * arvore ativa precisa entrar aqui explicitamente (fail-closed apenas
+     * para o que esta enumerado; os demais seguem sem estado de tela). */
+    return type == "ui.click" || type == "ui.tap" || type == "ui.type" || type == "ui.clear" ||
+           type == "ui.dump" || type == "term.dump" || type == "screen.shot" ||
+           type == "screen.dump";
+}
+
+std::string screen_status_result(bool off)
+{
+    return off ? "{\"ok\":true,\"off\":true}" : "{\"ok\":true,\"off\":false}";
+}
+
+bool screen_wake_should_turn_on(bool off) { return off; }
+
+std::string screen_wake_result(bool woke)
+{
+    return woke ? "{\"ok\":true,\"woke\":true}" : "{\"ok\":true,\"woke\":false}";
 }
 
 /* ================================================================== */
@@ -1973,6 +2003,46 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
     device_result d;
     json_field f;
 
+    /* Protecao de tela: com a sobreposicao preta ativa a arvore ativa e a da
+     * protecao, nao a da sessao. Recusar aqui, antes de qualquer hit-test,
+     * injecao de teclado ou captura, evita alcancar widgets escondidos e
+     * reportar um estado que o usuario nao ve. Ver o header para a lista
+     * fechada de comandos afetados. */
+    if (ui_command_needs_screen_on(req.type) && screen_off_is_active()) {
+        d.handled = true;
+        d.result = err_result(req, dispatch_error::screen_off, k_screen_off_detail);
+        return d;
+    }
+    /* Os dois comandos de saida da protecao leem s_active e, no wake, trocam a
+     * tela ativa (lv_disp_load_scr) e disparam atividade. Ambos sao estado do
+     * LVGL lido pelo timer de inatividade na task do LVGL, portanto a leitura E
+     * a acao ficam sob o mesmo bsp_display_lock; a resposta e composta depois
+     * do unlock, fora da regiao critica. */
+    if (req.type == "screen.status") {
+        d.handled = true;
+        if (!bsp_display_lock(cyberdeck_lvgl_dispatch::k_display_lock_timeout_ms)) {
+            d.result = err_result(req, dispatch_error::internal, "display busy");
+            return d;
+        }
+        const bool off = screen_off_is_active();
+        bsp_display_unlock();
+        d.result = ok_result(req, screen_status_result(off));
+        return d;
+    }
+    if (req.type == "screen.wake") {
+        d.handled = true;
+        if (!bsp_display_lock(cyberdeck_lvgl_dispatch::k_display_lock_timeout_ms)) {
+            d.result = err_result(req, dispatch_error::internal, "display busy");
+            return d;
+        }
+        const bool was_off = screen_off_is_active();
+        if (screen_wake_should_turn_on(was_off)) {
+            screen_off_turn_on();
+        }
+        bsp_display_unlock();
+        d.result = ok_result(req, screen_wake_result(was_off));
+        return d;
+    }
     if (req.type == "wifi.scan") {
         return exec_wifi_scan(req);
     }

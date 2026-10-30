@@ -24,7 +24,7 @@ def check() -> None:
     clean = model.rule("clean")
     aggregate = model.rule("test")
     assert clean and aggregate
-    assert len(bins) == len(set(bins)) == 83
+    assert len(bins) == len(set(bins)) == 84
     assert "test_music_manager_bin" in bins
     music_controller = "test_music_command_controller"
     music_controller_bin = music_controller + "_bin"

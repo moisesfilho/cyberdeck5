@@ -34,6 +34,41 @@
  *     ESP/FATFS, um destino existente e rejeitado (io_error) porque o VFS nao
  *     garante replace atomico, e rename nunca e seguido por unlink do destino.
  */
+
+/*
+ * Protecao de tela: quando `screen_off_is_active()` e verdadeiro, a UI ativa
+ * do firmware e a sobreposicao preta da protecao (s_off_screen), e nao a
+ * arvore de widgets da sessao. Operar as cegas ali alcanca widgets escondidos
+ * (um `ui.click` alterava o estado de um app com a tela apagada) e os dumps
+ * reportam um estado que nao corresponde ao que o usuario ve.
+ *
+ * Comandos que LEEM ou OPERAM a arvore/framebuffer ativos sao recusados com
+ * `dispatch_error::screen_off` e a mensagem k_screen_off_detail enquanto a
+ * tela estiver apagada:
+ *   - ui.click, ui.tap  : hit-test + LV_EVENT_CLICKED em widget escondido.
+ *   - ui.type, ui.clear : injetam teclado; o guard de wake da UI consumiria a
+ *                         primeira tecla para religar a tela e a injecao se
+ *                         perderia silenciosamente.
+ *   - ui.dump           : a arvore consultada nao e a tela visivel.
+ *   - term.dump         : snapshot textual da tela ativa.
+ *   - screen.shot       : captura o framebuffer (tela preta) e substitui a
+ *                         sessao de dump ativa.
+ *   - screen.dump       : stream do framebuffer (tela preta).
+ *
+ * Continuam disponiveis com a tela apagada (nao tocam a arvore ativa):
+ * ping, sys.info, sys.safe_mode.clear, ui.echo, wifi.status, wifi.scan,
+ * events.read e fs.write, alem dos dois comandos de saida da protecao:
+ *   - screen.status -> {"ok":true,"off":<bool>}  (`screen_off_is_active()`)
+ *   - screen.wake   -> {"ok":true,"woke":<bool>} (`screen_off_turn_on()` so
+ *     quando a tela estava apagada; `woke` indica que houve religamento)
+ * Ambos leem `screen_off_is_active()` e, no wake, executam
+ * `screen_off_turn_on()` (troca de tela ativa) SOB `bsp_display_lock`, porque
+ * esse estado pertence a task do LVGL (o timer de inatividade le s_active ali);
+ * a resposta e composta apos o unlock e, se o lock expirar, a recusa e
+ * `dispatch_error::internal` com "display busy".
+ * Os comandos que MUDAM a protecao (`screen on|off|timeout`) continuam
+ * exclusivos do shell, via `ui.type`; a ponte nao tem side channel para eles.
+ */
 namespace cyberdeck_serial {
 
 /* Limites do protocolo (contrato fixado pelos testes host). */
@@ -46,7 +81,9 @@ constexpr std::size_t k_fs_write_max_bytes = 2048;
 /* Erros tipados de dispatch. `internal` e aditivo (falha de hardware/UI no
  * dispositivo) e nao fazia parte da enum original; `invalid_path`,
  * `invalid_payload` e `io_error` tambem sao aditivos, criados para os
- * erros tipados de fs.write; os testes preservam os codigos originais. */
+ * erros tipados de fs.write; `screen_off` (aditivo, sempre no fim) recusa os
+ * comandos de UI enquanto a protecao de tela esta ativa; os testes preservam
+ * os codigos originais. */
 enum class dispatch_error {
     none = 0,
     too_large,
@@ -59,6 +96,7 @@ enum class dispatch_error {
     invalid_path,
     invalid_payload,
     io_error,
+    screen_off,
 };
 
 struct request {
@@ -129,6 +167,28 @@ bool sys_info_from_json(const std::string &json, SysInfo &out);
 std::string wifi_scan_to_json(const std::vector<WifiNet> &nets);
 std::string handle_sys_info(const std::string &rid);
 std::string handle_wifi_scan(const std::string &rid, const std::vector<WifiNet> &nets);
+
+/* ------------------------------------------------------------------ */
+/* Guarda da protecao de tela (screen.status / screen.wake)            */
+/* ------------------------------------------------------------------ */
+
+/* Mensagem unica de recusa: identifica a causa e o caminho de saida. */
+constexpr char k_screen_off_detail[] = "tela apagada: use screen.wake antes";
+
+/* Tipo de requisicao que exige a tela ativa (lista fechada documentada no
+ * comentario acima do namespace). Puro: o estado da protecao entra por
+ * parametro no chamador (`screen_off_is_active()`). */
+bool ui_command_needs_screen_on(const std::string &type);
+
+/* Resultado de `screen.status` para o estado informado. */
+std::string screen_status_result(bool off);
+
+/* `screen.wake` so religa quando a tela estava apagada; separar a decisao do
+ * efeito mantem o handler testavel sem hardware. */
+bool screen_wake_should_turn_on(bool off);
+
+/* Resultado de `screen.wake`; `woke` = a tela estava apagada e foi religada. */
+std::string screen_wake_result(bool woke);
 
 /* ------------------------------------------------------------------ */
 /* screen.dump: BMP 24-bit em chunks com CRC IEEE (REQ-006/REQ-007).  */
