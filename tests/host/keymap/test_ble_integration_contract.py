@@ -572,11 +572,23 @@ def check_adapter_composition(report: Report) -> None:
                    "Local LVGL port must set allocation errors and safely release partial display/buffers")
 
     music_player = (ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp").read_text(encoding="utf-8")
-    report.require("StaticTask_t *task_control = nullptr;" in music_player and
-                   "heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)" in music_player and
-                   "impl_->task_stack, impl_->task_control" in music_player and
-                   music_player.count("heap_caps_free(impl_->task_control);") >= 2,
-                   "Music static-task TCB must be internal RAM and freed on rollback/worker completion")
+    # The worker TCB belongs to the kernel.  ESP-IDF documents that the caps
+    # passed to xTaskCreateWithCaps apply only to the stack, because "a TCB must
+    # always be in internal RAM"
+    # (~/esp/esp-idf/components/freertos/esp_additions/include/freertos/idf_additions.h:302-303),
+    # and that such a task "must only be deleted using vTaskDeleteWithCaps()"
+    # (same header, :305-306).  The internal-RAM property is therefore kept by
+    # construction, and no manual TCB/stack may exist in the player.
+    music_worker = re.search(
+        r"xTaskCreateWithCaps\(\s*impl::task_entry,\s*\"music_player\",\s*k_worker_stack,[^;]*?"
+        r"MALLOC_CAP_SPIRAM\s*\|\s*MALLOC_CAP_8BIT\s*\)", music_player)
+    report.require(music_worker is not None,
+                   "Music worker must be created with xTaskCreateWithCaps so the kernel owns the internal-RAM TCB")
+    report.require(music_player.count("vTaskDeleteWithCaps(impl_->task)") == 1,
+                   "Music worker must be deleted with vTaskDeleteWithCaps exactly once")
+    report.require(all(token not in music_player for token in
+                       ("task_control", "task_stack", "heap_caps_malloc", "heap_caps_free")),
+                   "Music player must not allocate or free a manual TCB/stack")
 
     # Regression: transport/controller initialization is non-fatal.  The
     # adapter returns errors and cleans up; it must not hide an aborting macro

@@ -21,6 +21,5 @@ int xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout);
 int xQueueReceive(QueueHandle_t queue, void *item, TickType_t timeout);
 void xQueueReset(QueueHandle_t queue);
 unsigned music_test_queue_reset_count();
+unsigned music_test_queue_delete_count();
 void vQueueDelete(QueueHandle_t queue);
-void vQueueDeleteWithCaps(QueueHandle_t queue);
-void vQueueDeleteWithCaps(QueueHandle_t queue);

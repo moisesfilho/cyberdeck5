@@ -21,6 +21,7 @@ class controller final {
     std::string_view text() const { return text_; }
     std::size_t cursor() const { return cursor_; }
     std::string_view feedback() const { return feedback_; }
+    void set_feedback(std::string_view message);
     void insert_text(std::string_view text);
     key_result handle(key input, execute_callback execute, void *execute_context,
                       close_callback close_player, void *close_context);

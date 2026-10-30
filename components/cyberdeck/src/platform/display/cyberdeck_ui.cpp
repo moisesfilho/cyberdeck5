@@ -970,6 +970,9 @@ void process_music_status(lv_timer_t *) {
     if (music.consume_player_request()) {
         s_music_ui_active = false;
         (void)s_music_manager.open();
+        /* Reopening the view must not resurrect feedback from a previous
+         * failed close. */
+        s_music_command_input.set_feedback(std::string_view{});
         if (!s_music_view.create(s_menu, music_view_action, nullptr)) {
             s_music_manager.deactivate();
             return;
@@ -1638,7 +1641,11 @@ void music_command_close_player(void *) {
     if (s_music_manager.close()) {
         s_music_ui_active = false;
         s_music_view.destroy();
+        return;
     }
+    /* The app stop failed, so the runtime kept this foreground and the view
+     * alive; surface the retry hint instead of leaving an empty player. */
+    s_music_command_input.set_feedback("music: close failed; press ESC to retry\n");
 }
 cyberdeck_music_command_input::key music_input_key(uint32_t key) {
     using music_key = cyberdeck_music_command_input::key;

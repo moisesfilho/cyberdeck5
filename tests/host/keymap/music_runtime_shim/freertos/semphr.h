@@ -8,3 +8,4 @@ SemaphoreHandle_t xSemaphoreCreateBinary();
 int xSemaphoreTake(SemaphoreHandle_t semaphore, TickType_t timeout);
 int xSemaphoreGive(SemaphoreHandle_t semaphore);
 void vSemaphoreDelete(SemaphoreHandle_t semaphore);
+unsigned music_test_semaphore_delete_count();

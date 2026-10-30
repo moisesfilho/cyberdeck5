@@ -602,6 +602,25 @@ int main() {
         [&] { return music.execute("music", "status").output.find("queue: scan complete") != std::string::npos; },
         std::chrono::seconds(2)));
     CHECK(music.execute("music", "list").output.find("reopened.mp3") != std::string::npos);
+
+    /* TEST-MUSIC-ESC-04: closing the player and reopening it must start a new
+     * scan and list the tracks again, twice in a row, without a stale queue. */
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        const int stops_before_cycle = player.stops;
+        const int starts_before_cycle = player.starts;
+        CHECK(runtime.stop_application("cyberdeck.music"));
+        CHECK(!music.running() && runtime.active_foreground().empty());
+        CHECK(player.stops == stops_before_cycle + 1 && !player.active);
+        CHECK(runtime.start_application("cyberdeck.music"));
+        CHECK(music.running() && runtime.active_foreground() == "cyberdeck.music");
+        CHECK(player.starts == starts_before_cycle + 1 && player.active);
+        CHECK(music.execute("music", "").status == cyberdeck_apps::result_status::handled);
+        CHECK(music.consume_player_request());
+        CHECK(wait_until(
+            [&] { return music.execute("music", "status").output.find("queue: scan complete") != std::string::npos; },
+            std::chrono::seconds(2)));
+        CHECK(music.execute("music", "list").output.find("reopened.mp3") != std::string::npos);
+    }
     CHECK(runtime.stop_application("cyberdeck.music"));
     CHECK(runtime.stop_all());
     fs::remove_all(scan_root);

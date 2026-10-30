@@ -1,9 +1,9 @@
 # Music player host-test traceability
 
-Scope: REQ-MUSIC-01..05 / AC-MUSIC-01..08 and the approved
-TEST-AUDIO-01..29 scenarios. This matrix records tested behavior versus seams
-that are not currently host-executable; structural/source inspection is not
-treated as runtime proof.
+Scope: REQ-MUSIC-01..05 / AC-MUSIC-01..12 and the approved
+TEST-AUDIO-01..29 plus TEST-MUSIC-ESC-01..07 scenarios. This matrix records
+tested behavior versus seams that are not currently host-executable;
+structural/source inspection is not treated as runtime proof.
 
 ## Requirement traceability
 
@@ -22,6 +22,10 @@ treated as runtime proof.
 | AC-MUSIC-06 | TEST-AUDIO-22 | Audio backend routing, bounds, amp-off failure fail-closed/retry PASS (47 checks); physical codec not covered |
 | AC-MUSIC-07 | TEST-AUDIO-23..25 | Stop/play race, queue-full stop, join/quiesce and poweroff music stage PASS (65 player, 74 app, poweroff target) |
 | AC-MUSIC-08 | TEST-AUDIO-26..29 | Header behavior and terminal-view panel with scrollback PASS; actual UI glue and hardware output pending |
+| AC-MUSIC-09 | TEST-MUSIC-ESC-01..02 | Worker never returns from its entry point and a successful stop owns the single teardown PASS (`test_music_player`, shim counters); host scheduler is not ESP-IDF timing proof |
+| AC-MUSIC-10 | TEST-MUSIC-ESC-04, TEST-MUSIC-ESC-08 | Reopening after ESC scans and plays again: player start/play/stop/start/play and app stop/start/scan cycles PASS (`test_music_player`, `test_music_app`); the reopened player reports `stopped` with an empty current track while the volume survives (`test_music_player`) |
+| AC-MUSIC-11 | TEST-MUSIC-ESC-03 | Timed-out stop keeps worker/queue/semaphore/initialized intact and the retry releases each handle exactly once PASS (`test_music_player`) |
+| AC-MUSIC-12 | TEST-MUSIC-ESC-05..07 | Start failures leave no live worker; the structural teardown contract PASSes (`test_music_player_teardown_contract.py`); the close-failure hint is bounded and cleared on reopen while the manager keeps ownership (`test_music_command_controller`, `test_music_manager`). Device ESC/reopen validated on fw `627f9499`: `stop result=complete`, no reboot, prompt back, reopen scans and plays |
 
 AC row groupings are inferred from the approved TEST-AUDIO scenario grouping:
 the individual AC text was not included in checked-in inputs. Treat these links
@@ -58,6 +62,14 @@ were verified.
 | TEST-AUDIO-23 | Queue-full stop wake, stop/play race, timeout while open/close blocked, retry, worker completion/caller-owned deletion order and restart | `test_music_player.cpp`: barrier-controlled stop holds lifecycle while play races and is rejected; completion precedes capability-aware caller deletion of the worker; host scheduler does not prove ESP-IDF timing |
 | TEST-AUDIO-24 | App poweroff quiesce delegation and bounded timeout argument | `test_music_app.cpp` covers delegation using injected player; active scanner/playback poweroff integration is not covered |
 | TEST-AUDIO-25 | App start/stop lifecycle and cancellation of in-flight directory scan | PASS in `test_music_app.cpp`: blocked open, quiesce cancellation, no queue publication, lease released; stale completion after restart remains untested |
+| TEST-MUSIC-ESC-01 | The playback worker never returns from its entry point | `music_runtime_shim` records `entry_returned_without_delete` when an entry returns without `vTaskDelete*`, mirroring the IDF `panic_abort`; `test_music_player.cpp` asserts the counter stays 0 across every lifecycle |
+| TEST-MUSIC-ESC-02 | Single owner of a successful teardown | `test_music_player.cpp` asserts park once, `vTaskDeleteWithCaps` once, caps `SPIRAM|8BIT`, `stack_bytes=8192`, queue/semaphore deleted once and the recorded order `park → semaphore_take → task_delete_with_caps → queue_delete → semaphore_delete` |
+| TEST-MUSIC-ESC-03 | Timed-out stop keeps every handle and the retry releases once | `test_music_player.cpp`: `stop(10)`/`stop(25)` return false with park/queue/semaphore/initialized untouched, then `stop(2000)` releases each handle once with no invalid or double delete; a repeated `stop(0)` after the successful teardown is a no-op and never frees a released handle again |
+| TEST-MUSIC-ESC-04 | Close/reopen cycles keep scanning and playing | `test_music_player.cpp` start→play→stop→start→play; `test_music_app.cpp` stop→start→scan→list twice in a row |
+| TEST-MUSIC-ESC-05 | Failing start leaves no live task, semaphore or queue | `test_music_player.cpp` covers queue, semaphore and task-with-caps failures; no park/delete counter moves and no handle survives |
+| TEST-MUSIC-ESC-06 | Structural teardown contract | `test_music_player_teardown_contract.py`: `xTaskCreateWithCaps(... k_worker_stack ... SPIRAM|8BIT)`, one `vTaskDeleteWithCaps(impl_->task)` in `stop()`, no plain `vTaskDelete(`, park after `xSemaphoreGive(finished)`, `k_worker_stack == 8192`, ordered releases and the UI close-failure/reopen wiring. Structural only |
+| TEST-MUSIC-ESC-07 | Close-failure feedback is bounded, cleared and non-destructive | `test_music_command_controller.cpp` bounds and clears `set_feedback`; `test_music_manager.cpp` keeps `active()` after a failed close. The UI path is covered structurally, not by a host LVGL run |
+| TEST-MUSIC-ESC-08 | Reopening the player never inherits the closed session snapshot | `test_music_player.cpp`: a fresh session reports `stopped`; after a real gated playback plus `set_volume(31)`, `stop()`/`start()` report `stopped` with empty title/artist/path, `size_bytes==0`, `position_ms==0` and `volume==31`; a failed reopen also reports `stopped` (the reset precedes every allocation that can bail out). Device reopen validated on fw `627f9499` |
 | TEST-AUDIO-26 | Header indicator hidden idle, visible active, then hidden | Real `cyberdeck_header_view` + LVGL host shim in `test_display_views.cpp` PASS |
 | TEST-AUDIO-27 | Header music button dispatch invokes registered action once per dispatch | Real view callback path with sentinel context PASS; UI callback destination not exercised |
 | TEST-AUDIO-28 | App status panel content and global header action path, including placement after scrollback | App status and header action behavior PASS; `test_display_views.cpp` sends preceding transcript plus panel through real terminal view, scrolls to history and back, and confirms panel return line visible at bottom. Actual `cyberdeck_ui.cpp` callback/timer composition remains unexecuted (not host-linkable) |

@@ -81,5 +81,26 @@ int main() {
     expect(input.handle(key::escape, execute, &app, close_player, &app) == key_result::closed_player && app.closes == 1,
            "second escape closes player");
     expect(app.executions == 1, "escape never dispatches player command");
+
+    /* TEST-MUSIC-ESC-07: the close-failure hint is bounded, replaces the
+     * previous feedback and never survives reopening the command line. */
+    input.set_feedback("music: close failed; press ESC to retry\n");
+    expect(input.feedback() == "music: close failed; press ESC to retry\n",
+           "close failure feedback is published");
+    input.set_feedback(std::string(4 * controller::max_bytes, 'x'));
+    expect(input.feedback().size() == controller::max_bytes, "feedback is bounded by the command buffer limit");
+    input.set_feedback(std::string(controller::max_bytes - 1, 'a') + "\xc3\xa7");
+    expect(input.feedback().size() == controller::max_bytes - 1 &&
+               input.feedback().back() == 'a',
+           "bounded feedback never splits a UTF-8 codepoint");
+    input.open();
+    expect(input.feedback().empty(), "reopening the command line clears the feedback");
+    input.set_feedback("music: close failed; press ESC to retry\n");
+    expect(input.handle(key::escape, execute, &app, close_player, &app) == key_result::closed_line &&
+               input.feedback().find("close failed") != std::string_view::npos,
+           "closing the command line keeps the close-failure hint");
+    expect(input.handle(key::escape, execute, &app, close_player, &app) == key_result::closed_player &&
+               input.feedback().find("close failed") != std::string_view::npos,
+           "a failed close keeps the hint until the view reopens");
     std::cout << "test_music_command_controller: " << checks << " checks passed\n";
 }

@@ -173,7 +173,8 @@ executados:
 reportado após Esc ainda não tem causa demonstrada. Os logs `music: stop
 stage=cancel_scan`, `scan_join_complete`, `player_stop` (ou `stop failed
 stage=...`) são evidência diagnóstica para uma rodada autorizada futura; host
-tests não provam ausência de reboot no Tab5.
+tests não provam ausência de reboot no Tab5. A regressão de ESC tem cenário
+próprio e autorização explícita na seção 4.
 
 ### Fora do escopo desta rodada: autorização explícita obrigatória
 
@@ -191,3 +192,68 @@ a rodada atual e não autoriza nenhum desses passos.
 
 Não marcar aceite físico completo sem registrar confirmação humana de speaker e
 jack. Host tests/build não substituem este roteiro.
+
+## 4. ESC e reabertura do player — regressão do reboot `should not return`
+
+Cenário autorizado apenas com confirmação explícita. Ele cobre a correção do
+reboot `FreeRTOS Task "music_player" should not return, Aborting now!` após Esc
+(fw `26499c37`, corrigido e validado em fw `627f9499`): o worker agora parkeia depois de sinalizar completion e o
+`stop()` é o dono único do teardown (`vTaskDeleteWithCaps`).
+
+**Pré-requisito:** firmware construído a partir deste snapshot, seção 1 concluída
+(`safe_mode=false`, `interrupted_boots=0`, uptime crescente).
+
+**Critérios objetivos por cenário** (todos obrigatórios):
+
+- `sys.info` depois do Esc com uptime **maior** que o anterior e sem reset de
+  contadores; nenhum reboot, panic ou WDT;
+- log serial sem `should not return`, `panic_abort`, `Guru Meditation` ou
+  `Backtrace`;
+- log serial mostra `music: stop stage=cancel_scan`, `scan_join_complete`
+  (quando havia scan), `player_stop` e `stop result=complete`;
+- `term.dump` mostra o prompt do shell (`/$ `) depois do Esc;
+- a ponte Serial-JTAG continua respondendo (`ping`) sem reconectar a porta.
+
+### 4.1. ESC com o player parado
+
+1. `ui.type "music"`, aguarde `queue: scan complete` e `music status` (estado
+   `stopped`).
+2. Registre `sys.info`.
+3. Envie Escape (`ui.type ""` não envia ESC; use o teclado físico ou
+   `ui.type` com o comando de shell equivalente ao Escape usado na rodada).
+4. Confirme `term.dump` com o prompt de volta, `music status` recusado (app não
+   está em foreground) e `sys.info` sem reboot.
+
+### 4.2. ESC tocando
+
+1. Reabra `music`, aguarde o scan e envie `music play 1`.
+2. Confirme `music status` com estado `playing` e progresso crescendo.
+3. Envie Escape durante a reprodução.
+4. Critérios da seção + áudio silencioso depois do Esc (sem necessidade de
+   medir qualidade) e `sys.info` com uptime monotônico.
+
+### 4.3. ESC com scan em voo
+
+1. Feche e reabra o player, disparando um novo scan.
+2. Envie Escape imediatamente após `ui.type "music"` (antes de
+   `queue: scan complete`).
+3. Confirme `stop stage=cancel_scan`, ausência de publicação de fila parcial
+   (`music status` recusado após o fechamento), prompt de volta e uptime
+   monotônico.
+
+### 4.4. Ciclo ESC → reabrir → tocar, 5 vezes
+
+Repita cinco vezes: abrir `music`, aguardar o scan, `music play 1`, confirmar
+`playing`, Escape, confirmar prompt, `sys.info`. Critérios:
+
+- uptime estritamente crescente em todas as leituras, sem reset de contadores;
+- nenhuma linha `should not return`/`panic_abort`/`Guru` no log acumulado;
+- cada reabertura executa novo scan (`queue: scan complete` com a lista atual) e
+  o play volta a funcionar;
+- heap livre em `sys.info` sem queda monotônica entre ciclos (variação pequena e
+  sem tendência de esgotamento);
+- ao final, `ping` e `ui.dump` respondem; encerrar com `music` fechado.
+
+**Falha do cenário:** qualquer reboot, ausência de resposta NDJSON, prompt que
+não volta, `close failed` persistente ou ausência de novo scan após reabrir.
+Registre a captura e não repita automaticamente.

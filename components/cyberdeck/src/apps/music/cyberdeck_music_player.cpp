@@ -105,8 +105,6 @@ struct player::impl {
     std::atomic<std::uint8_t> volume{20};
     bool initialized = false;
     std::atomic<bool> worker_exited{false};
-    StaticTask_t *task_control = nullptr;
-    StackType_t *task_stack = nullptr;
 
     static void task_entry(void *arg) {
         auto *self = static_cast<impl *>(arg);
@@ -378,6 +376,13 @@ struct player::impl {
         cyberdeck_audio_output::stop();
         worker_exited.store(true, std::memory_order_release);
         xSemaphoreGive(finished);
+        /* The worker must never return: this build enables
+         * CONFIG_FREERTOS_TASK_FUNCTION_WRAPPER, so leaving the entry point
+         * calls panic_abort and reboots the device.  Park the task after the
+         * completion signal and let stop() delete it through the handle. */
+        vTaskSuspend(nullptr);
+        for (;;)
+            vTaskDelay(portMAX_DELAY);
     }
 };
 
@@ -391,6 +396,14 @@ bool player::start(cyberdeck_sd_io::coordinator *storage, cyberdeck_apps::grant 
         return true;
     impl_->storage = storage;
     impl_->access = access;
+    /* A new session must not inherit the previous snapshot: after stop() the
+     * state could still read playing/position/current from the closed session,
+     * which made a reopened player look like it was playing.  The volume is a
+     * separate field and intentionally survives. */
+    {
+        std::lock_guard<std::mutex> state_lock(impl_->state_mutex);
+        impl_->state = snapshot{};
+    }
     impl_->queue = xQueueCreateWithCaps(k_queue_depth, sizeof(request), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (impl_->queue == nullptr) {
         ESP_LOGE(k_tag, "player start failed stage=queue depth=%u item_bytes=%u",
@@ -407,27 +420,13 @@ bool player::start(cyberdeck_sd_io::coordinator *storage, cyberdeck_apps::grant 
     }
     impl_->shutting_down = false;
     impl_->worker_exited.store(false, std::memory_order_release);
-    impl_->task_control = static_cast<StaticTask_t *>(heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    if (impl_->task_control == nullptr) {
-        ESP_LOGE(k_tag, "player start failed stage=worker_tcb");
-        vQueueDeleteWithCaps(impl_->queue);
-        vSemaphoreDelete(impl_->finished);
-        impl_->queue = nullptr;
-        impl_->finished = nullptr;
-        return false;
-    }
-    impl_->task_stack = static_cast<StackType_t *>(heap_caps_malloc(k_worker_stack * sizeof(StackType_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (impl_->task_stack != nullptr) {
-        impl_->task = xTaskCreateStatic(impl::task_entry, "music_player", k_worker_stack, impl_, 5,
-                                        impl_->task_stack, impl_->task_control);
-    }
-    if (impl_->task == nullptr) {
-        ESP_LOGE(k_tag, "player start failed stage=worker_task stack_bytes=%lu stack=%u",
-                 static_cast<unsigned long>(k_worker_stack), impl_->task_stack != nullptr);
-        heap_caps_free(impl_->task_stack);
-        impl_->task_stack = nullptr;
-        heap_caps_free(impl_->task_control);
-        impl_->task_control = nullptr;
+    impl_->task = nullptr;
+    const BaseType_t worker_created =
+        xTaskCreateWithCaps(impl::task_entry, "music_player", k_worker_stack, impl_, 5, &impl_->task,
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (worker_created != pdPASS || impl_->task == nullptr) {
+        ESP_LOGE(k_tag, "player start failed stage=worker_task stack_bytes=%lu",
+                 static_cast<unsigned long>(k_worker_stack));
         vQueueDeleteWithCaps(impl_->queue);
         vSemaphoreDelete(impl_->finished);
         impl_->queue = nullptr;
@@ -461,15 +460,11 @@ bool player::stop(std::uint32_t timeout_ms) {
         return false;
     if (!impl_->worker_exited.load(std::memory_order_acquire) || impl_->task == nullptr)
         return false;
-    vTaskDelete(impl_->task);
+    vTaskDeleteWithCaps(impl_->task);
     impl_->task = nullptr;
-    heap_caps_free(impl_->task_stack);
-    impl_->task_stack = nullptr;
-    heap_caps_free(impl_->task_control);
-    impl_->task_control = nullptr;
     vQueueDeleteWithCaps(impl_->queue);
-    vSemaphoreDelete(impl_->finished);
     impl_->queue = nullptr;
+    vSemaphoreDelete(impl_->finished);
     impl_->finished = nullptr;
     impl_->initialized = false;
     return true;

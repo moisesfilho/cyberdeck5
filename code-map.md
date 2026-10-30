@@ -182,6 +182,10 @@ scroll/slider/textarea usadas pelo TU; o TU permanece no scope guard sem allowli
 O controller puro `cyberdeck_music_command_input.{h,cpp}` é compartilhado pela
 UI (`cyberdeck_ui.cpp`) e pelo host (`test_music_command_controller`): mantém
 campo aberto/feedback, edição UTF-8 bounded a 96 bytes, cursor, Backspace/Delete,
+`set_feedback(std::string_view)` bounded (truncamento sem dividir codepoint) usado
+quando `music_command_close_player` falha ao fechar o app — a view e o foreground
+permanecem ativos, o timer `process_music_status` concatena `feedback()` e a
+reabertura do view limpa a mensagem; `open()` também limpa o feedback,
 Enter por callback exclusivo do app e prioridade de Escape. O alvo focal cobre
 dispatch único/erro/escape/limites; `test_music_app` integra o mesmo seam com
 `application::player_command("status")` real. `player_traceability.md` rastreia
@@ -1039,11 +1043,10 @@ destrói recursos potencialmente usados.
       ativos e bloqueia a troca, permitindo retry. `tests/host/keymap/player_traceability.md`
      define os cenários de aceite foreground, falha, limites, segurança e regressão.
    - `cyberdeck_music_player.{h,cpp}` é o serviço FreeRTOS de playback em
-    background: fila bounded de requisições e stack de worker em PSRAM byte-addressable
-     (`xQueueCreateWithCaps`/`xTaskCreateStatic`); o TCB estático é alocado separadamente
-     em RAM interna, exigência de `portVALID_TCB_MEM` no ESP-IDF. A stack é alocada
-   explicitamente em PSRAM; o chamador aguarda completion, chama `vTaskDelete` e
-   libera a stack após a saída do worker. Mantém READ lease longa até fechar o FD,
+    background: fila bounded de requisições (`xQueueCreateWithCaps`) e worker
+    criado por `xTaskCreateWithCaps` com `k_worker_stack` de 8192 bytes e
+    `MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`; TCB e pilha pertencem ao kernel e o
+    player não guarda buffers próprios de task. Mantém READ lease longa até fechar o FD,
   stream de blocos bounded, decode minimp3, estados/progresso, pausa/seek e
   geração monotônica por comando para descartar plays obsoletos e impedir que
   um dequeue posterior limpe cancelamento de stop/halt;
@@ -1055,9 +1058,27 @@ destrói recursos potencialmente usados.
    a regra de reiniciar a faixa após 3 s; EOF atualiza seleção publicada junto
    ao índice interno antes de enfileirar a próxima faixa, sob o mesmo lock e
    guard de geração.
-   worker publica completion como último acesso aos handles e se autoexclui; stop
-  descarta requests pendentes, enfileira wake sentinel e aguarda completion mesmo
-   quando a fila estava cheia. Tags ID3 maiores que o limite de extração de
+    worker publica completion (`worker_exited` + give do semáforo `finished`) como
+    último acesso aos handles e então parkeia em `vTaskSuspend(nullptr)`, seguido de
+    um laço `vTaskDelay(portMAX_DELAY)` inalcançável como fail-safe: retornar da entry
+    dispara `panic_abort` porque o build usa `CONFIG_FREERTOS_TASK_FUNCTION_WRAPPER`.
+    `stop()` é o dono único do teardown: aguarda completion com timeout (timeout
+    retorna false sem liberar nada, preservando fila/semáforo/task/initialized, e a
+    repetição é idempotente porque a task já sinalizou e está parkeada), chama
+    `vTaskDeleteWithCaps`, zera `task` e só então libera fila (`vQueueDeleteWithCaps`)
+    e semáforo. Falha de `start()` na criação do worker loga `stage=worker_task` e
+    libera fila/semáforo; `stop` descarta requests pendentes, enfileira wake sentinel
+    e aguarda completion mesmo quando a fila estava cheia.
+    `test_music_player_teardown_contract.py` fixa esse contrato (criação com caps,
+    exatamente um `vTaskDeleteWithCaps(impl_->task)`, nenhum `vTaskDelete(`, park
+    depois do give, `k_worker_stack == 8192` e ordem de liberação).
+    `start()` também reinicia o snapshot sob `state_mutex` (ordem
+    `lifecycle_mutex` → `state_mutex`, como em `stop()`): `state`, `current`,
+    `position_ms`, `duration_ms` e `failure_stage` voltam ao default de
+    `snapshot{}`, enquanto `impl_->volume` (campo separado) persiste. Sem esse
+    reset a sessão reaberta herdava `playing`/faixa/posição da sessão anterior e a
+    UI mostrava reprodução sem áudio (fw `33e9f0aa`). `status()` continua copiando
+    `impl_->state` sem fallback por `initialized`.
    metadados continuam sendo puladas sem alocar seu conteúdo integral; tamanhos
    syncsafe são validados contra o tamanho do arquivo. A extração de metadados
    fica em `cyberdeck_music_metadata.{h,cpp}` e é chamada tanto pelo player ao

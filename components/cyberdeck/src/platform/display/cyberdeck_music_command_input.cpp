@@ -5,6 +5,15 @@
 namespace cyberdeck_music_command_input {
 namespace {
 bool continuation(unsigned char byte) { return (byte & 0xC0U) == 0x80U; }
+
+/* Bounded copy that never splits a UTF-8 codepoint, mirroring the command
+ * buffer limit so the rendered feedback stays a single bounded line. */
+void assign_bounded(std::string &target, std::string_view message) {
+    std::size_t length = std::min(message.size(), controller::max_bytes);
+    while (length > 0 && length < message.size() && continuation(static_cast<unsigned char>(message[length])))
+        --length;
+    target.assign(message.data(), length);
+}
 }
 
 void controller::open() {
@@ -13,6 +22,8 @@ void controller::open() {
     feedback_.clear();
     open_ = true;
 }
+
+void controller::set_feedback(std::string_view message) { assign_bounded(feedback_, message); }
 
 void controller::insert_text(std::string_view input) {
     if (!open_) return;

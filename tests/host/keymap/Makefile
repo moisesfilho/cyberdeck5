@@ -2712,6 +2712,10 @@ test_music_decoder_stack_contract:
 test_music_scan_stack_contract: test_music_scan_stack_contract.py $(MUSIC_METADATA_SRC) $(MUSIC_METADATA_HDR) $(MUSIC_APP_MAIN_SRC) $(MUSIC_MODEL_HDR)
 	@$(PYTHON) test_music_scan_stack_contract.py
 
+.PHONY: test_music_player_teardown_contract
+test_music_player_teardown_contract: test_music_player_teardown_contract.py ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_player.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
+	@$(PYTHON) test_music_player_teardown_contract.py
+
 .PHONY: test_music_decoder_scratch
 test_music_decoder_scratch: test_music_decoder_scratch_bin
 	@./test_music_decoder_scratch_bin
@@ -2731,6 +2735,7 @@ test: test-build
 	@$(MAKE) --no-print-directory test_esp_hosted_cpu_staging
 	@$(MAKE) --no-print-directory test_music_decoder_stack_contract
 	@$(MAKE) --no-print-directory test_music_scan_stack_contract
+	@$(MAKE) --no-print-directory test_music_player_teardown_contract
 	@$(MAKE) --no-print-directory test_music_decoder_scratch
 	@$(MAKE) --no-print-directory test_music_model
 	@$(MAKE) --no-print-directory test_music_audio_output

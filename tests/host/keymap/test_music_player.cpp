@@ -5,6 +5,7 @@
 #include "platform/audio/cyberdeck_audio_output.h"
 #include "freertos/queue.h"
 #include "freertos/idf_additions.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 
@@ -17,6 +18,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <iterator>
 #include <mutex>
@@ -166,6 +168,20 @@ bool wait_until(Predicate predicate, std::chrono::milliseconds timeout) {
     return predicate();
 }
 
+/* TEST-MUSIC-ESC-02: the shim records the teardown order so a test can prove
+ * that no handle is released before the completion take. */
+bool trailing_events_are(std::initializer_list<const char *> expected) {
+    const auto events = music_test_teardown_events();
+    if (events.size() < expected.size()) return false;
+    const std::size_t offset = events.size() - expected.size();
+    std::size_t index = 0;
+    for (const char *name : expected) {
+        if (events[offset + index] != name) return false;
+        ++index;
+    }
+    return true;
+}
+
 }
 
 int cyberdeck_local_shell_open_readonly(const char *root, const char *cwd, std::string_view path,
@@ -278,6 +294,47 @@ int main() {
 
     cyberdeck_sd_io::coordinator storage;
     cyberdeck_music::player subject;
+    /* TEST-MUSIC-ESC-02/04: a successful stop parks the worker once and
+     * releases task, queue and semaphore exactly once, in that order, after the
+     * completion take; the following start must be able to play again. */
+    const auto stop_releases_once = [&]() -> bool {
+        const unsigned parks = music_test_park_count();
+        const unsigned deletes = music_test_delete_with_caps_count;
+        const unsigned queue_deletes = music_test_queue_delete_count();
+        const unsigned semaphore_deletes = music_test_semaphore_delete_count();
+        music_test_clear_teardown_events();
+        if (!subject.stop(2000)) return false;
+        return music_test_park_count() == parks + 1 &&
+               music_test_delete_with_caps_count == deletes + 1 &&
+               music_test_queue_delete_count() == queue_deletes + 1 &&
+               music_test_semaphore_delete_count() == semaphore_deletes + 1 &&
+               music_test_invalid_task_delete_count == 0 &&
+               music_test_entry_returned_without_delete_count() == 0 &&
+               trailing_events_are({"park", "semaphore_take", "task_delete_with_caps", "queue_delete",
+                                    "semaphore_delete"});
+    };
+    /* Host playback is unpaced: a whole track can finish between two polls.
+     * Hold the worker inside its first PCM write so `playing` is observable
+     * instead of relying on a stale snapshot from the previous session. */
+    const auto begin_gated_playback = [&](std::string_view path) -> bool {
+        {
+            std::lock_guard<std::mutex> lock(audio_mutex);
+            gate_audio_write = true;
+            audio_write_entered = false;
+            release_audio_write = false;
+        }
+        if (!subject.play(path)) return false;
+        std::unique_lock<std::mutex> lock(audio_mutex);
+        return audio_changed.wait_for(lock, std::chrono::seconds(2), [] { return audio_write_entered; });
+    };
+    const auto release_playback = [&]() {
+        {
+            std::lock_guard<std::mutex> lock(audio_mutex);
+            gate_audio_write = false;
+            release_audio_write = true;
+        }
+        audio_changed.notify_all();
+    };
     CHECK(!subject.running());
     CHECK(!subject.play("/outside.mp3"));
     CHECK(!subject.pause());
@@ -290,17 +347,39 @@ int main() {
     CHECK(!subject.start(&storage, access));
     music_test_fail_binary_semaphore_create = false;
     CHECK(music_test_delete_without_completion_count() == 0);
-    music_test_fail_internal_allocation = true;
+    /* TEST-MUSIC-ESC-05: a failing worker creation must not leave the queue or
+     * the completion semaphore alive, and must never park or delete a task. */
+    const unsigned parks_before_task_failure = music_test_park_count();
+    const unsigned deletes_before_task_failure = music_test_delete_with_caps_count;
+    const unsigned queue_deletes_before_task_failure = music_test_queue_delete_count();
+    const unsigned semaphore_deletes_before_task_failure = music_test_semaphore_delete_count();
+    music_test_fail_task_create_with_caps = true;
     CHECK(!subject.start(&storage, access));
-    CHECK(music_test_last_heap_caps == static_cast<unsigned>(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    music_test_fail_internal_allocation = false;
-    music_test_fail_static_task_create = true;
-    CHECK(!subject.start(&storage, access));
-    music_test_fail_static_task_create = false;
+    CHECK(music_test_last_task_caps == static_cast<unsigned>(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    CHECK(music_test_last_task_stack_bytes == 8192);
+    music_test_fail_task_create_with_caps = false;
+    CHECK(!subject.running());
+    CHECK(music_test_park_count() == parks_before_task_failure);
+    CHECK(music_test_delete_with_caps_count == deletes_before_task_failure);
+    CHECK(music_test_queue_delete_count() == queue_deletes_before_task_failure + 1);
+    CHECK(music_test_semaphore_delete_count() == semaphore_deletes_before_task_failure + 1);
+    CHECK(music_test_invalid_task_delete_count == 0);
     CHECK(music_test_delete_without_completion_count() == 0);
     CHECK(subject.start(&storage, access));
+    CHECK(music_test_last_task_caps == static_cast<unsigned>(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    CHECK(music_test_last_task_stack_bytes == 8192);
     CHECK(music_test_last_queue_caps == static_cast<unsigned>(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     CHECK(subject.running());
+    /* TEST-MUSIC-ESC-08: a session that never played anything reports stopped
+     * with an empty current track and no position. */
+    {
+        cyberdeck_music::snapshot pristine{};
+        CHECK(subject.status(pristine));
+        CHECK(pristine.state == cyberdeck_music::playback_state::stopped);
+        CHECK(std::string_view(pristine.current.title.data()).empty());
+        CHECK(std::string_view(pristine.current.path.data()).empty());
+        CHECK(pristine.position_ms == 0);
+    }
     CHECK(subject.start(&storage, access));
     CHECK(subject.running());
     CHECK(!subject.play("/folder/../stream.mp3"));
@@ -326,9 +405,19 @@ int main() {
     for (int i = 0; i < 8; ++i) CHECK(subject.play("/stream.mp3"));
     CHECK(!subject.play("/stream.mp3"));
 
+    /* TEST-MUSIC-ESC-03: a timed-out stop keeps the worker, queue, semaphore
+     * and initialized state untouched so the same call can be retried. */
+    const unsigned parks_before_timeouts = music_test_park_count();
+    const unsigned deletes_before_timeouts = music_test_delete_with_caps_count;
+    const unsigned queue_deletes_before_timeouts = music_test_queue_delete_count();
+    const unsigned semaphore_deletes_before_timeouts = music_test_semaphore_delete_count();
     CHECK(!subject.stop(10));
     CHECK(subject.running());
     CHECK(storage.active_leases() == 1);
+    CHECK(music_test_park_count() == parks_before_timeouts);
+    CHECK(music_test_delete_with_caps_count == deletes_before_timeouts);
+    CHECK(music_test_queue_delete_count() == queue_deletes_before_timeouts);
+    CHECK(music_test_semaphore_delete_count() == semaphore_deletes_before_timeouts);
     {
         std::lock_guard<std::mutex> lock(open_mutex);
         release_first_open = true;
@@ -348,14 +437,32 @@ int main() {
     stopper.join();
     CHECK(!stop_result.load(std::memory_order_acquire));
     CHECK(storage.active_leases() == 1);
+    CHECK(subject.running());
+    CHECK(music_test_park_count() == parks_before_timeouts);
+    CHECK(music_test_delete_with_caps_count == deletes_before_timeouts);
+    CHECK(music_test_queue_delete_count() == queue_deletes_before_timeouts);
+    CHECK(music_test_semaphore_delete_count() == semaphore_deletes_before_timeouts);
     {
         std::lock_guard<std::mutex> lock(open_mutex);
         release_fd_close = true;
     }
     open_changed.notify_all();
+    /* The retry waits for the parked worker and releases each handle exactly
+     * once, after the completion take.  The park itself may already have
+     * happened before this call, so the check is on the trailing order. */
+    CHECK(wait_until([&] { return music_test_park_count() == parks_before_timeouts + 1; },
+                     std::chrono::seconds(2)));
+    music_test_clear_teardown_events();
     CHECK(subject.stop(2000));
     CHECK(!subject.running());
     CHECK(storage.active_leases() == 0);
+    CHECK(music_test_park_count() == parks_before_timeouts + 1);
+    CHECK(music_test_delete_with_caps_count == deletes_before_timeouts + 1);
+    CHECK(music_test_queue_delete_count() == queue_deletes_before_timeouts + 1);
+    CHECK(music_test_semaphore_delete_count() == semaphore_deletes_before_timeouts + 1);
+    CHECK(music_test_invalid_task_delete_count == 0);
+    CHECK(music_test_entry_returned_without_delete_count() == 0);
+    CHECK(trailing_events_are({"semaphore_take", "task_delete_with_caps", "queue_delete", "semaphore_delete"}));
     CHECK(wait_until([] { return music_test_delete_without_completion_count() == 0; }, std::chrono::seconds(1)));
 
     CHECK(subject.start(&storage, access));
@@ -444,11 +551,24 @@ int main() {
     const std::string after((std::istreambuf_iterator<char>(persisted)), std::istreambuf_iterator<char>());
     CHECK(after.size() == 24U * 417U);
     CHECK(after[0] == static_cast<char>(0xFF) && static_cast<unsigned char>(after[1]) == 0xFB);
-    CHECK(subject.stop(2000));
+    CHECK(stop_releases_once());
     CHECK(!subject.running());
     CHECK(storage.active_leases() == 0);
     CHECK(wait_until([] { return music_test_delete_without_completion_count() == 0; }, std::chrono::seconds(1)));
     CHECK(music_test_delete_without_completion_count() == 0);
+
+    /* TEST-MUSIC-ESC-03: once the teardown succeeded, a repeated stop is a
+     * no-op, so the released task/queue/semaphore can never be freed twice. */
+    {
+        const unsigned deletes_after_teardown = music_test_delete_with_caps_count;
+        const unsigned queue_deletes_after_teardown = music_test_queue_delete_count();
+        const unsigned semaphore_deletes_after_teardown = music_test_semaphore_delete_count();
+        CHECK(subject.stop(0));
+        CHECK(music_test_delete_with_caps_count == deletes_after_teardown);
+        CHECK(music_test_queue_delete_count() == queue_deletes_after_teardown);
+        CHECK(music_test_semaphore_delete_count() == semaphore_deletes_after_teardown);
+        CHECK(music_test_invalid_task_delete_count == 0);
+    }
 
     CHECK(subject.start(&storage, access));
     /* The current-track title is also rendered by the UI, so the basename
@@ -492,32 +612,27 @@ int main() {
      * the basename fallback never fills `artist`. A missing TPE1 frame must
      * leave the artist empty instead of inheriting a stale value. */
     CHECK(write_id3_tagged_mp3(fixture_path, "Tag title", "Tag artist"));
-    CHECK(subject.play("/stream.mp3"));
-    CHECK(wait_until([&] {
-        cyberdeck_music::snapshot state{};
-        return subject.status(state) && state.state == cyberdeck_music::playback_state::playing &&
-               std::string_view(state.current.title.data()) == "Tag title" &&
-               std::string_view(state.current.artist.data()) == "Tag artist";
-    }, std::chrono::seconds(2)));
+    CHECK(begin_gated_playback("/stream.mp3"));
     cyberdeck_music::snapshot tagged{};
     CHECK(subject.status(tagged));
+    CHECK(tagged.state == cyberdeck_music::playback_state::playing);
+    CHECK(std::string_view(tagged.current.title.data()) == "Tag title");
+    CHECK(std::string_view(tagged.current.artist.data()) == "Tag artist");
     CHECK(std::string_view(tagged.current.path.data()) == "/stream.mp3");
     CHECK(tagged.failure_stage == cyberdeck_music::error_stage::none);
-    CHECK(subject.stop(2000));
+    release_playback();
+    CHECK(stop_releases_once());
     CHECK(subject.start(&storage, access));
 
     CHECK(write_id3_tagged_mp3(fixture_path, "Only title", std::string_view{}));
-    CHECK(subject.play("/stream.mp3"));
-    CHECK(wait_until([&] {
-        cyberdeck_music::snapshot state{};
-        return subject.status(state) && state.state == cyberdeck_music::playback_state::playing &&
-               std::string_view(state.current.title.data()) == "Only title";
-    }, std::chrono::seconds(2)));
+    CHECK(begin_gated_playback("/stream.mp3"));
     cyberdeck_music::snapshot title_only_tag{};
     CHECK(subject.status(title_only_tag));
+    CHECK(title_only_tag.state == cyberdeck_music::playback_state::playing);
     CHECK(std::string_view(title_only_tag.current.title.data()) == "Only title");
     CHECK(std::string_view(title_only_tag.current.artist.data()).empty());
-    CHECK(subject.stop(2000));
+    release_playback();
+    CHECK(stop_releases_once());
     CHECK(subject.start(&storage, access));
 
     CHECK(write_large_id3_mp3(fixture_path));
@@ -527,24 +642,80 @@ int main() {
         std::lock_guard<std::mutex> lock(audio_mutex);
         audio_write_count = 0;
     }
-    CHECK(subject.stop(2000));
+    CHECK(stop_releases_once());
     CHECK(subject.start(&storage, access));
-    CHECK(subject.play("/stream.mp3"));
-    CHECK(wait_until([&] {
-        cyberdeck_music::snapshot state{};
-        return subject.status(state) && state.state == cyberdeck_music::playback_state::playing &&
-               state.failure_stage == cyberdeck_music::error_stage::none;
-    }, std::chrono::seconds(2)));
+    CHECK(begin_gated_playback("/stream.mp3"));
+    cyberdeck_music::snapshot large_tag_playback{};
+    CHECK(subject.status(large_tag_playback));
+    CHECK(large_tag_playback.state == cyberdeck_music::playback_state::playing);
+    CHECK(large_tag_playback.failure_stage == cyberdeck_music::error_stage::none);
+    release_playback();
     CHECK(wait_until([&] {
         std::lock_guard<std::mutex> lock(audio_mutex);
         return audio_write_count > 1;
     }, std::chrono::seconds(2)));
-    cyberdeck_music::snapshot large_tag_playback{};
     CHECK(subject.status(large_tag_playback));
     CHECK(large_tag_playback.failure_stage == cyberdeck_music::error_stage::none);
     CHECK(large_tag_playback.current.size_bytes == static_cast<std::uint32_t>(large_info.st_size));
-    CHECK(subject.stop(2000));
+    CHECK(stop_releases_once());
+    /* TEST-MUSIC-ESC-08: reopening the player after a real playback session
+     * must reset the snapshot; only the configured volume survives. */
+    CHECK(write_id3_tagged_mp3(fixture_path, "Session title", "Session artist"));
+    CHECK(subject.start(&storage, access));
+    CHECK(begin_gated_playback("/stream.mp3"));
+    {
+        cyberdeck_music::snapshot playing{};
+        CHECK(subject.status(playing));
+        CHECK(playing.state == cyberdeck_music::playback_state::playing);
+        CHECK(std::string_view(playing.current.title.data()) == "Session title");
+        CHECK(std::string_view(playing.current.artist.data()) == "Session artist");
+    }
+    release_playback();
+    CHECK(wait_until([&] {
+        cyberdeck_music::snapshot state{};
+        return subject.status(state) && state.position_ms > 0;
+    }, std::chrono::seconds(2)));
+    CHECK(subject.set_volume(31));
+    cyberdeck_music::snapshot before_stop{};
+    CHECK(subject.status(before_stop));
+    CHECK(before_stop.position_ms > 0);
+    CHECK(std::string_view(before_stop.current.title.data()) == "Session title");
+    CHECK(stop_releases_once());
+    CHECK(subject.start(&storage, access));
+    {
+        cyberdeck_music::snapshot reopened{};
+        CHECK(subject.status(reopened));
+        CHECK(reopened.state == cyberdeck_music::playback_state::stopped);
+        CHECK(reopened.failure_stage == cyberdeck_music::error_stage::none);
+        CHECK(std::string_view(reopened.current.title.data()).empty());
+        CHECK(std::string_view(reopened.current.artist.data()).empty());
+        CHECK(std::string_view(reopened.current.path.data()).empty());
+        CHECK(reopened.current.size_bytes == 0);
+        CHECK(reopened.position_ms == 0);
+        CHECK(reopened.volume == 31);
+    }
+    /* TEST-MUSIC-ESC-08: a session that played and then closed must not come
+     * back as playing when the next start fails; the stale snapshot has to be
+     * cleared before any allocation can bail out. */
+    CHECK(begin_gated_playback("/stream.mp3"));
+    release_playback();
+    CHECK(stop_releases_once());
+    music_test_fail_caps_queue_create = true;
+    CHECK(!subject.start(&storage, access));
+    music_test_fail_caps_queue_create = false;
+    {
+        cyberdeck_music::snapshot failed_start{};
+        CHECK(subject.status(failed_start));
+        CHECK(failed_start.state == cyberdeck_music::playback_state::stopped);
+        CHECK(std::string_view(failed_start.current.path.data()).empty());
+        CHECK(failed_start.position_ms == 0);
+        CHECK(failed_start.volume == 31);
+    }
+    CHECK(subject.stop(0));
+    CHECK(!subject.running());
     CHECK(wait_until([] { return music_test_delete_without_completion_count() == 0; }, std::chrono::seconds(1)));
+    CHECK(music_test_entry_returned_without_delete_count() == 0);
+    CHECK(music_test_invalid_task_delete_count == 0);
     CHECK(runtime.stop_all());
     CHECK(::unlink(path) == 0);
     std::cout << checks - failures << '/' << checks << " checks passed\n";
