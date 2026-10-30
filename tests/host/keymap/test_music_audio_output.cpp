@@ -198,6 +198,112 @@ int main() {
     cyberdeck_audio_output::stop();
     CHECK(probe.amp_off >= 5);
 
+    /* The player calls start() once per PCM frame (about 42 times per second)
+     * with identical arguments, so a reentrant start() must stay off the codec
+     * I2C bus: volume only when it actually changes and the jack probe only
+     * inside the existing 500 ms route throttle. */
+    auto count_calls = [&probe](const std::string &prefix) {
+        int total = 0;
+        for (const auto &call : probe.calls)
+            if (call.compare(0, prefix.size(), prefix) == 0)
+                ++total;
+        return total;
+    };
+    const int volumes_before_burst = count_calls("volume:");
+    const int headset_before_burst = count_calls("headset");
+    CHECK(cyberdeck_audio_output::start(48000, 2, 20));
+    const int volumes_after_open = count_calls("volume:");
+    const int headset_after_open = count_calls("headset");
+    CHECK(volumes_after_open == volumes_before_burst + 1);
+    CHECK(headset_after_open == headset_before_burst + 1);
+
+    for (int i = 0; i < 100; ++i)
+        CHECK(cyberdeck_audio_output::start(48000, 2, 20));
+    const int burst_volumes = count_calls("volume:") - volumes_after_open;
+    const int burst_headsets = count_calls("headset") - headset_after_open;
+    std::cout << "identical start() burst: set_volume=" << burst_volumes << " headphone_connected=" << burst_headsets
+              << "\n";
+    CHECK(burst_volumes == 0);
+    CHECK(burst_headsets == 0);
+
+    now += 500;
+    CHECK(cyberdeck_audio_output::start(48000, 2, 20));
+    CHECK(count_calls("headset") - headset_after_open == 1);
+    CHECK(count_calls("volume:") - volumes_after_open == 0);
+
+    now += 1;
+    CHECK(cyberdeck_audio_output::start(48000, 2, 21));
+    CHECK(count_calls("volume:") - volumes_after_open == 1);
+    CHECK(count_calls("headset") - headset_after_open == 1);
+    CHECK(cyberdeck_audio_output::start(48000, 2, 21));
+    CHECK(cyberdeck_audio_output::start(48000, 2, 21));
+    CHECK(count_calls("volume:") - volumes_after_open == 1);
+
+    cyberdeck_audio_output::stop();
+    CHECK(cyberdeck_audio_output::start(48000, 2, 21));
+    CHECK(count_calls("volume:") - volumes_after_open == 2);
+
+    /* The throttle must not turn into a blind spot: a jack change during
+     * playback is still honoured, just once per 500 ms window instead of once
+     * per PCM frame. */
+    const int volumes_before_jack = count_calls("volume:");
+    const int headsets_before_jack = count_calls("headset");
+    const int amp_off_before_jack = probe.amp_off;
+    probe.headset = true;
+    now += 1; // inside the current route window
+    CHECK(cyberdeck_audio_output::start(48000, 2, 21));
+    CHECK(probe.amp_off == amp_off_before_jack);
+    CHECK(count_calls("headset") == headsets_before_jack);
+    now += 500;
+    CHECK(cyberdeck_audio_output::start(48000, 2, 21));
+    CHECK(probe.amp_off == amp_off_before_jack + 1);
+    CHECK(count_calls("headset") == headsets_before_jack + 1);
+    CHECK(count_calls("volume:") == volumes_before_jack);
+    probe.headset = false;
+    const int amp_on_before_jack = probe.amp_on;
+    now += 500;
+    CHECK(cyberdeck_audio_output::start(48000, 2, 21));
+    CHECK(probe.amp_on == amp_on_before_jack + 1);
+    CHECK(count_calls("headset") == headsets_before_jack + 2);
+
+    /* A speaker-amplifier failure inside the reentrant route is fail-closed:
+     * start() fails without writing the volume, the codec is not reopened and
+     * the fault blocks write()/set_volume() until the route recovers. */
+    const int opens_before_fault = probe.opens;
+    const int volumes_before_fault = count_calls("volume:");
+    const int amp_attempts_before_fault = probe.amp_off;
+    probe.headset = true;
+    probe.fail_amplifier = true;
+    now += 500;
+    CHECK(!cyberdeck_audio_output::start(48000, 2, 22));
+    CHECK(probe.amp_off == amp_attempts_before_fault + 1); // one attempt, rejected
+    CHECK(count_calls("volume:") == volumes_before_fault);
+    CHECK(probe.opens == opens_before_fault);
+    CHECK(!cyberdeck_audio_output::write(&sample, 1));
+    CHECK(probe.amp_off == amp_attempts_before_fault + 2); // write() retries it too
+    CHECK(!cyberdeck_audio_output::set_volume(22));
+    now += 1; // the route fault bypasses the throttle and keeps retrying
+    CHECK(!cyberdeck_audio_output::start(48000, 2, 22));
+    CHECK(probe.amp_off == amp_attempts_before_fault + 3);
+    probe.fail_amplifier = false;
+    now += 1;
+    CHECK(cyberdeck_audio_output::start(48000, 2, 22));
+    CHECK(probe.amp_off == amp_attempts_before_fault + 4); // route recovered once
+    CHECK(probe.opens == opens_before_fault);
+    CHECK(count_calls("volume:") == volumes_before_fault + 1); // 21 -> 22, once
+    CHECK(cyberdeck_audio_output::start(48000, 2, 22));
+    CHECK(count_calls("volume:") == volumes_before_fault + 1);
+
+    /* set_volume() must keep active_volume in sync, otherwise the next
+     * per-frame start() would rewrite the same value over I2C. */
+    const int volumes_before_sync = count_calls("volume:");
+    CHECK(cyberdeck_audio_output::set_volume(24));
+    CHECK(count_calls("volume:") == volumes_before_sync + 1);
+    CHECK(cyberdeck_audio_output::start(48000, 2, 24));
+    CHECK(cyberdeck_audio_output::start(48000, 2, 24));
+    CHECK(count_calls("volume:") == volumes_before_sync + 1);
+    CHECK(cyberdeck_audio_output::write(&sample, 1));
+
     std::cout << checks - failures << '/' << checks << " checks passed\n";
     return failures == 0 ? 0 : 1;
 }

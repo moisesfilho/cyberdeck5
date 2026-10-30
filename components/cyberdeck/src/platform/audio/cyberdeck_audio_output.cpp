@@ -13,6 +13,7 @@ bool amplifier = false;
 bool route_fault = false;
 std::uint32_t active_rate = 0;
 std::uint8_t active_channels = 0;
+std::uint8_t active_volume = 0;
 TickType_t last_route_check = 0;
 
 void *default_initialize(void *) {
@@ -85,9 +86,18 @@ bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume) {
     if (rate < 8000 || rate > 48000 || (channels != 1 && channels != 2) || volume > 50)
         return false;
     if (codec != nullptr && opened && active_rate == rate && active_channels == channels) {
-        if (!update_route(true))
+        /* Callers re-enter start() once per audio frame: keep this path free of
+         * codec I2C traffic (volume write + jack probe) unless something really
+         * changed, otherwise the bus contention starves the DMA and the output
+         * stutters. */
+        if (!update_route())
             return false;
-        return active_backend.set_volume(active_backend.context, codec, volume);
+        if (volume == active_volume)
+            return true;
+        if (!active_backend.set_volume(active_backend.context, codec, volume))
+            return false;
+        active_volume = volume;
+        return true;
     }
     stop();
     if (amplifier || route_fault)
@@ -105,6 +115,7 @@ bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume) {
         stop();
         return false;
     }
+    active_volume = volume;
     if (!update_route(true)) {
         stop();
         return false;
@@ -122,8 +133,12 @@ bool write(const std::int16_t *samples, std::size_t count) {
 }
 
 bool set_volume(std::uint8_t volume) {
-    return codec != nullptr && opened && !route_fault && volume <= 50 &&
-           active_backend.set_volume(active_backend.context, codec, volume);
+    if (codec == nullptr || !opened || route_fault || volume > 50)
+        return false;
+    if (!active_backend.set_volume(active_backend.context, codec, volume))
+        return false;
+    active_volume = volume;
+    return true;
 }
 
 void stop() {
@@ -139,5 +154,6 @@ void stop() {
     opened = false;
     active_rate = 0;
     active_channels = 0;
+    active_volume = 0;
 }
 } // namespace cyberdeck_audio_output
