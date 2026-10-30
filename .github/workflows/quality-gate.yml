@@ -94,6 +94,13 @@ jobs:
           clang-format --dry-run --Werror \
             components/cyberdeck/include/apps/music/cyberdeck_music_metadata.h \
             components/cyberdeck/src/apps/music/cyberdeck_music_metadata.cpp
+          # The music player/view TUs predate this gate and intentionally
+          # retain their existing layout, and the music test TUs keep the
+          # repository's CHECK macro layout; only the new session-duration
+          # files are checked here.
+          clang-format --dry-run --Werror \
+            components/cyberdeck/include/apps/music/cyberdeck_music_duration.h \
+            components/cyberdeck/src/apps/music/cyberdeck_music_duration.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.

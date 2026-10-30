@@ -1,4 +1,5 @@
 #include "apps/music/cyberdeck_music_player.h"
+#include "apps/music/cyberdeck_music_duration.h"
 #include "apps/music/cyberdeck_music_metadata.h"
 #include "apps/runtime/cyberdeck_app_storage.h"
 #include "apps/shell/cyberdeck_local_shell.h"
@@ -34,6 +35,15 @@ constexpr std::size_t k_io_size = 4096;
  * allocated by FreeRTOS with the required internal-memory capabilities. */
 constexpr UBaseType_t k_queue_depth = 8;
 constexpr std::uint32_t k_worker_stack = 8192;
+/* A seek that lands in the middle of a VBR frame makes minimp3 report a
+ * plausible header (rate/channels) with zero samples for the frame it already
+ * consumed.  Skipping those is safe; a stream that never decodes anything still
+ * fails once this many consecutive empty frames are seen. */
+constexpr unsigned k_max_empty_frames = 64;
+/* Upper bound of the discarded audio window after a TOC seek: the TOC entry is
+ * an estimate, so the extra audio is dropped instead of played.  A wrong entry
+ * can therefore never mute more than five seconds. */
+constexpr std::uint32_t k_max_seek_discard_ms = 5000;
 enum class request_kind : std::uint8_t { play, stop };
 struct request {
     request_kind kind;
@@ -186,6 +196,21 @@ struct player::impl {
                 publish_error(req, error_stage::id3);
                 continue;
             }
+            /* Resolve the whole-track duration once, before playback starts.
+             * `info.bitrate_kbps` describes the frame just decoded, so a VBR
+             * track used to publish a different total on every frame and the
+             * progress bar jumped back and forth.  The probe owns its heap
+             * buffers (this worker only has an 8192-byte stack) and, without a
+             * Xing/Info tag, samples windows spread over the whole payload.  The
+             * probe is also the session constant the seek maps through (TOC and
+             * frame count), instead of assuming CBR. */
+            const mp3_probe session_probe =
+                mp3_probe_fd(fd, std::uint64_t(file_size), std::uint64_t(data_offset));
+            std::uint32_t session_duration_ms = session_probe.duration_ms;
+            ESP_LOGI(k_tag, "playback duration generation=%lu duration_ms=%lu has_toc=%d source=%s",
+                     static_cast<unsigned long>(req.generation),
+                     static_cast<unsigned long>(session_duration_ms), session_probe.has_toc ? 1 : 0,
+                     session_duration_ms != 0 ? "probe" : "pending_fallback");
             track current{};
             std::memcpy(current.path.data(), req.path, std::strlen(req.path) + 1);
             const char *base = std::strrchr(req.path, '/');
@@ -205,6 +230,8 @@ struct player::impl {
                                      req.generation == playback_generation.load(std::memory_order_acquire);
                 if (request_is_current) {
                     state.current = current;
+                    /* Session constant: every later publish is idempotent. */
+                    state.current.duration_ms = session_duration_ms;
                     state.position_ms = 0;
                     state.volume = volume.load(std::memory_order_acquire);
                 }
@@ -226,7 +253,14 @@ struct player::impl {
             std::size_t buffered = 0;
             std::size_t file_position = data_offset;
             std::uint32_t played_ms = 0;
-            std::uint32_t duration_ms = 0;
+            std::uint32_t played_base_ms = 0;
+            std::uint64_t played_samples = 0;
+            /* Seek discard window: the TOC byte is only accurate to ~1% of the
+             * track, so decoded audio before `seek_target_ms` is dropped. */
+            std::uint32_t seek_target_ms = 0;
+            std::uint32_t seek_skip_ms = 0;
+            std::uint64_t seek_skip_samples = 0;
+            unsigned empty_frames = 0;
             unsigned decoded_frames = 0;
             bool failed = false;
             error_stage failure = error_stage::none;
@@ -241,23 +275,41 @@ struct player::impl {
                    !shutting_down.load(std::memory_order_acquire)) {
                 if (paused.load(std::memory_order_acquire)) {
                     cyberdeck_audio_output::stop();
-                    (void)publish_if_current(req, playback_state::paused, played_ms, duration_ms);
+                    (void)publish_if_current(req, playback_state::paused, played_ms, session_duration_ms);
                     vTaskDelay(pdMS_TO_TICKS(20));
                     continue;
                 }
                 const std::uint32_t seek_value = seek_to_ms.exchange(0, std::memory_order_acq_rel);
-                if (seek_value != 0 && duration_ms != 0) {
-                    played_ms = std::min(seek_value - 1, duration_ms);
-                    const std::uint64_t target =
-                        data_offset + (std::uint64_t(file_size - data_offset) * played_ms / duration_ms);
-                    if (lseek(fd, static_cast<off_t>(target), SEEK_SET) < 0) {
+                if (seek_value != 0 && session_duration_ms != 0) {
+                    const std::uint32_t target_ms = std::min(seek_value - 1, session_duration_ms);
+                    const std::uint64_t audio_bytes = std::uint64_t(file_size) - data_offset;
+                    const mp3_seek_point point =
+                        mp3_seek_target(session_probe, data_offset, audio_bytes, target_ms);
+                    if (lseek(fd, static_cast<off_t>(point.byte), SEEK_SET) < 0) {
                         failed = true;
                         failure = error_stage::io;
                         break;
                     }
-                    file_position = static_cast<std::size_t>(target);
+                    file_position = static_cast<std::size_t>(point.byte);
                     buffered = 0;
                     mp3dec_init(decoder.get());
+                    /* The sample accumulator restarts at the seek point so the
+                     * elapsed time never rewinds or double-counts. */
+                    played_ms = point.position_ms;
+                    played_base_ms = point.position_ms;
+                    played_samples = 0;
+                    seek_target_ms = target_ms;
+                    seek_skip_samples = 0;
+                    seek_skip_ms = target_ms > point.position_ms
+                                       ? std::min(target_ms - point.position_ms, k_max_seek_discard_ms)
+                                       : 0;
+                    ESP_LOGI(k_tag,
+                             "playback seek generation=%lu target_ms=%lu byte=%llu toc_position_ms=%lu "
+                             "discard_ms=%lu",
+                             static_cast<unsigned long>(req.generation), static_cast<unsigned long>(target_ms),
+                             static_cast<unsigned long long>(point.byte),
+                             static_cast<unsigned long>(point.position_ms),
+                             static_cast<unsigned long>(seek_skip_ms));
                 }
                 if (buffered < k_io_size && file_position < file_size) {
                     const ssize_t got = read(fd, input.get() + buffered, k_io_size);
@@ -305,10 +357,47 @@ struct player::impl {
                 std::memmove(input.get(), input.get() + info.frame_bytes,
                              buffered - static_cast<std::size_t>(info.frame_bytes));
                 buffered -= static_cast<std::size_t>(info.frame_bytes);
-                if (samples <= 0 || (info.channels != 1 && info.channels != 2) || info.hz < 8000 || info.hz > 48000) {
+                /* The frame was consumed above, so an empty one cannot be
+                 * "retried": a VBR seek that lands in the middle of a frame
+                 * yields a plausible header with zero samples, and playback
+                 * used to die here with a decode error.  Only a run of empty
+                 * frames (a really corrupt stream) is fatal. */
+                if (samples == 0 && info.frame_bytes > 0) {
+                    if (++empty_frames > k_max_empty_frames) {
+                        failed = true;
+                        failure = error_stage::decode;
+                        break;
+                    }
+                    /* The empty frame consumed the last bytes and nothing was
+                     * ever decoded: that is a corrupt file, not a finished
+                     * track, so the `decoded_frames == 0` failure still
+                     * applies. */
+                    if (buffered == 0 && file_position >= file_size && decoded_frames == 0) {
+                        failed = true;
+                        failure = error_stage::decode;
+                        break;
+                    }
+                    continue;
+                }
+                if (samples < 0 || (info.channels != 1 && info.channels != 2) || info.hz < 8000 ||
+                    info.hz > 48000) {
                     failed = true;
                     failure = error_stage::decode;
                     break;
+                }
+                empty_frames = 0;
+                if (seek_skip_ms != 0) {
+                    /* Drop the audio between the TOC point and the requested
+                     * time instead of playing it, without publishing a
+                     * position: the accumulator restarts at the target. */
+                    seek_skip_samples += static_cast<std::uint64_t>(samples);
+                    if (static_cast<std::uint32_t>(seek_skip_samples * 1000 / info.hz) < seek_skip_ms)
+                        continue;
+                    played_base_ms = seek_target_ms;
+                    played_samples = 0;
+                    seek_skip_ms = 0;
+                    seek_skip_samples = 0;
+                    continue;
                 }
                 const auto current_volume = volume.load(std::memory_order_acquire);
                 if (decoded_frames == 0)
@@ -335,12 +424,24 @@ struct player::impl {
                              static_cast<unsigned long>(req.generation));
                     first_pcm_write = false;
                 }
+                if (decoded_frames == 0 && session_duration_ms == 0) {
+                    /* The probe could not resolve the track (for example a
+                     * stream with a damaged first frame): freeze the estimate
+                     * from the first decoded frame and never re-estimate, so
+                     * the published total stays constant for the whole track. */
+                    if (info.bitrate_kbps > 0) {
+                        session_duration_ms = static_cast<std::uint32_t>(
+                            std::uint64_t(file_size - data_offset) * 8 / info.bitrate_kbps);
+                        ESP_LOGI(k_tag, "playback duration fallback generation=%lu duration_ms=%lu",
+                                 static_cast<unsigned long>(req.generation),
+                                 static_cast<unsigned long>(session_duration_ms));
+                    }
+                }
                 ++decoded_frames;
-                played_ms += static_cast<std::uint32_t>(std::uint64_t(samples) * 1000 / info.hz);
-                if (info.bitrate_kbps > 0)
-                    duration_ms =
-                        static_cast<std::uint32_t>(std::uint64_t(file_size - data_offset) * 8 / info.bitrate_kbps);
-                (void)publish_if_current(req, playback_state::playing, played_ms, duration_ms);
+                played_samples += static_cast<std::uint64_t>(samples);
+                played_ms = played_base_ms +
+                            static_cast<std::uint32_t>(played_samples * 1000 / info.hz);
+                (void)publish_if_current(req, playback_state::playing, played_ms, session_duration_ms);
             }
             cyberdeck_audio_output::stop();
             if (close(fd) != 0)
@@ -348,9 +449,9 @@ struct player::impl {
             if (failed && failure == error_stage::none)
                 failure = error_stage::io;
             if (failed) {
-                publish_error(req, failure, played_ms, duration_ms);
+                publish_error(req, failure, played_ms, session_duration_ms);
             } else {
-                (void)publish_if_current(req, playback_state::stopped, played_ms, duration_ms);
+                (void)publish_if_current(req, playback_state::stopped, played_ms, session_duration_ms);
                 std::lock_guard<std::mutex> lock(state_mutex);
                 if (req.generation == playback_generation.load(std::memory_order_acquire) && eof &&
                     state.repeat != repeat_mode::off && queue_count != 0) {

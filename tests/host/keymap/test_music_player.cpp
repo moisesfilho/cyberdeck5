@@ -3,6 +3,7 @@
 #include "apps/runtime/cyberdeck_app_storage.h"
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "platform/audio/cyberdeck_audio_output.h"
+#include "third_party/minimp3/minimp3.h"
 #include "freertos/queue.h"
 #include "freertos/idf_additions.h"
 #include "freertos/semphr.h"
@@ -53,6 +54,10 @@ std::vector<std::string> secure_open_paths;
 bool gate_audio_write = false;
 bool audio_write_entered = false;
 bool release_audio_write = false;
+bool gate_each_write = false;
+bool write_waiting = false;
+bool release_write = false;
+unsigned write_gate_count = 0;
 unsigned audio_write_count = 0;
 bool fail_audio_start = false;
 bool fail_audio_write = false;
@@ -98,6 +103,189 @@ bool write_large_id3_mp3(const std::string &path) {
         frames[i * frame_bytes + 2] = 0x90; frames[i * frame_bytes + 3] = 0x64;
     }
     output.write(reinterpret_cast<const char *>(frames.data()), static_cast<std::streamsize>(frames.size()));
+    return output.good();
+}
+
+/* VBR fixture: 60 frames alternating 417 bytes (128 kbps) and 1044 bytes
+ * (320 kbps) at 44.1 kHz.  A per-frame bitrate estimate changes on every frame,
+ * which is exactly the progress-bar jitter REQ-MUSIC-06 fixes. */
+bool write_vbr_mp3(const std::string &path) {
+    std::vector<unsigned char> frames;
+    for (unsigned frame = 0; frame < 60; ++frame) {
+        const bool high = (frame % 2) == 1;
+        const std::size_t bytes = high ? 1044 : 417;
+        const std::size_t offset = frames.size();
+        frames.resize(offset + bytes, 0);
+        frames[offset] = 0xFF;
+        frames[offset + 1] = 0xFB;
+        frames[offset + 2] = high ? 0xE0 : 0x90;
+        frames[offset + 3] = 0x64;
+    }
+    const int fd = ::open(path.c_str(), O_WRONLY | O_TRUNC);
+    if (fd < 0) return false;
+    const bool written = ::write(fd, frames.data(), frames.size()) ==
+                         static_cast<ssize_t>(frames.size());
+    return ::close(fd) == 0 && written;
+}
+
+/* Same CBR stream preceded by three stray bytes: the duration probe cannot
+ * parse the first header, so the player must freeze the estimate taken from the
+ * first decoded frame instead of re-estimating later. */
+bool write_garbage_prefixed_mp3(const std::string &path) {
+    constexpr std::size_t frame_bytes = 417;
+    constexpr unsigned frame_count = 24;
+    std::vector<unsigned char> frames(3 + frame_bytes * frame_count, 0);
+    frames[0] = 0x12;
+    frames[1] = 0x34;
+    frames[2] = 0x56;
+    for (unsigned frame = 0; frame < frame_count; ++frame) {
+        const std::size_t offset = 3 + frame * frame_bytes;
+        frames[offset] = 0xFF;
+        frames[offset + 1] = 0xFB;
+        frames[offset + 2] = 0x90;
+        frames[offset + 3] = 0x64;
+    }
+    const int fd = ::open(path.c_str(), O_WRONLY | O_TRUNC);
+    if (fd < 0) return false;
+    const bool written = ::write(fd, frames.data(), frames.size()) ==
+                         static_cast<ssize_t>(frames.size());
+    return ::close(fd) == 0 && written;
+}
+
+/* Four decodable silent frames followed by valid-looking headers whose payload
+ * cannot be decoded: minimp3 reports a plausible frame (rate/channels/bitrate)
+ * and zero samples for the garbage frames.  Because the prefix already decoded,
+ * only the bounded consecutive-empty-frame ceiling can end this stream — a
+ * corrupt tail must still fail with `error_stage=decode` instead of reaching EOF
+ * as a clean stop. */
+bool write_zero_sample_mp3(const std::string &path) {
+    constexpr std::size_t frame_bytes = 417;
+    constexpr unsigned silent_frames = 4;
+    constexpr unsigned garbage_frames = 200;
+    std::vector<unsigned char> frames(frame_bytes * (silent_frames + garbage_frames), 0);
+    for (unsigned frame = 0; frame < silent_frames; ++frame) {
+        const std::size_t offset = frame * frame_bytes;
+        frames[offset] = 0xFF;
+        frames[offset + 1] = 0xFB;
+        frames[offset + 2] = 0x90;
+        frames[offset + 3] = 0x64;
+    }
+    std::uint32_t state = 12345;
+    for (unsigned frame = silent_frames; frame < silent_frames + garbage_frames; ++frame) {
+        const std::size_t offset = frame * frame_bytes;
+        frames[offset] = 0xFF;
+        frames[offset + 1] = 0xFB;
+        frames[offset + 2] = 0x90;
+        frames[offset + 3] = 0x40;
+        for (std::size_t byte = offset + 4; byte < offset + frame_bytes; ++byte) {
+            state = state * 1664525U + 1013904223U;
+            frames[byte] = static_cast<unsigned char>(state >> 24);
+        }
+    }
+    const int fd = ::open(path.c_str(), O_WRONLY | O_TRUNC);
+    if (fd < 0) return false;
+    const bool written = ::write(fd, frames.data(), frames.size()) ==
+                         static_cast<ssize_t>(frames.size());
+    return ::close(fd) == 0 && written;
+}
+
+/* ID3v2 skip and Xing/Info TOC offset of the committed fixture, plus the
+ * consecutive zero-sample frames decoded from a byte offset.  The helpers keep
+ * TEST-MUSIC-DUR-13 tied to the real fixture instead of a hardcoded layout. */
+std::size_t fixture_audio_offset(const std::vector<char> &bytes) {
+    if (bytes.size() < 10 || std::memcmp(bytes.data(), "ID3", 3) != 0)
+        return 0;
+    const auto byte = [&bytes](std::size_t index) {
+        return static_cast<std::size_t>(static_cast<std::uint8_t>(bytes[index]));
+    };
+    return 10 + ((byte(6) << 21) | (byte(7) << 14) | (byte(8) << 7) | byte(9));
+}
+
+bool read_fixture_bytes(std::vector<char> &out) {
+    const std::string source = __FILE__;
+    const auto slash = source.find_last_of('/');
+    const std::string directory =
+        slash == std::string::npos ? std::string{} : source.substr(0, slash + 1);
+    std::ifstream input(directory + "fixtures/music/vbr-1s.mp3", std::ios::binary);
+    if (!input) return false;
+    out.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    return !out.empty();
+}
+
+bool write_fixture_bytes(const std::vector<char> &bytes, const std::string &path) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) return false;
+    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    return output.good();
+}
+
+/* Offset of the first TOC entry inside the Xing/Info tag, or 0 when absent. */
+std::size_t fixture_toc_offset(const std::vector<char> &bytes) {
+    const std::size_t audio = fixture_audio_offset(bytes);
+    /* MPEG-1 joint-stereo side info is 32 bytes: the tag starts at frame + 36. */
+    const std::size_t tag = audio + 4 + 32;
+    if (audio == 0 || bytes.size() < tag + 8)
+        return 0;
+    if (std::memcmp(bytes.data() + tag, "Xing", 4) != 0 &&
+        std::memcmp(bytes.data() + tag, "Info", 4) != 0)
+        return 0;
+    const auto byte = [&bytes](std::size_t index) {
+        return static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[index]));
+    };
+    const std::uint32_t flags = (byte(tag + 4) << 24) | (byte(tag + 5) << 16) |
+                                (byte(tag + 6) << 8) | byte(tag + 7);
+    if ((flags & 0x4) == 0)
+        return 0;
+    std::size_t cursor = tag + 8;
+    if ((flags & 0x1) != 0) cursor += 4; /* frame count */
+    if ((flags & 0x2) != 0) cursor += 4; /* stream size */
+    return bytes.size() < cursor + 100 ? 0 : cursor;
+}
+
+/* Consecutive zero-sample frames the production decoder reports from `byte`.
+ * A seek that lands in the middle of a VBR frame produces this sequence because
+ * the bit reservoir of the previous frame is missing. */
+unsigned zero_sample_prefix(const std::vector<char> &bytes, std::size_t byte) {
+    if (byte >= bytes.size())
+        return 0;
+    mp3dec_t decoder{};
+    mp3dec_init(&decoder);
+    mp3d_sample_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
+    unsigned zeros = 0;
+    std::size_t cursor = byte;
+    for (unsigned frame = 0; frame < 8 && cursor < bytes.size(); ++frame) {
+        mp3dec_frame_info_t info{};
+        const int samples = mp3dec_decode_frame(
+            &decoder, reinterpret_cast<const std::uint8_t *>(bytes.data() + cursor),
+            static_cast<int>(bytes.size() - cursor), pcm, &info);
+        if (info.frame_bytes <= 0)
+            break;
+        cursor += static_cast<std::size_t>(info.frame_bytes);
+        if (samples != 0)
+            break;
+        ++zeros;
+    }
+    return zeros;
+}
+
+/* Real 1 s VBR fixture committed at
+ * tests/host/keymap/fixtures/music/vbr-1s.mp3 (5196 bytes, ID3v2 tag + Xing
+ * TOC), generated with:
+ *   ffmpeg -f lavfi -i "sine=frequency=440:duration=1" -ac 2 -ar 44100 \
+ *          -codec:a libmp3lame -q:a 4 vbr-1s.mp3 */
+bool copy_fixture_to(const std::string &destination) {
+    const std::string source = __FILE__;
+    const auto slash = source.find_last_of('/');
+    const std::string directory =
+        slash == std::string::npos ? std::string{} : source.substr(0, slash + 1);
+    std::ifstream input(directory + "fixtures/music/vbr-1s.mp3", std::ios::binary);
+    if (!input) return false;
+    const std::vector<char> bytes((std::istreambuf_iterator<char>(input)),
+                                  std::istreambuf_iterator<char>());
+    if (bytes.empty()) return false;
+    std::ofstream output(destination, std::ios::binary | std::ios::trunc);
+    if (!output) return false;
+    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     return output.good();
 }
 
@@ -268,6 +456,14 @@ bool write(const std::int16_t *samples, std::size_t count) {
         audio_write_entered = true;
         audio_changed.notify_all();
         audio_changed.wait(lock, [] { return release_audio_write; });
+    }
+    if (gate_each_write) {
+        ++write_gate_count;
+        write_waiting = true;
+        audio_changed.notify_all();
+        audio_changed.wait(lock, [] { return release_write; });
+        release_write = false;
+        write_waiting = false;
     }
     return !fail_audio_write;
 }
@@ -658,6 +854,371 @@ int main() {
     CHECK(large_tag_playback.failure_stage == cyberdeck_music::error_stage::none);
     CHECK(large_tag_playback.current.size_bytes == static_cast<std::uint32_t>(large_info.st_size));
     CHECK(stop_releases_once());
+
+    /* REQ-MUSIC-06 / TEST-MUSIC-DUR-05: the published total is a session
+     * constant.  This VBR fixture alternates 128 kbps (417 B) and 320 kbps
+     * (1044 B) frames, so the old per-frame estimate changed on every frame and
+     * made elapsed/total jump back and forth. */
+    const auto sample_durations = [&](std::array<std::uint32_t, 3> &out) -> bool {
+        bool ok = true;
+        unsigned observed = 0;
+        {
+            std::lock_guard<std::mutex> lock(audio_mutex);
+            observed = write_gate_count;
+        }
+        for (std::size_t index = 0; index < out.size(); ++index) {
+            {
+                std::unique_lock<std::mutex> lock(audio_mutex);
+                ok = ok && audio_changed.wait_for(lock, std::chrono::seconds(2),
+                                                  [&observed] { return write_gate_count > observed; });
+                observed = write_gate_count;
+            }
+            cyberdeck_music::snapshot state{};
+            const bool sampled = subject.status(state);
+            ok = ok && sampled && state.state == cyberdeck_music::playback_state::playing;
+            out[index] = sampled ? state.current.duration_ms : 0;
+            {
+                std::lock_guard<std::mutex> lock(audio_mutex);
+                release_write = true;
+            }
+            audio_changed.notify_all();
+        }
+        return ok;
+    };
+    const auto gate_playback_writes = [&] {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        gate_each_write = true;
+        write_waiting = false;
+        release_write = false;
+    };
+    const auto release_each_write = [&] {
+        {
+            std::lock_guard<std::mutex> lock(audio_mutex);
+            gate_each_write = false;
+            release_write = true;
+        }
+        audio_changed.notify_all();
+    };
+    const auto wait_for_eof = [&] {
+        return wait_until([&] {
+            cyberdeck_music::snapshot state{};
+            return subject.status(state) && state.state == cyberdeck_music::playback_state::stopped &&
+                   state.position_ms > 0;
+        }, std::chrono::seconds(5));
+    };
+    const auto eof_drift = [&](std::uint32_t expected_duration) -> long long {
+        cyberdeck_music::snapshot end{};
+        if (!subject.status(end))
+            return 1LL << 40;
+        if (end.current.duration_ms != expected_duration)
+            return 1LL << 40;
+        return static_cast<long long>(end.position_ms) - static_cast<long long>(end.current.duration_ms);
+    };
+
+    CHECK(write_vbr_mp3(fixture_path));
+    CHECK(subject.start(&storage, access));
+    CHECK(subject.set_queue(queue, 1, 0));
+    subject.set_repeat(cyberdeck_music::repeat_mode::off);
+    gate_playback_writes();
+    CHECK(subject.play("/stream.mp3"));
+    std::array<std::uint32_t, 3> vbr_durations{};
+    CHECK(sample_durations(vbr_durations));
+    CHECK(vbr_durations[0] > 0);
+    CHECK(vbr_durations[0] == vbr_durations[1]);
+    CHECK(vbr_durations[1] == vbr_durations[2]);
+    release_each_write();
+    CHECK(wait_for_eof());
+    {
+        const long long drift = eof_drift(vbr_durations[0]);
+        CHECK(drift >= -1000 && drift <= 1000);
+    }
+    CHECK(stop_releases_once());
+
+    /* TEST-MUSIC-DUR-06: the probe cannot parse a stream that starts with stray
+     * bytes, so the player freezes the estimate from the first decoded frame
+     * and keeps it constant; the EOF position still matches the total. */
+    CHECK(write_garbage_prefixed_mp3(fixture_path));
+    CHECK(subject.start(&storage, access));
+    CHECK(subject.set_queue(queue, 1, 0));
+    gate_playback_writes();
+    CHECK(subject.play("/stream.mp3"));
+    std::array<std::uint32_t, 3> fallback_durations{};
+    CHECK(sample_durations(fallback_durations));
+    CHECK(fallback_durations[0] == 0);
+    CHECK(fallback_durations[1] > 0);
+    CHECK(fallback_durations[1] == fallback_durations[2]);
+    release_each_write();
+    CHECK(wait_for_eof());
+    {
+        const long long drift = eof_drift(fallback_durations[1]);
+        CHECK(drift >= -1000 && drift <= 1000);
+    }
+    CHECK(stop_releases_once());
+
+    /* AC-MUSIC-16 / TEST-MUSIC-DUR-07: seeking into a VBR frame must not kill
+     * the playback.  The old seek mapped the target proportionally by byte, so
+     * it landed in the middle of a frame; minimp3 answered with zero samples
+     * for an already-consumed frame and the loop treated that as fatal
+     * (`error_stage=decode`). */
+    CHECK(copy_fixture_to(fixture_path));
+    {
+        struct stat fixture_info{};
+        CHECK(::stat(fixture_path.c_str(), &fixture_info) == 0);
+        CHECK(fixture_info.st_size == 5196);
+    }
+    CHECK(subject.start(&storage, access));
+    CHECK(subject.set_queue(queue, 1, 0));
+    subject.set_repeat(cyberdeck_music::repeat_mode::off);
+    gate_playback_writes();
+    CHECK(subject.play("/stream.mp3"));
+    CHECK(wait_until([] {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        return write_waiting;
+    }, std::chrono::seconds(2)));
+    {
+        cyberdeck_music::snapshot before_seek{};
+        CHECK(subject.status(before_seek));
+        CHECK(before_seek.state == cyberdeck_music::playback_state::playing);
+        CHECK(before_seek.current.duration_ms > 0);
+    }
+    unsigned writes_before_seek = 0;
+    {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        writes_before_seek = write_gate_count;
+    }
+    CHECK(subject.seek(400));
+    {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        release_write = true;
+    }
+    audio_changed.notify_all();
+    CHECK(wait_until([&] {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        return write_gate_count > writes_before_seek;
+    }, std::chrono::seconds(2)));
+    {
+        cyberdeck_music::snapshot after_seek{};
+        CHECK(subject.status(after_seek));
+        CHECK(after_seek.state == cyberdeck_music::playback_state::playing);
+        CHECK(after_seek.failure_stage == cyberdeck_music::error_stage::none);
+        CHECK(std::abs(static_cast<long>(after_seek.position_ms) - 400L) <= 1000L);
+    }
+    release_each_write();
+    CHECK(wait_for_eof());
+    CHECK(stop_releases_once());
+
+    /* TEST-MUSIC-DUR-13 / AC-MUSIC-16: the bounded empty-frame tolerance must be
+     * really exercised, not only assumed.  A real Xing TOC is accurate to ~1 %,
+     * so a seek can start in the middle of a VBR frame; minimp3 then answers a
+     * run of zero-sample frames (the bit reservoir of the previous frame is
+     * missing) and playback used to die with `error_stage=decode`.  The
+     * committed fixture is patched at `toc[50] = 150`, which maps to byte 3062
+     * (44 + 150 * 5152 / 256) and was measured to yield four consecutive
+     * zero-sample frames.  The runtime probe below re-checks that property, so a
+     * regenerated fixture cannot make this block vacuous, and the seek targets
+     * 50 % of the published total because `500 ms` of this 1044 ms fixture
+     * resolves to TOC entry 47 and would never touch the patched entry. */
+    {
+        std::vector<char> patched;
+        CHECK(read_fixture_bytes(patched));
+        const std::size_t audio = fixture_audio_offset(patched);
+        const std::size_t toc = fixture_toc_offset(patched);
+        CHECK(audio == 44);
+        CHECK(toc != 0);
+        if (toc != 0) {
+            patched[toc + 50] = static_cast<char>(150);
+            const std::size_t audio_bytes = patched.size() - audio;
+            const std::size_t seek_byte = audio + std::size_t(150) * audio_bytes / 256;
+            CHECK(seek_byte == 3062);
+            CHECK(zero_sample_prefix(patched, seek_byte) >= 2);
+            CHECK(write_fixture_bytes(patched, fixture_path));
+
+            CHECK(subject.start(&storage, access));
+            CHECK(subject.set_queue(queue, 1, 0));
+            subject.set_repeat(cyberdeck_music::repeat_mode::off);
+            gate_playback_writes();
+            CHECK(subject.play("/stream.mp3"));
+            CHECK(wait_until([] {
+                std::lock_guard<std::mutex> lock(audio_mutex);
+                return write_waiting;
+            }, std::chrono::seconds(2)));
+            cyberdeck_music::snapshot before_patched{};
+            CHECK(subject.status(before_patched));
+            CHECK(before_patched.state == cyberdeck_music::playback_state::playing);
+            CHECK(before_patched.current.duration_ms > 0);
+            const std::uint32_t target = before_patched.current.duration_ms / 2 +
+                                         before_patched.current.duration_ms / 200;
+            CHECK(target * 100 / before_patched.current.duration_ms == 50);
+            unsigned writes_before_patched = 0;
+            {
+                std::lock_guard<std::mutex> lock(audio_mutex);
+                writes_before_patched = write_gate_count;
+            }
+            CHECK(subject.seek(target));
+            {
+                std::lock_guard<std::mutex> lock(audio_mutex);
+                release_write = true;
+            }
+            audio_changed.notify_all();
+            CHECK(wait_until([&] {
+                std::lock_guard<std::mutex> lock(audio_mutex);
+                return write_gate_count > writes_before_patched;
+            }, std::chrono::seconds(2)));
+            cyberdeck_music::snapshot after_patched{};
+            CHECK(subject.status(after_patched));
+            CHECK(after_patched.state == cyberdeck_music::playback_state::playing);
+            CHECK(after_patched.failure_stage == cyberdeck_music::error_stage::none);
+            CHECK(std::abs(static_cast<long>(after_patched.position_ms) -
+                           static_cast<long>(target)) <= 1000L);
+            release_each_write();
+            CHECK(wait_for_eof());
+            CHECK(stop_releases_once());
+        }
+    }
+
+    /* TEST-MUSIC-DUR-10: two seeks on the same track.  Each seek restarts the
+     * sample accumulator at the resolved position, so the elapsed time never
+     * rewinds below the target, never double-counts the audio played before the
+     * seek and still matches the total at EOF. */
+    /* Releases gated writes one frame at a time until the published position
+     * reaches `target` (the accumulator restarts at the seek point, so the first
+     * frame decoded after the seek publishes `target + one frame`).  The write
+     * gate publishes only after the released frame, so a single release is not
+     * enough to observe the seek. */
+    const auto seek_and_observe = [&](std::uint32_t target, std::uint32_t window,
+                                      cyberdeck_music::snapshot &out) {
+        if (!subject.seek(target))
+            return false;
+        for (unsigned attempt = 0; attempt < 8; ++attempt) {
+            unsigned writes_before = 0;
+            {
+                std::lock_guard<std::mutex> lock(audio_mutex);
+                writes_before = write_gate_count;
+            }
+            {
+                std::lock_guard<std::mutex> lock(audio_mutex);
+                release_write = true;
+            }
+            audio_changed.notify_all();
+            if (!wait_until([&] {
+                    std::lock_guard<std::mutex> lock(audio_mutex);
+                    return write_gate_count > writes_before;
+                }, std::chrono::seconds(2)))
+                return false;
+            if (!subject.status(out))
+                return false;
+            const long long delta =
+                static_cast<long long>(out.position_ms) - static_cast<long long>(target);
+            if (delta >= 0 && delta <= static_cast<long long>(window))
+                return true;
+        }
+        return false;
+    };
+    CHECK(copy_fixture_to(fixture_path));
+    CHECK(subject.start(&storage, access));
+    CHECK(subject.set_queue(queue, 1, 0));
+    subject.set_repeat(cyberdeck_music::repeat_mode::off);
+    gate_playback_writes();
+    CHECK(subject.play("/stream.mp3"));
+    CHECK(wait_until([] {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        return write_waiting;
+    }, std::chrono::seconds(2)));
+    cyberdeck_music::snapshot first_seek{};
+    CHECK(seek_and_observe(300, 200, first_seek));
+    CHECK(first_seek.state == cyberdeck_music::playback_state::playing);
+    CHECK(first_seek.failure_stage == cyberdeck_music::error_stage::none);
+    CHECK(first_seek.position_ms >= 300 && first_seek.position_ms <= 500);
+    cyberdeck_music::snapshot second_seek{};
+    CHECK(seek_and_observe(700, 200, second_seek));
+    CHECK(second_seek.state == cyberdeck_music::playback_state::playing);
+    CHECK(second_seek.failure_stage == cyberdeck_music::error_stage::none);
+    CHECK(second_seek.position_ms >= 700 && second_seek.position_ms <= 900);
+    CHECK(second_seek.position_ms > first_seek.position_ms);
+    CHECK(second_seek.current.duration_ms == first_seek.current.duration_ms);
+    release_each_write();
+    CHECK(wait_for_eof());
+    {
+        const long long drift = eof_drift(second_seek.current.duration_ms);
+        CHECK(drift >= -1000 && drift <= 1000);
+    }
+    CHECK(stop_releases_once());
+
+    /* TEST-MUSIC-DUR-11: seeking to the first millisecond and to the reported
+     * total both stay inside the payload.  The rewind publishes a position near
+     * zero, and the seek to the end reaches EOF without a decode/seek error. */
+    CHECK(copy_fixture_to(fixture_path));
+    CHECK(subject.start(&storage, access));
+    CHECK(subject.set_queue(queue, 1, 0));
+    subject.set_repeat(cyberdeck_music::repeat_mode::off);
+    gate_playback_writes();
+    CHECK(subject.play("/stream.mp3"));
+    CHECK(wait_until([] {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        return write_waiting;
+    }, std::chrono::seconds(2)));
+    cyberdeck_music::snapshot before_rewind{};
+    CHECK(seek_and_observe(600, 200, before_rewind));
+    CHECK(before_rewind.position_ms >= 600 && before_rewind.position_ms <= 800);
+    cyberdeck_music::snapshot rewound{};
+    CHECK(seek_and_observe(0, 200, rewound));
+    CHECK(rewound.state == cyberdeck_music::playback_state::playing);
+    CHECK(rewound.failure_stage == cyberdeck_music::error_stage::none);
+    CHECK(rewound.position_ms <= 200);
+    CHECK(rewound.position_ms < before_rewind.position_ms);
+    CHECK(rewound.current.duration_ms == before_rewind.current.duration_ms);
+    cyberdeck_music::snapshot at_end{};
+    /* Seeking to the reported total starts at the last TOC entry (99 %), so the
+     * track finishes almost immediately: the requirement is a clean stop near
+     * the end, not a continuing playback. */
+    CHECK(subject.seek(rewound.current.duration_ms));
+    {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        release_write = true; /* let the worker reach the top of the loop */
+    }
+    audio_changed.notify_all();
+    CHECK(wait_until([&] {
+        cyberdeck_music::snapshot state{};
+        return subject.status(state) && state.state == cyberdeck_music::playback_state::stopped &&
+               state.position_ms > 0;
+    }, std::chrono::seconds(5)));
+    CHECK(subject.status(at_end));
+    CHECK(at_end.failure_stage == cyberdeck_music::error_stage::none);
+    CHECK(at_end.position_ms + 200 >= rewound.current.duration_ms);
+    release_each_write();
+    CHECK(wait_for_eof());
+    {
+        cyberdeck_music::snapshot ended{};
+        CHECK(subject.status(ended));
+        CHECK(ended.failure_stage == cyberdeck_music::error_stage::none);
+        const long long drift = eof_drift(rewound.current.duration_ms);
+        CHECK(drift >= -1000 && drift <= 1000);
+    }
+    CHECK(stop_releases_once());
+
+    /* TEST-MUSIC-DUR-12 / AC-MUSIC-16 negative: the empty-frame tolerance is
+     * bounded, so it cannot hide a corrupt stream.  Headers are valid and the
+     * payloads are not, so minimp3 answers zero samples for every frame; past
+     * `k_max_empty_frames` consecutive frames the player must still fail with
+     * `error_stage=decode` instead of "playing" silence forever. */
+    CHECK(write_zero_sample_mp3(fixture_path));
+    CHECK(subject.start(&storage, access));
+    CHECK(subject.set_queue(queue, 1, 0));
+    subject.set_repeat(cyberdeck_music::repeat_mode::off);
+    CHECK(subject.play("/stream.mp3"));
+    CHECK(wait_until([&] {
+        cyberdeck_music::snapshot state{};
+        return subject.status(state) && state.state == cyberdeck_music::playback_state::error &&
+               state.failure_stage == cyberdeck_music::error_stage::decode;
+    }, std::chrono::seconds(5)));
+    {
+        cyberdeck_music::snapshot corrupt{};
+        CHECK(subject.status(corrupt));
+        CHECK(corrupt.state == cyberdeck_music::playback_state::error);
+        CHECK(corrupt.failure_stage == cyberdeck_music::error_stage::decode);
+    }
+    CHECK(stop_releases_once());
+
     /* TEST-MUSIC-ESC-08: reopening the player after a real playback session
      * must reset the snapshot; only the configured volume survives. */
     CHECK(write_id3_tagged_mp3(fixture_path, "Session title", "Session artist"));

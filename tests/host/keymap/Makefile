@@ -229,7 +229,7 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN)
 
 MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
 MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
@@ -247,6 +247,11 @@ MUSIC_APP_MAIN_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_mus
 MUSIC_APP_OBJ := test_music_app/music_app.o
 MUSIC_METADATA_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_metadata.cpp
 MUSIC_METADATA_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_metadata.h
+MUSIC_DURATION_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_duration.cpp
+MUSIC_DURATION_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_duration.h
+MUSIC_DURATION_TEST := test_music_duration.cpp
+MUSIC_DURATION_BIN := test_music_duration_bin
+MUSIC_DURATION_OBJS := test_music_duration/test.o test_music_duration/duration.o
 MUSIC_APP_SOURCES := \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
 	$(MUSIC_METADATA_SRC) \
@@ -270,9 +275,11 @@ MUSIC_APP_HDRS := ../../../components/cyberdeck/include/apps/music/cyberdeck_mus
 	../../../components/cyberdeck/include/platform/audio/cyberdeck_audio_output.h \
 	../../../components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h
 MUSIC_PLAYER_TEST := test_music_player.cpp
+MUSIC_VBR_FIXTURE := fixtures/music/vbr-1s.mp3
 MUSIC_COMMAND_INPUT_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_music_command_input.cpp
 MUSIC_COMMAND_INPUT_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_music_command_input.h
 MUSIC_PLAYER_SOURCES := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp \
+	$(MUSIC_DURATION_SRC) \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
 	$(MUSIC_METADATA_SRC) \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp \
@@ -364,7 +371,7 @@ KNOWN_HOSTS_FILE_MIG_OBJS := test_known_hosts_file/test.o test_known_hosts_file/
 POWEROFF_MIG_OBJS := test_poweroff/test.o test_poweroff/poweroff.o
 MIGRATION_FINAL_OBJS := $(EDITOR_MODEL_MIG_OBJS) $(TIME_SYNC_MIG_OBJS) $(SHELL_UTILS_MIG_OBJS) $(SD_PACKAGE_MIG_OBJS) $(RESOURCE_CATALOG_MIG_OBJS) $(NETDIAG_DNS_ADAPTER_MIG_OBJS) $(NETDIAG_HTTPS_ADAPTER_MIG_OBJS) $(NETDIAG_APP_MIG_OBJS) $(SHELL_SESSION_MIG_OBJS) $(SHELL_HELP_MIG_OBJS) $(APP_RUNTIME_MIG_OBJS) $(RUNTIME_SDK_MIG_OBJS) $(STORAGE_FACADE_MIG_OBJS) $(PHASE9_CAPABILITIES_MIG_OBJS) $(DEMO_APP_MIG_OBJS) $(SHELL_APP_MIG_OBJS) $(WINDOW_MANAGER_MIG_OBJS) $(LOCAL_SHELL_MIG_OBJS) $(CAT_MULTILINE_MIG_OBJS) $(HELP_UNIFICATION_MIG_OBJS) $(BATTERY_PROTECTION_MIG_OBJS) $(CAT_WORKER_MIG_OBJS) $(BLE_BACKGROUND_MIG_OBJS) $(KEYBOARD_DISPATCH_MIG_OBJS) $(DISPLAY_VIEWS_MIG_OBJS) $(KNOWN_HOSTS_FILE_MIG_OBJS) $(POWEROFF_MIG_OBJS)
 
-MAKE_DEPFILES := $(addsuffix .d,$(MIGRATION_FINAL_OBJS) $(SCREEN_PROTECTION_OBJS) $(SAVE_SIDECAR_OBJS) $(WIFI_SURVEY_EXPORT_OBJS) $(NETDIAG_CONTROLLER_OBJS) $(NETDIAG_TCP_OBJS) $(EVENT_LOG_RUNTIME_OBJS) $(SD_IO_COORDINATOR_OBJS) $(BATTERY_CONTRACT_OBJS) $(BATTERY_VIEW_OBJS) $(BLE_TYPES_OBJS) $(BLE_STATE_OBJS) $(BLE_EVENTS_OBJS) $(BLE_STORE_OBJS) $(BLE_COMMAND_OBJS) $(WIFI_AUDIT_OBJS) $(TERMINAL_SCROLLBACK_OBJS) $(WIFI_SURVEY_OBJS) $(RECOVERY_POLICY_OBJS) $(WIFI_AUDIT_PERSISTENCE_OBJS) $(WIFI_AUDIT_SAVE_OBJS) $(SERIAL_NDJSON_OBJS) $(SERIAL_SCREEN_DUMP_OBJS) $(SERIAL_CLI_TOLERANCE_OBJS) $(SERIAL_SYSINFO_WIFI_OBJS) $(SERIAL_TERM_DUMP_OBJS) $(FS_WRITE_DISPATCH_OBJS) $(WIFI_EVENT_DISPATCH_OBJS) $(WIFI_PERSISTENCE_QUEUE_OBJS) $(WIFI_PERSISTENCE_COORDINATION_OBJS) $(CLOCK_FORMATTER_OBJS) $(TERMINAL_FILTER_OBJS) $(EDIT_LINE_OBJS) $(WIFI_INDICATOR_OBJS) $(WIFI_ICON_OBJS) $(WIFI_MENU_OBJS) $(HISTORY_OBJS) $(KEYBOARD_EVENT_OBJS) $(EVENT_LOG_RECENT_OBJS) $(WIFI_STATE_MACHINE_OBJS) $(NET_COORDINATOR_OBJS) $(SSH_ECHO_GUARD_OBJS) $(SSH_LINE_COMPOSER_OBJS) $(KEYMAP_OBJS) $(SCREENSHOT_BMP_OBJS) $(ORIENTATION_OBJS) $(MUSIC_APP_OBJ))
+MAKE_DEPFILES := $(addsuffix .d,$(MIGRATION_FINAL_OBJS) $(SCREEN_PROTECTION_OBJS) $(SAVE_SIDECAR_OBJS) $(WIFI_SURVEY_EXPORT_OBJS) $(NETDIAG_CONTROLLER_OBJS) $(NETDIAG_TCP_OBJS) $(EVENT_LOG_RUNTIME_OBJS) $(SD_IO_COORDINATOR_OBJS) $(BATTERY_CONTRACT_OBJS) $(BATTERY_VIEW_OBJS) $(BLE_TYPES_OBJS) $(BLE_STATE_OBJS) $(BLE_EVENTS_OBJS) $(BLE_STORE_OBJS) $(BLE_COMMAND_OBJS) $(WIFI_AUDIT_OBJS) $(TERMINAL_SCROLLBACK_OBJS) $(WIFI_SURVEY_OBJS) $(RECOVERY_POLICY_OBJS) $(WIFI_AUDIT_PERSISTENCE_OBJS) $(WIFI_AUDIT_SAVE_OBJS) $(SERIAL_NDJSON_OBJS) $(SERIAL_SCREEN_DUMP_OBJS) $(SERIAL_CLI_TOLERANCE_OBJS) $(SERIAL_SYSINFO_WIFI_OBJS) $(SERIAL_TERM_DUMP_OBJS) $(FS_WRITE_DISPATCH_OBJS) $(WIFI_EVENT_DISPATCH_OBJS) $(WIFI_PERSISTENCE_QUEUE_OBJS) $(WIFI_PERSISTENCE_COORDINATION_OBJS) $(CLOCK_FORMATTER_OBJS) $(TERMINAL_FILTER_OBJS) $(EDIT_LINE_OBJS) $(WIFI_INDICATOR_OBJS) $(WIFI_ICON_OBJS) $(WIFI_MENU_OBJS) $(HISTORY_OBJS) $(KEYBOARD_EVENT_OBJS) $(EVENT_LOG_RECENT_OBJS) $(WIFI_STATE_MACHINE_OBJS) $(NET_COORDINATOR_OBJS) $(SSH_ECHO_GUARD_OBJS) $(SSH_LINE_COMPOSER_OBJS) $(KEYMAP_OBJS) $(SCREENSHOT_BMP_OBJS) $(ORIENTATION_OBJS) $(MUSIC_APP_OBJ) $(MUSIC_DURATION_OBJS))
 LEGACY_TEST_ARTIFACTS := test_editor_model test_shell_utils test_shell_session test_app_runtime test_runtime_sdk test_demo_app test_local_shell test_cat_multiline test_help_unification test_known_hosts_file test_poweroff  test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_shell_help test_shell_app test_screen_protection test_terminal_scrollback test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_wifi_survey test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_recovery_policy test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_window_manager test_time_sync test_clock_formatter test_terminal_filter test_edit_line test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_echo_guard test_ssh_line_composer test_keymap test_screenshot_bmp test_orientation
 
 test_save_sidecar_recovery/%.o: test_save_sidecar_recovery.cpp Makefile
@@ -2691,11 +2698,26 @@ test_music_manager: test_music_manager_bin
 test_music_manager_bin: test_music_manager.cpp ../../../components/cyberdeck/src/apps/music/cyberdeck_music_manager.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_manager.h Makefile
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $< ../../../components/cyberdeck/src/apps/music/cyberdeck_music_manager.cpp -o $@
 
+.PHONY: test_music_duration
+test_music_duration: $(MUSIC_DURATION_BIN)
+	@./$(MUSIC_DURATION_BIN)
+
+test_music_duration/test.o: $(MUSIC_DURATION_TEST) $(MUSIC_DURATION_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_music_duration/duration.o: $(MUSIC_DURATION_SRC) $(MUSIC_DURATION_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+$(MUSIC_DURATION_BIN): $(MUSIC_DURATION_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(MUSIC_DURATION_OBJS) -o $@
+
 .PHONY: test_music_player
 test_music_player: test_music_player_bin
 	@./test_music_player_bin
 
-test_music_player_bin: $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) $(MUSIC_PLAYER_SHIMS) $(MUSIC_APP_HDRS) $(MUSIC_METADATA_HDR) $(MUSIC_AUDIO_HDR) music_traceability.md Makefile
+test_music_player_bin: $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) $(MUSIC_PLAYER_SHIMS) $(MUSIC_APP_HDRS) $(MUSIC_METADATA_HDR) $(MUSIC_DURATION_HDR) $(MUSIC_AUDIO_HDR) music_traceability.md $(MUSIC_VBR_FIXTURE) Makefile
 	$(CXX) $(CXXFLAGS) -Wno-error=stringop-truncation -ffunction-sections -fdata-sections -pthread -Imusic_runtime_shim \
 		-I../../../components/cyberdeck/include -I../../../components/cyberdeck $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) \
 		-Wl,--wrap=close -Wl,--wrap=read -Wl,--gc-sections -o $@
@@ -2715,6 +2737,14 @@ test_music_scan_stack_contract: test_music_scan_stack_contract.py $(MUSIC_METADA
 .PHONY: test_music_player_teardown_contract
 test_music_player_teardown_contract: test_music_player_teardown_contract.py ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_player.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
 	@$(PYTHON) test_music_player_teardown_contract.py
+
+.PHONY: test_music_player_duration_contract
+test_music_player_duration_contract: test_music_player_duration_contract.py ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp ../../../components/cyberdeck/src/apps/music/cyberdeck_music_duration.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_duration.h Makefile
+	@$(PYTHON) test_music_player_duration_contract.py
+
+.PHONY: test_music_audio_buffer_contract
+test_music_audio_buffer_contract: test_music_audio_buffer_contract.py ../../../components/m5stack_tab5/src/bsp_audio.c ../../../components/cyberdeck/src/platform/audio/cyberdeck_audio_output.cpp Makefile
+	@$(PYTHON) test_music_audio_buffer_contract.py
 
 .PHONY: test_music_decoder_scratch
 test_music_decoder_scratch: test_music_decoder_scratch_bin
@@ -2736,7 +2766,10 @@ test: test-build
 	@$(MAKE) --no-print-directory test_music_decoder_stack_contract
 	@$(MAKE) --no-print-directory test_music_scan_stack_contract
 	@$(MAKE) --no-print-directory test_music_player_teardown_contract
+	@$(MAKE) --no-print-directory test_music_player_duration_contract
+	@$(MAKE) --no-print-directory test_music_audio_buffer_contract
 	@$(MAKE) --no-print-directory test_music_decoder_scratch
+	@$(MAKE) --no-print-directory test_music_duration
 	@$(MAKE) --no-print-directory test_music_model
 	@$(MAKE) --no-print-directory test_music_audio_output
 	@$(MAKE) --no-print-directory test_music_app
@@ -3005,7 +3038,7 @@ test_display_memory_contract: test_display_memory_contract.py ../../../component
 	$(PYTHON) test_display_memory_contract.py
 
 clean:
-	rm -rf test_music_app
+	rm -rf test_music_app test_music_duration
 	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff
 	rm -f $(BINS) test_app_runtime_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
 	rm -rf test_keymap test_screenshot_bmp test_orientation

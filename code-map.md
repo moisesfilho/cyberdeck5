@@ -1139,6 +1139,67 @@ destrói recursos potencialmente usados.
    candidata: scratch no heap uma vez por faixa, com erro `decode` se indisponível;
    `mp3dec_decode_frame_with_scratch` local mede 976 B, worker 1.152 B. O wrapper
     upstream permanece disponível; adaptação em `components/cyberdeck/THIRD_PARTY.md`.
+   - `cyberdeck_music_duration.{h,cpp}` (`include/apps/music/` e `src/apps/music/`)
+     é o probe puro (apenas `std`, sem ESP-IDF/LVGL) que resolve a duração da
+     faixa uma única vez por sessão. `mp3_probe` carrega `duration_ms` (0 =
+     desconhecida, fail-closed), `has_toc` e `toc[100]`.
+     `mp3_probe_bytes(data, size, audio_bytes)` valida o header MPEG no offset 0
+     (sync 11 bits, Layer III, versão válida, bitrate 1..14, sample rate 0..2 e
+     frame coerente), procura `Xing`/`Info` em `4 + side_info` (flags BE:
+     `0x1` frames → `frames * spf * 1000 / hz`; `0x2` tamanho em bytes ignorado;
+     `0x4` copia os 100 bytes de TOC) e, sem Xing, estima pela média dos frames
+     completos presentes no buffer (cap 48) extrapolada para `audio_bytes`;
+     frames 0/`>0xFFFFFF` e duração > 24 h falham fechado.
+     `mp3_audio_offset(fd, file_size, offset)` valida/salta o ID3v2 via `pread`
+     sem mover o descritor. `mp3_probe_fd(fd, file_size, offset)` é o probe de
+     arquivo inteiro usado pelo player: `pread` de 4 KiB no heap, `Xing`/`Info`
+     tem prioridade absoluta e, sem o tag, a média vem de amostragem
+     distribuída. `mp3_window { bytes, samples }` e
+     `mp3_frame_window(data, size, out)` medem uma janela: ressincronizam no
+     primeiro header confirmado pelo header seguinte (um `0xFF` isolado não
+     vale), percorrem só frames completos com `hz`/`spf` iguais aos do primeiro
+     e somam bytes e amostras; janela sem esse par de headers falha fechado e
+     zera `out`. `mp3_probe_fd` lê `k_window_count = 32` janelas de
+     `k_window_bytes = 2048` em `offset + audio_bytes*i/32` (69632 B de I/O por
+     abertura, teto de 72 KiB), reusa **um** buffer de 2048 B no heap (nunca na
+     stack: o worker tem 8192 B) e extrapola
+     `duration_ms = samples*1000*audio_bytes/(hz*bytes)`; nenhuma janela válida
+     ou header inválido no offset 0 → `duration_ms = 0` (fallback do player).
+     `audio_bytes = file_size - offset`, então tags de cauda contam como áudio.
+     O player chama `mp3_probe_fd` uma vez, logo após o skip de ID3, retém o
+     `mp3_probe` inteiro como constante da sessão (duração + TOC), grava
+     `state.current.duration_ms` e só usa o fallback do primeiro frame
+     decodificado (`decoded_frames == 0`) quando o probe falha; as publicações
+     por frame repetem a mesma constante. `elapsed` acumula amostras
+     (`played_samples` + `played_base_ms`) em vez de truncar ms por frame.
+     `mp3_seek_target(probe, offset, audio_bytes, target_ms)` resolve o início
+     do seek: com TOC, `percent = min(99, target_ms*100/duration_ms)`,
+     `byte = offset + toc[percent]*audio_bytes/256` (clamp em
+     `offset..offset+audio_bytes`) e `position_ms = percent*duration_ms/100`;
+     sem TOC mantém o mapeamento linear (`position_ms = target_ms`), exato em
+     CBR, e também limita `byte` a `offset+audio_bytes` (alvo acima de
+     `duration_ms` não escapa do payload); duração 0 falha fechado em
+     `offset`/0. O laço faz `lseek` no `byte`,
+     reinicia `played_base_ms = point.position_ms` e `played_samples`, e descarta
+     os frames decodificados (sem `cyberdeck_audio_output::write` nem publicação
+     de posição) até cobrir `target_ms - point.position_ms`, limitado a 5000 ms;
+     ao terminar, `played_base_ms = target_ms` e a escrita volta. Cada seek emite
+     uma linha `playback seek` com alvo, byte, posição do TOC e ms descartados. O
+     laço também tolera frame vazio (`samples == 0 && info.frame_bytes > 0`): o
+     frame já foi consumido pelo `memmove`, então apenas `continue`, contando
+     consecutivos e zerando no sucesso; acima de 64 consecutivos volta a falhar
+     `decode`. `samples < 0`, `hz` fora de 8000..48000, `channels` inválido,
+     `frame_bytes <= 0`, EOF e `decoded_frames == 0` continuam fatais. Testes:
+     `test_music_duration` (alvo incremental com objetos/depfiles,
+     TEST-MUSIC-DUR-01..04, os casos de `mp3_seek_target` em
+     TEST-MUSIC-DUR-08, `test_frame_window` e `test_distributed_vbr_sampling`
+     em TEST-MUSIC-DUR-14), `test_music_player_duration_contract.py`
+     (TEST-MUSIC-DUR-06/09 estrutural, `.PHONY` no agregado `test`, sem entrada
+     em `BINS`) e `test_music_player` cobre TEST-MUSIC-DUR-05 (fixture VBR),
+     TEST-MUSIC-DUR-07 (fixture real `fixtures/music/vbr-1s.mp3`, 5196 B, seek
+     de 400 ms sem `error_stage=decode`) e TEST-MUSIC-DUR-13 (mesmo fixture com
+     `toc[50] = 150` → byte 3062, sequência de frames `samples == 0` conferida
+     em runtime com o decoder de produção, seek a 50% da duração).
      Falhas do lifecycle inicial agora registram estágio específico (`storage_grant`,
      `player`, queue, completion semaphore, worker task ou scan completion semaphore)
      sem SSID/caminhos; `app info` continua expondo o resultado genérico do supervisor.
@@ -1194,8 +1255,22 @@ destrói recursos potencialmente usados.
   inicialização, permitindo exercitar codec/roteamento com callbacks determinísticos.
   Falha ao desligar o amplificador mantém estado de rota em falha, força retry e
   bloqueia start/write até a rota segura ser confirmada.
+  `start(rate, channels, volume)` é idempotente porque o player o chama a cada
+  frame PCM: com codec já aberto na mesma taxa/canais ele não toca o barramento
+  I2C do codec — `set_volume` só é escrito quando `volume != active_volume`
+  (guardado no adapter, zerado por `stop()`) e a rota usa o `update_route()`
+  throttled de 500 ms; `update_route(true)` (leitura forçada do jack) ficou
+  restrito à abertura e o `stop()` mantém a checagem forçada ao desligar o
+  amplificador. `set_volume()` público continua aplicando sempre e atualiza
+  `active_volume` no sucesso.
   `components/m5stack_tab5/CMakeLists.txt` compila `bsp_audio.c` e declara
-  `esp_codec_dev`/expander como dependências.
+  `esp_codec_dev`/expander como dependências. `bsp_audio_init()` configura o
+  I2S com `dma_desc_num=8`/`dma_frame_num=512` (~85 ms a 48 kHz, contra os
+  ~30 ms do default `6 x 240`) para absorver hiccups de SD/Wi-Fi/redraw; TX e
+  RX alocam 16 KB de DMA interno cada (8 descritores de 2048 B por canal, então
+  o maior bloco contíguo exigido é 2048 B; `sys.info` reportou `dma_largest`
+  43008). Essa era a causa dos cortes audíveis: o usuário confirmou em fw
+  `9bfd6410` que eles pararam após a mudança.
 - O código upstream minimp3 revision
   `ea99364f61c14656440e8d77e9c233ccf3124633` está em
   `components/cyberdeck/third_party/minimp3/minimp3.h`, com licença CC0 em
@@ -1240,8 +1315,21 @@ destrói recursos potencialmente usados.
   registro durante a saída do processo); `music_test_task_state` continua sendo
   alocado por `spawn_task` e liberado apenas pela própria task; e
   `test_music_audio_output.cpp` para volume, mute, falhas e roteamento via backend
-  codec injetável. `MUSIC_METADATA_SRC`/`MUSIC_METADATA_HDR` entram em
-  `MUSIC_APP_SOURCES`/`MUSIC_PLAYER_SOURCES` e nas dependências dos dois alvos. `music_traceability.md` relaciona esses cenários a
+  codec injetável, incluindo o burst de 100 `start()` idênticos (0 escrita de
+  volume e 0 leitura de jack), a reaplicação de volume apenas quando muda, a
+  troca de jack durante o play aplicada uma vez por janela de 500 ms e a falha
+  de amplificador fail-closed no caminho reentrante (206 checks). A geometria do
+  DMA de I2S é fixada estruturalmente por
+  `test_music_audio_buffer_contract.py` (17 checks, no agregado `test`): valores
+  `8`/`512`, `auto_clear = true`, atribuições antes de `i2s_new_channel()`,
+  janela derivada de 60..200 ms (o default `6 x 240` calcula 30 ms e é
+  rejeitado), limite de descritor, cap `count <= 2304` dentro do ring e fonte
+  única dos valores. `MUSIC_METADATA_SRC`/`MUSIC_METADATA_HDR` entram em
+  `MUSIC_APP_SOURCES`/`MUSIC_PLAYER_SOURCES` e nas dependências dos dois alvos;
+  `MUSIC_DURATION_SRC`/`MUSIC_DURATION_HDR` entram em `MUSIC_PLAYER_SOURCES` e
+  no alvo incremental `test_music_duration` (`test_music_duration/test.o` +
+  `test_music_duration/duration.o`, depfiles em `MAKE_DEPFILES`, `_bin` em
+  `BINS`). `music_traceability.md` relaciona esses cenários a
   REQ-MUSIC/AC-MUSIC/TEST-AUDIO; os casos de secure-open usam a produção real do
   shell em `test_local_shell.cpp` e exercitam recusa de symlink/traversal sem
   enfraquecer os flags `O_NOFOLLOW`.

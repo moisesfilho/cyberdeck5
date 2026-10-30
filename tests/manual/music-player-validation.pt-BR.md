@@ -183,6 +183,10 @@ após autorização explícita. A confirmação “Sim, sem playback” vale som
 a rodada atual e não autoriza nenhum desses passos.
 
 - verificar áudio audível no speaker integrado;
+- confirmar ausência de cortes/engasgos audíveis durante uma faixa inteira,
+  inclusive com leitura de SD, Wi-Fi e redraw da UI ativos (correção do DMA de
+  I2S para `8 x 512`, ~85 ms; o usuário já confirmou em fw `9bfd6410` que os
+  cortes pararam);
 - verificar inserção/remoção de fone e rota pelo jack de 3,5 mm;
 - testar pause/resume/seek/volume/stop e observar status/progresso;
 - confirmar amplificador desligado quando ocioso, sem ruído persistente;
@@ -257,3 +261,80 @@ Repita cinco vezes: abrir `music`, aguardar o scan, `music play 1`, confirmar
 **Falha do cenário:** qualquer reboot, ausência de resposta NDJSON, prompt que
 não volta, `close failed` persistente ou ausência de novo scan após reabrir.
 Registre a captura e não repita automaticamente.
+
+## 5. Duração da faixa e barra de progresso — REQ-MUSIC-06
+
+Cenário de playback; exige a mesma autorização explícita da seção 4 e um boot
+normal comprovado (seção 1). Cobre a correção em que o total da faixa era
+recalculado a cada frame com o bitrate daquele frame, fazendo `elapsed/total`
+(e a barra) pular para frente e para trás em arquivos VBR.
+
+**Pré-requisito:** firmware construído a partir deste snapshot e faixa MP3
+(preferencialmente VBR) presente em `/musica`.
+
+1. Abra o player (`ui.type "music"`), aguarde `queue: scan complete` e inicie a
+   faixa (`music play 1`).
+2. Confirme no log serial uma única linha
+   `music: playback duration generation=... duration_ms=... has_toc=... source=probe`
+   (ou `source=pending_fallback`, seguida de
+   `music: playback duration fallback generation=... duration_ms=...` quando o
+   probe não resolveu o arquivo). Não deve haver nova linha de duração por frame.
+   Em faixa VBR **sem** tag Xing/Info, o probe amostra 32 janelas de 2048 B
+   distribuídas pelo arquivo inteiro (69632 B de I/O por abertura) em vez de só
+   os primeiros 4 KiB: compare o total publicado com a duração real medida no
+   host (`ffprobe -count_frames` × spf/hz sobre o mesmo arquivo). O total deve
+   ficar dentro de 2 %; o estimador antigo (só o head) ficava 9–16 % abaixo.
+3. Com a faixa tocando, amostre o rótulo `progress:` 10 vezes em 10 s (1 amostra
+   por segundo) via `term.dump` ou `screen.dump`. Critérios:
+   - o total (segunda parte de `elapsed/total`) é **idêntico** nas 10 amostras;
+   - `elapsed` cresce de forma monotônica (nunca regride) e a barra avança no
+     mesmo sentido;
+   - nenhuma amostra mostra total alternando entre valores diferentes.
+4. Deixe a faixa terminar naturalmente (sem seek). No EOF, a última amostra
+   `progress:` deve satisfazer `elapsed == total` com tolerância de ±1 s; a
+   reprodução para e `music status` mostra `stopped`.
+5. Registre `sys.info` antes/depois: uptime crescente, sem reboot/panic/WDT, e
+   `ping` da ponte Serial-JTAG respondendo.
+
+**Falha do cenário:** total variando entre amostras, `elapsed` regredindo,
+divergência maior que 1 s no EOF, reboot ou ausência de resposta NDJSON.
+Registre as amostras e o log e não repita automaticamente.
+
+## 5.1. Seek em faixa VBR — AC-MUSIC-16
+
+Cenário de playback; exige a mesma autorização explícita da seção 4, boot normal
+comprovado (seção 1) e uma faixa **VBR** em `/musica`. Cobre o defeito em que
+`seek <segundos>` fazia `lseek` proporcional por byte, caía no meio de um frame,
+o minimp3 devolvia `samples=0` para o frame já consumido e a reprodução morria
+com `state: error / error_stage: decode`.
+
+1. Abra o player (`ui.type "music"`), aguarde `queue: scan complete` e inicie a
+   faixa (`music play 1`).
+2. Envie `seek 60` e confirme: a faixa **continua tocando**, `music status`
+   mostra `playing` (nunca `error`) e a posição fica próxima de 60 s (±1 s).
+3. Repita com alvos **dentro da duração exibida** no rótulo `progress:
+   <elapsed>/<total>`: `seek 60` (≈ metade da faixa curta), `seek 100` (≈ 80 %)
+   e `seek <total-10>` (perto do fim). Alvos acima do total não são atingíveis:
+   `player::seek` clampa no fim da faixa e o rótulo mostra ≈ o cap, não o alvo
+   pedido — registre o alvo realmente efetivo. Em cada seek confirme que a
+   reprodução **continua** (`state: playing`, sem `error_stage: decode`) e que a
+   posição fica ≈ ao alvo (±1 s).
+4. No log serial, cada seek deve emitir exatamente uma linha
+   `music: playback seek generation=... target_ms=... byte=... toc_position_ms=... discard_ms=...`.
+   Com TOC, `discard_ms` deve ser pequeno (≤ 5000); sem TOC, `discard_ms=0`.
+5. Confirme em `term.dump`/`screen.dump` que o `progress:` mostra a posição no
+   alvo e que o total não muda, e que `music status` nunca exibe
+   `error_stage: decode`.
+6. Registre `sys.info` antes/depois: uptime crescente, sem reboot/panic/WDT, e
+   `ping` da ponte Serial-JTAG respondendo.
+
+**Medição física já registrada (fw `c822b8cc`, `/dev/ttyACM0`):** na faixa longa
+o total ficou constante em 271 s em 6 amostras e `seek 150` resultou em 152 s
+ainda tocando; na faixa de 121 s, `seek 60`/`seek 100`/`seek 110` resultaram em
+61 s/102 s/111 s e, após o fim natural, `music status` mostrou `stopped` com
+`121s / 121 s`. Essa medição cobre a regra de clamping e a continuidade após o
+seek; resta apenas o aceite visual (áudio/barra) no dispositivo.
+
+**Falha do cenário:** `state: error`, `error_stage: decode`, posição que não
+avança depois do seek, `discard_ms > 5000`, reboot ou ausência de resposta
+NDJSON. Registre o alvo, as amostras e o log e não repita automaticamente.
