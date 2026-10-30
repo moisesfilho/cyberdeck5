@@ -1189,7 +1189,11 @@ destrói recursos potencialmente usados.
   `test_music_player.cpp` para fila, cancelamento, leases, lifecycle worker e
   shims `music_runtime_shim/freertos/idf_additions.h` e
   `music_runtime_shim/music_freertos_shim.cpp` suportam fault injection de
-  semáforo binário e criação de task estática para cobrir rollback de startup; e
+  semáforo binário e criação de task estática para cobrir rollback de startup.
+  O registro de tasks e o log de eventos desse shim vivem em um `shared_state`
+  alocado por `shared()` e nunca destruído (as tasks destacadas podem tocar o
+  registro durante a saída do processo); `music_test_task_state` continua sendo
+  alocado por `spawn_task` e liberado apenas pela própria task; e
   `test_music_audio_output.cpp` para volume, mute, falhas e roteamento via backend
   codec injetável. `MUSIC_METADATA_SRC`/`MUSIC_METADATA_HDR` entram em
   `MUSIC_APP_SOURCES`/`MUSIC_PLAYER_SOURCES` e nas dependências dos dois alvos. `music_traceability.md` relaciona esses cenários a

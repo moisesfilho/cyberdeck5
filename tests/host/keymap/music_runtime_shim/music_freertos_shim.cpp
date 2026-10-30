@@ -40,15 +40,28 @@ std::atomic<unsigned> park_count{0};
  * requested; it never escapes the host thread wrapper. */
 struct task_terminated {};
 
-std::mutex registry_mutex;
-std::unordered_set<music_test_task_state *> live_tasks;
+/* Registry and event log of the host-backed tasks.  They cannot be ordinary
+ * namespace-scope statics: spawn_task detaches its std::thread, so a worker may
+ * still be inside retire_task()/record() while the process exits and destroys
+ * static objects, which would crash on an already destroyed mutex/container.
+ * The state is therefore allocated once and intentionally never destroyed; it
+ * stays reachable through the pointer, so LSan does not report it as a leak. */
+struct shared_state {
+    std::mutex registry_mutex;
+    std::unordered_set<music_test_task_state *> live_tasks;
+    std::mutex events_mutex;
+    std::vector<std::string> teardown_events;
+};
 
-std::mutex events_mutex;
-std::vector<std::string> teardown_events;
+shared_state &shared() {
+    static shared_state *state = new shared_state();
+    return *state;
+}
 
 void record(const char *event) {
-    std::lock_guard<std::mutex> lock(events_mutex);
-    teardown_events.emplace_back(event);
+    shared_state &s = shared();
+    std::lock_guard<std::mutex> lock(s.events_mutex);
+    s.teardown_events.emplace_back(event);
 }
 } // namespace
 
@@ -66,8 +79,9 @@ struct music_test_task_state {
 
 namespace {
 void retire_task(music_test_task_state *state) {
-    std::lock_guard<std::mutex> lock(registry_mutex);
-    live_tasks.erase(state);
+    shared_state &s = shared();
+    std::lock_guard<std::mutex> lock(s.registry_mutex);
+    s.live_tasks.erase(state);
 }
 
 void run_managed(TaskFunction_t entry, void *context, music_test_task_state *state) {
@@ -96,8 +110,9 @@ music_test_task_state *spawn_task(TaskFunction_t entry, void *context) {
     if (entry == nullptr) return nullptr;
     auto *state = new music_test_task_state{};
     {
-        std::lock_guard<std::mutex> lock(registry_mutex);
-        live_tasks.insert(state);
+        shared_state &s = shared();
+        std::lock_guard<std::mutex> lock(s.registry_mutex);
+        s.live_tasks.insert(state);
     }
     std::thread([entry, context, state] { run_managed(entry, context, state); }).detach();
     return state;
@@ -106,8 +121,9 @@ music_test_task_state *spawn_task(TaskFunction_t entry, void *context) {
 void delete_task_handle(TaskHandle_t handle, bool with_caps) {
     auto *state = static_cast<music_test_task_state *>(handle);
     {
-        std::lock_guard<std::mutex> lock(registry_mutex);
-        if (live_tasks.count(state) == 0) {
+        shared_state &s = shared();
+        std::lock_guard<std::mutex> lock(s.registry_mutex);
+        if (s.live_tasks.count(state) == 0) {
             ++music_test_invalid_task_delete_count;
             record("invalid_task_delete");
             return;
@@ -298,10 +314,12 @@ unsigned music_test_entry_returned_without_delete_count() {
 unsigned music_test_park_count() { return park_count.load(std::memory_order_relaxed); }
 unsigned music_test_semaphore_delete_count() { return semaphore_delete_count.load(std::memory_order_relaxed); }
 std::vector<std::string> music_test_teardown_events() {
-    std::lock_guard<std::mutex> lock(events_mutex);
-    return teardown_events;
+    shared_state &s = shared();
+    std::lock_guard<std::mutex> lock(s.events_mutex);
+    return s.teardown_events;
 }
 void music_test_clear_teardown_events() {
-    std::lock_guard<std::mutex> lock(events_mutex);
-    teardown_events.clear();
+    shared_state &s = shared();
+    std::lock_guard<std::mutex> lock(s.events_mutex);
+    s.teardown_events.clear();
 }
