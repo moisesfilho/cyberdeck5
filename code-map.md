@@ -173,6 +173,10 @@ sobreposição do header. Também cobre progresso, callback de seleção/comando
 para segundos do comando `seek`, protegido por `test_music_scan_opendir_contract.py`.
 O caso REQ-PLAYER-LAYOUT-READABLE também fixa que status com mais de três linhas
 retém somente as três primeiras, limita a altura e mantém a label dentro do card.
+AC-MUSIC-13 fixa também a grade de controles: as linhas são separadas por
+`row_gap = pad` (4 px, igual ao gap entre colunas) e o bloco é ancorado por
+`lv_obj_get_content_height(now_playing_)` com o mesmo inset de 8 px do
+`x`, em retrato (2 colunas/4 linhas) e paisagem (3 colunas/3 linhas).
 A surface de música é explicitamente excluída do layout do pai e ancorada em
   (0,0) dentro do content_ da shell, para não herdar o deslocamento do fluxo flex
   nem cobrir header/área inferior; o teste modela content_ deslocado e calcula
@@ -238,6 +242,13 @@ centrado por `(row_height - track_label_height) / 2` e com inset horizontal de
 Como o tema default é light, o alvo também exige `radius`, `outline_width`,
 `shadow_width` e `shadow_opa` (`LV_OPA_TRANSP`) zerados na linha e no botão de
 música do header, com provas de mutação para cada canal.
+O contrato também fixa a grade de controles do player (`controls_grid_issues`):
+`const int row_gap = pad;`, `controls_height` reservando `row_gap * (control_rows - 1)`,
+linhas posicionadas com `row * (button_height + row_gap)`, `controls_area` clampado
+por `content_height` e o bloco em `content_height - controls_area - 8`. As mutações
+"sem gaps" (`button_height * control_rows`, ou `row_gap = 0`) e "âncora pelo cartão"
+(`card_height - controls_area - 8`) são rejeitadas com mensagem explícita; o mesmo
+alvo cobre o inset simétrico dos cartões descrito acima.
 O contrato rejeita por mutação U+2212/U+2014 reintroduzidos, as setas na dica de
 controles, `LV_SYMBOL_PLAY` renderizado (inclusive dentro do handler do teclado
 virtual, num render que compartilha statement com a comparação, num ternário e em
@@ -1042,6 +1053,40 @@ destrói recursos potencialmente usados.
        caminhos; falha mantém foreground/grant/quota
       ativos e bloqueia a troca, permitindo retry. `tests/host/keymap/player_traceability.md`
      define os cenários de aceite foreground, falha, limites, segurança e regressão.
+      Como o tema default do LVGL está em modo light, a view sobrepõe o estilo que
+      ele aplica: a barra de progresso é `lv_slider` de propósito (mantém o seek por
+      toque/arraste em `progress_released` -> `seek_ratio`), mas MAIN fica `kBorder`
+      (cinza de borda, para a trilha permanecer visível do início ao fim em vez de
+      sumir no `kSurface` do cartão) com `bg_opa` `LV_OPA_COVER` explícito — o tema
+      aplica `LV_OPA_20` no MAIN via `bg_color_primary_muted`, então só a cor deixaria
+      a trilha a 20% sobre o cartão (medido #080A08 no aparelho) — sem raio/borda,
+      INDICATOR usa `kWhite` (o tema
+      pintaria com o primário azul) e
+      o KNOB fica invisível (`bg_opa` transparente + `pad_all`/`radius`/`border_width`/
+      `shadow_width` zerados), porque `draw_knob` sempre desenha um retângulo nessa
+      parte. Os oito botões de controle usam `kSelected` (#303030, o mesmo cinza
+      elevado da linha selecionada da biblioteca) sem borda, raio ou sombra, no
+      mesmo padrão das linhas da biblioteca — `kBlack` continua sendo apenas o
+      fundo da surface da view, porque é mais escuro que o cartão; `test_display_views` verifica os valores
+      finais pelo shim (que ignora o seletor de parte, logo o `bg_opa` do slot é o da
+      última escrita, KNOB) e
+      `test_music_player_ui_contract.py::progress_style_issues` fixa o track
+      `LV_PART_MAIN` em `kBorder` com `bg_opa` `LV_OPA_COVER`, o
+      `LV_PART_INDICATOR`/`LV_PART_KNOB`, exige que cada slot fixado continue
+      sendo a última escrita da parte (uma escrita posterior vence no LVGL e o
+      tema volta a aparecer, sem que o shim perceba) e rejeita mutações
+      (AC-MUSIC-13). Os filhos dos cartões (`now_playing_`, `list_`) derivam a
+      largura de `lv_obj_get_content_width(...) - 2 * kCardInset`, com
+      `kCardInset = 8` documentando o `pad_all` de `card()`: o filho fica a
+      `border + pad + inset` da borda esquerda, então a borda direita mantém o
+      mesmo inset (simétrico) para barra de progresso, coluna direita dos
+      controles e linhas da lista. Antes, `now_width - 16`/`browser_width - 16`
+      media o cartão externo (ignorando borda/pad) e deixava esses filhos 1 px
+      além da borda do cartão (medido no aparelho: barra 574 vs cartão 573).
+      `test_music_player_ui_contract.py::card_inset_issues` fixa essa derivação e
+      rejeita as mutações de volta para `now_width - 16`/`browser_width - 16`, o
+      inset subtraído uma única vez e o nome/valor de `kCardInset` fora do
+      `pad_all` de `card()`.
    - `cyberdeck_music_player.{h,cpp}` é o serviço FreeRTOS de playback em
     background: fila bounded de requisições (`xQueueCreateWithCaps`) e worker
     criado por `xTaskCreateWithCaps` com `k_worker_stack` de 8192 bytes e

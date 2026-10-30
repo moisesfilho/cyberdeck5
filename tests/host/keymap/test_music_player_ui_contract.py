@@ -405,6 +405,265 @@ def track_layout_issues(source: str) -> list[str]:
     return issues
 
 
+def progress_style_issues(source: str) -> list[str]:
+    """AC-MUSIC-13: the player bar and controls stay inside the mono palette.
+
+    The default LVGL theme is light: `styles.slider` paints the INDICATOR with
+    `bg_color_primary` (blue) and rounds MAIN/INDICATOR, while `styles.knob`
+    draws a circle larger than the track. `draw_knob` always initializes a rect
+    draw descriptor for LV_PART_KNOB, so transparent background plus zero
+    padding/border/shadow hides the ball without giving up the `lv_slider`
+    tap/drag seek. The unfilled MAIN track uses the card border grey with an
+    explicit opaque `bg_opa`, not the card surface, so the rail is visible even
+    when the indicator is empty (the theme paints MAIN at `LV_OPA_20`).
+
+    Comments are stripped before matching, so a commented-out setter cannot
+    satisfy a requirement. Every pinned slot is also checked as last-write-wins
+    (LVGL keeps one style value per part/property): an extra write after the
+    override silently reverts it while a presence-only scan stays green, and the
+    host shim folds all parts into one slot, so `test_display_views` reads only
+    the final KNOB writes and cannot see the MAIN slots either.
+
+    The control cells are `kSelected` (#303030) — the elevated grey of the
+    selected library row — because `kBlack` is darker than the card surface they
+    sit on and would read as a hole.
+    """
+    issues: list[str] = []
+    try:
+        create = strip_comments(function_body(source, "bool view::create("))
+    except (AssertionError, ValueError):
+        return ["player view create function not found"]
+    for part in ("MAIN", "INDICATOR"):
+        if not re.search(
+                rf"lv_obj_set_style_radius\(\s*progress_\s*,\s*0\s*,\s*LV_PART_{part}\s*\)",
+                create):
+            issues.append(f"progress bar must flatten LV_PART_{part} with radius 0")
+    # The unfilled track is the part that still shows the theme palette: the
+    # default light theme paints slider MAIN with `bg_color_primary_muted`, a
+    # blue-grey. Dropping this override keeps the bar blue behind the white
+    # indicator, so the MAIN background is as load-bearing as the INDICATOR one.
+    # The track must be the card border grey: `kSurface` matches the card and
+    # would make the empty bar invisible (a loose white block at playback start).
+    if not re.search(
+            r"lv_obj_set_style_bg_color\(\s*progress_\s*,\s*kBorder\s*,\s*LV_PART_MAIN\s*\)",
+            create):
+        issues.append(
+            "progress track must use kBorder so the rail stays visible instead "
+            "of the theme primary_muted")
+    # The same theme style also sets `bg_opa` to `LV_OPA_20` on MAIN, so the
+    # border grey would be blended at 20% over the card and the rail would be
+    # invisible on device (measured #080A08 on the bar band). MAIN therefore
+    # needs an explicit opaque `bg_opa`; INDICATOR already gets `LV_OPA_COVER`
+    # from the theme `bg_color_primary`.
+    if not re.search(
+            r"lv_obj_set_style_bg_opa\(\s*progress_\s*,\s*LV_OPA_COVER\s*,\s*LV_PART_MAIN\s*\)",
+            create):
+        issues.append(
+            "progress track must set lv_obj_set_style_bg_opa(progress_, "
+            "LV_OPA_COVER, LV_PART_MAIN) because the theme paints MAIN at "
+            "LV_OPA_20 and the rail disappears")
+    # LVGL keeps a single style value per part/property, so a later write wins
+    # and silently reverts the override while a presence-only scan stays green
+    # (measured class: the theme MAIN opacity). Every slot pinned above must
+    # therefore also hold its expected value as the LAST write.
+    for setter, part, value in (
+            ("bg_color", "MAIN", "kBorder"),
+            ("bg_opa", "MAIN", "LV_OPA_COVER"),
+            ("border_width", "MAIN", "0"),
+            ("radius", "MAIN", "0"),
+            ("bg_color", "INDICATOR", "kWhite"),
+            ("radius", "INDICATOR", "0"),
+            ("bg_opa", "KNOB", "LV_OPA_TRANSP"),
+            ("pad_all", "KNOB", "0"),
+            ("radius", "KNOB", "0"),
+            ("border_width", "KNOB", "0"),
+            ("shadow_width", "KNOB", "0")):
+        writes = re.findall(
+            rf"lv_obj_set_style_{setter}\(\s*progress_\s*,\s*(\w+)\s*,\s*"
+            rf"LV_PART_{part}\s*\)", create)
+        if writes and writes[-1] != value:
+            issues.append(
+                f"the last LV_PART_{part} {setter} write must stay {value}, but it "
+                f"is {writes[-1]}: a later write wins in LVGL and the theme style "
+                "leaks back")
+    if not re.search(
+            r"lv_obj_set_style_bg_color\(\s*progress_\s*,\s*kWhite\s*,\s*LV_PART_INDICATOR\s*\)",
+            create):
+        issues.append("progress indicator must use kWhite instead of the theme primary")
+    for setter, value in (("bg_opa", "LV_OPA_TRANSP"), ("pad_all", "0"),
+                          ("radius", "0"), ("border_width", "0"),
+                          ("shadow_width", "0")):
+        if not re.search(
+                rf"lv_obj_set_style_{setter}\(\s*progress_\s*,\s*{value}\s*,\s*"
+                r"LV_PART_KNOB\s*\)", create):
+            issues.append(
+                f"progress knob must zero lv_obj_set_style_{setter}(progress_, {value}, "
+                "LV_PART_KNOB)")
+    if "LV_RADIUS_CIRCLE" in strip_comments(source):
+        issues.append("the player view must not paint circular geometry")
+    try:
+        loop = block_after(create, "for (std::size_t index = 0; index < count; ++index)")
+    except (AssertionError, ValueError):
+        return issues + ["control button creation loop not found"]
+    for match in re.finditer(
+            r"lv_obj_set_style_border_width\(\s*buttons_\[index\]\s*,\s*(\d+)\s*,\s*0\s*\)",
+            loop):
+        if int(match.group(1)) > 0:
+            issues.append("control buttons must not paint a border")
+    if not re.search(
+            r"lv_obj_set_style_border_width\(\s*buttons_\[index\]\s*,\s*0\s*,\s*0\s*\)",
+            loop):
+        issues.append("control buttons must zero lv_obj_set_style_border_width")
+    # The control cells sit on the card surface, so a `kBlack` fill is darker than
+    # the card itself and reads as a hole. They reuse the elevated grey of the
+    # selected library row (`kSelected` #303030) with `kWhite` text; `kBlack`
+    # stays the view surface background (`surface_`), which is not a control.
+    if not re.search(
+            r"lv_obj_set_style_bg_color\(\s*buttons_\[index\]\s*,\s*kSelected\s*,\s*0\s*\)",
+            loop):
+        issues.append(
+            "control buttons must use kSelected (#303030) as bg_color, the same "
+            "elevated grey as the selected library row, instead of a colour darker "
+            "than the card")
+    for match in re.finditer(
+            r"lv_obj_set_style_bg_color\(\s*buttons_\[index\]\s*,\s*(\w+)\s*,\s*0\s*\)",
+            loop):
+        if match.group(1) == "kBlack":
+            issues.append(
+                "control buttons must not use kBlack as bg_color: kBlack is the "
+                "darker-than-card view surface background, not the control grey "
+                "(use kSelected #303030)")
+    return issues
+
+
+def card_inset_issues(source: str) -> list[str]:
+    """AC-MUSIC-13: card children keep the same inset on both sides.
+
+    `card()` applies `pad_all = 8` plus a 1 px border, and a child at `x = 8` is
+    positioned relative to the card *content* area, which already starts at
+    `border + pad` from the card border. The usable width is therefore
+    `lv_obj_get_content_width(card) - 2 * kCardInset`; deriving it from the outer
+    card width (`now_width`/`browser_width`) counted the border/pad once and
+    pushed the progress bar, the right control column and every library row 1 px
+    past the card border (device: bar right edge 574 vs card 573).
+    """
+    issues: list[str] = []
+    inset = re.search(r"constexpr int kCardInset = (\d+);", strip_comments(source))
+    if not inset:
+        issues.append(
+            "the card padding must be a named constexpr int kCardInset (it documents "
+            "the pad_all applied by card())")
+    elif int(inset.group(1)) != 8:
+        issues.append(
+            f"kCardInset must stay 8 because card() applies pad_all = 8, but it is "
+            f"{inset.group(1)}")
+    try:
+        layout = strip_comments(function_body(source, "void view::layout()"))
+    except (AssertionError, ValueError):
+        return issues + ["player layout function not found"]
+    twice_inset = r"(?:2\s*\*\s*kCardInset|kCardInset\s*\*\s*2)"
+    for name, panel in (("inner_width", "now_playing_"),
+                        ("browser_inner_width", "list_")):
+        pattern = (rf"const int {name} =\s*std::max\(\s*1\s*,\s*"
+                   rf"static_cast<int>\(\s*lv_obj_get_content_width\(\s*{panel}\s*\)\s*\)"
+                   rf"\s*-\s*{twice_inset}\s*\)")
+        if not re.search(pattern, layout):
+            issues.append(
+                f"{name} must be derived from lv_obj_get_content_width({panel}) minus "
+                "2 * kCardInset so the card child keeps the same inset on both sides")
+    flat = re.sub(r"\s+", " ", layout)
+    for legacy in ("now_width - 16", "browser_width - 16"):
+        if legacy in flat:
+            issues.append(
+                f"{legacy} measures the outer card width: it ignores the card border "
+                "and padding, so the child ends 1 px past the card on the right")
+    return issues
+
+
+def controls_grid_issues(source: str) -> list[str]:
+    """AC-MUSIC-13: the control grid keeps equal gaps and a content anchor.
+
+    Device defects measured with `ui.dump` plus pixels (fw 01dd21a9): the three
+    rows touched each other (`controls_height = button_height * control_rows`, so
+    the block read as one continuous cell) and the block was placed with
+    `card_height - controls_area - 8`, mixing the outer card height with a
+    content-relative `y`. The last row therefore ended on the card border (694)
+    instead of keeping the 17 px inset measured on the left/right.
+    """
+    issues: list[str] = []
+    try:
+        layout = strip_comments(function_body(source, "void view::layout()"))
+    except (AssertionError, ValueError):
+        return ["player layout function not found"]
+    flat = re.sub(r"\s+", " ", layout)
+    if not re.search(r"const int row_gap = pad;", flat):
+        issues.append(
+            "the gap between control rows must be the named `const int row_gap = pad;` "
+            "so it stays equal to the 4 px used between columns")
+    height = re.search(r"const int controls_height = ([^;]+);", flat)
+    if not height:
+        issues.append("controls_height must be declared in view::layout()")
+    else:
+        expression = re.sub(r"\s+", "", height.group(1))
+        if "row_gap" not in expression or "(control_rows-1)" not in expression:
+            issues.append(
+                "controls_height must reserve one row_gap between rows "
+                "(`button_height * control_rows + row_gap * (control_rows - 1)`); "
+                f"found `{height.group(1).strip()}`")
+        elif expression == "button_height*control_rows":
+            issues.append(
+                "controls_height = button_height * control_rows glues the rows "
+                "together; the rows need `row_gap` between them")
+    area = re.search(r"const int controls_area = ([^;]+);", flat)
+    if not area:
+        issues.append("controls_area must be declared in view::layout()")
+    elif "content_height" not in re.sub(r"\s+", "", area.group(1)):
+        if re.search(r"card_height", area.group(1)):
+            issues.append(
+                "`controls_area` must be derived from the card *content* height "
+                "(`content_height`, i.e. `lv_obj_get_content_height(now_playing_)`), "
+                "not from the outer `card_height`")
+        else:
+            issues.append(
+                "`controls_area` must be clamped by the card content height "
+                "(`std::min(controls_height, std::max(line, content_height - content_y - pad))`)")
+    if not re.search(r"const int content_height = static_cast<int>\(\s*"
+                     r"lv_obj_get_content_height\(\s*now_playing_\s*\)\s*\)", flat):
+        issues.append(
+            "the control block must be anchored by "
+            "`lv_obj_get_content_height(now_playing_)` in `content_height`: `x = 8` is "
+            "relative to the card content area, so the bottom inset must be measured "
+            "there too")
+    if not re.search(r"lv_obj_set_pos\(\s*controls_\s*,\s*8\s*,\s*content_height\s*-\s*"
+                     r"controls_area\s*-\s*8\s*\)", flat):
+        if re.search(r"card_height\s*-\s*controls_area", flat):
+            issues.append(
+                "`lv_obj_set_pos(controls_, 8, card_height - controls_area - 8)` anchors "
+                "the block with the outer card height: the last row lands on the card "
+                "border (device: 694, no 17 px inset). Use `content_height - controls_area - 8`")
+        else:
+            issues.append(
+                "the control block must be positioned with "
+                "`lv_obj_set_pos(controls_, 8, content_height - controls_area - 8)`")
+    if not re.search(r"row\s*\*\s*\(\s*button_height\s*\+\s*row_gap\s*\)", flat):
+        issues.append(
+            "control rows must be positioned with `row * (button_height + row_gap)` so "
+            "consecutive rows keep the same 4 px gap as the columns")
+    return issues
+
+
+def derivation_pattern(name: str) -> str:
+    """Regex for the AC-MUSIC-13 derivation of `name` from a card content area.
+
+    Formatting-tolerant on purpose: the mutation proofs replace the fixed
+    derivation with the legacy arithmetic, so the pattern must not depend on
+    where the line breaks land after a reformat.
+    """
+    return (rf"const int {name} =\s*std::max\(\s*1\s*,\s*"
+            rf"static_cast<int>\(\s*lv_obj_get_content_width\(\s*\w+\s*\)\s*\)\s*-\s*"
+            r"(?:2\s*\*\s*kCardInset|kCardInset\s*\*\s*2)\s*\)")
+
+
 def raises(call) -> bool:
     """True when `call` rejects its input instead of returning a value."""
     try:
@@ -612,6 +871,18 @@ def main() -> int:
             "track rows must zero every theme padding and chrome channel")
     require(track_layout_issues(view_source) == [],
             "track labels must be inset and vertically centred inside the row")
+    progress_issues = progress_style_issues(view_source)
+    require(progress_issues == [],
+            "the progress bar and control buttons must stay flat and monochrome: "
+            + "; ".join(progress_issues))
+    inset_issues = card_inset_issues(view_source)
+    require(inset_issues == [],
+            "the player cards must keep the symmetric card inset (AC-MUSIC-13): "
+            + "; ".join(inset_issues))
+    grid_issues = controls_grid_issues(view_source)
+    require(grid_issues == [],
+            "the control grid must keep the vertical row gap and the content-height "
+            "anchor (AC-MUSIC-13): " + "; ".join(grid_issues))
 
     header_source = HEADER.read_text(encoding="utf-8")
     require(header_music_issues(header_source) == [],
@@ -659,6 +930,186 @@ def main() -> int:
     require(track_layout_issues(legacy_centring) != [],
             "mutation dropping the vertical centring must be rejected")
 
+    # AC-MUSIC-13 mutation proof: every part override and the flat button chrome
+    # must be load-bearing, so the style contract cannot pass vacuously.
+    legacy_indicator_main = view_source.replace(
+        "    lv_obj_set_style_bg_color(progress_, kWhite, LV_PART_INDICATOR);",
+        "    lv_obj_set_style_bg_color(progress_, kWhite, LV_PART_MAIN);")
+    require(progress_style_issues(legacy_indicator_main) != [],
+            "mutation painting the indicator through LV_PART_MAIN must be rejected")
+    missing_indicator = view_source.replace(
+        "    lv_obj_set_style_bg_color(progress_, kWhite, LV_PART_INDICATOR);\n", "")
+    require(progress_style_issues(missing_indicator) != [],
+            "mutation dropping the indicator override must be rejected")
+    opaque_knob = view_source.replace(
+        "    lv_obj_set_style_bg_opa(progress_, LV_OPA_TRANSP, LV_PART_KNOB);\n", "")
+    require(progress_style_issues(opaque_knob) != [],
+            "mutation leaving the slider knob visible must be rejected")
+    rounded_bar = view_source.replace(
+        "    lv_obj_set_style_radius(progress_, 0, LV_PART_MAIN);\n", "")
+    require(progress_style_issues(rounded_bar) != [],
+            "mutation restoring the theme radius on the bar must be rejected")
+    muted_track = view_source.replace(
+        "    lv_obj_set_style_bg_color(progress_, kBorder, LV_PART_MAIN);\n", "")
+    require(progress_style_issues(muted_track) != [],
+            "mutation leaving the theme primary_muted track must be rejected")
+    invisible_track = view_source.replace(
+        "    lv_obj_set_style_bg_color(progress_, kBorder, LV_PART_MAIN);",
+        "    lv_obj_set_style_bg_color(progress_, kSurface, LV_PART_MAIN);")
+    require(progress_style_issues(invisible_track) != [],
+            "mutation painting the track with kSurface (invisible rail) must be rejected")
+    # The theme paints MAIN at LV_OPA_20; without the explicit COVER the border
+    # grey is blended over the card and the rail vanishes (device: #080A08).
+    transparent_track = view_source.replace(
+        "    lv_obj_set_style_bg_opa(progress_, LV_OPA_COVER, LV_PART_MAIN);\n", "")
+    require(progress_style_issues(transparent_track) != [],
+            "mutation dropping the MAIN bg_opa COVER must be rejected because the "
+            "theme paints the track at LV_OPA_20 (invisible rail)")
+    bordered_button = view_source.replace(
+        "        lv_obj_set_style_border_width(buttons_[index], 0, 0);",
+        "        lv_obj_set_style_border_width(buttons_[index], 1, 0);")
+    require(progress_style_issues(bordered_button) != [],
+            "mutation restoring the control border must be rejected")
+    # The control cells must not fall back to `kBlack`, which is darker than the
+    # card they sit on; the elevated grey is `kSelected` (#303030).
+    black_buttons = view_source.replace(
+        "        lv_obj_set_style_bg_color(buttons_[index], kSelected, 0);",
+        "        lv_obj_set_style_bg_color(buttons_[index], kBlack, 0);")
+    require(black_buttons != view_source,
+            "the control button bg_color must stay replaceable for the mutation proof")
+    black_button_issues = progress_style_issues(black_buttons)
+    require(black_button_issues != [],
+            "mutation painting the control buttons with kBlack must be rejected")
+    require(any("kSelected" in issue for issue in black_button_issues),
+            "the kBlack mutation must be reported as the missing kSelected grey")
+    require(any("kBlack" in issue for issue in black_button_issues),
+            "the kBlack mutation must name kBlack as the rejected colour")
+    # A later MAIN write wins in LVGL but no other target notices it: the shim
+    # folds every part into one slot, so `test_display_views` still reads the
+    # KNOB transparency (bg_opa) or the INDICATOR white (bg_color). Only the
+    # last-write check keeps the rail opaque and unrounded.
+    later_opa_write = view_source.replace(
+        "    lv_obj_set_style_bg_opa(progress_, LV_OPA_COVER, LV_PART_MAIN);\n",
+        "    lv_obj_set_style_bg_opa(progress_, LV_OPA_COVER, LV_PART_MAIN);\n"
+        "    lv_obj_set_style_bg_opa(progress_, 51, LV_PART_MAIN);\n")
+    require(progress_style_issues(later_opa_write) != [],
+            "mutation adding a later MAIN bg_opa write must be rejected")
+    later_track_write = view_source.replace(
+        "    lv_obj_set_style_bg_color(progress_, kBorder, LV_PART_MAIN);\n",
+        "    lv_obj_set_style_bg_color(progress_, kBorder, LV_PART_MAIN);\n"
+        "    lv_obj_set_style_bg_color(progress_, kSurface, LV_PART_MAIN);\n")
+    require(progress_style_issues(later_track_write) != [],
+            "mutation adding a later MAIN bg_color write must be rejected")
+    later_radius_write = view_source.replace(
+        "    lv_obj_set_style_radius(progress_, 0, LV_PART_MAIN);\n",
+        "    lv_obj_set_style_radius(progress_, 0, LV_PART_MAIN);\n"
+        "    lv_obj_set_style_radius(progress_, 6, LV_PART_MAIN);\n")
+    require(progress_style_issues(later_radius_write) != [],
+            "mutation adding a later MAIN radius write must be rejected")
+    # A setter that survives only as a comment is not a style.
+    commented_cover = view_source.replace(
+        "    lv_obj_set_style_bg_opa(progress_, LV_OPA_COVER, LV_PART_MAIN);\n",
+        "    /* lv_obj_set_style_bg_opa(progress_, LV_OPA_COVER, LV_PART_MAIN); */\n")
+    require(progress_style_issues(commented_cover) != [],
+            "mutation keeping the MAIN bg_opa COVER only as a comment must be rejected")
+
+    # AC-MUSIC-13 (symmetric card inset) mutation proof: the legacy arithmetic
+    # measured the outer card width, which is 18 px wider than the content area
+    # minus the inset, so the bar/right column/rows overflow the card by 1 px.
+    # Only meaningful while the fixed derivation is present; otherwise the
+    # primary check above already reports the defect.
+    if not inset_issues:
+        legacy_inner_width = re.sub(
+            derivation_pattern("inner_width"),
+            "const int inner_width = std::max(1, now_width - 16);",
+            view_source, count=1)
+        require(legacy_inner_width != view_source,
+                "the inner_width derivation must stay replaceable for the mutation proof")
+        legacy_inner = card_inset_issues(legacy_inner_width)
+        require(legacy_inner != [],
+                "mutation back to `inner_width = now_width - 16` must be rejected")
+        require(any("now_width - 16" in issue for issue in legacy_inner),
+                "the now_width - 16 mutation must be reported with the offending "
+                "expression, not only as a missing derivation")
+        legacy_browser_width = re.sub(
+            derivation_pattern("browser_inner_width"),
+            "const int browser_inner_width = std::max(1, browser_width - 16);",
+            view_source, count=1)
+        require(legacy_browser_width != view_source,
+                "the browser_inner_width derivation must stay replaceable for the "
+                "mutation proof")
+        legacy_browser = card_inset_issues(legacy_browser_width)
+        require(legacy_browser != [],
+                "mutation back to `browser_inner_width = browser_width - 16` must be "
+                "rejected")
+        require(any("browser_width - 16" in issue for issue in legacy_browser),
+                "the browser_width - 16 mutation must be reported with the offending "
+                "expression, not only as a missing derivation")
+        # The named constant carries the card() contract; a bare literal would let
+        # a later pad change silently reintroduce the asymmetric inset.
+        unnamed_inset = view_source.replace("constexpr int kCardInset = 8;",
+                                            "constexpr int kCardPadding = 8;")
+        require(card_inset_issues(unnamed_inset) != [],
+                "mutation dropping the kCardInset name must be rejected")
+        wrong_inset = view_source.replace("constexpr int kCardInset = 8;",
+                                          "constexpr int kCardInset = 7;")
+        require(card_inset_issues(wrong_inset) != [],
+                "mutation that desynchronises kCardInset from card()'s pad_all must "
+                "be rejected")
+        single_inset = re.sub(
+            derivation_pattern("inner_width"),
+            "const int inner_width = std::max(1, static_cast<int>("
+            "lv_obj_get_content_width(now_playing_)) - kCardInset);",
+            view_source, count=1)
+        require(card_inset_issues(single_inset) != [],
+                "mutation subtracting the inset only once must be rejected")
+        outer_width_derivation = re.sub(
+            derivation_pattern("browser_inner_width"),
+            "const int browser_inner_width = std::max(1, browser_width - 16);",
+            view_source, count=1)
+        require(card_inset_issues(outer_width_derivation) != [],
+                "mutation deriving browser_inner_width from the outer card width must "
+                "be rejected")
+
+    # AC-MUSIC-13 (control grid) mutation proof: the glued rows and the outer
+    # card anchor are the two measured device defects, so both must be rejected
+    # with an explicit message instead of only "missing derivation".
+    if not grid_issues:
+        glued_rows = view_source.replace(
+            "const int controls_height = button_height * control_rows + "
+            "row_gap * (control_rows - 1);",
+            "const int controls_height = button_height * control_rows;").replace(
+            "row * (button_height + row_gap)", "row * button_height")
+        require(glued_rows != view_source,
+                "the row_gap derivation and the row position must stay replaceable "
+                "for the mutation proof")
+        glued_issues = controls_grid_issues(glued_rows)
+        require(glued_issues != [],
+                "mutation back to `controls_height = button_height * control_rows` "
+                "must be rejected")
+        require(any("row_gap" in issue or "glue" in issue for issue in glued_issues),
+                "the glued-rows mutation must be reported as the missing row_gap")
+        outer_anchor = view_source.replace(
+            "lv_obj_set_pos(controls_, 8, content_height - controls_area - 8);",
+            "lv_obj_set_pos(controls_, 8, card_height - controls_area - 8);")
+        require(outer_anchor != view_source,
+                "the control anchor must stay replaceable for the mutation proof")
+        anchor_issues = controls_grid_issues(outer_anchor)
+        require(anchor_issues != [],
+                "mutation back to `card_height - controls_area - 8` must be rejected")
+        require(any("content_height" in issue for issue in anchor_issues),
+                "the outer-anchor mutation must name the content-height anchor, not "
+                "only report a missing position")
+        renamed_gap = view_source.replace("const int row_gap = pad;",
+                                          "const int row_gap = 0;")
+        require(controls_grid_issues(renamed_gap) != [],
+                "mutation that keeps the name but drops the gap value must be rejected")
+        unanchored_area = view_source.replace(
+            "std::max(line, content_height - content_y - pad)",
+            "std::max(line, card_height - content_y - pad)")
+        require(controls_grid_issues(unanchored_area) != [],
+                "mutation deriving controls_area from card_height must be rejected")
+
     for failure in failures:
         print(f"FAIL: {failure}")
     if failures:
@@ -666,7 +1117,13 @@ def main() -> int:
     print("PASS: player UI literals and rendered LV_SYMBOL_* stay inside the real "
           "cyberdeck_font coverage, the controls hint is ASCII and shared, track "
           "rows and the header button zero the theme padding, radius and shadow, "
-          "and the track label stays inset and centred")
+          "the track label stays inset and centred, the card children derive their "
+          "width from the real content area with a symmetric kCardInset, the control "
+          "grid keeps the vertical row_gap equal to the column gap and is anchored "
+          "by the card content height (AC-MUSIC-13), and the "
+          "progress bar/controls keep the monochrome flat style (opaque kBorder "
+          "track with a visible rail, white indicator, hidden knob, no border) and "
+          "the control cells use the elevated kSelected grey")
     return 0
 
 

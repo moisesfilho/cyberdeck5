@@ -12,6 +12,13 @@ namespace {
 constexpr const char *kActions[] = {"prev", "toggle", "next", "seek_back", "seek_forward", "volume_down", "volume_up", "command_open"};
 constexpr const char *kLabels[] = {"Previous", "Play / Pause", "Next", "-10s", "+10s", "Vol -", "Vol +", "Command"};
 constexpr int kMinimumButtonSize = 44;
+/* `card()` applies `pad_all = 8` (plus a 1 px border). Children are positioned
+ * relative to the card *content* area, which already starts at `border + pad`
+ * from the card border, so `x = kCardInset` leaves `border + pad + inset` on
+ * the left. The usable width is therefore `content - 2 * kCardInset`, which
+ * keeps the same inset on the right; measuring the outer card width instead
+ * counts the border/pad once and pushes the child 1 px past the card. */
+constexpr int kCardInset = 8;
 const lv_color_t kBlack = lv_color_hex(0x000000);
 const lv_color_t kSurface = lv_color_hex(0x0A0A0A);
 const lv_color_t kBorder = lv_color_hex(0x2A2A2A);
@@ -96,7 +103,30 @@ bool view::create(lv_obj_t *parent, callback on_action, void *context) {
     lv_label_set_text(browser_title_, "LIBRARY  /  64 TRACKS MAX");
     lv_label_set_text(volume_, "VOLUME");
     lv_label_set_long_mode(status_, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_bg_color(progress_, kSurface, 0);
+    /* The default theme is light: it paints the slider INDICATOR with the
+     * primary (blue), rounds MAIN/INDICATOR and draws a KNOB ball bigger than
+     * the bar. The player is monochrome and the bar must stay a flat white
+     * rectangle. It is still an `lv_slider` on purpose: the knob is invisible,
+     * but tapping/dragging the bar still seeks (`progress_released` ->
+     * `seek_ratio`), which an `lv_bar` would lose. The unfilled MAIN track uses
+     * the card border grey instead of the card surface, so the rail stays
+     * visible from start to end even when the indicator is empty. The theme
+     * paints MAIN through `bg_color_primary_muted`, which sets `bg_opa` to
+     * `LV_OPA_20` (lv_theme_default.c), so the border grey alone would be drawn
+     * at 20% over the card and the rail would vanish: MAIN needs an explicit
+     * opaque `bg_opa`. The INDICATOR does not need it because the theme already
+     * uses `bg_color_primary` with `LV_OPA_COVER`. */
+    lv_obj_set_style_bg_color(progress_, kBorder, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(progress_, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(progress_, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(progress_, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(progress_, kWhite, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(progress_, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(progress_, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(progress_, 0, LV_PART_KNOB);
+    lv_obj_set_style_radius(progress_, 0, LV_PART_KNOB);
+    lv_obj_set_style_border_width(progress_, 0, LV_PART_KNOB);
+    lv_obj_set_style_shadow_width(progress_, 0, LV_PART_KNOB);
     lv_obj_set_scrollbar_mode(list_, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_scroll_dir(list_, LV_DIR_VER);
     lv_obj_set_scroll_chain(list_, false);
@@ -144,9 +174,16 @@ bool view::create(lv_obj_t *parent, callback on_action, void *context) {
         lv_label_set_text(label, kLabels[index]);
         lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
         style(label, kWhite);
-        lv_obj_set_style_bg_color(buttons_[index], kBlack, 0);
-        lv_obj_set_style_border_color(buttons_[index], kBorder, 0);
-        lv_obj_set_style_border_width(buttons_[index], 1, 0);
+        /* Control cells reuse the same elevated grey as the selected library
+         * row (`kSelected`) with `kWhite` text; `kBlack` stays the surface
+         * background of the view. */
+        lv_obj_set_style_bg_color(buttons_[index], kSelected, 0);
+        lv_obj_set_style_border_width(buttons_[index], 0, 0);
+        /* Same light-theme `btn` chrome as the library rows: the rounded
+         * capsule and grey shadow would frame the control in a foreign color. */
+        lv_obj_set_style_radius(buttons_[index], 0, 0);
+        lv_obj_set_style_shadow_width(buttons_[index], 0, 0);
+        lv_obj_set_style_shadow_opa(buttons_[index], LV_OPA_TRANSP, 0);
         lv_obj_set_clickable(buttons_[index], true);
         lv_obj_add_event_cb(buttons_[index], clicked, LV_EVENT_CLICKED, this);
     }
@@ -289,7 +326,11 @@ void view::layout() {
     const int columns = landscape ? 3 : 2;
     const int control_rows = static_cast<int>((buttons_.size() + columns - 1) / columns);
     const int button_height = std::max(line, kMinimumButtonSize);
-    const int controls_height = button_height * control_rows;
+    /* Rows are separated by the same `pad` used between columns: without it the
+     * three rows touch vertically and read as one continuous block (device:
+     * 563..694) instead of three distinct cells. */
+    const int row_gap = pad;
+    const int controls_height = button_height * control_rows + row_gap * (control_rows - 1);
     const int command_height = command_open_ ? line + 8 : 0;
     const int progress_height = 20;
     int y = pad;
@@ -304,8 +345,13 @@ void view::layout() {
     const int browser_width = landscape ? width - browser_x - pad : width - 2 * pad;
     lv_obj_set_pos(now_playing_, pad, y); lv_obj_set_size(now_playing_, now_width, card_height);
     lv_obj_set_pos(list_, browser_x, browser_y); lv_obj_set_size(list_, browser_width, card_height);
-    const int inner_width = std::max(1, now_width - 16);
-    const int browser_inner_width = std::max(1, browser_width - 16);
+    /* Derive the child width from the real card content area (AC-MUSIC-13):
+     * the previous `now_width - 16` / `browser_width - 16` measured the outer
+     * card and ignored that `x = 8` is relative to the content area, so the
+     * progress bar, the right control column and the library rows ended 1 px
+     * past the card border (device: bar right edge 574 vs card 573). */
+    const int inner_width = std::max(1, static_cast<int>(lv_obj_get_content_width(now_playing_)) - 2 * kCardInset);
+    const int browser_inner_width = std::max(1, static_cast<int>(lv_obj_get_content_width(list_)) - 2 * kCardInset);
     lv_obj_set_pos(now_title_, 8, 8); lv_obj_set_size(now_title_, inner_width, line);
     lv_label_set_long_mode(now_title_, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_pos(browser_title_, 8, 8); lv_obj_set_size(browser_title_, browser_inner_width, line);
@@ -317,14 +363,21 @@ void view::layout() {
     lv_obj_set_pos(volume_, 8, content_y); lv_obj_set_size(volume_, inner_width, line); content_y += line + pad;
     if (command_open_) { lv_obj_set_pos(command_, 8, content_y); lv_obj_set_size(command_, inner_width, command_height); content_y += command_height + pad; }
     else lv_obj_set_size(command_, 0, 0);
-    const int controls_area = std::min(controls_height, std::max(line, card_height - content_y - pad));
-    lv_obj_set_pos(controls_, 8, card_height - controls_area - 8);
+    /* Anchor the block by the card *content* height (AC-MUSIC-13): `x = 8` is
+     * relative to the content area, so the bottom inset must be measured there
+     * too. The previous `card_height - controls_area - 8` mixed the outer card
+     * height with a content-relative y and pushed the last row onto the card
+     * border (device: last row ended at 694, i.e. no 17 px inset, while the
+     * left/right inset was 17 px). `card_height` still sizes the cards. */
+    const int content_height = static_cast<int>(lv_obj_get_content_height(now_playing_));
+    const int controls_area = std::min(controls_height, std::max(line, content_height - content_y - pad));
+    lv_obj_set_pos(controls_, 8, content_height - controls_area - 8);
     lv_obj_set_size(controls_, inner_width, controls_area);
     const int button_width = std::max(1, (inner_width - pad * (columns - 1)) / columns);
     for (std::size_t i = 0; i < buttons_.size(); ++i) {
         const int row = static_cast<int>(i) / columns;
         const int col = static_cast<int>(i) % columns;
-        lv_obj_set_pos(buttons_[i], col * (button_width + pad), row * button_height);
+        lv_obj_set_pos(buttons_[i], col * (button_width + pad), row * (button_height + row_gap));
         lv_obj_set_size(buttons_[i], button_width, button_height);
         lv_obj_t *label = lv_obj_get_child(buttons_[i], 0);
         lv_obj_set_pos(label, 0, 0);

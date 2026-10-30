@@ -548,6 +548,20 @@ int main()
     auto *controls = now_playing->children[6];
     assert(music_surface->color == 0x000000);
     assert(now_playing->color == 0x0A0A0A && browser->color == 0x0A0A0A);
+    /* AC-MUSIC-13: the light default theme paints the slider indicator with the
+     * primary (blue), rounds MAIN/INDICATOR and draws a knob ball. The shim
+     * folds every part selector into one style slot, so the last write per
+     * property wins: `color` is the INDICATOR override and `bg_opa` is the KNOB
+     * one (LV_OPA_TRANSP), because the KNOB block is written after MAIN.
+     * Therefore this `bg_opa` assertion only proves the knob stays invisible in
+     * the real call order; it is NOT evidence of the MAIN track opacity (the
+     * slot holds the last write). The opaque `kBorder` track is proven by the
+     * structural contract `test_music_player_ui_contract.py`. */
+    assert(progress->color == 0xF2F2F2);
+    assert(progress->radius == 0);
+    assert(progress->border_width == 0);
+    assert(progress->bg_opa == LV_OPA_TRANSP);
+    assert(progress->shadow_width == 0);
     const auto assert_not_scrollable = [](const lv_obj_t *object) {
         assert(lv_obj_get_scroll_dir(object) == LV_DIR_NONE);
         assert(lv_obj_get_scrollbar_mode(object) == LV_SCROLLBAR_MODE_OFF);
@@ -572,7 +586,47 @@ int main()
         assert(label->y + label->height <= button->height);
         assert(label->long_mode == LV_LABEL_LONG_MODE_DOTS);
         assert(lv_shim_text_width(&cyberdeck_font, label->text) <= label->width);
+        /* AC-MUSIC-13: the light theme frames every `lv_btn` with a border,
+         * radius and grey shadow; the control must stay a flat cell. */
+        assert(button->border_width == 0);
+        assert(button->radius == 0);
+        assert(button->shadow_width == 0);
+        assert(button->shadow_opa == LV_OPA_TRANSP);
+        assert(button->color == 0x303030);
     }
+    /* AC-MUSIC-13: the control grid keeps the same gap between rows as between
+     * columns (`pad` = 4) and anchors the block by the card *content* height.
+     * Device defect: the three rows were glued into one continuous block
+     * (563..694) and the block was placed with the outer card height, so the
+     * last row ended on the card border (694) instead of keeping the 17 px
+     * inset measured on the left/right. */
+    constexpr int kControlGap = 4;
+    const auto assert_control_grid = [&](int columns) {
+        const int rows = static_cast<int>(
+            (controls->children.size() + static_cast<std::size_t>(columns) - 1) /
+            static_cast<std::size_t>(columns));
+        const int button_height = controls->children[0]->height;
+        for (std::size_t index = static_cast<std::size_t>(columns);
+             index < controls->children.size(); ++index) {
+            const auto *button = controls->children[index];
+            const auto *above = controls->children[index - static_cast<std::size_t>(columns)];
+            assert(button->height == button_height);
+            assert(button->y == above->y + above->height + kControlGap);
+        }
+        /* Non-vacuity: the glued layout is `(rows - 1) * gap` px shorter, so
+         * this equality cannot hold without the row gap. */
+        assert(controls->height == rows * button_height + (rows - 1) * kControlGap);
+        assert(controls->height > rows * button_height);
+        /* Symmetric inset: the bottom of the block sits 8 px from the bottom of
+         * the card *content* area, exactly like the 8 px left/right inset. */
+        assert(controls->y + controls->height ==
+               lv_obj_get_content_height(now_playing) - 8);
+        /* The anchor is the content height, not the outer card height (they
+         * differ by `card()`'s border + pad), so the legacy
+         * `card_height - controls_area - 8` cannot satisfy the line above. */
+        assert(controls->y + controls->height != now_playing->height - 8);
+    };
+    assert_control_grid(2);
     assert(browser->scroll_dir == LV_DIR_VER);
     assert(browser->scrollbar_mode == LV_SCROLLBAR_MODE_AUTO);
     assert(!browser->scroll_chain);
@@ -600,7 +654,7 @@ int main()
     assert(music_log.actions.size() == 7 && music_log.context_calls == 7);
     auto *command_button = controls->children[7];
     assert(command_button->children[0]->text == "Command");
-    assert(command_button->color == 0x000000);
+    assert(command_button->color == 0x303030);
     lv_shim_emit_event(command_button, LV_EVENT_CLICKED);
     assert(music_log.actions.back() == "command_open");
     music_view.set_command_open(true);
@@ -750,6 +804,49 @@ int main()
         assert(label->y + label->height <= button->height);
         assert(label->long_mode == LV_LABEL_LONG_MODE_DOTS);
     }
+    /* AC-MUSIC-13: `card()` pads every side by 8 px, and a child at `x = 8` is
+     * relative to the card *content* area, which already starts at
+     * `border + pad` from the card border. The symmetric inset therefore comes
+     * from the real content width (`content - 2 * kCardInset`) and the right
+     * edge of the bar, of the rightmost control column and of every library row
+     * must stay `kCardInset` inside that content area. The previous
+     * `now_width - 16` / `browser_width - 16` measured the outer card and left
+     * the right edge 1 px past the card border (device: bar 574 vs card 573).
+     * The shim resolves `lv_obj_get_content_width` from border + pad, so the
+     * assertion is relative to the same content area the production code reads
+     * (the shim subtracts the border once, LVGL subtracts it on both sides, so
+     * host widths are 1 px larger than the device; the invariant is identical). */
+    constexpr int kCardInset = 8;
+    const int now_content = lv_obj_get_content_width(now_playing);
+    const int browser_content = lv_obj_get_content_width(browser);
+    assert(now_content > 0 && browser_content > 0);
+    for (const auto *child : now_playing->children) {
+        if (child->width <= 0) continue;
+        assert(child->x == kCardInset);
+        assert(child->x + child->width == now_content - kCardInset);
+    }
+    assert(progress->x == kCardInset);
+    assert(progress->x + progress->width == now_content - kCardInset);
+    /* The rightmost control column is column 2 of 3; the integer division of
+     * `button_width` can leave up to `columns - 1` px unused, so the right edge
+     * must sit between `content - kCardInset - (columns - 1)` and
+     * `content - kCardInset`. */
+    for (std::size_t index = 2; index < controls->children.size(); index += 3) {
+        const auto *button = controls->children[index];
+        const int right = controls->x + button->x + button->width;
+        assert(button->x >= 0);
+        assert(right <= now_content - kCardInset);
+        assert(right >= now_content - kCardInset - 2);
+    }
+    for (const auto *row : {browser->children[1], browser->children[64]}) {
+        assert(row->x == kCardInset);
+        assert(row->x + row->width == browser_content - kCardInset);
+    }
+    /* Non-vacuity: the legacy arithmetic is 18 px wider, which is exactly the
+     * overflow measured on the device, so the equality above cannot be
+     * satisfied by the previous formula. */
+    assert(kCardInset + (now_playing->width - 16) > now_content - kCardInset);
+    assert(kCardInset + (browser->width - 16) > browser_content - kCardInset);
     const auto absolute_position = [](const lv_obj_t *object) {
         int x = 0;
         int y = 0;
@@ -784,6 +881,9 @@ int main()
         assert(button->x + button->width <= controls->width);
         assert(button->y + button->height <= controls->height);
     }
+    /* Same invariants in landscape (3 columns, 3 rows): the vertical gap and the
+     * content-height anchor cannot be satisfied by the legacy glued block. */
+    assert_control_grid(3);
     /* REQ-PLAYER-LAYOUT-READABLE: repeat the complete information/control
      * matrix in landscape; the portrait matrix above cannot catch regressions
      * caused by the denser horizontal arrangement. */
