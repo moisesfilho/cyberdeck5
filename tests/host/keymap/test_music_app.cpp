@@ -129,12 +129,13 @@ void write_file(const fs::path &path, std::string_view content) {
     output.write(content.data(), static_cast<std::streamsize>(content.size()));
 }
 
-/* Minimal ID3v2.3 tag with a UTF-8 TIT2 frame, enough to prove the scan fills
- * the track title from metadata instead of the file name. */
-std::string id3_title_tag(std::string_view title) {
+/* Minimal ID3v2.3 tag with UTF-8 TIT2 (and optional TPE1) frames, enough to
+ * prove the scan fills the track title/artist from metadata instead of the file
+ * name. */
+std::string id3_utf8_frame(const char *id, std::string_view text) {
     std::string payload(1, static_cast<char>(3));
-    payload.append(title);
-    std::string frame = "TIT2";
+    payload.append(text);
+    std::string frame(id, 4);
     const auto frame_size = static_cast<std::uint32_t>(payload.size());
     frame.push_back(static_cast<char>((frame_size >> 24) & 0xff));
     frame.push_back(static_cast<char>((frame_size >> 16) & 0xff));
@@ -142,6 +143,13 @@ std::string id3_title_tag(std::string_view title) {
     frame.push_back(static_cast<char>(frame_size & 0xff));
     frame.append(2, '\0');
     frame += payload;
+    return frame;
+}
+
+std::string id3_title_tag(std::string_view title, std::string_view artist = {}) {
+    std::string frame = id3_utf8_frame("TIT2", title);
+    if (!artist.empty())
+        frame += id3_utf8_frame("TPE1", artist);
     std::string tag = "ID3";
     tag.push_back(static_cast<char>(3));
     tag.append(2, '\0');
@@ -451,6 +459,47 @@ int main() {
     CHECK(player.queue_count == 0);
     CHECK(music.execute("music", "list").output.find("track-") == std::string::npos);
 
+    /* TEST-MUSIC-NAME-01: a file name that is not valid UTF-8 must reach the
+     * queue through the same model sanitizer as the ID3 UTF-8 path, so the
+     * panel never receives a raw, undecodable byte. The bytes on disk stay
+     * untouched; only the displayed title is re-encoded. */
+    fs::remove_all(music_dir);
+    fs::create_directories(music_dir);
+    const std::string invalid_name("bad\xff.mp3", 8);
+    write_file(music_dir / invalid_name, "invalid-name-data");
+    CHECK(music.execute("music", "queue /music").status == cyberdeck_apps::result_status::handled);
+    CHECK(wait_until([&] {
+        const auto current = music.execute("music", "status").output;
+        return current.find("queue: scan complete") != std::string::npos &&
+               current.find("queue: 1 tracks") != std::string::npos;
+    }, std::chrono::seconds(2)));
+    CHECK(player.last_queue.size() == 1);
+    CHECK(std::string_view(player.last_queue[0].path.data()) == "/music/bad\xff.mp3");
+    CHECK(std::string_view(player.last_queue[0].title.data()) == "bad?.mp3");
+    CHECK(music.execute("music", "list").output.find("bad?.mp3") != std::string::npos);
+    CHECK(fs::exists(music_dir / invalid_name));
+
+    /* The scan reuses one heap candidate for every file, so a tagged file that
+     * sorts first must not leak its title/artist into the untagged file after
+     * it (the reuse reset is the only thing standing between them). */
+    fs::remove_all(music_dir);
+    fs::create_directories(music_dir);
+    write_file(music_dir / "tagged.mp3", id3_title_tag("Tagged", "Artist"));
+    write_file(music_dir / "zeta.mp3", "zeta-data");
+    CHECK(music.execute("music", "queue /music").status == cyberdeck_apps::result_status::handled);
+    CHECK(wait_until([&] {
+        const auto current = music.execute("music", "status").output;
+        return current.find("queue: scan complete") != std::string::npos &&
+               current.find("queue: 2 tracks") != std::string::npos;
+    }, std::chrono::seconds(2)));
+    CHECK(player.last_queue.size() == 2);
+    CHECK(std::string_view(player.last_queue[0].path.data()) == "/music/tagged.mp3");
+    CHECK(std::string_view(player.last_queue[0].title.data()) == "Tagged");
+    CHECK(std::string_view(player.last_queue[0].artist.data()) == "Artist");
+    CHECK(std::string_view(player.last_queue[1].path.data()) == "/music/zeta.mp3");
+    CHECK(std::string_view(player.last_queue[1].title.data()) == "zeta.mp3");
+    CHECK(std::string_view(player.last_queue[1].artist.data()).empty());
+
     fs::remove_all(music_dir);
     fs::create_directories(music_dir);
     write_file(music_dir / "cancel.mp3", "cancel-data");
@@ -477,8 +526,10 @@ int main() {
     scan_gate_changed.notify_all();
     CHECK(music.poweroff_quiesce(2000));
     CHECK(storage.active_leases() == 0);
-    constexpr int scan_count = 7;
-    constexpr int published_queue_count = 4;
+    /* 9 scans / 6 published queues: the TEST-MUSIC-NAME-01 sanitized-name scan
+     * and the candidate-reuse scan each add one scan and one publication. */
+    constexpr int scan_count = 9;
+    constexpr int published_queue_count = 6;
     CHECK(player.queue_updates == scan_count + published_queue_count);
     CHECK(player.queue_count == 0);
     CHECK(music.execute("music", "list").output.find("cancel.mp3") == std::string::npos);

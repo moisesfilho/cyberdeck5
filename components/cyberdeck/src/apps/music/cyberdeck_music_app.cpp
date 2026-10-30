@@ -228,6 +228,8 @@ void application::scan_entry(void *context) {
     self->scan_running_.store(false, std::memory_order_release);
     const SemaphoreHandle_t completed = self->scan_done_;
     xSemaphoreGive(completed);
+    ESP_LOGI(k_tag, "scan stack_high_water_mark_bytes=%u stack_bytes=6144",
+             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     vTaskDelete(nullptr);
 }
 
@@ -241,6 +243,9 @@ bool application::scan_directory_sync(std::string_view path) {
     const std::string virtual_dir(path);
     std::unique_ptr<std::array<track, k_max_tracks>> tracks(new (std::nothrow) std::array<track, k_max_tracks>{});
     if (!tracks)
+        return false;
+    std::unique_ptr<track> candidate(new (std::nothrow) track{});
+    if (!candidate)
         return false;
     std::size_t count = 0;
     bool truncated = false;
@@ -290,24 +295,27 @@ bool application::scan_directory_sync(std::string_view path) {
                                                                             k_max_track_bytes, verified_size);
                 if (descriptor < 0)
                     continue;
-                track candidate{};
-                std::memcpy(candidate.path.data(), child.data(), child.size());
-                candidate.path[child.size()] = '\0';
-                candidate.size_bytes = static_cast<std::uint32_t>(verified_size);
-                const std::size_t title_bytes = std::min(next_name.size(), k_max_title_bytes);
-                std::memcpy(candidate.title.data(), next_name.data(), title_bytes);
-                candidate.title[title_bytes] = '\0';
-                read_metadata(descriptor, verified_size, candidate);
+                *candidate = track{};
+                std::memcpy(candidate->path.data(), child.data(), child.size());
+                candidate->path[child.size()] = '\0';
+                candidate->size_bytes = static_cast<std::uint32_t>(verified_size);
+                sanitize_display_text(next_name, candidate->title.data(), k_max_title_bytes);
+                metadata tags{};
+                read_metadata(descriptor, verified_size, tags);
                 if (close(descriptor) != 0)
                     continue;
+                if (tags.title[0] != '\0')
+                    candidate->title = tags.title;
+                if (tags.artist[0] != '\0')
+                    candidate->artist = tags.artist;
                 if (count < tracks->size()) {
-                    (*tracks)[count++] = candidate;
+                    (*tracks)[count++] = *candidate;
                 } else {
                     truncated = true;
                     auto largest = std::max_element(tracks->begin(), tracks->end(),
                         [](const track &left, const track &right) { return left.path < right.path; });
-                    if (candidate.path < largest->path)
-                        *largest = candidate;
+                    if (candidate->path < largest->path)
+                        *largest = *candidate;
                 }
                 continue;
             }

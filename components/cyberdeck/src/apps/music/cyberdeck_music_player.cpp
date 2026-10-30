@@ -192,9 +192,14 @@ struct player::impl {
             std::memcpy(current.path.data(), req.path, std::strlen(req.path) + 1);
             const char *base = std::strrchr(req.path, '/');
             base = base == nullptr ? req.path : base + 1;
-            std::strncpy(current.title.data(), base, k_max_title_bytes);
+            sanitize_display_text(base, current.title.data(), k_max_title_bytes);
             current.size_bytes = static_cast<std::uint32_t>(file_size);
-            read_metadata(fd, file_size, current);
+            metadata tags{};
+            read_metadata(fd, file_size, tags);
+            if (tags.title[0] != '\0')
+                current.title = tags.title;
+            if (tags.artist[0] != '\0')
+                current.artist = tags.artist;
             bool request_is_current = false;
             {
                 std::lock_guard<std::mutex> lock(state_mutex);

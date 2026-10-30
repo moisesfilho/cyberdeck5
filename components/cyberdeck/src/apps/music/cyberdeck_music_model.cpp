@@ -84,14 +84,63 @@ bool append_codepoint(char *target, std::size_t &out, std::size_t max, std::uint
     return true;
 }
 
-void copy_text(std::array<char, k_max_title_bytes + 1> &dst, std::array<char, k_max_artist_bytes + 1> *artist,
-               const unsigned char *data, std::size_t length) {
+/* Validates and re-encodes UTF-8 text. It is shared by the ID3 `UTF-8`
+ * payloads and by the file-name fallback, so both always land in the
+ * `cyberdeck_font` repertoire without a raw, undecodable byte. */
+void copy_utf8_text(char *target, std::size_t max, const unsigned char *data, std::size_t length) {
+    std::size_t out = 0;
+    for (std::size_t i = 0; i < length && out < max;) {
+        const unsigned char lead = data[i];
+        if (lead == 0)
+            break;
+        if (lead < 0x80) {
+            if (!append_codepoint(target, out, max, lead))
+                break;
+            ++i;
+            continue;
+        }
+        const std::size_t bytes = lead >= 0xc2 && lead <= 0xdf   ? 2
+                                  : lead >= 0xe0 && lead <= 0xef ? 3
+                                  : lead >= 0xf0 && lead <= 0xf4 ? 4
+                                                                 : 0;
+        /* Consume the maximal subpart of a malformed sequence so each broken
+         * character yields one '?' instead of one per stray byte. */
+        std::size_t span = 0;
+        if (bytes != 0) {
+            span = 1;
+            while (span < bytes && i + span < length && (data[i + span] & 0xc0) == 0x80)
+                ++span;
+        }
+        bool valid = bytes != 0 && span == bytes;
+        if (valid && bytes == 3 && ((lead == 0xe0 && data[i + 1] < 0xa0) || (lead == 0xed && data[i + 1] >= 0xa0)))
+            valid = false;
+        if (valid && bytes == 4 && ((lead == 0xf0 && data[i + 1] < 0x90) || (lead == 0xf4 && data[i + 1] >= 0x90)))
+            valid = false;
+        if (!valid) {
+            if (!append_codepoint(target, out, max, '?'))
+                break;
+            i += span == 0 ? 1 : span;
+            continue;
+        }
+        std::uint32_t codepoint = bytes == 2 ? (lead & 0x1fU) : bytes == 3 ? (lead & 0x0fU) : (lead & 0x07U);
+        for (std::size_t j = 1; j < bytes; ++j)
+            codepoint = (codepoint << 6) | (data[i + j] & 0x3fU);
+        i += bytes;
+        if (!append_codepoint(target, out, max, codepoint))
+            break;
+    }
+    target[out] = '\0';
+}
+
+void copy_text(char *target, std::size_t max, const unsigned char *data, std::size_t length) {
     if (length < 1)
         return;
     const unsigned encoding = data[0];
+    if (encoding == 3) {
+        copy_utf8_text(target, max, data + 1, length - 1);
+        return;
+    }
     std::size_t out = 0;
-    const std::size_t max = artist == nullptr ? k_max_title_bytes : k_max_artist_bytes;
-    auto *target = artist == nullptr ? dst.data() : artist->data();
     if (encoding == 0) {
         for (std::size_t i = 1; i < length && out < max; ++i) {
             const unsigned char c = data[i];
@@ -100,54 +149,24 @@ void copy_text(std::array<char, k_max_title_bytes + 1> &dst, std::array<char, k_
             if (!append_codepoint(target, out, max, c))
                 break;
         }
-    } else if (encoding == 3) {
-        for (std::size_t i = 1; i < length && out < max;) {
-            const unsigned char lead = data[i];
-            if (lead == 0)
-                break;
-            if (lead < 0x80) {
-                if (!append_codepoint(target, out, max, lead))
-                    break;
-                ++i;
-                continue;
-            }
-            const std::size_t bytes = lead >= 0xc2 && lead <= 0xdf   ? 2
-                                      : lead >= 0xe0 && lead <= 0xef ? 3
-                                      : lead >= 0xf0 && lead <= 0xf4 ? 4
-                                                                     : 0;
-            /* Consume the maximal subpart of a malformed sequence so each
-             * broken character yields one '?' instead of one per stray byte. */
-            std::size_t span = 0;
-            if (bytes != 0) {
-                span = 1;
-                while (span < bytes && i + span < length && (data[i + span] & 0xc0) == 0x80)
-                    ++span;
-            }
-            bool valid = bytes != 0 && span == bytes;
-            if (valid && bytes == 3 && ((lead == 0xe0 && data[i + 1] < 0xa0) || (lead == 0xed && data[i + 1] >= 0xa0)))
-                valid = false;
-            if (valid && bytes == 4 && ((lead == 0xf0 && data[i + 1] < 0x90) || (lead == 0xf4 && data[i + 1] >= 0x90)))
-                valid = false;
-            if (!valid) {
-                if (!append_codepoint(target, out, max, '?'))
-                    break;
-                i += span == 0 ? 1 : span;
-                continue;
-            }
-            std::uint32_t codepoint = bytes == 2 ? (lead & 0x1fU) : bytes == 3 ? (lead & 0x0fU) : (lead & 0x07U);
-            for (std::size_t j = 1; j < bytes; ++j)
-                codepoint = (codepoint << 6) | (data[i + j] & 0x3fU);
-            i += bytes;
-            if (!append_codepoint(target, out, max, codepoint))
-                break;
-        }
     } else if ((encoding == 1 || encoding == 2) && length >= 3) {
-        const bool little = encoding == 2 || (data[1] == 0xff && data[2] == 0xfe);
+        /* ID3v2.4: encoding 2 is UTF-16BE without a BOM; encoding 1 carries the
+         * BOM (FF FE little-endian, FE FF big-endian) and falls back to
+         * little-endian when it is missing. */
+        bool little = true;
+        std::size_t i = 1;
+        if (encoding == 2) {
+            little = false;
+        } else if (data[1] == 0xff && data[2] == 0xfe) {
+            i = 3;
+        } else if (data[1] == 0xfe && data[2] == 0xff) {
+            i = 3;
+            little = false;
+        }
         const auto unit_at = [&](std::size_t index) {
             return little ? (std::uint32_t(data[index]) | (std::uint32_t(data[index + 1]) << 8))
                           : ((std::uint32_t(data[index]) << 8) | std::uint32_t(data[index + 1]));
         };
-        std::size_t i = encoding == 1 ? 3 : 1;
         for (; i + 1 < length && out < max; i += 2) {
             std::uint32_t codepoint = unit_at(i);
             if (codepoint == 0)
@@ -165,13 +184,15 @@ void copy_text(std::array<char, k_max_title_bytes + 1> &dst, std::array<char, k_
     }
     target[out] = '\0';
 }
-} // namespace
 
-bool is_mp3_path(std::string_view path) {
-    return safe_path(path);
-}
+/* Frames actually present in the tag, so the `track` overload preserves the
+ * historical "a present but empty frame clears the field" behavior. */
+struct frame_fields {
+    bool title = false;
+    bool artist = false;
+};
 
-bool parse_id3v2(std::string_view bytes, track &out) {
+bool parse_tag(std::string_view bytes, metadata &out, frame_fields &seen) {
     if (bytes.size() < 10 || bytes.substr(0, 3) != "ID3")
         return true;
     const auto *p = reinterpret_cast<const unsigned char *>(bytes.data());
@@ -198,13 +219,45 @@ bool parse_id3v2(std::string_view bytes, track &out) {
             (version == 2 && std::memcmp(id, "TT2", 3) == 0) || (version != 2 && std::memcmp(id, "TIT2", 4) == 0);
         const bool artist =
             (version == 2 && std::memcmp(id, "TP1", 3) == 0) || (version != 2 && std::memcmp(id, "TPE1", 4) == 0);
-        if (title)
-            copy_text(out.title, nullptr, p + offset + header_bytes, size);
-        if (artist)
-            copy_text(out.title, &out.artist, p + offset + header_bytes, size);
+        if (title) {
+            copy_text(out.title.data(), k_max_title_bytes, p + offset + header_bytes, size);
+            seen.title = true;
+        }
+        if (artist) {
+            copy_text(out.artist.data(), k_max_artist_bytes, p + offset + header_bytes, size);
+            seen.artist = true;
+        }
         offset += header_bytes + size;
     }
     return true;
+}
+} // namespace
+
+bool is_mp3_path(std::string_view path) {
+    return safe_path(path);
+}
+
+bool parse_id3v2(std::string_view bytes, metadata &out) {
+    frame_fields seen{};
+    return parse_tag(bytes, out, seen);
+}
+
+bool parse_id3v2(std::string_view bytes, track &out) {
+    metadata tags{};
+    frame_fields seen{};
+    if (!parse_tag(bytes, tags, seen))
+        return false;
+    if (seen.title)
+        out.title = tags.title;
+    if (seen.artist)
+        out.artist = tags.artist;
+    return true;
+}
+
+void sanitize_display_text(std::string_view source, char *dst, std::size_t max) {
+    if (dst == nullptr)
+        return;
+    copy_utf8_text(dst, max, reinterpret_cast<const unsigned char *>(source.data()), source.size());
 }
 
 bool model::replace_queue(const track *items, std::size_t count) {

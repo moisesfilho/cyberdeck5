@@ -968,13 +968,23 @@ destrói recursos potencialmente usados.
   UTF-8 válidas passam verbatim; ISO-8859-1 e UTF-16 são transcodificados para
   UTF-8; aspas/dashes tipográficos e ellipsis viram ASCII, U+00A0 vira espaço e
   o resto vira `?`, sempre respeitando `k_max_title_bytes`/`k_max_artist_bytes`,
-  sem dividir sequência multi-byte e sem perder a terminação NUL.
+  sem dividir sequência multi-byte e sem perder a terminação NUL. O parser
+  preenche o struct bounded `metadata` (só `title`/`artist`); a sobrecarga
+  `parse_id3v2(bytes, track&)` continua existindo e delega a ele, substituindo
+  apenas os campos cujo frame está presente. Encoding 2 é UTF-16BE sem BOM,
+  como define a ID3v2.4; encoding 1 lê o BOM (FF FE little-endian, FE FF
+  big-endian) e usa little-endian quando ele falta. O mesmo validador/reencoder
+  UTF-8 é exposto como `sanitize_display_text(source, dst, max)`, usado pelo
+  scan no fallback de nome do arquivo (controles viram espaço, byte inválido
+  vira `?` por maximal subpart, truncamento atômico e NUL final).
   `include/apps/music/cyberdeck_music_metadata.h` e
   `src/apps/music/cyberdeck_music_metadata.cpp` expõem
-  `cyberdeck_music::read_metadata(fd, size, track&)`, extraído do player e
+  `cyberdeck_music::read_metadata(fd, size, metadata&)`, extraído do player e
   compartilhado com o scan: `pread` do header de 10 bytes, só segue com `ID3`,
   buffer no heap (`std::nothrow`), leitura limitada a 64 KiB + 10 e substituição
-  de título/artista apenas quando a ID3 traz valor. O app
+  de título/artista apenas quando a ID3 traz valor. A task do scan não declara
+  `track` para decodificar metadados: `read_metadata` usa só o struct leve e os
+  donos (scan e player) copiam `title`/`artist` não vazios para o `track`. O app
   `cyberdeck.music` em `cyberdeck_music_app.{h,cpp}` registra o
   comando de terminal `music` como app foreground único, sujeito ao lifecycle e
   exclusividade do runtime; `queue /diretorio` inicia scan assíncrono,
@@ -984,8 +994,21 @@ destrói recursos potencialmente usados.
   enumeração e só publica uma fila completa após validar grant/lifecycle. Para
   cada arquivo admitido, o descritor já aberto é usado para ler a ID3 antes do
   `close`, então `track.title` recebe o título real e cai no nome do arquivo
-  (com extensão) quando a tag falta ou não traz `TIT2`; não há buffer grande na
-  stack da task `music_scan`. Uma
+  (com extensão) quando a tag falta ou não traz `TIT2`; o fallback é
+  `sanitize_display_text(next_name, ...)`, que mantém o nome legível sem byte
+  inválido. O playback worker usa o mesmo helper para o basename fallback antes
+  de publicar `snapshot.current`, mantendo NOW PLAYING/status em UTF-8 válido;
+  `test_music_player.cpp` cobre basename inválido, acento válido e truncamento
+  atômico pelo snapshot real. O `track candidate` do walker também é uma única
+  alocação reutilizada no heap, criada uma vez antes do lambda recursivo e
+  liberada por RAII; falta de memória aborta o scan antes de enumerar. Assim,
+  nem a decodificação nem o caminho por arquivo adicionam um `track` inteiro à
+  stack de `music_scan`. `test_music_scan_stack_contract.py` fixa essas condições.
+  `scan_entry`
+  registra `uxTaskGetStackHighWaterMark(nullptr)` como bytes livres antes do
+  `vTaskDelete`, com a stack de 6144 bytes fixada por
+  `test_music_scan_stack_contract.py` (que também falha se `read_metadata`
+  voltar a declarar `track` na stack). Uma
   trava curta serializa a publicação final com stop/poweroff: quiesce fecha a
   admissão do scanner e marca cancelamento antes de aguardar o worker; uma
    operação de secure-open já em voo não pode publicar resultado stale após esse
@@ -1077,7 +1100,12 @@ destrói recursos potencialmente usados.
     `test_music_decoder_stack_contract.py` verifica ownership/stack;
    `test_music_decoder_scratch.cpp` compara duas frames decodificadas com o
    wrapper upstream e scratch externo (PCM/status iguais, ASan/UBSan limpos).
-    Ambos estão no agregado e `BINS` inclui os novos binários. O alvo
+   `test_music_scan_stack_contract.py` (alvo `.PHONY` no agregado) fixa que
+   `read_metadata` usa `metadata&` sem `track` na stack, que o fallback do scan
+   chama `sanitize_display_text`, que a stack de `music_scan` continua em 6144
+   bytes e que `scan_entry` publica o high-water mark antes de se autoexcluir.
+     `test_music_decoder_scratch_bin` é binário listado em `BINS`; `test_music_decoder_stack_contract.py` e
+     `test_music_scan_stack_contract.py` são contratos Python executados no agregado `test`, sem entrada em `BINS`. O alvo
     `test_music_manager_bin` e `test_music_command_controller_bin` são testes
     monolíticos fora dos 27 candidatos per-TU da fixture incremental; o mesmo
     vale para `test_lvgl_dispatch_state_bin`, apensado ao final de `BINS +=`

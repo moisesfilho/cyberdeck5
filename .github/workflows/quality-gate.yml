@@ -91,6 +91,9 @@ jobs:
             components/cyberdeck/include/apps/wifi/cyberdeck_wifi_survey_export_controller.h \
             components/cyberdeck/src/apps/wifi/cyberdeck_wifi_survey_export_controller.cpp \
             tests/host/keymap/test_wifi_survey_export_controller.cpp
+          clang-format --dry-run --Werror \
+            components/cyberdeck/include/apps/music/cyberdeck_music_metadata.h \
+            components/cyberdeck/src/apps/music/cyberdeck_music_metadata.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.

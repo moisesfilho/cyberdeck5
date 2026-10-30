@@ -111,6 +111,7 @@ TaskHandle_t xTaskCreateStatic(TaskFunction_t entry, const char *name, unsigned,
     (void)priority;
     return handle;
 }
+unsigned uxTaskGetStackHighWaterMark(TaskHandle_t) { return 512; }
 void vTaskDelete(TaskHandle_t task) {
     if (task != nullptr) return;
     if (completion_signaled_in_task) self_delete_count.fetch_add(1, std::memory_order_relaxed);

@@ -367,22 +367,28 @@ void test_id3_legacy_text_encodings() {
     CHECK(cyberdeck_music::parse_id3v2(utf16_le_bom, parsed));
     CHECK(std::string_view(parsed.title.data()) == "AB");
 
-    auto utf16_le = make_encoded_tag(2, std::string("A\0B\0", 4));
-    CHECK(cyberdeck_music::parse_id3v2(utf16_le, parsed));
+    /* Encoding 1 without a BOM uses the documented little-endian default. */
+    auto utf16_no_bom = make_encoded_tag(1, std::string("A\x00" "B\x00", 4));
+    CHECK(cyberdeck_music::parse_id3v2(utf16_no_bom, parsed));
+    CHECK(std::string_view(parsed.title.data()) == "AB");
+
+    /* Encoding 2 is UTF-16BE without a BOM per ID3v2.4, not little-endian. */
+    auto utf16_be_spec = make_encoded_tag(2, std::string("\x00" "A\x00" "B", 4));
+    CHECK(cyberdeck_music::parse_id3v2(utf16_be_spec, parsed));
     CHECK(std::string_view(parsed.title.data()) == "AB");
 
     /* Code units are transcoded to UTF-8: Latin-1 accents become two bytes,
      * typographic punctuation becomes ASCII and an ellipsis becomes three dots. */
-    auto utf16_accent = make_encoded_tag(2, std::string("A\0\xe9\0", 4));
+    auto utf16_accent = make_encoded_tag(2, std::string("\x00" "A\x00\xe9", 4));
     CHECK(cyberdeck_music::parse_id3v2(utf16_accent, parsed));
     CHECK(std::string_view(parsed.title.data()) == "A\xc3\xa9");
     CHECK(valid_utf8(parsed.title.data()));
 
-    auto utf16_punctuation = make_encoded_tag(2, std::string("\x18\x20\x26\x20", 4));
+    auto utf16_punctuation = make_encoded_tag(2, std::string("\x20\x18\x20\x26", 4));
     CHECK(cyberdeck_music::parse_id3v2(utf16_punctuation, parsed));
     CHECK(std::string_view(parsed.title.data()) == "'...");
 
-    auto utf16_space = make_encoded_tag(2, std::string("\xa0\x00", 2));
+    auto utf16_space = make_encoded_tag(2, std::string("\x00\xa0", 2));
     CHECK(cyberdeck_music::parse_id3v2(utf16_space, parsed));
     CHECK(std::string_view(parsed.title.data()) == " ");
 
@@ -390,23 +396,23 @@ void test_id3_legacy_text_encodings() {
     CHECK(cyberdeck_music::parse_id3v2(unsupported, parsed));
     CHECK(parsed.title[0] == '\0');
 
-    auto utf16_odd_tail = make_encoded_tag(2, std::string("A\0Z", 3));
+    auto utf16_odd_tail = make_encoded_tag(2, std::string("\x00" "A" "Z", 3));
     CHECK(cyberdeck_music::parse_id3v2(utf16_odd_tail, parsed));
     CHECK(std::string_view(parsed.title.data()) == "A");
 
     /* U+00D8 is a printable Latin-1 glyph and must reach LVGL as UTF-8; a lone
      * or paired surrogate is outside the font and becomes '?'. */
-    auto utf16_latin1_byte = make_encoded_tag(2, std::string("\xd8\x00", 2));
+    auto utf16_latin1_byte = make_encoded_tag(2, std::string("\x00\xd8", 2));
     CHECK(cyberdeck_music::parse_id3v2(utf16_latin1_byte, parsed));
     CHECK(std::string_view(parsed.title.data()) == "\xc3\x98");
     CHECK(valid_utf8(parsed.title.data()));
 
-    auto utf16_surrogate = make_encoded_tag(2, std::string("\x00\xd8\x00\x00", 4));
+    auto utf16_surrogate = make_encoded_tag(2, std::string("\xd8\x00\x00\x00", 4));
     CHECK(cyberdeck_music::parse_id3v2(utf16_surrogate, parsed));
     CHECK(std::string_view(parsed.title.data()) == "?");
 
     /* U+1F600 arrives as a surrogate pair; it has no glyph, so one '?'. */
-    auto utf16_surrogate_pair = make_encoded_tag(2, std::string("\x3d\xd8\x00\xde", 4));
+    auto utf16_surrogate_pair = make_encoded_tag(2, std::string("\xd8\x3d\xde\x00", 4));
     CHECK(cyberdeck_music::parse_id3v2(utf16_surrogate_pair, parsed));
     CHECK(std::string_view(parsed.title.data()) == "?");
     CHECK(valid_utf8(parsed.title.data()));
@@ -431,6 +437,74 @@ void test_id3_legacy_text_encodings() {
     CHECK(cyberdeck_music::parse_id3v2(overlong_utf8, parsed));
     CHECK(std::string_view(parsed.title.data()) == "?");
     CHECK(valid_utf8(parsed.title.data()));
+}
+
+void test_metadata_struct_and_display_text() {
+    /* The bounded metadata overload fills only the frames the tag carries, so
+     * the parser and the scan never need a whole `track` on the stack. */
+    std::string frames;
+    append_frame(frames, 4, "TIT2", "Only title");
+    std::string title_only = "ID3";
+    title_only.push_back('\x04');
+    title_only.append(2, '\0');
+    append_syncsafe(title_only, static_cast<std::uint32_t>(frames.size()));
+    title_only += frames;
+
+    cyberdeck_music::metadata tags{};
+    std::strcpy(tags.artist.data(), "keep");
+    CHECK(cyberdeck_music::parse_id3v2(title_only, tags));
+    CHECK(std::string_view(tags.title.data()) == "Only title");
+    CHECK(std::string_view(tags.artist.data()) == "keep");
+
+    /* The track overload still leaves a field untouched when its frame is
+     * absent, while a present but empty frame keeps clearing it. */
+    track partial{};
+    std::strcpy(partial.artist.data(), "keep");
+    CHECK(cyberdeck_music::parse_id3v2(title_only, partial));
+    CHECK(std::string_view(partial.title.data()) == "Only title");
+    CHECK(std::string_view(partial.artist.data()) == "keep");
+
+    std::array<char, k_max_title_bytes + 1> buffer{};
+
+    /* A valid file name is preserved byte for byte. */
+    cyberdeck_music::sanitize_display_text("alpha.mp3", buffer.data(), k_max_title_bytes);
+    CHECK(std::string_view(buffer.data()) == "alpha.mp3");
+    CHECK(valid_utf8(buffer.data()));
+
+    /* An invalid byte becomes a single '?' (maximal subpart) without losing the
+     * rest of the name. */
+    cyberdeck_music::sanitize_display_text(std::string_view("bad\xff.mp3", 9), buffer.data(), k_max_title_bytes);
+    CHECK(std::string_view(buffer.data()) == "bad?.mp3");
+    CHECK(valid_utf8(buffer.data()));
+
+    /* Controls become spaces and typographic marks are transliterated, exactly
+     * like the ID3 UTF-8 path. */
+    cyberdeck_music::sanitize_display_text(std::string_view("a\x01" "b\xe2\x80\xa6", 6), buffer.data(),
+                                           k_max_title_bytes);
+    CHECK(std::string_view(buffer.data()) == "a b...");
+
+    /* A two-byte sequence that does not fit is dropped whole, so the truncated
+     * name still ends on a code point boundary. */
+    const std::string long_name = std::string(k_max_title_bytes - 1, 'a') + "\xc3\xa7" + ".mp3";
+    cyberdeck_music::sanitize_display_text(long_name, buffer.data(), k_max_title_bytes);
+    CHECK(std::strlen(buffer.data()) == k_max_title_bytes - 1);
+    CHECK(std::string_view(buffer.data()) == std::string(k_max_title_bytes - 1, 'a'));
+    CHECK(buffer[k_max_title_bytes - 1] == '\0' && buffer[k_max_title_bytes] == '\0');
+    CHECK(valid_utf8(buffer.data()));
+
+    /* A sequence that fits exactly is kept and NUL-terminated one byte later. */
+    const std::string exact_name = std::string(k_max_title_bytes - 2, 'a') + "\xc3\xa7";
+    cyberdeck_music::sanitize_display_text(exact_name, buffer.data(), k_max_title_bytes);
+    CHECK(std::strlen(buffer.data()) == k_max_title_bytes);
+    CHECK(buffer[k_max_title_bytes] == '\0');
+    CHECK(valid_utf8(buffer.data()));
+
+    /* Degenerate inputs stay terminated and never write past `max`. */
+    cyberdeck_music::sanitize_display_text("", buffer.data(), k_max_title_bytes);
+    CHECK(buffer[0] == '\0');
+    cyberdeck_music::sanitize_display_text("abc", buffer.data(), 0);
+    CHECK(buffer[0] == '\0');
+    cyberdeck_music::sanitize_display_text("abc", nullptr, k_max_title_bytes);
 }
 
 void test_clear_and_empty_state() {
@@ -461,6 +535,7 @@ int main() {
     test_id3_versions_and_malformed_tags();
     test_id3_text_encoding_and_limits();
     test_id3_legacy_text_encodings();
+    test_metadata_struct_and_display_text();
     test_clear_and_empty_state();
     std::cout << checks - failures << '/' << checks << " checks passed\n";
     return failures == 0 ? 0 : 1;

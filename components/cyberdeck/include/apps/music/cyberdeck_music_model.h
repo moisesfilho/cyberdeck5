@@ -24,6 +24,14 @@ struct track {
     std::uint32_t duration_ms = 0;
 };
 
+/* Decoded ID3v2 text without the queue fields. It keeps the metadata read off
+ * the scan task's stack: the parser and `read_metadata` only ever touch this
+ * bounded struct, and the owners copy title/artist into a `track` afterwards. */
+struct metadata {
+    std::array<char, k_max_title_bytes + 1> title{};
+    std::array<char, k_max_artist_bytes + 1> artist{};
+};
+
 struct snapshot {
     playback_state state = playback_state::stopped;
     error_stage failure_stage = error_stage::none;
@@ -64,5 +72,15 @@ class model final {
 };
 
 bool is_mp3_path(std::string_view path);
+/* Fills `out.title`/`out.artist` for the frames the tag carries; a present but
+ * empty frame clears the field, while an absent frame leaves it untouched. */
+bool parse_id3v2(std::string_view bytes, metadata &out);
+/* Track-level overload kept for callers that already own a `track`; it only
+ * replaces the fields whose frame is present and never copies the whole track. */
 bool parse_id3v2(std::string_view bytes, track &out);
+/* Re-encodes arbitrary text (file names included) exactly like ID3 UTF-8 text:
+ * controls become spaces, malformed sequences become one '?' per maximal
+ * subpart, typographic marks are transliterated and truncation happens between
+ * code points. `dst` must hold `max` bytes plus the NUL terminator. */
+void sanitize_display_text(std::string_view source, char *dst, std::size_t max);
 }

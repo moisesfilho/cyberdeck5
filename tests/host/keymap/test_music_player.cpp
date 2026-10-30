@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 int checks = 0;
@@ -45,6 +46,8 @@ bool fd_close_entered = false;
 bool release_fd_close = false;
 int blocked_fd = -1;
 std::string fixture_path;
+std::string expected_secure_open_path = "/stream.mp3";
+std::vector<std::string> secure_open_paths;
 bool gate_audio_write = false;
 bool audio_write_entered = false;
 bool release_audio_write = false;
@@ -96,6 +99,50 @@ bool write_large_id3_mp3(const std::string &path) {
     return output.good();
 }
 
+/* ID3v2.3 tag with UTF-8 TIT2/TPE1 frames (any of them optional) followed by
+ * valid frames, so the player decodes the tag and still reaches real playback. */
+std::string id3_utf8_frame(const char *id, std::string_view text) {
+    std::string payload(1, '\x03');
+    payload.append(text);
+    std::string frame(id, 4);
+    const auto size = static_cast<std::uint32_t>(payload.size());
+    frame.push_back(static_cast<char>((size >> 24) & 0xff));
+    frame.push_back(static_cast<char>((size >> 16) & 0xff));
+    frame.push_back(static_cast<char>((size >> 8) & 0xff));
+    frame.push_back(static_cast<char>(size & 0xff));
+    frame.append(2, '\0');
+    frame += payload;
+    return frame;
+}
+
+bool write_id3_tagged_mp3(const std::string &path, std::string_view title, std::string_view artist) {
+    std::string frames;
+    if (!title.empty()) frames += id3_utf8_frame("TIT2", title);
+    if (!artist.empty()) frames += id3_utf8_frame("TPE1", artist);
+    std::string tag = "ID3";
+    tag.push_back('\x03');
+    tag.append(2, '\0');
+    const auto tag_size = static_cast<std::uint32_t>(frames.size());
+    tag.push_back(static_cast<char>((tag_size >> 21) & 0x7f));
+    tag.push_back(static_cast<char>((tag_size >> 14) & 0x7f));
+    tag.push_back(static_cast<char>((tag_size >> 7) & 0x7f));
+    tag.push_back(static_cast<char>(tag_size & 0x7f));
+    tag += frames;
+    constexpr std::size_t frame_bytes = 417;
+    constexpr unsigned frame_count = 24;
+    std::array<unsigned char, frame_bytes * frame_count> audio{};
+    for (unsigned frame = 0; frame < frame_count; ++frame) {
+        audio[frame * frame_bytes] = 0xff;
+        audio[frame * frame_bytes + 1] = 0xfb;
+        audio[frame * frame_bytes + 2] = 0x90;
+        audio[frame * frame_bytes + 3] = 0x64;
+    }
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(tag.data(), static_cast<std::streamsize>(tag.size()));
+    output.write(reinterpret_cast<const char *>(audio.data()), static_cast<std::streamsize>(audio.size()));
+    return output.good();
+}
+
 class storage_owner final : public cyberdeck_apps::application {
   public:
     const cyberdeck_apps::manifest &get_manifest() const override { return manifest_; }
@@ -124,10 +171,12 @@ bool wait_until(Predicate predicate, std::chrono::milliseconds timeout) {
 int cyberdeck_local_shell_open_readonly(const char *root, const char *cwd, std::string_view path,
                                          std::size_t max_bytes, std::size_t &file_size) {
     if (root == nullptr || std::string_view(root) != "/sdcard" || cwd == nullptr ||
-        std::string_view(cwd) != "/" || path != "/stream.mp3" || max_bytes == 0) return -1;
-    if (fail_secure_open) return -1;
+        std::string_view(cwd) != "/" || max_bytes == 0) return -1;
     {
         std::unique_lock<std::mutex> lock(open_mutex);
+        if (path != expected_secure_open_path)
+            return -1;
+        secure_open_paths.emplace_back(path);
         if (hold_first_open) {
             first_open_entered = true;
             open_changed.notify_all();
@@ -135,6 +184,7 @@ int cyberdeck_local_shell_open_readonly(const char *root, const char *cwd, std::
             hold_first_open = false;
         }
     }
+    if (fail_secure_open) return -1;
     const int fd = ::open(fixture_path.c_str(), O_RDONLY);
     if (fd < 0) return -1;
     struct stat info{};
@@ -400,16 +450,85 @@ int main() {
     CHECK(wait_until([] { return music_test_delete_without_completion_count() == 0; }, std::chrono::seconds(1)));
     CHECK(music_test_delete_without_completion_count() == 0);
 
+    CHECK(subject.start(&storage, access));
+    /* The current-track title is also rendered by the UI, so the basename
+     * fallback must use the same bounded UTF-8 sanitizer as the queue scan. */
+    const auto check_title_fallback = [&](std::string_view path, std::string_view expected) {
+        std::size_t previous_open_count = 0;
+        {
+            std::lock_guard<std::mutex> lock(open_mutex);
+            expected_secure_open_path.assign(path);
+            previous_open_count = secure_open_paths.size();
+        }
+        CHECK(subject.play(path));
+        CHECK(wait_until([&] {
+            cyberdeck_music::snapshot state{};
+            return subject.status(state) && state.state == cyberdeck_music::playback_state::error &&
+                   state.failure_stage == cyberdeck_music::error_stage::decode &&
+                   std::string_view(state.current.title.data()) == expected;
+        }, std::chrono::seconds(2)));
+        cyberdeck_music::snapshot state{};
+        CHECK(subject.status(state));
+        CHECK(std::string_view(state.current.title.data()) == expected);
+        {
+            std::lock_guard<std::mutex> lock(open_mutex);
+            CHECK(secure_open_paths.size() == previous_open_count + 1 &&
+                  secure_open_paths.back() == path);
+            expected_secure_open_path = "/stream.mp3";
+        }
+    };
+    {
+        std::ofstream malformed(fixture_path, std::ios::binary | std::ios::trunc);
+        malformed.write(reinterpret_cast<const char *>(invalid_mp3), sizeof(invalid_mp3));
+    }
+    check_title_fallback(std::string_view("/bad\xff.mp3", 9), "bad?.mp3");
+    check_title_fallback("/Caf\xc3\xa9.mp3", "Caf\xc3\xa9.mp3");
+    const std::string long_basename = "/" + std::string(cyberdeck_music::k_max_title_bytes - 1, 'a') +
+                                      "\xc3\xa7.mp3";
+    const std::string expected_truncated(cyberdeck_music::k_max_title_bytes - 1, 'a');
+    check_title_fallback(long_basename, expected_truncated);
+
+    /* The tag wins over the file name, and the artist only comes from the tag:
+     * the basename fallback never fills `artist`. A missing TPE1 frame must
+     * leave the artist empty instead of inheriting a stale value. */
+    CHECK(write_id3_tagged_mp3(fixture_path, "Tag title", "Tag artist"));
+    CHECK(subject.play("/stream.mp3"));
+    CHECK(wait_until([&] {
+        cyberdeck_music::snapshot state{};
+        return subject.status(state) && state.state == cyberdeck_music::playback_state::playing &&
+               std::string_view(state.current.title.data()) == "Tag title" &&
+               std::string_view(state.current.artist.data()) == "Tag artist";
+    }, std::chrono::seconds(2)));
+    cyberdeck_music::snapshot tagged{};
+    CHECK(subject.status(tagged));
+    CHECK(std::string_view(tagged.current.path.data()) == "/stream.mp3");
+    CHECK(tagged.failure_stage == cyberdeck_music::error_stage::none);
+    CHECK(subject.stop(2000));
+    CHECK(subject.start(&storage, access));
+
+    CHECK(write_id3_tagged_mp3(fixture_path, "Only title", std::string_view{}));
+    CHECK(subject.play("/stream.mp3"));
+    CHECK(wait_until([&] {
+        cyberdeck_music::snapshot state{};
+        return subject.status(state) && state.state == cyberdeck_music::playback_state::playing &&
+               std::string_view(state.current.title.data()) == "Only title";
+    }, std::chrono::seconds(2)));
+    cyberdeck_music::snapshot title_only_tag{};
+    CHECK(subject.status(title_only_tag));
+    CHECK(std::string_view(title_only_tag.current.title.data()) == "Only title");
+    CHECK(std::string_view(title_only_tag.current.artist.data()).empty());
+    CHECK(subject.stop(2000));
+    CHECK(subject.start(&storage, access));
+
     CHECK(write_large_id3_mp3(fixture_path));
     struct stat large_info{};
     CHECK(::stat(fixture_path.c_str(), &large_info) == 0);
-    current.size_bytes = static_cast<std::uint32_t>(large_info.st_size);
     {
         std::lock_guard<std::mutex> lock(audio_mutex);
         audio_write_count = 0;
     }
+    CHECK(subject.stop(2000));
     CHECK(subject.start(&storage, access));
-    CHECK(subject.set_queue(&current, 1, 0));
     CHECK(subject.play("/stream.mp3"));
     CHECK(wait_until([&] {
         cyberdeck_music::snapshot state{};

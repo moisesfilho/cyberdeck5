@@ -9,6 +9,9 @@ int xTaskCreate(TaskFunction_t entry, const char *name, unsigned stack_bytes, vo
                 unsigned priority, TaskHandle_t *handle);
 TaskHandle_t xTaskCreateStatic(TaskFunction_t entry, const char *name, unsigned stack_bytes, void *context,
                                unsigned priority, StackType_t *stack, StaticTask_t *control);
+/* Host threads have no FreeRTOS stack accounting; the shim reports a fixed
+ * value so code that only logs the real peak stays compilable and silent. */
+unsigned uxTaskGetStackHighWaterMark(TaskHandle_t task);
 void vTaskDelete(TaskHandle_t task);
 unsigned music_test_self_delete_count();
 unsigned music_test_delete_without_completion_count();
