@@ -19,11 +19,26 @@ constexpr int kMinimumButtonSize = 44;
  * keeps the same inset on the right; measuring the outer card width instead
  * counts the border/pad once and pushes the child 1 px past the card. */
 constexpr int kCardInset = 8;
+/* Fixed shortcut row of the player view. ASCII only: `cyberdeck_font` covers
+ * 0x20-0x7E, 0xA0-0xFF and the sparse Font Awesome block, so arrow code points
+ * (U+2190..U+2193) would be painted as missing-glyph boxes. It is a static
+ * footer, so the command overlay reuses the same text.
+ *
+ * The flat row is the landscape variant. The 71-character hint needs 767.7 px
+ * at the real `cyberdeck_font` advance (adv_w 173/16 = 10.8125 px/char) while
+ * the portrait surface only offers 680 px of content, so portrait splits the
+ * same shortcuts in two rows after "seek". The break is explicit: the layout
+ * decides by orientation and never measures text at runtime. */
+constexpr const char *kMusicControlsHint =
+    "Enter play/pause  left/right seek  up/down volume  N/P track  Esc close";
+constexpr const char *kMusicControlsHintPortrait =
+    "Enter play/pause  left/right seek\nup/down volume  N/P track  Esc close";
 const lv_color_t kBlack = lv_color_hex(0x000000);
 const lv_color_t kSurface = lv_color_hex(0x0A0A0A);
 const lv_color_t kBorder = lv_color_hex(0x2A2A2A);
 const lv_color_t kSelected = lv_color_hex(0x303030);
 const lv_color_t kWhite = lv_color_hex(0xF2F2F2);
+const lv_color_t kMuted = lv_color_hex(0x8A8A8A);
 
 void style(lv_obj_t *object, lv_color_t text) {
     lv_obj_set_style_bg_color(object, kSurface, 0);
@@ -69,8 +84,10 @@ bool view::create(lv_obj_t *parent, callback on_action, void *context) {
     title_ = lv_label_create(surface_);
     now_playing_ = lv_obj_create(surface_);
     list_ = lv_obj_create(surface_);
-    if (!title_ || !now_playing_ || !list_) { destroy(); return false; }
+    footer_ = lv_label_create(surface_);
+    if (!title_ || !now_playing_ || !list_ || !footer_) { destroy(); return false; }
     disable_scrolling(title_);
+    disable_scrolling(footer_);
     now_title_ = lv_label_create(now_playing_);
     browser_title_ = lv_label_create(list_);
     if (!now_title_ || !browser_title_) { destroy(); return false; }
@@ -93,7 +110,9 @@ bool view::create(lv_obj_t *parent, callback on_action, void *context) {
     disable_scrolling(controls_);
     style(title_, kWhite); style(now_title_, kWhite); style(browser_title_, kWhite);
     style(status_, kWhite); style(time_, kWhite); style(volume_, kWhite); style(command_, kWhite);
+    style(footer_, kMuted);
     lv_label_set_long_mode(status_, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_long_mode(footer_, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_layout(controls_, LV_LAYOUT_NONE);
     lv_obj_set_style_bg_color(controls_, kSurface, 0);
     lv_obj_set_style_border_width(controls_, 0, 0);
@@ -195,10 +214,11 @@ bool view::create(lv_obj_t *parent, callback on_action, void *context) {
 void view::destroy() {
     if (parent_) lv_obj_remove_event_cb(parent_, parent_resized);
     if (surface_) lv_obj_delete(surface_);
-    surface_ = title_ = now_title_ = browser_title_ = status_ = now_playing_ = time_ = volume_ = progress_ = command_ = list_ = controls_ = nullptr;
+    surface_ = title_ = now_title_ = browser_title_ = status_ = now_playing_ = time_ = volume_ = progress_ = command_ = list_ = footer_ = controls_ = nullptr;
     parent_ = nullptr;
     tracks_.fill(nullptr); buttons_.fill(nullptr);
     callback_ = nullptr; context_ = nullptr; visible_ = false; command_open_ = false; selected_track_ = 0;
+    footer_landscape_ = -1;
 }
 
 void view::set_visible(bool visible) {
@@ -337,14 +357,33 @@ void view::layout() {
     lv_obj_set_pos(title_, pad, y); lv_obj_set_size(title_, width - pad * 2, title_height);
     lv_label_set_long_mode(title_, LV_LABEL_LONG_MODE_DOTS);
     y += title_height + pad;
+    /* Fixed footer at the bottom of the surface. Both cards are measured against
+     * `footer_y` so neither can grow into the reserved band; the previous
+     * `height - y - pad` card formula would paint the shortcut row over the
+     * library rows and the control block. The band is one text row in landscape
+     * and two rows (plus the 2 px line slack) in portrait, where the flat hint
+     * does not fit; the matching text is chosen by the same `landscape` flag. */
+    const int footer_height = landscape ? line : 2 * line + 2;
+    const int footer_y = height - pad - footer_height;
     const int gap = 8;
     const int now_width = landscape ? (width - 3 * pad - gap) * 45 / 100 : width - 2 * pad;
-    const int card_height = landscape ? height - y - pad : (height - y - 3 * pad) / 2;
+    const int card_height = landscape ? footer_y - pad - y : (footer_y - y - 2 * pad) / 2;
     const int browser_x = landscape ? pad + now_width + gap : pad;
     const int browser_y = landscape ? y : y + card_height + pad;
     const int browser_width = landscape ? width - browser_x - pad : width - 2 * pad;
     lv_obj_set_pos(now_playing_, pad, y); lv_obj_set_size(now_playing_, now_width, card_height);
     lv_obj_set_pos(list_, browser_x, browser_y); lv_obj_set_size(list_, browser_width, card_height);
+    lv_obj_set_pos(footer_, pad, footer_y);
+    lv_obj_set_size(footer_, width - pad * 2, footer_height);
+    /* The footer text only depends on the orientation, and this function runs on
+     * every status refresh (~4x/s). Re-applying the same string makes LVGL free
+     * and re-allocate the label text and invalidate the 1232x22 px band on every
+     * tick, so the setter is gated by the orientation already applied. */
+    const std::int8_t footer_landscape = landscape ? 1 : 0;
+    if (footer_landscape_ != footer_landscape) {
+        lv_label_set_text(footer_, landscape ? kMusicControlsHint : kMusicControlsHintPortrait);
+        footer_landscape_ = footer_landscape;
+    }
     /* Derive the child width from the real card content area (AC-MUSIC-13):
      * the previous `now_width - 16` / `browser_width - 16` measured the outer
      * card and ignored that `x = 8` is relative to the content area, so the

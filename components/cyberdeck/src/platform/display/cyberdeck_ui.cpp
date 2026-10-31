@@ -104,12 +104,6 @@ bool s_music_ui_active = false;
 cyberdeck_music_command_input::controller s_music_command_input;
 cyberdeck_music_view::view s_music_view;
 cyberdeck_music_manager::manager s_music_manager;
-/* Player controls hint, shared by both render branches so the text cannot
- * drift. ASCII only: `cyberdeck_font` covers 0x20-0x7E, 0xA0-0xFF and the
- * sparse Font Awesome block, so arrow code points (U+2190..U+2193) would be
- * painted as missing-glyph boxes. */
-constexpr const char kMusicControlsHint[] =
-    "Enter play/pause  left/right seek  up/down volume  N/P track  Esc close";
 bool s_terminal_output_dirty = false;
 bool s_virtual_enter_handled = false;
 std::string s_last_clock_text;
@@ -984,7 +978,6 @@ void process_music_status(lv_timer_t *) {
         std::string text = status.output;
         text += tracks.output;
         text += s_music_command_input.feedback();
-        text += kMusicControlsHint;
         s_music_view.render(text);
     } else if (s_music_manager.active() && s_music_view.exists()) {
         const auto status = music.player_command("status");
@@ -992,7 +985,6 @@ void process_music_status(lv_timer_t *) {
         std::string text = status.output;
         text += tracks.output;
         text += s_music_command_input.feedback();
-        text += kMusicControlsHint;
         s_music_view.render(text);
         s_music_view.set_visible(true);
         (void)s_music_manager.activate();

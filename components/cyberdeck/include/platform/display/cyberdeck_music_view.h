@@ -2,6 +2,7 @@
 
 #include <string_view>
 #include <array>
+#include <cstdint>
 
 struct _lv_obj_t;
 using lv_obj_t = _lv_obj_t;
@@ -45,6 +46,7 @@ class view final {
     lv_obj_t *progress_ = nullptr;
     lv_obj_t *command_ = nullptr;
     lv_obj_t *list_ = nullptr;
+    lv_obj_t *footer_ = nullptr;
     lv_obj_t *controls_ = nullptr;
     std::array<lv_obj_t *, 64> tracks_{};
      std::array<lv_obj_t *, 8> buttons_{};
@@ -52,6 +54,10 @@ class view final {
     void *context_ = nullptr;
     bool visible_ = false;
     bool command_open_ = false;
+    /* Orientation whose footer text is already applied: -1 = never applied
+     * (fresh label). `layout()` runs on every status refresh, so the footer
+     * setter is gated by this value instead of re-writing the same string. */
+    std::int8_t footer_landscape_ = -1;
     std::size_t selected_track_ = 0;
 };
 } // namespace cyberdeck_music_view

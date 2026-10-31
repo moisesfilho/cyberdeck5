@@ -162,10 +162,24 @@ LVGL completo; cobre layout 720x1280/1280x720 e resize por
 `LV_EVENT_SIZE_CHANGED`, bounds de surface/controles/lista, scroll vertical das
 64 faixas e isolamento do scroll: surface, cards, controles, parent content e
 itens da lista ficam sem scroll/scrollbar/chain, enquanto somente a lista tem
-`LV_DIR_VER`/scrollbar automático sem chaining. Os oito botões têm no mínimo
+`LV_DIR_VER`/scrollbar automático sem chaining. Verifica também o rodapé fixo:
+quatro filhos na surface (`title_`, `now_playing_`, `list_`, `footer_`), texto
+exato por orientação (`kMusicControlsHint` sem `\n` em paisagem e a quebra única
+após `seek` em retrato), cor `kMuted` #8A8A8A, `LV_LABEL_LONG_MODE_DOTS`,
+geometria `(pad, height - pad - footer_height)` com `footer_height` de `line`
+em paisagem e `2 * line + 2` em retrato, e ausência de sobreposição com os dois
+cartões em retrato (696x1203) e paisagem (1256x643). Cada linha renderizada do
+rodapé precisa caber na largura do label (avanço do shim 11 px/char, conservador
+frente aos 10,8125 px/char reais; a truncagem DOTS real não é renderizada no
+host). Os oito botões têm no mínimo
 44x44 px nas duas orientações; labels com truncagem por pontos permanecem dentro
 dos botões, e a matriz de conteúdo/controles sem sobreposição é verificada em
-ambas. Resize percorre portrait→landscape→portrait→landscape. Nomes de faixa longos ficam
+ambas. Resize percorre portrait→landscape→portrait→landscape. TEST-MUSIC-FOOTER-GUARD
+prova no shim que o texto do rodapé só é reaplicado quando a orientação muda:
+`layout()` repete o valor num mesmo tamanho (marcador plantado em `text` sobrevive
+a `render()`, que chama `layout()`) e a troca de orientação seguinte restaura a
+dica correta; `destroy()` + `create()` na mesma orientação comprova o reset de
+`footer_landscape_` (rótulo novo nasce vazio). Nomes de faixa longos ficam
 visualmente limitados ao slot, mantendo o texto completo no label. A fixture modela root, system bar
 e content como irmãos, verificando parent da view e bounds absolutos sem
 sobreposição do header. Também cobre progresso, callback de seleção/comando,
@@ -233,8 +247,9 @@ deixe o gate verde sem checar drift. Ambos reportam erro explicável e rc≠0 (s
 traceback) para JSON inválido, corpo de macro não escapado (UTF-8 cru), corpo que
 decodifica para mais de um code point e mapa ausente. É por isso que o botão de música
 do header usa ASCII `>` em vez de `LV_SYMBOL_PLAY` (U+F04B) e a dica de controles
-do player, centralizada em `kMusicControlsHint` no `cyberdeck_ui.cpp`, é ASCII e
-única. O mesmo alvo fixa o layout das linhas da biblioteca: `pad_all`/`pad_row`/`pad_column` zerados
+do player é ASCII e única, definida em `cyberdeck_music_view.cpp`
+(`kMusicControlsHint`) como rodapé fixo da view — o `cyberdeck_ui.cpp` não a
+concatena mais ao texto de status. O mesmo alvo fixa o layout das linhas da biblioteca: `pad_all`/`pad_row`/`pad_column` zerados
 na linha (o tema `styles.btn` aplica `PAD_SMALL`/`PAD_DEF` e cortava a base do
 glifo), rótulo com altura derivada de `row_height`/`lv_font_get_line_height`,
 centrado por `(row_height - track_label_height) / 2` e com inset horizontal de
@@ -1044,7 +1059,25 @@ destrói recursos potencialmente usados.
         mostra status/progresso, controles e lista rolável bounded a 64 itens; status
         ocupa até três linhas; labels de faixa/controle têm dimensões fixas e
         `LV_LABEL_LONG_MODE_DOTS` preserva o texto da origem sem invadir widgets
-        vizinhos. O scroll permanece exclusivo da lista; Command
+        vizinhos. Um rodapé fixo `footer_` (label `kMuted` #8A8A8A, criado depois
+        de `list_`) ocupa a faixa inferior da surface; `layout()` reserva
+        `footer_y = height - pad - footer_height`, com `footer_height` de `line`
+        em paisagem e `2 * line + 2` em retrato (a dica plana tem 71 caracteres
+        = 767,7 px a 10,8125 px/char, acima dos 680 px de conteúdo do retrato),
+        e mede os dois cartões
+        por `footer_y` (paisagem `footer_y - pad - y`, retrato
+        `(footer_y - y - 2 * pad) / 2`), então nenhum cartão cresce sobre a dica
+        de atalhos. O texto é fixo e igual nos modos normal e comando: uma linha
+        (`kMusicControlsHint`) em paisagem e a quebra explícita após `seek`
+        (`kMusicControlsHintPortrait`) em retrato, sem medir texto em runtime.
+        Como `layout()` também roda a cada atualização de status (~4x/s), o
+        setter é gated por `footer_landscape_` (`std::int8_t`, `-1` = nunca
+        aplicado, resetado em `destroy()`): reaplicar a mesma string faria o
+        LVGL liberar/re-alocar o texto e invalidar a faixa de 1232x22 px a cada
+        tick. `test_music_player_ui_contract.py::footer_issues` exige o sentinela
+        no header, o `lv_label_set_text(footer_, ...)` como corpo do `if` da
+        orientação e o reset em `destroy()`, com provas de mutação para a guarda
+        removida e para o sentinela não resetado. O scroll permanece exclusivo da lista; Command
        usa textarea na mesma surface e o roteador da UI encaminha exclusivamente ao
        parser do app, consumindo texto fora do overlay para preservar a linha shell.
        Seleção altera índice sem iniciar reprodução; stop por Esc ou

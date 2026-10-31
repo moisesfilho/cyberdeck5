@@ -539,10 +539,11 @@ int main()
     assert(music_surface->parent == &music_content);
     assert(lv_obj_is_ignore_layout(music_surface));
     assert(music_surface->x == 0 && music_surface->y == 0);
-    assert(music_surface->children.size() == 3);
+    assert(music_surface->children.size() == 4);
     assert(music_surface->hidden && !music_view.visible());
     auto *now_playing = music_surface->children[1];
     auto *browser = music_surface->children[2];
+    auto *music_footer = music_surface->children[3];
     auto *music_status_label = now_playing->children[1];
     auto *progress = now_playing->children[3];
     auto *controls = now_playing->children[6];
@@ -576,6 +577,14 @@ int main()
     for (std::size_t index = 0; index < now_playing->children.size(); ++index)
         assert_not_scrollable(now_playing->children[index]);
     assert_not_scrollable(browser->children[0]);
+    assert_not_scrollable(music_footer);
+    /* TEST-MUSIC-FOOTER-TEXT: the shortcut row is a real label on the surface,
+     * painted in the palette MUTED grey, not text appended to the status block.
+     * The exact per-orientation text is asserted by `assert_music_footer`. */
+    assert(!music_footer->text.empty());
+    assert(music_footer->text_color == 0x8A8A8A);
+    assert(music_footer->text_font == &cyberdeck_font);
+    assert(music_footer->long_mode == LV_LABEL_LONG_MODE_DOTS);
     assert_not_scrollable(controls);
     assert(controls->children.size() == 8);
     for (const auto *button : controls->children) {
@@ -667,6 +676,75 @@ int main()
         return left->x < right->x + right->width && right->x < left->x + left->width &&
                left->y < right->y + right->height && right->y < left->y + left->height;
     };
+    /* TEST-MUSIC-FOOTER-TEXT: the shortcut row is one row in landscape and two
+     * explicit rows in portrait. The 71-character hint needs 767.7 px at the
+     * real `cyberdeck_font` advance (10.8125 px/char) while the portrait surface
+     * content is 680 px wide, so the break is orientation-driven and never
+     * derived from runtime text metrics. */
+    const std::string music_footer_landscape =
+        "Enter play/pause  left/right seek  up/down volume  N/P track  Esc close";
+    const std::string music_footer_portrait =
+        "Enter play/pause  left/right seek\nup/down volume  N/P track  Esc close";
+    /* TEST-MUSIC-FOOTER-LAYOUT: the footer owns the bottom `pad + label height`
+     * band of the surface and both cards must end above it, in portrait
+     * (696x1203) and landscape (1256x643). The old `height - y - pad` card
+     * formula filled the whole surface, so the row would have been painted over
+     * the library. */
+    const int music_footer_line = lv_font_get_line_height(&cyberdeck_font);
+    const auto assert_music_footer = [&]() {
+        const int surface_width = lv_obj_get_content_width(music_surface);
+        const int surface_height = lv_obj_get_content_height(music_surface);
+        const bool landscape = surface_width > surface_height;
+        const int expected_height =
+            landscape ? music_footer_line : 2 * music_footer_line + 2;
+        /* The row is only useful while painted: a hidden footer would still
+         * satisfy every geometry/text assertion below. The hint stays visible
+         * in the normal and in the command overlay mode. */
+        assert(!music_footer->hidden);
+        assert(music_footer->parent == music_surface);
+        assert(music_footer->x == 4);
+        assert(music_footer->y == surface_height - 4 - expected_height);
+        assert(music_footer->width == surface_width - 8);
+        assert(music_footer->height == expected_height);
+        assert(music_footer->x >= 0 && music_footer->y >= 0);
+        assert(music_footer->x + music_footer->width <= surface_width);
+        assert(music_footer->y + music_footer->height <= surface_height);
+        /* Landscape keeps the single row; portrait carries the exact break. */
+        assert(music_footer->text ==
+               (landscape ? music_footer_landscape : music_footer_portrait));
+        if (landscape)
+            assert(music_footer->text.find('\n') == std::string::npos);
+        else
+            assert(music_footer->text.find('\n') != std::string::npos &&
+                   music_footer->text.find('\n') == music_footer->text.rfind('\n'));
+        /* TEST-MUSIC-FOOTER-FIT: `LV_LABEL_LONG_MODE_DOTS` truncates instead of
+         * wrapping, so the reserved height alone does not prove the row is
+         * readable: a literal that fits the band can still be cut at the label
+         * edge. The shim advance is `line_height / 2` = 11 px/char, 1.7% wider
+         * than the real `cyberdeck_font` advance (adv_w 173/16 = 10.8125
+         * px/char), so this hint measurement is a conservative proxy for the
+         * device. It reproduces the original defect scenario (71 x 11 = 781 px
+         * inside the 672 px portrait label) whenever the shortcuts grow and the
+         * expected literals above are updated together. */
+        int rows = 1;
+        std::size_t row_begin = 0;
+        while (true) {
+            const std::size_t row_end = music_footer->text.find('\n', row_begin);
+            const std::string row = music_footer->text.substr(
+                row_begin,
+                row_end == std::string::npos ? std::string::npos : row_end - row_begin);
+            assert(lv_shim_text_width(&cyberdeck_font, row) <= music_footer->width);
+            if (row_end == std::string::npos) break;
+            ++rows;
+            row_begin = row_end + 1;
+        }
+        assert(rows * music_footer_line <= music_footer->height);
+        assert(now_playing->y + now_playing->height <= music_footer->y);
+        assert(browser->y + browser->height <= music_footer->y);
+        assert(!overlaps(music_footer, now_playing));
+        assert(!overlaps(music_footer, browser));
+    };
+    assert_music_footer();
     const std::array<const lv_obj_t *, 4> fixed_content{
         now_playing->children[1], progress, now_playing->children[4], command_field};
     for (const auto *fixed_item : fixed_content)
@@ -784,6 +862,7 @@ int main()
     assert(music_surface->x == 0 && music_surface->y == 0);
     assert(music_surface->width == 1256 && music_surface->height == 643);
     lv_shim_emit_event(music_surface, LV_EVENT_SIZE_CHANGED);
+    assert_music_footer();
     assert(browser->y <= portrait_y);
     assert(browser->x > now_playing->x && browser->y == now_playing->y);
     assert(browser->x >= now_playing->x + now_playing->width);
@@ -922,6 +1001,7 @@ int main()
      * list-scroll and callback assertions. */
     lv_obj_set_size(&music_content, 696, 1203);
     lv_shim_emit_event(&music_content, LV_EVENT_SIZE_CHANGED);
+    assert_music_footer();
     assert(browser->y > now_playing->y);
     assert(browser->y >= now_playing->y + now_playing->height);
     assert(now_playing->x + now_playing->width <= music_surface->width);
@@ -933,6 +1013,21 @@ int main()
     assert(!overlaps(command_field, controls));
     lv_obj_set_size(&music_content, 1256, 643);
     lv_shim_emit_event(&music_content, LV_EVENT_SIZE_CHANGED);
+    assert_music_footer();
+    /* TEST-MUSIC-FOOTER-GUARD: `layout()` also runs on every status refresh
+     * (~4x/s), and re-applying the same string makes LVGL free/re-allocate it
+     * and invalidate the whole band each tick. Planting a marker and forcing a
+     * same-orientation layout proves the setter is gated by the orientation; the
+     * next orientation change must still restore the matching hint. */
+    music_footer->text = "stale-footer";
+    music_view.render("state: paused\nmusic queue:\n1. a.mp3\n2. b.mp3\n3. c.mp3\n");
+    assert(music_footer->text == "stale-footer");
+    lv_obj_set_size(&music_content, 696, 1203);
+    lv_shim_emit_event(&music_content, LV_EVENT_SIZE_CHANGED);
+    assert(music_footer->text == music_footer_portrait);
+    lv_obj_set_size(&music_content, 1256, 643);
+    lv_shim_emit_event(&music_content, LV_EVENT_SIZE_CHANGED);
+    assert_music_footer();
     assert(browser->x >= now_playing->x + now_playing->width);
     assert(browser->scroll_dir == LV_DIR_VER);
     assert(!browser->scroll_chain);
@@ -975,6 +1070,12 @@ int main()
     assert(!music_view.create(nullptr, record_music_action, &music_log));
     assert(music_view.create(&music_content, record_music_action, &music_log));
     assert(music_view.visible() == false);
+    /* TEST-MUSIC-FOOTER-GUARD: `destroy()` resets the orientation sentinel, so a
+     * recreated view in the same orientation (landscape 1256x643) must paint the
+     * hint on the fresh label instead of skipping the gated setter. */
+    auto *recreated_surface = music_content.children.back();
+    assert(recreated_surface->children.size() == 4);
+    assert(recreated_surface->children[3]->text == music_footer_landscape);
     music_view.destroy();
 
     /* TEST-EDIT-FOOTER-HOST/CONTRACT: keyboard inset and orientation resize

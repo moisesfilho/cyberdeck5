@@ -38,6 +38,8 @@ from lv_symbol_map import load_symbols, map_issues, parse_map, render_json
 ROOT = Path(__file__).resolve().parents[3]
 DISPLAY = ROOT / "components/cyberdeck/src/platform/display"
 VIEW = DISPLAY / "cyberdeck_music_view.cpp"
+VIEW_HEADER = (ROOT / "components/cyberdeck/include/platform/display"
+               / "cyberdeck_music_view.h")
 HEADER = DISPLAY / "cyberdeck_header_view.cpp"
 COMMAND_INPUT = DISPLAY / "cyberdeck_music_command_input.cpp"
 APP = ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp"
@@ -45,8 +47,12 @@ FONT = DISPLAY / "cyberdeck_font.c"
 SYMBOL_MAP = Path(__file__).resolve().with_name("lv_symbol_codepoints.json")
 
 # Player controls hint. ASCII only: U+2190..U+2193 have no glyph in the font.
+# The landscape variant is one row; portrait splits the same shortcuts after
+# "seek" because the 71-character row needs 767.7 px at the real font advance
+# (adv_w 173/16 = 10.8125 px/char) and the portrait surface only offers 680 px.
 MUSIC_HINT = ("Enter play/pause  left/right seek  up/down volume  N/P track  "
               "Esc close")
+MUSIC_HINT_PORTRAIT = MUSIC_HINT.replace("seek  up/down", "seek\nup/down")
 
 # Macros used (or reserved for the header) by the UI that must stay covered.
 REQUIRED_COVERED_SYMBOLS = (
@@ -652,6 +658,131 @@ def controls_grid_issues(source: str) -> list[str]:
     return issues
 
 
+FOOTER_LITERAL = re.compile(
+    r'constexpr const char \*(kMusicControlsHint(?:Portrait)?)\s*=\s*'
+    r'"((?:[^"\\\n]|\\.)*)"\s*;')
+
+
+def footer_literals(source: str) -> dict[str, str]:
+    """`name -> C string body` for the two shortcut-row literals."""
+    return dict(FOOTER_LITERAL.findall(strip_comments(source)))
+
+
+def footer_issues(source: str, header_source: str = "") -> list[str]:
+    """The shortcut row must be a fixed footer label, not status text.
+
+    The hint used to be appended to the status string of both render branches
+    of `cyberdeck_ui.cpp`; the view never turned it into a widget, so it was
+    dead text and could drift from the real key bindings. The footer is created
+    after `list_` (children order stays `title_, now_playing_, list_, footer_`),
+    painted with the palette MUTED grey and anchored in the bottom band; both
+    cards are measured against `footer_y` so neither can overlap it.
+
+    The band holds one row in landscape and two rows in portrait. The flat hint
+    is 71 characters, which needs 767.7 px at the real `cyberdeck_font` advance
+    (adv_w 173/16 = 10.8125 px/char), while the portrait surface only offers
+    680 px of content; the device truncated "Esc close". The break is therefore
+    explicit and driven by the existing `landscape` flag, never by runtime text
+    metrics, so the host shim font (9 px/char) cannot hide the defect again.
+
+    `layout()` also runs on every status refresh (~4x/s) and the footer text only
+    depends on the orientation, so the setter is gated by the orientation that is
+    already applied (`footer_landscape_`). Re-applying the same string makes
+    LVGL free/re-allocate the label text and invalidate the whole band on every
+    tick; `destroy()` resets the sentinel so a recreated label is painted.
+    """
+    issues: list[str] = []
+    header = header_source or VIEW_HEADER.read_text(encoding="utf-8")
+    try:
+        create = strip_comments(function_body(source, "bool view::create("))
+        layout = strip_comments(function_body(source, "void view::layout()"))
+        destroy = strip_comments(function_body(source, "void view::destroy()"))
+    except (AssertionError, ValueError):
+        return ["player view create/layout/destroy function not found"]
+    created = re.search(r"footer_\s*=\s*lv_label_create\(\s*surface_\s*\)", create)
+    if not created:
+        issues.append("the controls hint must be a footer label on the surface")
+    elif not re.search(r"list_\s*=\s*lv_obj_create\(\s*surface_\s*\)", create) or \
+            created.start() < create.index("list_ = lv_obj_create(surface_)"):
+        issues.append("the footer must be created after list_ so the children "
+                      "order stays title_, now_playing_, list_, footer_")
+    if not re.search(r"style\(\s*footer_\s*,\s*kMuted\s*\)", create):
+        issues.append("the footer must use kMuted (#8A8A8A) from the palette")
+    if "const lv_color_t kMuted = lv_color_hex(0x8A8A8A);" not in source:
+        issues.append("kMuted must stay lv_color_hex(0x8A8A8A)")
+    if not re.search(r"lv_label_set_long_mode\(\s*footer_\s*,\s*"
+                     r"LV_LABEL_LONG_MODE_DOTS\s*\)", create):
+        issues.append("the footer must keep LV_LABEL_LONG_MODE_DOTS")
+    literals = footer_literals(source)
+    flat = literals.get("kMusicControlsHint")
+    if flat is None:
+        issues.append("the landscape hint must stay a named kMusicControlsHint literal")
+    elif flat != MUSIC_HINT:
+        issues.append(f"kMusicControlsHint must keep the exact shortcuts {MUSIC_HINT!r}, "
+                      f"found {flat!r}")
+    portrait = literals.get("kMusicControlsHintPortrait")
+    if portrait is None:
+        issues.append("the portrait hint must be a named kMusicControlsHintPortrait "
+                      "literal so the break does not depend on runtime metrics")
+    elif portrait.replace("\\n", "\n") != MUSIC_HINT_PORTRAIT:
+        issues.append("kMusicControlsHintPortrait must repeat the same shortcuts "
+                      f"split once after 'seek', found {portrait!r}")
+    if re.search(r"lv_label_set_text\(\s*footer_", create):
+        issues.append("the footer text must be applied by layout(), the only place "
+                      "that knows the orientation; setting it in create() would be "
+                      "overwritten and hide the missing portrait branch")
+    flat_layout = re.sub(r"\s+", " ", layout)
+    if not re.search(r"lv_label_set_text\(\s*footer_\s*,\s*landscape\s*\?\s*"
+                     r"kMusicControlsHint\s*:\s*kMusicControlsHintPortrait\s*\)",
+                     flat_layout):
+        issues.append("layout() must apply kMusicControlsHint in landscape and "
+                      "kMusicControlsHintPortrait in portrait, keyed by the existing "
+                      "`landscape` flag")
+    # The setter must sit inside the orientation guard: `layout()` is also called
+    # by every status refresh, so an unconditional `lv_label_set_text` re-allocates
+    # the text and invalidates the whole band ~4x/s.
+    if not re.search(r"if\s*\(\s*footer_landscape_\s*!=\s*\w+\s*\)\s*\{\s*"
+                     r"lv_label_set_text\(\s*footer_\s*,\s*landscape\s*\?\s*"
+                     r"kMusicControlsHint\s*:\s*kMusicControlsHintPortrait\s*\)\s*;"
+                     r"\s*footer_landscape_\s*=", flat_layout):
+        issues.append("layout() must reapply the footer text only when the "
+                      "orientation changes: the `lv_label_set_text(footer_, ...)` "
+                      "call must be the body of `if (footer_landscape_ != ...)`, "
+                      "which then stores the applied orientation")
+    if not re.search(r"std::int8_t\s+footer_landscape_\s*=\s*-1\s*;",
+                     strip_comments(header)):
+        issues.append("the view header must keep `std::int8_t footer_landscape_ = "
+                      "-1;` as the never-applied sentinel (-1 leaves the text "
+                      "unset for a fresh/recreated label)")
+    if not re.search(r"footer_landscape_\s*=\s*-1\s*;", destroy):
+        issues.append("destroy() must reset footer_landscape_ to -1, otherwise a "
+                      "recreated view in the same orientation never paints the "
+                      "new footer label")
+    if "lv_txt_get_width" in layout:
+        issues.append("the footer break must be orientation-driven; measuring the "
+                      "text at runtime reintroduces the shim-only coverage")
+    if "const int footer_y = height - pad - footer_height;" not in flat_layout:
+        issues.append("the footer band must be reserved as "
+                      "`const int footer_y = height - pad - footer_height;` "
+                      "before the cards are measured")
+    if not re.search(r"const int footer_height = landscape \? line : 2 \* line \+ 2;",
+                     flat_layout):
+        issues.append("the footer band must reserve `line` in landscape and "
+                      "`2 * line + 2` in portrait, otherwise the portrait row is "
+                      "clipped again")
+    if not re.search(r"lv_obj_set_pos\(\s*footer_\s*,\s*pad\s*,\s*footer_y\s*\)",
+                     flat_layout):
+        issues.append("the footer must be anchored at `(pad, footer_y)`")
+    if not re.search(r"lv_obj_set_size\(\s*footer_\s*,\s*width - pad \* 2\s*,\s*"
+                     r"footer_height\s*\)", flat_layout):
+        issues.append("the footer must span the surface width minus the two pads")
+    if not re.search(r"const int card_height = landscape \? footer_y - pad - y : "
+                     r"\(footer_y - y - 2 \* pad\) / 2;", flat_layout):
+        issues.append("card_height must stop at `footer_y` in both orientations so "
+                      "neither card grows into the reserved footer band")
+    return issues
+
+
 def derivation_pattern(name: str) -> str:
     """Regex for the AC-MUSIC-13 derivation of `name` from a card content area.
 
@@ -743,10 +874,16 @@ def main() -> int:
                 "renders as a box")
 
     ui_source = DISPLAY.joinpath("cyberdeck_ui.cpp").read_text(encoding="utf-8")
-    require(ui_source.count("text += kMusicControlsHint;") == 2,
-            "both player render branches must reuse the shared kMusicControlsHint")
-    require(ui_source.count(MUSIC_HINT) == 1,
-            "the player controls hint must be defined once, not duplicated")
+    # The fixed shortcut row is a footer widget in the player view. The UI used
+    # to append `kMusicControlsHint` to the status text of both render branches,
+    # where it never became a real row: the view must own the literal, and the
+    # UI must not resurrect the concatenation.
+    require("kMusicControlsHint" not in ui_source,
+            "the player controls hint must live in the view footer, not in "
+            "cyberdeck_ui.cpp")
+    require(MUSIC_HINT not in ui_source,
+            "the player controls hint literal must not be concatenated into the "
+            "status text rendered by cyberdeck_ui.cpp")
 
     symbol_sources = [path for path in literal_sources
                       if "LV_SYMBOL_" in path.read_text(encoding="utf-8")]
@@ -867,6 +1004,16 @@ def main() -> int:
         "a commented LV_SYMBOL_PLAY must not become a literal")
 
     view_source = VIEW.read_text(encoding="utf-8")
+    require(view_source.count(MUSIC_HINT) == 1,
+            "the player view must define the controls hint exactly once, as the "
+            "footer literal")
+    require((ui_source + view_source).count(MUSIC_HINT) == 1,
+            "the player controls hint literal must exist exactly once across "
+            "cyberdeck_ui.cpp and cyberdeck_music_view.cpp")
+    footer_problems = footer_issues(view_source)
+    require(footer_problems == [],
+            "the player view must render the controls hint as a fixed footer: "
+            + "; ".join(footer_problems))
     require(track_create_issues(view_source) == [],
             "track rows must zero every theme padding and chrome channel")
     require(track_layout_issues(view_source) == [],
@@ -1110,12 +1257,107 @@ def main() -> int:
         require(controls_grid_issues(unanchored_area) != [],
                 "mutation deriving controls_area from card_height must be rejected")
 
+    # Footer mutation proof: appending the hint to the status text instead of
+    # creating a widget, letting the cards occupy the footer band and shrinking
+    # the band back to one row in portrait were the defects this contract
+    # replaces, so all of them must be rejected.
+    if not footer_problems:
+        no_footer = view_source.replace("    footer_ = lv_label_create(surface_);\n", "")
+        require(no_footer != view_source,
+                "the footer creation must stay replaceable for the mutation proof")
+        require(footer_issues(no_footer) != [],
+                "mutation dropping the footer label (hint only as status text) "
+                "must be rejected")
+        full_height_cards = view_source.replace(
+            "const int card_height = landscape ? footer_y - pad - y : "
+            "(footer_y - y - 2 * pad) / 2;",
+            "const int card_height = landscape ? height - y - pad : "
+            "(height - y - 3 * pad) / 2;")
+        require(full_height_cards != view_source,
+                "the footer-aware card_height must stay replaceable for the "
+                "mutation proof")
+        require(footer_issues(full_height_cards) != [],
+                "mutation back to the full-height cards (footer painted over the "
+                "library) must be rejected")
+        unanchored_footer = view_source.replace(
+            "lv_obj_set_pos(footer_, pad, footer_y);",
+            "lv_obj_set_pos(footer_, pad, 0);")
+        require(unanchored_footer != view_source,
+                "the footer anchor must stay replaceable for the mutation proof")
+        require(footer_issues(unanchored_footer) != [],
+                "mutation moving the footer to the top of the surface must be "
+                "rejected")
+        # The measured device defect: 767.7 px of text in a 680 px portrait
+        # surface. A one-row band clips "Esc close" and a landscape-only text
+        # keeps the truncation, so both mutations must fail even though the host
+        # shim font (9 px/char) would fit the row.
+        single_row_band = view_source.replace(
+            "const int footer_height = landscape ? line : 2 * line + 2;",
+            "const int footer_height = line;")
+        require(single_row_band != view_source,
+                "the orientation-dependent footer band must stay replaceable for "
+                "the mutation proof")
+        clipping_issues = footer_issues(single_row_band)
+        require(clipping_issues != [],
+                "mutation reserving a single row in portrait must be rejected")
+        require(any("2 * line + 2" in issue for issue in clipping_issues),
+                "the single-row mutation must be reported as the missing "
+                "`2 * line + 2` reservation, not only as a missing setter")
+        flat_text = view_source.replace(
+            "lv_label_set_text(footer_, landscape ? kMusicControlsHint : "
+            "kMusicControlsHintPortrait);",
+            "lv_label_set_text(footer_, kMusicControlsHint);")
+        require(flat_text != view_source,
+                "the conditional footer text must stay replaceable for the mutation "
+                "proof")
+        require(footer_issues(flat_text) != [],
+                "mutation applying the flat hint in portrait must be rejected")
+        unbroken_portrait = view_source.replace(
+            "left/right seek\\nup/down volume", "left/right seek  up/down volume")
+        require(unbroken_portrait != view_source,
+                "the portrait break must stay replaceable for the mutation proof")
+        require(footer_issues(unbroken_portrait) != [],
+                "mutation dropping the portrait line break must be rejected")
+        create_text = view_source.replace(
+            "    footer_ = lv_label_create(surface_);\n",
+            "    footer_ = lv_label_create(surface_);\n"
+            "    lv_label_set_text(footer_, kMusicControlsHint);\n")
+        require(create_text != view_source,
+                "the footer creation must stay replaceable for the mutation proof")
+        require(footer_issues(create_text) != [],
+                "mutation setting the footer text in create() must be rejected")
+        unguarded_text = view_source.replace(
+            "    if (footer_landscape_ != footer_landscape) {\n"
+            "        lv_label_set_text(footer_, landscape ? kMusicControlsHint : "
+            "kMusicControlsHintPortrait);\n"
+            "        footer_landscape_ = footer_landscape;\n"
+            "    }",
+            "    lv_label_set_text(footer_, landscape ? kMusicControlsHint : "
+            "kMusicControlsHintPortrait);")
+        require(unguarded_text != view_source,
+                "the footer orientation guard must stay replaceable for the "
+                "mutation proof")
+        require(footer_issues(unguarded_text) != [],
+                "mutation re-applying the footer text on every layout() must be "
+                "rejected")
+        stale_sentinel = view_source.replace("    footer_landscape_ = -1;\n", "", 1)
+        require(stale_sentinel != view_source,
+                "the footer sentinel reset must stay replaceable for the mutation "
+                "proof")
+        require(footer_issues(stale_sentinel) != [],
+                "mutation leaving footer_landscape_ uncleared by destroy() must be "
+                "rejected")
+
     for failure in failures:
         print(f"FAIL: {failure}")
     if failures:
         return 1
     print("PASS: player UI literals and rendered LV_SYMBOL_* stay inside the real "
-          "cyberdeck_font coverage, the controls hint is ASCII and shared, track "
+          "cyberdeck_font coverage, the controls hint is a single ASCII footer "
+          "owned by the view (never status text in cyberdeck_ui.cpp) with one row "
+          "in landscape and the exact two-row break in portrait, reapplied only "
+          "when the orientation changes (footer_landscape_ sentinel, reset by "
+          "destroy()), track "
           "rows and the header button zero the theme padding, radius and shadow, "
           "the track label stays inset and centred, the card children derive their "
           "width from the real content area with a symmetric kCardInset, the control "
