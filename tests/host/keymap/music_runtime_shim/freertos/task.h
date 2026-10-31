@@ -6,9 +6,11 @@
 using TaskHandle_t = void *;
 using TaskFunction_t = void (*)(void *);
 using StackType_t = std::uint32_t;
-struct StaticTask_t { alignas(std::max_align_t) unsigned char storage[512]; };
-int xTaskCreate(TaskFunction_t entry, const char *name, unsigned stack_bytes, void *context,
-                unsigned priority, TaskHandle_t *handle);
+struct StaticTask_t {
+    alignas(std::max_align_t) unsigned char storage[512];
+};
+int xTaskCreate(TaskFunction_t entry, const char *name, unsigned stack_bytes, void *context, unsigned priority,
+                TaskHandle_t *handle);
 TaskHandle_t xTaskCreateStatic(TaskFunction_t entry, const char *name, unsigned stack_bytes, void *context,
                                unsigned priority, StackType_t *stack, StaticTask_t *control);
 /* Host threads have no FreeRTOS stack accounting; the shim reports a fixed
@@ -28,3 +30,8 @@ unsigned music_test_park_count();
  * released before the worker signalled completion. */
 std::vector<std::string> music_test_teardown_events();
 void music_test_clear_teardown_events();
+void music_test_gate_completion_before_park(bool enabled);
+bool music_test_wait_for_completion_gate(unsigned timeout_ms);
+bool music_test_wait_for_delete_waiting(unsigned timeout_ms);
+void music_test_release_completion_gate();
+void music_test_require_park_before_completion_take(bool enabled);

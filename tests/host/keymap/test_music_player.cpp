@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -490,24 +491,50 @@ int main() {
 
     cyberdeck_sd_io::coordinator storage;
     cyberdeck_music::player subject;
-    /* TEST-MUSIC-ESC-02/04: a successful stop parks the worker once and
-     * releases task, queue and semaphore exactly once, in that order, after the
-     * completion take; the following start must be able to play again. */
-    const auto stop_releases_once = [&]() -> bool {
+    /* TEST-MUSIC-ESC-02/04: a successful stop parks the worker once and releases
+     * task, queue and semaphore exactly once after completion. Give/take and park
+     * may race; the following start must still be able to play again. */
+    const auto stop_releases_once = [&](bool caller_wakes_before_park = false) -> bool {
         const unsigned parks = music_test_park_count();
         const unsigned deletes = music_test_delete_with_caps_count;
         const unsigned queue_deletes = music_test_queue_delete_count();
         const unsigned semaphore_deletes = music_test_semaphore_delete_count();
         music_test_clear_teardown_events();
-        if (!subject.stop(2000)) return false;
-        return music_test_park_count() == parks + 1 &&
+        std::atomic<bool> stopped{false};
+        if (caller_wakes_before_park) {
+            music_test_gate_completion_before_park(true);
+            std::thread stopper([&] { stopped = subject.stop(2000); });
+            const bool reached_gate = music_test_wait_for_completion_gate(2000);
+            const bool take_observed = wait_until([&] {
+                const auto current = music_test_teardown_events();
+                return std::find(current.begin(), current.end(), "semaphore_take") != current.end();
+            }, std::chrono::seconds(2));
+            const bool deleter_waiting_for_park = music_test_wait_for_delete_waiting(2000);
+            const bool still_waiting_for_safe_delete = !stopped.load(std::memory_order_acquire);
+            music_test_release_completion_gate();
+            stopper.join();
+            if (!reached_gate || !take_observed || !deleter_waiting_for_park ||
+                !still_waiting_for_safe_delete) return false;
+        } else {
+            music_test_require_park_before_completion_take(true);
+            stopped.store(subject.stop(2000), std::memory_order_release);
+        }
+        if (!stopped.load(std::memory_order_acquire)) return false;
+        const auto events = music_test_teardown_events();
+        const std::vector<std::string> expected = caller_wakes_before_park
+            ? std::vector<std::string>{"semaphore_take", "park", "task_delete_with_caps",
+                                       "queue_delete", "semaphore_delete"}
+            : std::vector<std::string>{"park", "semaphore_take", "task_delete_with_caps",
+                                       "queue_delete", "semaphore_delete"};
+        const bool valid = music_test_park_count() == parks + 1 &&
                music_test_delete_with_caps_count == deletes + 1 &&
                music_test_queue_delete_count() == queue_deletes + 1 &&
                music_test_semaphore_delete_count() == semaphore_deletes + 1 &&
                music_test_invalid_task_delete_count == 0 &&
                music_test_entry_returned_without_delete_count() == 0 &&
-               trailing_events_are({"park", "semaphore_take", "task_delete_with_caps", "queue_delete",
-                                    "semaphore_delete"});
+               events.size() >= expected.size() &&
+               std::equal(expected.begin(), expected.end(), events.end() - expected.size());
+        return valid;
     };
     /* Host playback is unpaced: a whole track can finish between two polls.
      * Hold the worker inside its first PCM write so `playing` is observable
@@ -747,7 +774,7 @@ int main() {
     const std::string after((std::istreambuf_iterator<char>(persisted)), std::istreambuf_iterator<char>());
     CHECK(after.size() == 24U * 417U);
     CHECK(after[0] == static_cast<char>(0xFF) && static_cast<unsigned char>(after[1]) == 0xFB);
-    CHECK(stop_releases_once());
+    CHECK(stop_releases_once(true));
     CHECK(!subject.running());
     CHECK(storage.active_leases() == 0);
     CHECK(wait_until([] { return music_test_delete_without_completion_count() == 0; }, std::chrono::seconds(1)));
@@ -1153,10 +1180,12 @@ int main() {
     subject.set_repeat(cyberdeck_music::repeat_mode::off);
     gate_playback_writes();
     CHECK(subject.play("/stream.mp3"));
-    CHECK(wait_until([] {
-        std::lock_guard<std::mutex> lock(audio_mutex);
-        return write_waiting;
-    }, std::chrono::seconds(2)));
+    CHECK(wait_until(
+        [] {
+            std::lock_guard<std::mutex> lock(audio_mutex);
+            return write_waiting;
+        },
+        std::chrono::seconds(2)));
     cyberdeck_music::snapshot before_rewind{};
     CHECK(seek_and_observe(600, 200, before_rewind));
     CHECK(before_rewind.position_ms >= 600 && before_rewind.position_ms <= 800);
@@ -1177,11 +1206,13 @@ int main() {
         release_write = true; /* let the worker reach the top of the loop */
     }
     audio_changed.notify_all();
-    CHECK(wait_until([&] {
-        cyberdeck_music::snapshot state{};
-        return subject.status(state) && state.state == cyberdeck_music::playback_state::stopped &&
-               state.position_ms > 0;
-    }, std::chrono::seconds(5)));
+    CHECK(wait_until(
+        [&] {
+            cyberdeck_music::snapshot state{};
+            return subject.status(state) && state.state == cyberdeck_music::playback_state::stopped &&
+                   state.position_ms > 0;
+        },
+        std::chrono::seconds(5)));
     CHECK(subject.status(at_end));
     CHECK(at_end.failure_stage == cyberdeck_music::error_stage::none);
     CHECK(at_end.position_ms + 200 >= rewound.current.duration_ms);
@@ -1206,11 +1237,13 @@ int main() {
     CHECK(subject.set_queue(queue, 1, 0));
     subject.set_repeat(cyberdeck_music::repeat_mode::off);
     CHECK(subject.play("/stream.mp3"));
-    CHECK(wait_until([&] {
-        cyberdeck_music::snapshot state{};
-        return subject.status(state) && state.state == cyberdeck_music::playback_state::error &&
-               state.failure_stage == cyberdeck_music::error_stage::decode;
-    }, std::chrono::seconds(5)));
+    CHECK(wait_until(
+        [&] {
+            cyberdeck_music::snapshot state{};
+            return subject.status(state) && state.state == cyberdeck_music::playback_state::error &&
+                   state.failure_stage == cyberdeck_music::error_stage::decode;
+        },
+        std::chrono::seconds(5)));
     {
         cyberdeck_music::snapshot corrupt{};
         CHECK(subject.status(corrupt));
@@ -1232,10 +1265,12 @@ int main() {
         CHECK(std::string_view(playing.current.artist.data()) == "Session artist");
     }
     release_playback();
-    CHECK(wait_until([&] {
-        cyberdeck_music::snapshot state{};
-        return subject.status(state) && state.position_ms > 0;
-    }, std::chrono::seconds(2)));
+    CHECK(wait_until(
+        [&] {
+            cyberdeck_music::snapshot state{};
+            return subject.status(state) && state.position_ms > 0;
+        },
+        std::chrono::seconds(2)));
     CHECK(subject.set_volume(31));
     cyberdeck_music::snapshot before_stop{};
     CHECK(subject.status(before_stop));

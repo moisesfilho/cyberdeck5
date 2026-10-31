@@ -1,7 +1,8 @@
 # Music player host-test traceability
 
 Scope: REQ-MUSIC-01..06 / AC-MUSIC-01..16 and the approved
-TEST-AUDIO-01..29 plus TEST-MUSIC-ESC-01..08 and TEST-MUSIC-DUR-01..14
+REQ-TEST-STOPTASKSET-01 / TEST-AUDIO-STOP-TASKSET, TEST-AUDIO-01..29 plus
+TEST-MUSIC-ESC-01..08 and TEST-MUSIC-DUR-01..14
 scenarios. This matrix records tested behavior versus seams that are not
 currently host-executable; structural/source inspection is not treated as
 runtime proof.
@@ -16,6 +17,7 @@ runtime proof.
 | REQ-MUSIC-04 | TEST-AUDIO-26..28 | Header/button and real terminal-view panel-scroll behavior PASS; UI callback/timer composition not host-executed |
 | REQ-MUSIC-05 | TEST-AUDIO-29 | Hardware playback/jack/poweroff acceptance pending; on 2026-10-23 app start and one-track SD scan were confirmed, but playback was deliberately not attempted because `sys.info` remained `interrupted_boots=1` (manual gate requires 0) |
 | REQ-MUSIC-06 | TEST-MUSIC-DUR-01..06, TEST-MUSIC-DUR-14 | Session duration is resolved once per track (Xing/Info frame count, or the average frame duration sampled from windows spread over the whole payload when the tag is absent) and never re-estimated per frame; elapsed accumulates samples and matches the total at EOF. Host tests PASS (`test_music_duration` 156/156, `test_music_player` 324/324, structural contract 16 checks + 6 mutations); device validated on fw `8c41637d` (/dev/ttyACM0) — the `progress:` total stayed constant while the bar advanced (see the REQ-MUSIC-06 device paragraph), only the user's visual acceptance remains pending (`manual_validation: pending`) |
+| REQ-TEST-STOPTASKSET-01 | TEST-AUDIO-STOP-TASKSET | Deterministically exercises both valid completion-give/park interleavings and requires completion, safe caller-owned deletion, and exactly-once task/queue/semaphore cleanup; focused host mutation check confirms missing semaphore cleanup fails. ESP-IDF SMP scheduling itself remains unproven by the host shim |
 | AC-MUSIC-01 | TEST-AUDIO-01..06 | Path policy, size and malformed queue/track bounds PASS (test_music_model) |
 | AC-MUSIC-02 | TEST-AUDIO-07..16, TEST-AUDIO-30, TEST-AUDIO-32 | Queue navigation, playback options, previous threshold/selection preservation and ID3 metadata parsing PASS (`test_music_model`) |
 | AC-MUSIC-03 | TEST-AUDIO-17..18 | Enumeration/filter/overflow/cancel fence and secure filesystem open PASS (74 app; 1122 local-shell checks) |
@@ -70,7 +72,8 @@ were verified.
 | TEST-AUDIO-24 | App poweroff quiesce delegation and bounded timeout argument | `test_music_app.cpp` covers delegation using injected player; active scanner/playback poweroff integration is not covered |
 | TEST-AUDIO-25 | App start/stop lifecycle and cancellation of in-flight directory scan | PASS in `test_music_app.cpp`: blocked open, quiesce cancellation, no queue publication, lease released; stale completion after restart remains untested |
 | TEST-MUSIC-ESC-01 | The playback worker never returns from its entry point | `music_runtime_shim` records `entry_returned_without_delete` when an entry returns without `vTaskDelete*`, mirroring the IDF `panic_abort`; `test_music_player.cpp` asserts the counter stays 0 across every lifecycle |
-| TEST-MUSIC-ESC-02 | Single owner of a successful teardown | `test_music_player.cpp` asserts park once, `vTaskDeleteWithCaps` once, caps `SPIRAM|8BIT`, `stack_bytes=8192`, queue/semaphore deleted once and the recorded order `park → semaphore_take → task_delete_with_caps → queue_delete → semaphore_delete` |
+| TEST-MUSIC-ESC-02 | Single owner of a successful teardown | `test_music_player.cpp` asserts park once, `vTaskDeleteWithCaps` once, caps `SPIRAM|8BIT`, `stack_bytes=8192`, queue/semaphore deleted once and both valid event orders: `semaphore_take → park → task_delete_with_caps → queue_delete → semaphore_delete` and `park → semaphore_take → task_delete_with_caps → queue_delete → semaphore_delete` |
+| TEST-AUDIO-STOP-TASKSET | Stop teardown under both completion-give/park task schedules | `test_music_player.cpp::stop_releases_once(true)` gates the worker after give until the caller takes completion and reaches the safe-delete wait; `stop_releases_once()` gates the caller's take until park. Both require successful completion and exactly-once release; neither relies on sleep-only ordering |
 | TEST-MUSIC-ESC-03 | Timed-out stop keeps every handle and the retry releases once | `test_music_player.cpp`: `stop(10)`/`stop(25)` return false with park/queue/semaphore/initialized untouched, then `stop(2000)` releases each handle once with no invalid or double delete; a repeated `stop(0)` after the successful teardown is a no-op and never frees a released handle again |
 | TEST-MUSIC-ESC-04 | Close/reopen cycles keep scanning and playing | `test_music_player.cpp` start→play→stop→start→play; `test_music_app.cpp` stop→start→scan→list twice in a row |
 | TEST-MUSIC-ESC-05 | Failing start leaves no live task, semaphore or queue | `test_music_player.cpp` covers queue, semaphore and task-with-caps failures; no park/delete counter moves and no handle survives |

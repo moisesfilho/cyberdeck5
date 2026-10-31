@@ -153,6 +153,15 @@ resultado falso, preservação da cadeia e retry seguro.
 `test_music_player.cpp` usa os shims FreeRTOS em
 `tests/host/keymap/music_runtime_shim/` para exercitar falhas de fila, semáforo,
 alocação de TCB e criação de task, verificando rollback da inicialização.
+O cenário `stop_releases_once` aceita as duas ordens válidas entre o give de
+completion e o park do worker: o caller pode tomar o semáforo antes do park, mas
+o shim modela `vTaskDeleteWithCaps` suspendendo/aguardando a task antes de liberar
+seus recursos; ou o worker pode parkear antes do take. Em ambos os casos exige
+completion, park e liberação única de task/fila/semáforo, com fila e semáforo
+liberados após completion e task suspensa. Isso protege a ordem de teardown do
+deleter FreeRTOS sem impor `park` antes do retorno de `stop()`. `TEST-AUDIO-STOP-TASKSET`
+em `music_traceability.md` identifica o caso de caller-wakes-before-park e o de
+park-before-take; barreiras explícitas, não sleeps, impõem cada schedule.
 `test_music_app.cpp` cobre enumeração e falhas/cancelamento de scan, além de
 integrar o stop falho do player ao runtime (foreground/grant retidos até retry)
 e reabertura com novo scan/fixture. Também confirma que grants permanecem
