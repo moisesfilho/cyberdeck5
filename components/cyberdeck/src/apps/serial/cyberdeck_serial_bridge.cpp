@@ -1,4 +1,5 @@
 #include "apps/serial/cyberdeck_serial_bridge.h"
+#include "apps/serial/cyberdeck_ui_dump_serializer.h"
 
 #include "apps/screenshot/screenshot_bmp.h"
 
@@ -1492,66 +1493,40 @@ lv_obj_t *find_clickable_by_text(lv_obj_t *root, const std::string &want)
 }
 
 /* ---- ui.dump: arvore visivel como JSON (limitada) ---- */
-constexpr int k_dump_max_nodes = 64;
-constexpr std::size_t k_dump_max_bytes = 3500;
-constexpr std::size_t k_dump_max_text = 120;
-
-std::string clamp_text(const char *text)
-{
-    std::string s = text != nullptr ? text : "";
-    if (s.size() <= k_dump_max_text) {
-        return s;
-    }
-    std::size_t cut = k_dump_max_text;
-    while (cut > 0 && is_utf8_continuation(s[cut])) {
-        --cut;
-    }
-    s.resize(cut);
-    return s;
-}
-
 void dump_obj(lv_obj_t *obj, std::string &out, int &count, bool &truncated)
 {
-    if (obj == nullptr || count >= k_dump_max_nodes || truncated) {
+    if (obj == nullptr || truncated) {
         return;
     }
     if (lv_obj_is_hidden(obj)) {
         return;
     }
+    if (count >= static_cast<int>(ui_dump::k_max_nodes)) {
+        truncated = true;
+        return;
+    }
     const char *cls = "other";
     std::string text;
+    bool text_truncated = false;
     if (lv_obj_check_type(obj, &lv_label_class)) {
         cls = "label";
-        text = clamp_text(lv_label_get_text(obj));
+        auto clamped = ui_dump::clamp_text(lv_label_get_text(obj));
+        text = std::move(clamped.value);
+        text_truncated = clamped.truncated;
     } else if (lv_obj_check_type(obj, &lv_textarea_class)) {
         cls = "textarea";
-        text = clamp_text(lv_textarea_get_text(obj));
+        auto clamped = ui_dump::clamp_text(lv_textarea_get_text(obj));
+        text = std::move(clamped.value);
+        text_truncated = clamped.truncated;
     } else if (lv_obj_check_type(obj, &lv_button_class)) {
         cls = "button";
     }
     lv_area_t area{};
     lv_obj_get_coords(obj, &area);
-    if (count > 0) {
-        out.push_back(',');
-    }
-    out += "{\"class\":";
-    append_json_string(out, cls);
-    out += ",\"text\":";
-    append_json_string(out, text);
-    out += ",\"x\":";
-    out += std::to_string(area.x1);
-    out += ",\"y\":";
-    out += std::to_string(area.y1);
-    out += ",\"w\":";
-    out += std::to_string(area.x2 - area.x1 + 1);
-    out += ",\"h\":";
-    out += std::to_string(area.y2 - area.y1 + 1);
-    out.push_back('}');
+    const std::string node_json = ui_dump::serialize_node(
+        cls, text, text_truncated, area.x1, area.y1, area.x2 - area.x1 + 1, area.y2 - area.y1 + 1);
+    if (!ui_dump::append_node(out, static_cast<std::size_t>(count), node_json, truncated)) return;
     ++count;
-    if (out.size() >= k_dump_max_bytes) {
-        truncated = true;
-        return;
-    }
     const auto child_count = static_cast<std::int32_t>(lv_obj_get_child_count(obj));
     for (std::int32_t i = 0; i < child_count; ++i) {
         dump_obj(lv_obj_get_child(obj, i), out, count, truncated);
@@ -2148,7 +2123,7 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
     }
     if (req.type == "ui.dump") {
         d.handled = true;
-        std::string nodes = "[";
+        std::string nodes;
         int count = 0;
         bool truncated = false;
         if (bsp_display_lock(pdMS_TO_TICKS(1000))) {
@@ -2161,12 +2136,7 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
             d.result = err_result(req, dispatch_error::internal, "display busy");
             return d;
         }
-        nodes.push_back(']');
-        std::string result = "{\"nodes\":";
-        result += nodes;
-        result += ",\"truncated\":";
-        result += truncated ? "true" : "false";
-        result.push_back('}');
+        std::string result = ui_dump::serialize_result(nodes, truncated);
         d.result = ok_result(req, std::move(result));
         return d;
     }

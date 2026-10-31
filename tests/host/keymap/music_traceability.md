@@ -9,6 +9,19 @@ runtime proof.
 
 ## Requirement traceability
 
+Cycle 5 review (base HEAD `5807153`): TEST-FOOTER-01..03 add independent
+numeric oracles for portrait, landscape, and reverse-resize footer geometry in
+`test_display_views.cpp`. TEST-VBR-01 maps to TEST-MUSIC-DUR-07 (real seek);
+TEST-VBR-02 to DUR-13 (TOC empty-frame discard); TEST-VBR-03 to DUR-10/11
+(repeated, rewind, and end seeks); TEST-VBR-04 to DUR-12 (bounded corrupt
+stream). These already exercise behavior, but post-discard position is only
+bounded by a loose 1000 ms window; no independent sample-accurate oracle was
+added because the player snapshot follows a PCM write and the fixture includes
+encoder delay and bit-reservoir behavior requiring a separately specified
+reference timeline. TEST-DMA-01..03 map to TEST-AUDIO-34's explicit values/order,
+derived bounds, and unique source guard; no duplicate formula-only assertion or
+driver shim was added because that arithmetic is not shared production logic.
+
 | Requirement | Linked scenarios | Revalidation result |
 | --- | --- | --- |
 | REQ-MUSIC-01 | TEST-AUDIO-01..18 | Model/path, scan/filter/overflow/cancel, secure-open checks PASS (103 model, 78 app, 1122 local-shell checks) |

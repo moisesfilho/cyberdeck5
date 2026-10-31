@@ -1019,7 +1019,7 @@ void test_null_inputs_and_capacity()
  * supressao de eco passasse a casar um prompt sintetizado e engolisse a saida
  * legitima do remoto, e tambem a regressao em que o compositor voltasse a
  * fabricar um '\n' antes de qualquer saida remota. */
-void test_remote_prompt_never_matches_the_echo_guard()
+void test_remote_prompt_is_preserved_by_composer()
 {
     /* Prompt tipico do host remoto logo apos o comando: divergencia em k == 0,
      * bytes remotos integralmente, ZERO byte acrescentado.  begin() e feed()
@@ -1117,7 +1117,7 @@ int main()
     test_flush_single_pending_capacity();
     test_refused_begin_invariance();
     test_null_inputs_and_capacity();
-    test_remote_prompt_never_matches_the_echo_guard();
+    test_remote_prompt_is_preserved_by_composer();
 
     if (s_failures == 0) {
         std::printf("PASS: cyberdeck_ssh_line_composer (%d checks)\n", s_checks);

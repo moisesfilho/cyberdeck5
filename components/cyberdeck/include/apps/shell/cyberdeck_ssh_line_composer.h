@@ -12,8 +12,8 @@
  * (`cmd\n` ou `\n`, SEM eco local); o terminal remoto costuma ecoar de volta
  * os mesmos bytes. Este compositor decide a FAIXA EXIBIDA de cada linha:
  * o comando local aparece SEM o '\n' final (o cursor permanece junto ao
- * comando). A supressao do eco em si segue a mesma comparacao byte a byte da
- * cyberdeck_ssh_echo_guard; este seam apenas retém o casamento do payload até
+ * comando). A supressao do eco compara bytes do payload pendente; este seam
+ * retém o casamento do payload até
  * o eco ser confirmado ou divergir. Saida remota e LF recebido sao
  * preservados verbatim: o compositor nao fabrica separadores nem LF.
  *

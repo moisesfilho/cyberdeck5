@@ -12,7 +12,6 @@ idf_component_register(
         "src/platform/storage/cyberdeck_sd_io_coordinator.cpp"
         "src/platform/power/cyberdeck_poweroff.cpp"
         "src/apps/shell/cyberdeck_terminal_filter.cpp"
-        "src/apps/shell/cyberdeck_ssh_echo_guard.cpp"
         # Stateful local/remote compositor; keep it in the firmware target so
         # cyberdeck_ui and the host-side contract use the same implementation.
         "src/apps/shell/cyberdeck_ssh_line_composer.cpp"

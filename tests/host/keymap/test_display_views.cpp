@@ -745,6 +745,11 @@ int main()
         assert(!overlaps(music_footer, browser));
     };
     assert_music_footer();
+    /* TEST-FOOTER-01: independent numeric oracle for portrait geometry. */
+    assert(music_footer_line == 18);
+    assert(music_surface->width == 696 && music_surface->height == 1203);
+    assert(music_footer->x == 4 && music_footer->y == 1145);
+    assert(music_footer->width == 672 && music_footer->height == 38);
     const std::array<const lv_obj_t *, 4> fixed_content{
         now_playing->children[1], progress, now_playing->children[4], command_field};
     for (const auto *fixed_item : fixed_content)
@@ -863,6 +868,10 @@ int main()
     assert(music_surface->width == 1256 && music_surface->height == 643);
     lv_shim_emit_event(music_surface, LV_EVENT_SIZE_CHANGED);
     assert_music_footer();
+    /* TEST-FOOTER-02: independent numeric oracle for landscape geometry. */
+    assert(music_surface->width == 1256 && music_surface->height == 643);
+    assert(music_footer->x == 4 && music_footer->y == 605);
+    assert(music_footer->width == 1232 && music_footer->height == 18);
     assert(browser->y <= portrait_y);
     assert(browser->x > now_playing->x && browser->y == now_playing->y);
     assert(browser->x >= now_playing->x + now_playing->width);
@@ -1002,6 +1011,10 @@ int main()
     lv_obj_set_size(&music_content, 696, 1203);
     lv_shim_emit_event(&music_content, LV_EVENT_SIZE_CHANGED);
     assert_music_footer();
+    /* TEST-FOOTER-03: portrait geometry is restored after reverse resize. */
+    assert(music_surface->width == 696 && music_surface->height == 1203);
+    assert(music_footer->x == 4 && music_footer->y == 1145);
+    assert(music_footer->width == 672 && music_footer->height == 38);
     assert(browser->y > now_playing->y);
     assert(browser->y >= now_playing->y + now_playing->height);
     assert(now_playing->x + now_playing->width <= music_surface->width);
