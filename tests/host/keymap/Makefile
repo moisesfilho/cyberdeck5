@@ -220,7 +220,7 @@ BLE_STATE_BIN := test_ble_state_machine_bin
 BLE_EVENTS_BIN := test_ble_event_dispatch_bin
 BLE_STORE_BIN := test_ble_store_bin
 BLE_COMMAND_BIN := test_ble_command_parse_bin
-BINS := test_shell_help_bin test_shell_app_bin test_keymap_bin test_shell_utils_bin test_history_bin test_keyboard_event_bin test_event_log_recent_bin test_event_log_shim test_wifi_indicator_state_bin test_wifi_icon_layout_bin test_wifi_menu_bin test_wifi_state_machine_bin test_clock_formatter_bin test_screen_protection_bin test_terminal_filter_bin test_terminal_scrollback_bin test_edit_line_bin test_editor_model_bin test_net_coordinator_bin test_ssh_echo_guard_bin test_ssh_line_composer_bin test_screenshot_bmp_bin test_wifi_event_dispatch_bin test_wifi_persistence_queue_bin test_wifi_persistence_coordination_bin test_local_shell_bin test_save_sidecar_recovery test_cat_multiline_bin test_help_unification_bin test_orientation_bin $(WIFI_AUDIT_BIN) test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_guard_bin test_serial_screen_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session_bin test_app_runtime_bin test_runtime_sdk_bin test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app_bin test_window_manager_bin test_recovery_policy_bin test_recovery_runtime_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
+BINS := test_shell_help_bin test_shell_app_bin test_keymap_bin test_shell_utils_bin test_history_bin test_keyboard_event_bin test_event_log_recent_bin test_event_log_shim test_wifi_indicator_state_bin test_wifi_icon_layout_bin test_wifi_menu_bin test_wifi_state_machine_bin test_clock_formatter_bin test_screen_protection_bin test_terminal_filter_bin test_terminal_scrollback_bin test_edit_line_bin test_editor_model_bin test_net_coordinator_bin test_ssh_echo_guard_bin test_ssh_line_composer_bin test_screenshot_bmp_bin test_wifi_event_dispatch_bin test_wifi_persistence_queue_bin test_wifi_persistence_coordination_bin test_local_shell_bin test_save_sidecar_recovery test_cat_multiline_bin test_help_unification_bin test_orientation_bin $(WIFI_AUDIT_BIN) test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_guard_bin test_screen_off_active_bin test_serial_screen_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session_bin test_app_runtime_bin test_runtime_sdk_bin test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app_bin test_window_manager_bin test_recovery_policy_bin test_recovery_runtime_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
 SAVE_SIDECAR_BIN := test_save_sidecar_recovery_bin
 WIFI_SURVEY_EXPORT_BIN := test_wifi_survey_export_controller_bin
 NETDIAG_CONTROLLER_BIN := test_netdiag_controller_bin
@@ -2315,6 +2315,16 @@ test_serial_screen_guard_bin: $(SERIAL_SCREEN_GUARD_OBJS) Makefile
 test_serial_screen_guard: test_serial_screen_guard_bin
 	@./test_serial_screen_guard_bin
 
+.PHONY: test_screen_off_active
+test_screen_off_active_bin: test_screen_off_active.cpp ../../../components/cyberdeck/include/platform/display/screen_off.h Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 --coverage -pthread $(INCLUDES) $< -o $@
+test_screen_off_active: test_screen_off_active_bin
+	@./test_screen_off_active_bin
+
+test_screen_off_active_tsan: test_screen_off_active.cpp ../../../components/cyberdeck/include/platform/display/screen_off.h Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -fsanitize=thread -g -pthread $(INCLUDES) $< -o test_screen_off_active_tsan
+	@./test_screen_off_active_tsan
+
 # device_exec (recusa + screen.status/screen.wake) vive sob ESP_PLATFORM: o
 # contrato estrutural fixa a ordem do guard e o uso do adaptador de producao.
 test_serial_screen_guard_contract: test_serial_screen_guard_contract.py $(SERIAL_BRIDGE_SRC) $(SERIAL_BRIDGE_HDR) ../../../tools/cyberdeck_cli.py ../../../code-map.md Makefile
@@ -2994,6 +3004,7 @@ test: test-build
 	@echo "==> Executando guarda da protecao de tela (screen.status/screen.wake + recusa de UI)"
 	@$(MAKE) --no-print-directory test_serial_screen_guard
 	@$(MAKE) --no-print-directory test_serial_screen_guard_contract
+	@$(MAKE) --no-print-directory test_screen_off_active
 	@echo "==> Executando contrato estrutural de exec_term_dump/cyberdeck_ui_term_dump (AC-TERM-002..005)"
 	@$(MAKE) --no-print-directory test_term_dump_contract
 	@echo "==> Executando contrato da CLI term.dump sem argumentos (TEST-TERM-007/AC-TERM-005)"
@@ -3063,7 +3074,7 @@ test_display_memory_contract: test_display_memory_contract.py ../../../component
 clean:
 	rm -rf test_music_app test_music_duration
 	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff
-	rm -f $(BINS) test_app_runtime_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
+	rm -f $(BINS) test_app_runtime_tsan test_screen_off_active_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
 	rm -rf test_keymap test_screenshot_bmp test_orientation
 	rm -rf test_screen_protection test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_guard test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_terminal_scrollback test_wifi_survey test_recovery_policy test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_clock_formatter test_terminal_filter test_edit_line test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_echo_guard test_ssh_line_composer .objects
 	rm -f $(LEGACY_TEST_ARTIFACTS)

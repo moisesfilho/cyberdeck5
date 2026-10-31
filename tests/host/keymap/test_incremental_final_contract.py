@@ -24,7 +24,16 @@ def check() -> None:
     clean = model.rule("clean")
     aggregate = model.rule("test")
     assert clean and aggregate
-    assert len(bins) == len(set(bins)) == 84
+    assert len(bins) == len(set(bins)) == 85
+    screen_off_active = "test_screen_off_active"
+    screen_off_active_bin = screen_off_active + "_bin"
+    assert screen_off_active_bin in bins
+    assert screen_off_active in model.phony()
+    screen_off_active_wrapper = model.rule_resolved(screen_off_active)
+    assert screen_off_active_wrapper and screen_off_active_bin in expand_vars(
+        screen_off_active_wrapper["prereqs_raw"], model
+    ).split()
+    assert any(screen_off_active in line for line in model.rule("test")["recipe"])
     assert "test_music_manager_bin" in bins
     music_controller = "test_music_command_controller"
     music_controller_bin = music_controller + "_bin"

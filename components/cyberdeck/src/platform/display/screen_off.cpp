@@ -40,7 +40,7 @@ std::atomic<bool> s_persistence_failed{false};
 uint32_t s_last_tap = 0;
 bool s_tap_pending = false;
 int s_active_brightness = 20;
-bool s_active = false;
+std::atomic<bool> s_active{false};
 cyberdeck_screen_protection::state s_state;
 
 void reset_to_default_timeout()
@@ -201,11 +201,11 @@ void off_screen_clicked(lv_event_t *)
 
 void show_screen(void)
 {
-    if (!s_active || s_display == nullptr) {
+    if (!cyberdeck_screen_off_detail::active_snapshot(s_active) || s_display == nullptr) {
         return;
     }
 
-    s_active = false;
+    cyberdeck_screen_off_detail::publish_active(s_active, false);
     s_tap_pending = false;
     bsp_display_brightness_set(s_active_brightness);
     if (s_previous_screen != nullptr && s_previous_screen != s_off_screen) {
@@ -218,12 +218,12 @@ void show_screen(void)
 
 void hide_screen(void)
 {
-    if (s_active || s_display == nullptr) {
+    if (cyberdeck_screen_off_detail::active_snapshot(s_active) || s_display == nullptr) {
         return;
     }
 
     s_previous_screen = lv_disp_get_scr_act(s_display);
-    s_active = true;
+    cyberdeck_screen_off_detail::publish_active(s_active, true);
     s_tap_pending = false;
     s_state.turn_off();
     bsp_display_brightness_set(0);
@@ -260,7 +260,7 @@ extern "C" esp_err_t screen_off_init(lv_display_t *display, int active_brightnes
     s_previous_screen = nullptr;
     s_last_tap = 0;
     s_tap_pending = false;
-    s_active = false;
+    cyberdeck_screen_off_detail::publish_active(s_active, false);
     reset_to_default_timeout();
 
     s_off_screen = lv_obj_create(nullptr);
@@ -322,7 +322,7 @@ extern "C" void screen_off_turn_off(void)
 
 extern "C" bool screen_off_is_active(void)
 {
-    return s_active;
+    return cyberdeck_screen_off_detail::active_snapshot(s_active);
 }
 
 extern "C" esp_err_t screen_off_set_timeout_minutes(uint16_t minutes)
