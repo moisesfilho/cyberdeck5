@@ -273,6 +273,12 @@ MUSIC_APP_HDRS := ../../../components/cyberdeck/include/apps/music/cyberdeck_mus
 	../../../components/cyberdeck/include/platform/audio/cyberdeck_audio_output.h \
 	../../../components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h
 MUSIC_PLAYER_TEST := test_music_player.cpp
+MUSIC_CODEC_I2S_TEST := test_music_codec_i2s_vendor.cpp
+MUSIC_CODEC_I2S_BIN := test_music_codec_i2s_vendor_bin
+MUSIC_CODEC_I2S_SHIM := music_codec_i2s_shim
+MUSIC_CODEC_VENDOR := ../../../components/esp_codec_dev
+MUSIC_CODEC_I2S_VENDOR_OBJS := test_music_codec_i2s_vendor/i2s-data.o test_music_codec_i2s_vendor/codec-dev.o
+MUSIC_CODEC_I2S_SHIMS := $(MUSIC_CODEC_I2S_SHIM)/esp_idf_version.h $(MUSIC_CODEC_I2S_SHIM)/esp_err.h $(MUSIC_CODEC_I2S_SHIM)/esp_log.h $(MUSIC_CODEC_I2S_SHIM)/freertos/FreeRTOS.h $(MUSIC_CODEC_I2S_SHIM)/hal/i2s_types.h $(MUSIC_CODEC_I2S_SHIM)/soc/soc_caps.h $(MUSIC_CODEC_I2S_SHIM)/driver/i2s_std.h $(MUSIC_CODEC_I2S_SHIM)/driver/i2s_tdm.h $(MUSIC_CODEC_I2S_SHIM)/driver/i2s_pdm.h $(MUSIC_CODEC_I2S_SHIM)/driver/i2s_test_control.h
 MUSIC_VBR_FIXTURE := fixtures/music/vbr-1s.mp3
 MUSIC_COMMAND_INPUT_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_music_command_input.cpp
 MUSIC_COMMAND_INPUT_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_music_command_input.h
@@ -2685,6 +2691,28 @@ $(MUSIC_MODEL_BIN): $(MUSIC_MODEL_TEST) $(MUSIC_MODEL_SRC) $(MUSIC_MODEL_HDR) mu
 test_music_audio_output: test_music_audio_output_bin
 	@./test_music_audio_output_bin
 
+.PHONY: test_music_codec_i2s_vendor test_music_codec_i2s_vendor_acceptance
+test_music_codec_i2s_vendor: $(MUSIC_CODEC_I2S_BIN)
+	@./$(MUSIC_CODEC_I2S_BIN)
+
+test_music_codec_i2s_vendor_acceptance: $(MUSIC_CODEC_I2S_BIN)
+	@./$(MUSIC_CODEC_I2S_BIN) --accept
+
+test_music_codec_i2s_vendor/test.o: $(MUSIC_CODEC_I2S_TEST) $(MUSIC_CODEC_I2S_SHIMS) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Imusic_codec_i2s_shim -I$(MUSIC_CODEC_VENDOR)/include -I$(MUSIC_CODEC_VENDOR)/interface -I$(MUSIC_CODEC_VENDOR) -MMD -MP -MF $@.d -c $< -o $@
+
+test_music_codec_i2s_vendor/i2s-data.o: $(MUSIC_CODEC_VENDOR)/platform/audio_codec_data_i2s.c $(MUSIC_CODEC_I2S_SHIMS) Makefile
+	@mkdir -p $(@D)
+	$(CC) -std=c11 -Wall -Wextra -Wno-unused-parameter -O0 -include stdlib.h -Imusic_codec_i2s_shim -I$(MUSIC_CODEC_VENDOR)/include -I$(MUSIC_CODEC_VENDOR)/interface -I$(MUSIC_CODEC_VENDOR) -MMD -MP -MF $@.d -c $< -o $@
+
+test_music_codec_i2s_vendor/codec-dev.o: $(MUSIC_CODEC_VENDOR)/esp_codec_dev.c $(MUSIC_CODEC_I2S_SHIMS) Makefile
+	@mkdir -p $(@D)
+	$(CC) -std=c11 -Wall -Wextra -Wno-unused-parameter -O0 -include stdlib.h -Imusic_codec_i2s_shim -I$(MUSIC_CODEC_VENDOR)/include -I$(MUSIC_CODEC_VENDOR)/interface -I$(MUSIC_CODEC_VENDOR) -MMD -MP -MF $@.d -c $< -o $@
+
+$(MUSIC_CODEC_I2S_BIN): test_music_codec_i2s_vendor/test.o $(MUSIC_CODEC_I2S_VENDOR_OBJS) $(MUSIC_CODEC_I2S_SHIM)/i2s_fake.cpp music_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -Imusic_codec_i2s_shim -I$(MUSIC_CODEC_VENDOR)/include -I$(MUSIC_CODEC_VENDOR)/interface -I$(MUSIC_CODEC_VENDOR) test_music_codec_i2s_vendor/test.o $(MUSIC_CODEC_I2S_VENDOR_OBJS) $(MUSIC_CODEC_I2S_SHIM)/i2s_fake.cpp -o $@
+
 test_music_audio_output_bin: $(MUSIC_AUDIO_TEST) $(MUSIC_AUDIO_SRC) $(MUSIC_AUDIO_HDR) $(MUSIC_AUDIO_SHIMS) music_traceability.md Makefile
 	$(CXX) $(CXXFLAGS) -Imusic_runtime_shim -I../../../components/cyberdeck/include $(MUSIC_AUDIO_TEST) $(MUSIC_AUDIO_SRC) -o $@
 
@@ -3055,6 +3083,8 @@ test_display_memory_contract: test_display_memory_contract.py ../../../component
 
 clean:
 	rm -rf test_music_app test_music_duration
+	rm -rf test_music_codec_i2s_vendor
+	rm -f $(MUSIC_CODEC_I2S_BIN)
 	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff
 	rm -f $(BINS) test_app_runtime_tsan test_screen_off_active_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
 	rm -rf test_keymap test_screenshot_bmp test_orientation

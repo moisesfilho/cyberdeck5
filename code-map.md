@@ -153,6 +153,24 @@ resultado falso, preservação da cadeia e retry seguro.
 `test_music_player.cpp` usa os shims FreeRTOS em
 `tests/host/keymap/music_runtime_shim/` para exercitar falhas de fila, semáforo,
 alocação de TCB e criação de task, verificando rollback da inicialização.
+Os helpers `.music-play-once-harness.py` e `.test-music-play-once-harness.py`
+foram rejeitados/supersedidos para execução física e permanecem intocados; não
+são a rota aprovada. O novo controller efêmero
+`tests/manual/.music-monitor-controller.py` usa exatamente um subprocesso
+`idf.py monitor --no-reset -p PORT` como dono serial; stdout/stderr são drenados
+em paralelo e capturados byte a byte em arquivo exclusivo modo 0600. Só envia
+frames NDJSON via `send` após gate de boot, hash SHA-256 fornecido pelo operador,
+versão local/`sys.info`, journal recovery consistente (fallback) e dois uptimes
+seguros crescentes. O hash é provenance declarada pelo operador, não verificada
+por firmware. Em seguida emite uma vez cada `ui.type music`, `music status`,
+`music list` e, após scan completo/estado stopped/track 1/volume válido, no máximo
+um `music play 1`; falha, EOF, saída ou timeout encerra sem comando seguinte.
+Não há comandos de stop/reset/flash/volume/seek nem retry. O modo de dispositivo
+exige `--run-device`; fake tests
+`tests/manual/.test-music-monitor-controller.py` cobrem gates negativos, único
+play, framing decorado e capture privado. Estes arquivos temporários não são
+firmware/CLI de produção. Nenhuma porta, monitor ou playback foi executado nesta
+implementação; a revisão independente deve preceder validação física.
 O cenário `stop_releases_once` aceita as duas ordens válidas entre o give de
 completion e o park do worker: o caller pode tomar o semáforo antes do park, mas
 o shim modela `vTaskDeleteWithCaps` suspendendo/aguardando a task antes de liberar
@@ -166,6 +184,30 @@ park-before-take; barreiras explícitas, não sleeps, impõem cada schedule.
 integrar o stop falho do player ao runtime (foreground/grant retidos até retry)
 e reabertura com novo scan/fixture. Também confirma que grants permanecem
 válidos durante teardown pendente e são revogados após teardown bem-sucedido.
+`tests/host/keymap/test_music_codec_i2s_vendor.cpp` compila as TUs reais
+do fork local `components/esp_codec_dev` 1.6.2 com `music_codec_i2s_shim/`;
+`main/idf_component.yml` fixa e resolve o override local, que mantém o LICENSE
+Apache-2.0 e metadados upstream. O fake modela direção, peer, atividade e falhas
+por handle, com trace que identifica o canal. Os dois alvos focados executam
+somente esse fork: `test_music_codec_i2s_vendor` caracteriza/controla o
+comportamento corrigido atual (não é baseline upstream), e
+`test_music_codec_i2s_vendor_acceptance` executa assertions de ordem/falha,
+rollback/cleanup de `esp_codec_dev_open/close`. O comportamento upstream sem
+patch é sustentado por inspeção prévia de fonte, não por execução/comparação nos
+alvos atuais. Nenhum deles entra no agregado `test` nem em `test-build`. O
+cenário acceptance verifica traces exatos simplex/duplex, falhas isoladas por
+direção/estágio, preferência half-duplex sobre fallback full-duplex, fallback
+único/ausência de peer e retry público com formatos distintos observados no
+callback. `esp_codec_dev_delete` retorna erro de close e libera somente após
+close bem-sucedido; a alteração da assinatura upstream `void` para `int` é uma
+quebra de compatibilidade de fonte intencional. Snapshots privados não têm getter público; seus bytes não
+são inspecionados, limitação registrada na matriz. Não prova execução ESP-IDF
+nem hardware. A matriz está em
+`tests/host/keymap/music_traceability.md`.
+Os três arquivos modificados do fork têm notice destacado `Modified by
+cyberdeck5` nos cabeçalhos SPDX, sem remover avisos upstream. A revalidação
+física pontual I2S de 2026-11-01 e seus limites estão registrados no plano e na
+matriz.
 `test_display_views` também linka o TU real `cyberdeck_music_view.cpp` com o shim
 LVGL completo; cobre layout 720x1280/1280x720 e resize por
 `LV_EVENT_SIZE_CHANGED`, bounds de surface/controles/lista, scroll vertical das
@@ -1528,6 +1570,20 @@ de 15 px), ambos definem `flex_grow=0`, a celula BLE usa
 `LV_FLEX_ALIGN_END` com gaps pequenos (0–4 px nos demais intervalos). Nao exibe SSID nem estado
 SSH. Estados SSH vao para o terminal e event log; diagnostico Wi-Fi e obtido
 pelo comando `wifi` e pela auditoria local.
+
+Harness diagnóstico de codec (sem alterar produção; ciclo 2):
+`tests/host/keymap/test_music_codec_i2s_vendor.cpp` compila/linka os TUs
+vendorizados `audio_codec_data_i2s.c` e `esp_codec_dev.c` contra
+`music_codec_i2s_shim/`, reutilizando headers de interface do componente.
+O fake expõe channel-active, trace ordenado e falhas injetáveis em disable,
+slot, clock e enable. Os alvos focados executam o fork local: o alvo
+`test_music_codec_i2s_vendor` caracteriza/controla o comportamento corrigido
+atual, não uma baseline upstream; `test_music_codec_i2s_vendor_acceptance`
+verifica ordem, falhas e rollback/cleanup via APIs reais de open/close.
+Nenhum deles executa ou compara o pacote upstream sem patch; esse comportamento
+foi estabelecido por inspeção prévia de fonte, não por estes testes. Ambos são
+focados, fora do agregado e sem artefatos de produção. A matriz fica em
+`tests/host/keymap/music_traceability.md`.
 
 ### Shell local (Etapa 6 concluida)
 

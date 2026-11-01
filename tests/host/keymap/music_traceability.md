@@ -1,5 +1,68 @@
 # Music player host-test traceability
 
+## Vendor I2S diagnostic harness (cycle 6)
+
+REQ-AUDIO-I2S-01..03 / AC-01..04 are exercised by the standalone focused targets
+`test_music_codec_i2s_vendor` and `test_music_codec_i2s_vendor_acceptance`
+(`TEST-AUDIO-I2S-01..12`). They compile the actual local fork of
+esp_codec_dev 1.6.2 `platform/audio_codec_data_i2s.c` and
+`esp_codec_dev.c` translation
+units against test-owned IDF/I2S boundary shims, while using the component's
+actual codec/data interface headers. The deterministic fake exposes
+per-handle direction/pair/active state, handle-aware ordered
+disable/slot/clock/enable calls, and per-channel one-shot failure injection.
+Both targets compile and execute the local fork; neither executes the original,
+unpatched upstream package. `test_music_codec_i2s_vendor` is a green
+characterization/control scenario for the fork's current corrected behavior, not
+an upstream baseline. The separate `test_music_codec_i2s_vendor_acceptance`
+target executes the approved behavior assertions against that same fork. It checks
+inactive OUT avoids disable, active disable→slot→clock→enable order, propagation
+and channel state for each injected operation failure, and the real public
+`esp_codec_dev_open/close` retry/flags/codec-callback cleanup path. Acceptance
+failures are real assertion failures, not printed labels counted as passing.
+Neither target is in the aggregate suite. The shim does not model I2S/IDF
+scheduling, DMA, codec registers, or hardware. See
+`music_codec_i2s_shim/README.md`.
+
+| Test | Executable evidence |
+| --- | --- |
+| TEST-AUDIO-I2S-01 | Fork characterization/control: the local fork propagates the injected disable failure and short-circuits before slot/clock; green characterization target, 5 assertions. This scenario does not establish behavior of the original unpatched upstream package. |
+| TEST-AUDIO-I2S-02 | Acceptance: inactive OUT does not call disable; active setup orders disable→slot→clock→enable. |
+| TEST-AUDIO-I2S-03 | Acceptance: injected disable, slot, clock, and enable errors have explicit result, trace, and resulting channel-state assertions. |
+| TEST-AUDIO-I2S-04 | Acceptance: actual public codec open returns setup error and does not invoke codec setup/enable; retry proves failed-open flags were rolled back. |
+| TEST-AUDIO-I2S-05 | Acceptance: all four driver failure points are injected through actual `esp_codec_dev_open`; close after failed open is safe, and successful retry close checks exact codec/I2S cleanup trace. Cleanup retry expects codec disable once then failed I2S disable and its retry (`[7,1,1]`). |
+| TEST-AUDIO-I2S-06 | Host fake state transition: disable clears active only on successful driver result; inactive disable returns `ESP_ERR_INVALID_STATE`; enable sets active only on success. |
+| TEST-AUDIO-I2S-07 | Acceptance adds per-handle simplex IN/OUT operation targeting; active/inactive behavior and direction-specific traces are asserted. |
+| TEST-AUDIO-I2S-08 | Acceptance exercises duplex IN_OUT with exact ordered RX/TX handle traces, final disabled state, RX-only/TX-only enable, and isolated disable/slot/clock/enable failures in both directions. First-error and short-circuit assertions remain RED where vendor overwrites/ignores errors. |
+| TEST-AUDIO-I2S-09 | Acceptance asserts the exact paired RX then TX disable/slot/clock trace; a fixture with an earlier full-duplex candidate proves matching half-duplex is preferred, and a second proves sole full-duplex fallback is selected. A simplex RX fixture proves no-peer behavior. |
+| TEST-AUDIO-I2S-10 | Acceptance drives RX/TX target and peer disable/slot/clock/enable failures through the actual I2S TU. Each case asserts target handle, exact terminal failure operation, short-circuit, and observable active state; regressions against the corrected fork contract fail acceptance. |
+| TEST-AUDIO-I2S-11 | Public `esp_codec_dev_open/close` retry injects a format-A slot failure, closes, then retries with distinct format B and asserts callback-observed rate/channel/bits, I2S trace and clean close. Vendor's private `fs/in_fs/out_fs` snapshots have no public getter: their stored bytes and every partial-failure field remain irreducibly unobservable without private-structure access. Public behavior proves the retry uses B and resources close, not the internal snapshot representation. |
+| TEST-AUDIO-I2S-12 | Public open/close/retry path covers four simplex failure injections. The fork propagates data `set_fmt`/`enable` errors and retains cleanup state for retry; private flags are not inspected. |
+
+The fork characterization/control target passes 5 assertions; acceptance passes
+181 assertions against the same local fork. The original upstream behavior
+(discarded `set_fmt`/`enable` results in `open`) was identified by prior source
+inspection; the current host targets do not execute or compare that unpatched
+source. Historical raw captures are separate evidence and are not reproduced by
+these targets. The cleanup oracle includes successful codec
+disable (enum 7), failed I2S disable (enum 1), and I2S retry (enum 1);
+`codec_disable_calls == 1` proves the completed stage is not repeated. The
+override is pinned to `components/esp_codec_dev` 1.6.2 and retains upstream
+manifest commit metadata and Apache-2.0 LICENSE. Public
+`esp_codec_dev_delete` intentionally changes from `void` to `int` so failed
+close retains the handle for retry; this is a source-compatibility break.
+Private snapshot-byte observability remains a gap; do not access the vendor's
+private struct. Host shims do not prove IDF scheduling, DMA, codec registers or
+hardware. The focused I2S playback revalidation is recorded in
+`docs/03-audio-player-plan.pt-BR.md` (2026-11-01): one flashed image and one
+playback, with the user reporting that it reached the end. The I2S capture
+(`d705e4588a3b55d11f70d9de1677c9e7f1e2ca944078dc55558aa980af3a5024`) does not
+show logs proving completion; it has no `channel not enabled yet` and contains a
+distinct RX master→slave warning. This is limited evidence for that reproduction,
+not full player acceptance. Jack/controls/poweroff-under-playback and the other
+physical player checks remain pending. Firmware bin SHA-256:
+`3ce90e1d24b68a771846b876a0e8fbde25ea6f7be25858286da55b04337aa9b4`.
+
 Scope: REQ-MUSIC-01..06 / AC-MUSIC-01..16 and the approved
 REQ-TEST-STOPTASKSET-01 / TEST-AUDIO-STOP-TASKSET, TEST-AUDIO-01..29 plus
 TEST-MUSIC-ESC-01..08 and TEST-MUSIC-DUR-01..14

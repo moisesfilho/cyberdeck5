@@ -485,7 +485,55 @@ O roteiro dispositivo-a-dispositivo fica em
 para qualquer teste de playback. Se o safe mode reaparecer, registrar `sys.info`
 e parar, sem repetir clear/reset nem tentar tocar.
 
+## Revalidação pontual I2S após correção — 2026-11-01
+
+O firmware `build/cyberdeck5.bin` (SHA-256
+`3ce90e1d24b68a771846b876a0e8fbde25ea6f7be25858286da55b04337aa9b4`) foi
+gravado; hash da captura I2S: `d705e4588a3b55d11f70d9de1677c9e7f1e2ca944078dc55558aa980af3a5024`.
+O usuário relatou que a única reprodução tocou até o fim. A captura não contém
+evidência de log que demonstre o término; ela não permite atribuir essa conclusão
+a logs. Não apareceu `channel not enabled yet`; apareceu também um warning
+distinto de transição RX master→slave, que não deve ser confundido com aquele
+erro. Isso valida somente esta tentativa de reprodução I2S conforme relato e
+captura, não o aceite completo do player. Jack/fone, controles e poweroff durante
+playback continuam fora desta revalidação e pendentes; demais critérios físicos
+do player não são declarados aprovados.
+
 ## Aceite
+
+## Correção local do transaction I2S/codec — cycle 1
+
+O dependency `espressif/esp_codec_dev` está pinado em 1.6.2 e resolvido pelo
+override `../components/esp_codec_dev` em `main/idf_component.yml`. O fork
+preserva o manifest upstream (commit `af7b72fb2b73d4f513d3cede01c13518ab216735`)
+e LICENSE Apache-2.0. A correção propaga erros de configuração I2S em `open`,
+mantém o primeiro erro ao fazer rollback e mantém estado/handles para retry na
+falha de cleanup. `esp_codec_dev_delete` agora retorna o resultado do close e
+só desaloca o handle após close bem-sucedido; a mudança upstream de retorno
+`void` para `int` é uma quebra de compatibilidade de fonte intencional para
+consumidores que assumiam `void`.
+
+Evidência do warning I2S: a versão upstream de `esp_codec_dev.c` descartava o
+retorno de `data_if->set_fmt`/`enable` durante `open`, e o caminho de cleanup
+precisava preservar ownership ao falhar. O TU real
+`platform/audio_codec_data_i2s.c` também é exercitado com erros injetados por
+operação. Para teardown, após limpar observers e trace, a falha injetada de I2S
+disable produz trace
+`[CODEC_DISABLE, I2S_DISABLE(falha), I2S_DISABLE(retry)]`; `codec_disable_calls`
+permanece 1. Assim, o disable do codec foi concluído uma vez e não deve ser
+omitido do oráculo nem repetido na tentativa de cleanup. Os alvos focados
+`test_music_codec_i2s_vendor` e `test_music_codec_i2s_vendor_acceptance`
+compilam e executam o fork local; o primeiro caracteriza/controla o comportamento
+corrigido do fork e o segundo executa a aceitação (181 assertions). Nenhum deles
+executa o pacote upstream original sem patch nem estabelece comparação upstream.
+O comportamento original (descarte dos retornos de `set_fmt`/`enable` em `open`)
+foi identificado por inspeção prévia do código upstream; essa inspeção é evidência
+histórica separada dos testes atuais. Os alvos são focados e não executam a suíte
+global.
+O harness usa TUs reais do fork com shims; não modela FreeRTOS/I2S hardware,
+DMA ou registradores do codec. Build ESP-IDF local é verificação de resolução e
+compilação, não validação de hardware. Sem flash/playback nesta rodada; aceite
+físico continua pendente.
 
 Após teste manual sem serial aberta, o usuário confirmou Wi-Fi, fila com uma faixa
 e status `stopped`, mas **uma única tentativa** com `music play 1` travou e

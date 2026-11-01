@@ -1,0 +1,6 @@
+#pragma once
+#define SOC_I2S_SUPPORTS_PDM 0
+#define SOC_I2S_SUPPORTS_PDM_RX 0
+#define SOC_I2S_SUPPORTS_PDM_TX 0
+#define SOC_I2S_SUPPORTS_TDM 0
+#define SOC_I2S_HW_VERSION_1 0
