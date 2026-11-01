@@ -682,9 +682,9 @@ int main()
      * content is 680 px wide, so the break is orientation-driven and never
      * derived from runtime text metrics. */
     const std::string music_footer_landscape =
-        "Enter play/pause  left/right seek  up/down volume  N/P track  Esc close";
+        "Enter play/pause  left/right track  up/down list  +/- volume  Esc close";
     const std::string music_footer_portrait =
-        "Enter play/pause  left/right seek\nup/down volume  N/P track  Esc close";
+        "Enter play/pause  left/right track\nup/down list  +/- volume  Esc close";
     /* TEST-MUSIC-FOOTER-LAYOUT: the footer owns the bottom `pad + label height`
      * band of the surface and both cards must end above it, in portrait
      * (696x1203) and landscape (1256x643). The old `height - y - pad` card
@@ -1053,6 +1053,23 @@ int main()
     for (std::size_t index = 1; index < browser->children.size(); ++index)
         assert_not_scrollable(browser->children[index]);
     assert(browser->children[64]->y + browser->children[64]->height > browser->height);
+    music_view.render("state: paused\ntrack: 1/2\nprogress: 50s / 100s\nmusic queue:\n1. track-1.mp3\n2. track-2.mp3\n");
+    const auto selection_actions_before_navigation = music_log.actions.size();
+    assert(music_view.move_selection(1));
+    assert(music_view.selected_track() == 1);
+    assert(music_log.actions.size() == selection_actions_before_navigation + 1);
+    assert(music_log.actions.back() == "select");
+    assert(landscape_list->children[2]->color == 0x303030);
+    assert(music_view.move_selection(-1));
+    assert(music_view.selected_track() == 0);
+    assert(!music_view.move_selection(-1));
+    assert(music_view.selected_track() == 0);
+    music_view.render(full_queue);
+    for (int i = 0; i < 63; ++i) assert(music_view.move_selection(1));
+    assert(music_view.selected_track() == 63);
+    assert(landscape_list->scroll_y > 0);
+    assert(!music_view.move_selection(1));
+    assert(music_view.selected_track() == 63);
     music_view.render("state: paused\ntrack: 2/64\nprogress: 50s / 100s\nmusic queue:\n1. track-1.mp3\n2. track-2.mp3\n");
     lv_shim_emit_event(landscape_list->children[2], LV_EVENT_CLICKED);
     assert(music_log.actions.back() == "select");

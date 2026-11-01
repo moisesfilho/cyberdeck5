@@ -331,8 +331,12 @@ visível, a surface é movida à frente da textarea criada posteriormente;
 `test_display_views` cria um irmão terminal posterior, confirma que ele começa
 no topo e que a surface passa ao último filho após ficar visível. O shim host de
 `lv_obj_move_foreground` modela essa reordenação removendo e anexando o objeto.
-O contrato `test_music_scan_opendir_contract.py`
-protege o roteamento e `test_music_manager` cobre Enter pendente sem ação e após ativação.
+O contrato `test_music_scan_opendir_contract.py` protege o roteamento (incluindo
+setas remapeadas, ambos os sinais de +/- nos caminhos físico e virtual, e a
+ausência de N/P em ambas as caixas), mas é estrutural e não prova eventos LVGL
+ou teclado real. `test_music_manager` cobre o mapeamento. `test_display_views` cobre bounds, highlight e scroll de seleção sem
+playback. `player_traceability.md` relaciona REQ-MUSIC-KEYS-01..05 aos testes
+TEST-MUSIC-KEYS-MAPPING/BOUNDS/LIST/REMOVED/REGRESSION/HINT.
 O runtime conserva estado foreground, grant
 e quota quando teardown falha, para que stop/join possa ser repetido sem liberar
 recursos vivos; somente teardown bem-sucedido revoga o grant e registra o app
@@ -1114,7 +1118,9 @@ destrói recursos potencialmente usados.
       app separado. Manager/view/adapter em
        `cyberdeck_music_manager.{h,cpp}` e `cyberdeck_music_view.{h,cpp}` isolam
         input/render. A view ocupa o display, reajusta layout em `LV_EVENT_SIZE_CHANGED`,
-        mostra status/progresso, controles e lista rolável bounded a 64 itens; status
+         mostra status/progresso, controles e lista rolável bounded a 64 itens; ↑/↓
+         movem seleção/highlight e fazem `lv_obj_scroll_to_view` sem playback,
+         ←/→ navegam faixas, +/− ajustam volume e N/P não são atalhos; status
         ocupa até três linhas; labels de faixa/controle têm dimensões fixas e
         `LV_LABEL_LONG_MODE_DOTS` preserva o texto da origem sem invadir widgets
         vizinhos. Um rodapé fixo `footer_` (label `kMuted` #8A8A8A, criado depois

@@ -840,10 +840,9 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
             render_terminal();
             return;
         }
-        if (text != nullptr && length == 1 &&
-            (text[0] == 'n' || text[0] == 'N' || text[0] == 'p' || text[0] == 'P')) {
-            (void)cyberdeck_music::global_application().player_command(
-                text[0] == 'n' || text[0] == 'N' ? "next" : "prev");
+        if (text != nullptr && length == 1 && (text[0] == '+' || text[0] == '-')) {
+            (void)s_music_manager.handle(text[0] == '+' ? cyberdeck_music_manager::key::volume_up
+                                                         : cyberdeck_music_manager::key::volume_down);
         } else if (text != nullptr && length > 0) {
             (void)s_music_manager.handle(cyberdeck_music_manager::key::other);
         } else if (special_key) {
@@ -1618,6 +1617,8 @@ bool music_manager_action(cyberdeck_music_manager::action action, void *) {
     }
     case cyberdeck_music_manager::action::next: return app.player_command("next").status == cyberdeck_apps::result_status::handled;
     case cyberdeck_music_manager::action::previous: return app.player_command("prev").status == cyberdeck_apps::result_status::handled;
+    case cyberdeck_music_manager::action::select_next: return s_music_view.move_selection(1);
+    case cyberdeck_music_manager::action::select_previous: return s_music_view.move_selection(-1);
     }
     return false;
 }
@@ -1687,12 +1688,16 @@ void music_view_action(std::string_view name, void *) {
         return;
     }
     if (name == "toggle") (void)s_music_manager.handle(cyberdeck_music_manager::key::enter);
-    else if (name == "seek_back") (void)s_music_manager.handle(cyberdeck_music_manager::key::left);
-    else if (name == "seek_forward") (void)s_music_manager.handle(cyberdeck_music_manager::key::right);
-    else if (name == "volume_up") (void)s_music_manager.handle(cyberdeck_music_manager::key::up);
-    else if (name == "volume_down") (void)s_music_manager.handle(cyberdeck_music_manager::key::down);
-    else if (name == "next") (void)s_music_manager.handle(cyberdeck_music_manager::key::next);
-    else if (name == "prev") (void)s_music_manager.handle(cyberdeck_music_manager::key::previous);
+    else if (name == "seek_back" || name == "seek_forward")
+        (void)music_manager_action(name == "seek_back" ? cyberdeck_music_manager::action::seek_back
+                                                         : cyberdeck_music_manager::action::seek_forward, nullptr);
+    else if (name == "volume_up" || name == "volume_down") {
+        (void)s_music_manager.handle(name == "volume_up" ? cyberdeck_music_manager::key::volume_up
+                                                            : cyberdeck_music_manager::key::volume_down);
+    } else if (name == "next") (void)s_music_manager.handle(cyberdeck_music_manager::key::right);
+    else if (name == "prev") (void)s_music_manager.handle(cyberdeck_music_manager::key::left);
+    else if (name == "select_next") (void)s_music_view.move_selection(1);
+    else if (name == "select_previous") (void)s_music_view.move_selection(-1);
 }
 
 void render_terminal() {
@@ -2009,11 +2014,9 @@ void terminal_insert(lv_event_t *event) {
     }
 
     if (s_music_ui_active) {
-        if (inserted[1] == '\0' &&
-            (inserted[0] == 'n' || inserted[0] == 'N'))
-            (void)s_music_manager.handle(cyberdeck_music_manager::key::next);
-        else if (inserted[1] == '\0' && (inserted[0] == 'p' || inserted[0] == 'P'))
-            (void)s_music_manager.handle(cyberdeck_music_manager::key::previous);
+        if (inserted[1] == '\0' && (inserted[0] == '+' || inserted[0] == '-'))
+            (void)s_music_manager.handle(inserted[0] == '+' ? cyberdeck_music_manager::key::volume_up
+                                                             : cyberdeck_music_manager::key::volume_down);
         return;
     }
 

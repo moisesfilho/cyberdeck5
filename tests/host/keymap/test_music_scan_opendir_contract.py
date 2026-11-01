@@ -69,8 +69,9 @@ checks = {
         'if (!active_)' in manager_source and 'return close();' in manager_source and
         'key::enter' in manager_source and 'key::left' in manager_source and
         'key::right' in manager_source and 'key::up' in manager_source and
-        'key::down' in manager_source and 'key::next' in manager_source and
-        'key::previous' in manager_source and 'close_(context_))' in manager_source and
+        'key::down' in manager_source and 'key::volume_up' in manager_source and
+        'key::volume_down' in manager_source and 'action::select_next' in manager_source and
+        'action::select_previous' in manager_source and 'close_(context_))' in manager_source and
         'if (!active_)' in manager_source and 'return false;' in manager_source,
     "physical music input is consumed before shell insertion":
         'if (s_music_ui_active) {' in physical_handler and
@@ -118,7 +119,20 @@ checks = {
     "music view owns clickable actions and adapter preserves bounded player controls":
         'lv_obj_set_clickable(track, true)' in view_source and 'LV_EVENT_CLICKED' in view_source and
         '"prev", "toggle", "next", "seek_back", "seek_forward", "volume_down", "volume_up"' in view_source and
-        's_music_manager.handle(cyberdeck_music_manager::key::next)' in view_action and
+        's_music_manager.handle(cyberdeck_music_manager::key::right)' in view_action and
+        's_music_view.move_selection(1)' in action_adapter and 'lv_obj_scroll_to_view' in view_source and
+        "length == 1 && (text[0] == '+' || text[0] == '-')" in physical_handler and
+        "text[0] == '+' ? cyberdeck_music_manager::key::volume_up" in physical_handler and
+        "inserted[0] == '+' ? cyberdeck_music_manager::key::volume_up" in virtual_insert_handler and
+        'cyberdeck_music_manager::key::volume_up' in physical_handler and
+        'cyberdeck_music_manager::key::volume_down' in physical_handler and
+        "inserted[1] == '\\0' && (inserted[0] == '+' || inserted[0] == '-')" in virtual_insert_handler and
+        'cyberdeck_music_manager::key::volume_up' in virtual_insert_handler and
+        'cyberdeck_music_manager::key::volume_down' in virtual_insert_handler and
+        "text[0] == 'n'" not in physical_handler and "text[0] == 'N'" not in physical_handler and
+        "text[0] == 'p'" not in physical_handler and "text[0] == 'P'" not in physical_handler and
+        "inserted[0] == 'n'" not in virtual_insert_handler and "inserted[0] == 'N'" not in virtual_insert_handler and
+        "inserted[0] == 'p'" not in virtual_insert_handler and "inserted[0] == 'P'" not in virtual_insert_handler and
         'action::seek_forward' in action_adapter and 'std::clamp<int>' in action_adapter and
         'player_command("seek "' in action_adapter and 'player_command("volume "' in action_adapter and
          'bool view::create(' in view_source and 'void view::destroy()' in view_source and

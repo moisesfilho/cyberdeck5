@@ -32,6 +32,12 @@ negativos existentes.
 | REQ-PLAYER-01 / AC-PLAYER-12 controles | TEST-PLAYER-CONTROLS | Touch e teclas Enter, setas, N/P acionam toggle/play-pause, prev/next, seek e volume na instância ativa; limites de volume/seek e input não reconhecido. | `test_display_views` valida os sete callbacks reais da view; `test_music_manager` cobre política de input e `test_music_player` efeitos. Manual Tab5 pendente. |
 | REQ-PLAYER-01 / AC-PLAYER-13 regressão | TEST-PLAYER-REGRESSION | Preservar testes existentes de model, decoder, áudio, player, app, segurança, bounds, help e runtime; novas suites entram nos alvos focados/agregado sem remover nem afrouxar asserts. | Alvos focados existentes e Makefile; suíte ampla fica para reviewer. |
 
+## REQ-MUSIC-KEYS-01..05 / AC-MUSIC-KEYS-01..06
+
+| REQ / AC | TEST | Cenário e asserts | Alvo/seam |
+| --- | --- | --- | --- |
+| REQ-MUSIC-KEYS-01..05 / AC-MUSIC-KEYS-01..06 | TEST-MUSIC-KEYS-MAPPING / BOUNDS / LIST / REMOVED / REGRESSION / HINT | ←/→ acionam faixa anterior/próxima; ↑/↓ movem a seleção/highlight e scroll da lista sem playback; +/- alteram volume; limites da lista não passam de 0..N-1; N/P não são atalhos; Enter/touch/comandos textuais preservados; dica ASCII atualizada por orientação. | `test_music_manager`, `test_display_views`, `test_music_scan_opendir_contract.py`, `test_music_player_ui_contract.py`; validação física no roteiro manual. |
+
 ## REQ-MUSIC-UI-01..04 / AC-MUSIC-UI-01..04
 
 | REQ / AC | TEST | Cenário e asserts | Alvo/seam comportamental |

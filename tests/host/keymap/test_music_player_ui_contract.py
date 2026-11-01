@@ -48,11 +48,10 @@ SYMBOL_MAP = Path(__file__).resolve().with_name("lv_symbol_codepoints.json")
 
 # Player controls hint. ASCII only: U+2190..U+2193 have no glyph in the font.
 # The landscape variant is one row; portrait splits the same shortcuts after
-# "seek" because the 71-character row needs 767.7 px at the real font advance
+# "track" because the shortcut row may exceed the portrait width at the real font advance
 # (adv_w 173/16 = 10.8125 px/char) and the portrait surface only offers 680 px.
-MUSIC_HINT = ("Enter play/pause  left/right seek  up/down volume  N/P track  "
-              "Esc close")
-MUSIC_HINT_PORTRAIT = MUSIC_HINT.replace("seek  up/down", "seek\nup/down")
+MUSIC_HINT = "Enter play/pause  left/right track  up/down list  +/- volume  Esc close"
+MUSIC_HINT_PORTRAIT = MUSIC_HINT.replace("track  up/down", "track\nup/down")
 
 # Macros used (or reserved for the header) by the UI that must stay covered.
 REQUIRED_COVERED_SYMBOLS = (
@@ -909,7 +908,7 @@ def main() -> int:
     require([code for code, _ in uncovered_literals(dash, covered)] == [0x2014],
             "scanner must reject U+2014 EM DASH")
     arrow_hint = ('text += "Enter play/pause  \u2190/\u2192 seek  \u2191/\u2193 '
-                  'volume  N/P track  Esc close";')
+                  'list  +/- volume  Esc close";')
     require(sorted({code for code, _ in uncovered_literals(arrow_hint, covered)})
             == [0x2190, 0x2191, 0x2192, 0x2193],
             "scanner must reject the arrow-glyph controls hint")
@@ -1313,7 +1312,7 @@ def main() -> int:
         require(footer_issues(flat_text) != [],
                 "mutation applying the flat hint in portrait must be rejected")
         unbroken_portrait = view_source.replace(
-            "left/right seek\\nup/down volume", "left/right seek  up/down volume")
+            "left/right track\\nup/down list", "left/right track  up/down list")
         require(unbroken_portrait != view_source,
                 "the portrait break must stay replaceable for the mutation proof")
         require(footer_issues(unbroken_portrait) != [],

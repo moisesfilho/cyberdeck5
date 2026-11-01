@@ -67,7 +67,7 @@ struct _lv_obj_t {
      * instead of inheriting the theme chrome. */
     int32_t radius{-1}, shadow_width{-1}, shadow_opa{-1}, outline_width{-1};
     /* Scroll state, defaulted as `lv_obj_constructor()` leaves a new object. */
-    int32_t scroll_dir{LV_DIR_ALL}, scrollbar_mode{LV_SCROLLBAR_MODE_AUTO};
+    int32_t scroll_dir{LV_DIR_ALL}, scrollbar_mode{LV_SCROLLBAR_MODE_AUTO}, scroll_y{};
     bool scroll_chain{true};
     std::vector<shim_event_cb> event_callbacks;
 };
@@ -123,6 +123,8 @@ inline void lv_obj_set_scroll_dir(lv_obj_t*o,int v){if(o)o->scroll_dir=v;} inlin
 /* Public LVGL 9 read-backs for the scroll state, so the host suite asserts the
  * device-visible result instead of the spelling that produced it. */
 inline int lv_obj_get_scroll_dir(const lv_obj_t*o){return o?o->scroll_dir:LV_DIR_NONE;} inline int lv_obj_get_scrollbar_mode(const lv_obj_t*o){return o?o->scrollbar_mode:LV_SCROLLBAR_MODE_OFF;}
+inline void lv_obj_scroll_to_y(lv_obj_t *o, int32_t y, int){if(o)o->scroll_y=std::max(0,y);}
+inline void lv_obj_scroll_to_view(lv_obj_t *child, int){if(!child||!child->parent)return;auto *parent=child->parent;const int visible=parent->height;if(child->y<parent->scroll_y)parent->scroll_y=child->y;else if(child->y+child->height>parent->scroll_y+visible)parent->scroll_y=child->y+child->height-visible;if(parent->scroll_y<0)parent->scroll_y=0;}
 /* `lv_obj_get_style_space_*_internal()` in LVGL 9 is the border width plus the
  * padding (with the default full border side), and `lv_obj_get_content_*` is
  * the object size minus the space on both sides.  Mirroring both lets the host

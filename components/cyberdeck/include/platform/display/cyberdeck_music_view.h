@@ -25,6 +25,7 @@ class view final {
     void set_command_cursor(std::size_t position);
     std::string_view command_text() const;
     std::size_t selected_track() const { return selected_track_; }
+    bool move_selection(int direction);
     int progress_value() const;
 
   private:

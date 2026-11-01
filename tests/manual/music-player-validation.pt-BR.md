@@ -151,9 +151,9 @@ Mapeamento de teclado (físico e virtual):
 | Tecla | Efeito |
 | --- | --- |
 | Enter | play/pause, alternando conforme o estado atual — **proibido nesta rodada** |
-| ← / → | seek -10 s / +10 s |
-| ↑ / ↓ | volume +1 / -1 (faixa 0..50) |
-| N / P | próxima / anterior — **proibido nesta rodada** |
+| ← / → | faixa anterior / próxima |
+| ↑ / ↓ | move seleção/highlight na lista; não inicia playback |
+| + / - | volume +1 / -1 (faixa 0..50) |
 | Esc | fecha o player: foreground volta ao shell com stop/join e halt do playback |
 
 Os itens de interação abaixo estão fora do escopo desta rodada e não devem ser
@@ -161,7 +161,7 @@ executados:
 
 - toque: `ui.tap "Play/Pause"`, `ui.tap "Next"`, `ui.tap "Volume +"` e conferir o
   efeito em `music status`/`ui.dump`;
-- teclado: Enter, ←/→, ↑/↓, N/P e Esc. Esc deve retornar ao shell **na mesma
+- teclado: Enter, ←/→, ↑/↓, +/− e Esc. Esc deve retornar ao shell **na mesma
   sessão** (prompt/linha anterior preservados) e sem desmontar a ponte serial;
 - `sys.info` antes e depois de cada bloco: uptime crescente, sem reboot/panic/WDT;
 - reabrir com `music` inicia novo scan e não restaura a fila anterior;

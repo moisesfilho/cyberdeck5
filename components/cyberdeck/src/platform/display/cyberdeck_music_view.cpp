@@ -30,9 +30,9 @@ constexpr int kCardInset = 8;
  * same shortcuts in two rows after "seek". The break is explicit: the layout
  * decides by orientation and never measures text at runtime. */
 constexpr const char *kMusicControlsHint =
-    "Enter play/pause  left/right seek  up/down volume  N/P track  Esc close";
+    "Enter play/pause  left/right track  up/down list  +/- volume  Esc close";
 constexpr const char *kMusicControlsHintPortrait =
-    "Enter play/pause  left/right seek\nup/down volume  N/P track  Esc close";
+    "Enter play/pause  left/right track\nup/down list  +/- volume  Esc close";
 const lv_color_t kBlack = lv_color_hex(0x000000);
 const lv_color_t kSurface = lv_color_hex(0x0A0A0A);
 const lv_color_t kBorder = lv_color_hex(0x2A2A2A);
@@ -334,6 +334,23 @@ std::string_view view::command_text() const {
     return text ? std::string_view(text) : std::string_view{};
 }
 int view::progress_value() const { return progress_ ? lv_slider_get_value(progress_) : 0; }
+
+bool view::move_selection(int direction) {
+    if (command_open_ || (direction != -1 && direction != 1)) return false;
+    std::size_t track_count = 0;
+    while (track_count < tracks_.size() && !lv_obj_is_hidden(tracks_[track_count])) ++track_count;
+    if (track_count == 0) return false;
+    const std::size_t next = direction > 0
+        ? std::min(selected_track_ + 1, track_count - 1)
+        : (selected_track_ == 0 ? 0 : selected_track_ - 1);
+    if (next == selected_track_) return false;
+    selected_track_ = next;
+    for (std::size_t i = 0; i < track_count; ++i)
+        lv_obj_set_style_bg_color(tracks_[i], i == selected_track_ ? kSelected : kSurface, 0);
+    lv_obj_scroll_to_view(tracks_[selected_track_], LV_ANIM_OFF);
+    if (callback_) callback_("select", context_);
+    return true;
+}
 
 void view::layout() {
     if (!surface_) return;

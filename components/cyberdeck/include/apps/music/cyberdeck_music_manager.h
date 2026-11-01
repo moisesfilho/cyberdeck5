@@ -4,8 +4,8 @@
 #include <string_view>
 
 namespace cyberdeck_music_manager {
-enum class key : std::uint8_t { enter, left, right, up, down, next, previous, escape, other };
-enum class action : std::uint8_t { toggle, seek_back, seek_forward, volume_up, volume_down, next, previous };
+enum class key : std::uint8_t { enter, left, right, up, down, volume_up, volume_down, escape, other };
+enum class action : std::uint8_t { toggle, seek_back, seek_forward, volume_up, volume_down, select_next, select_previous, next, previous };
 class manager final {
   public:
     using action_callback = bool (*)(action value, void *context);
