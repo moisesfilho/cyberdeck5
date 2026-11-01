@@ -326,8 +326,26 @@ botão do header mantém 26x36 e o clique.
 O manager fica em estado de abertura após `open()` e só aceita ações depois de
 `activate()`, chamado após criar/renderizar a view; input antecipado é consumido
 sem playback. A UI roteia teclado físico/virtual pelo foreground de música já
-ativo antes do pump de 250 ms, evitando que Enter precoce caia na shell. Ao ficar
-visível, a surface é movida à frente da textarea criada posteriormente;
+ativo antes do pump de 250 ms, evitando que Enter precoce caia na shell. O
+dispatcher captura geração no submit e invalida pendências na ativação/desativação;
+cada callback LVGL recebe uma identidade opaca monotônica, codificada em `uintptr_t`,
+e busca o ticket estático bounded ativo por essa identidade antes de tocar fila,
+evento ou ticket. Identidades nunca reciclam; ao atingir `UINTPTR_MAX`, novas
+submissões falham fechado, sem wrap. Stop limpa ownership do evento, mas retém
+ticket até callback stale; callback tardio/duplicado cuja identidade já foi
+retirada retorna sem tocar a fila da sessão reaberta. `test_keyboard_dispatch`
+cobre stale discard, pós-invalidação, stop/reopen, FIFO, overflow, rollback,
+exaustão/recuperação de slots, schedules submit/invalidate, callback claimado
+bloqueado durante stop/reopen e invocação duplicada após reuso do slot, usando
+barreiras/CV sem sleeps; TEST-KEY-PLAYER-13 protege identidade não reciclável.
+TEST-KEY-PLAYER-14 semeia `UINTPTR_MAX` por um seam privado de host condicionado
+a `!ESP_PLATFORM`, verificando admissão do último ID, falha fechada posterior,
+callback duplicado, fila vazia e limpeza dos tickets. O alvo
+`test_keyboard_dispatch` compila o teste e a implementação real como TUs
+separadas, com objetos/depfiles incrementais conforme o baseline imutável.
+`player_traceability.md` mapeia
+TEST-KEY-PLAYER-01..14.
+Ao ficar visível, a surface é movida à frente da textarea criada posteriormente;
 `test_display_views` cria um irmão terminal posterior, confirma que ele começa
 no topo e que a surface passa ao último filho após ficar visível. O shim host de
 `lv_obj_move_foreground` modela essa reordenação removendo e anexando o objeto.
@@ -337,6 +355,14 @@ ausência de N/P em ambas as caixas), mas é estrutural e não prova eventos LVG
 ou teclado real. `test_music_manager` cobre o mapeamento. `test_display_views` cobre bounds, highlight e scroll de seleção sem
 playback. `player_traceability.md` relaciona REQ-MUSIC-KEYS-01..05 aos testes
 TEST-MUSIC-KEYS-MAPPING/BOUNDS/LIST/REMOVED/REGRESSION/HINT.
+Enter é despachado pelo manager como toggle para `application::toggle_selected`:
+valida consistência de contagens e índice antes de qualquer efeito; playing→pause,
+paused→resume, stopped inicia a seleção válida, e error/enum desconhecido são
+no-op. Mismatch também é no-op em playing/paused/stopped. `test_music_app` cobre
+estados, início selecionado, fila/índices inválidos, mismatch por estado, error
+e enum fora do domínio sem chamada de player ou mutação de seleção; matriz
+`player_traceability.md` e cenário Tab5 seção 6 documentam os requisitos
+aditivos. A validação física permanece pendente.
 O runtime conserva estado foreground, grant
 e quota quando teardown falha, para que stop/join possa ser repetido sem liberar
 recursos vivos; somente teardown bem-sucedido revoga o grant e registra o app

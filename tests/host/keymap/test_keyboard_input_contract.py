@@ -50,13 +50,21 @@ def main() -> int:
             "keyboard handoff must enqueue snapshots")
     require("free(pending)" in submit,
             "rejected snapshots must be released")
-    require("lv_async_call(process_async, nullptr)" in submit,
-            "physical input must use lv_async_call")
+    require("lv_async_call(process_async, const_cast<void *>(user_data))" in submit,
+            "physical input must schedule its unique opaque ticket identity")
     require("lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr)" in submit,
             "successful async scheduling must wake the LVGL port task")
-    require(submit.index("lv_async_call(process_async, nullptr)") <
+    require(submit.index("lv_async_call(process_async, const_cast<void *>(user_data))") <
             submit.index("lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr)"),
             "the port task must be woken after async scheduling")
+    require("std::uintptr_t s_next_ticket_identity = 1" in dispatch and
+            "s_ticket_identity_exhausted" in dispatch and
+            "s_next_ticket_identity == UINTPTR_MAX" in dispatch,
+            "ticket identities must be monotonic and exhaust without wrapping")
+    require("reinterpret_cast<std::uintptr_t>(user_data)" in process and
+            "find_ticket(identity)" in process and
+            "if (ticket == nullptr)" in process,
+            "unknown or duplicate callback identities must return before queue access")
     require("xSemaphoreTake(s_mutex" in submit and
             "xSemaphoreGive(s_mutex)" in submit,
             "producer must serialize enqueue and async rollback")
@@ -66,7 +74,7 @@ def main() -> int:
             "pending_count < k_queue_capacity" in discard and
             "if (pending[i] == rejected) continue" in discard,
             "rollback must preserve bounded FIFO survivors")
-    require("xQueueReceive(s_queue" in process and
+    require("discard_from_queue(pending)" in process and
             "xSemaphoreGive(s_mutex)" in process and
             "free(pending)" in process,
             "consumer must release the mutex before UI callback and cleanup")

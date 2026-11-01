@@ -500,6 +500,26 @@ bool application::has_playback() const {
     snapshot info{};
     return player_.status(info) && (info.state == playback_state::playing || info.state == playback_state::paused);
 }
+bool application::toggle_selected(std::size_t selected) {
+    snapshot playback{};
+    if (!player_.status(playback))
+        return false;
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    const std::size_t track_count = queue_.status().track_count;
+    if (track_count != playback.track_count || selected >= track_count)
+        return false;
+    if (playback.state == playback_state::playing)
+        return player_.pause();
+    if (playback.state == playback_state::paused)
+        return player_.resume();
+    if (playback.state != playback_state::stopped)
+        return false;
+    const track *item = queue_.at(selected);
+    if (item == nullptr || !queue_.select(selected))
+        return false;
+    player_.select(selected);
+    return player_.play(item->path.data());
+}
 bool application::poweroff_quiesce(std::uint32_t timeout_ms) {
     const TickType_t started = xTaskGetTickCount();
     const TickType_t budget = pdMS_TO_TICKS(timeout_ms);

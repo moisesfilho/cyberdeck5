@@ -248,6 +248,34 @@ int main() {
     CHECK(player.selected_track == 0);
     CHECK(music.execute("music", "select 0").status == cyberdeck_apps::result_status::rejected);
 
+    player.state.state = cyberdeck_music::playback_state::playing;
+    CHECK(music.toggle_selected(0));
+    CHECK(player.pauses == 1 && player.played.empty());
+    player.state.state = cyberdeck_music::playback_state::paused;
+    CHECK(music.toggle_selected(0));
+    CHECK(player.resumes == 1 && player.played.empty());
+    const std::size_t selected_before_invalid_state = player.selected_track;
+    player.state.track_count = player.queue_count - 1;
+    player.state.state = cyberdeck_music::playback_state::playing;
+    CHECK(!music.toggle_selected(0));
+    player.state.state = cyberdeck_music::playback_state::paused;
+    CHECK(!music.toggle_selected(0));
+    CHECK(player.pauses == 1 && player.resumes == 1 && player.played.empty() &&
+          player.selected_track == selected_before_invalid_state);
+    player.state.track_count = player.queue_count;
+    player.state.state = cyberdeck_music::playback_state::error;
+    CHECK(!music.toggle_selected(0));
+    player.state.state = static_cast<cyberdeck_music::playback_state>(0xff);
+    CHECK(!music.toggle_selected(0));
+    CHECK(player.pauses == 1 && player.resumes == 1 && player.played.empty() &&
+          player.selected_track == selected_before_invalid_state);
+    player.state.state = cyberdeck_music::playback_state::stopped;
+    CHECK(music.toggle_selected(0));
+    CHECK(player.played.size() == 1 && player.selected_track == 0);
+    CHECK(!music.toggle_selected(1) && player.played.size() == 1);
+    CHECK(!music.toggle_selected(64) && player.played.size() == 1);
+    player.played.clear();
+
     CHECK(music.execute("other", "status").status == cyberdeck_apps::result_status::not_handled);
     result = music.execute("music", "help");
     CHECK(result.status == cyberdeck_apps::result_status::handled);
@@ -263,7 +291,7 @@ int main() {
     CHECK(music.execute("music", "pause").status == cyberdeck_apps::result_status::handled);
     CHECK(music.execute("music", "resume").status == cyberdeck_apps::result_status::handled);
     CHECK(music.execute("music", "stop").status == cyberdeck_apps::result_status::handled);
-    CHECK(player.pauses == 1 && player.resumes == 1 && player.halts == 1);
+    CHECK(player.pauses == 2 && player.resumes == 2 && player.halts == 1);
     CHECK(music.execute("music", "seek 0").status == cyberdeck_apps::result_status::handled);
     CHECK(music.execute("music", "seek 4294967").status == cyberdeck_apps::result_status::handled);
     CHECK(player.seeks.size() == 2 && player.seeks[0] == 0 && player.seeks[1] == 4294967000U);
@@ -328,6 +356,19 @@ int main() {
     CHECK(music.execute("music", "list").output.find("too-deep.mp3") == std::string::npos);
     CHECK(music.execute("music", "list").output.find("ignored.txt") == std::string::npos);
     CHECK(music.execute("music", "list").output.find("link.mp3") == std::string::npos);
+    player.state.state = cyberdeck_music::playback_state::stopped;
+    const auto play_requests_before_selected_enter = player.played.size();
+    CHECK(music.toggle_selected(2));
+    CHECK(player.played.size() == play_requests_before_selected_enter + 1 &&
+          player.played.back() == "/music/nested/inside.mp3" && player.selected_track == 2);
+    const auto play_requests_after_selected_enter = player.played.size();
+    CHECK(!music.toggle_selected(4) && player.played.size() == play_requests_after_selected_enter);
+    const auto selected_before_mismatch = player.selected_track;
+    player.state.track_count = player.queue_count - 1;
+    CHECK(!music.toggle_selected(1));
+    CHECK(player.played.size() == play_requests_after_selected_enter &&
+          player.selected_track == selected_before_mismatch);
+    player.state.track_count = player.queue_count;
 
     fs::remove(fs::path(scan_root) / "outside.mp3");
     write_file(fs::path(scan_root) / "root-track.mp3", "root-track-data");
@@ -446,6 +487,9 @@ int main() {
         std::chrono::seconds(2)));
     CHECK(player.queue_count == 0);
     CHECK(music.execute("music", "list").output.find("track-") == std::string::npos);
+    player.state.state = cyberdeck_music::playback_state::stopped;
+    const auto play_requests_before_empty_enter = player.played.size();
+    CHECK(!music.toggle_selected(0) && player.played.size() == play_requests_before_empty_enter);
 
     player.state.state = cyberdeck_music::playback_state::paused;
     CHECK(music.has_playback());

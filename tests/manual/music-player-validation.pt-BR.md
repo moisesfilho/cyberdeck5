@@ -300,6 +300,18 @@ recalculado a cada frame com o bitrate daquele frame, fazendo `elapsed/total`
 divergência maior que 1 s no EOF, reboot ou ausência de resposta NDJSON.
 Registre as amostras e o log e não repita automaticamente.
 
+## 6. Enter no player — pausa, retomada e faixa selecionada
+
+Validação Tab5 pendente para `REQ-ENTER-PLAYPAUSE`, `REQ-ENTER-SELECTED-START`
+e `REQ-ENTER-INVALID-NOOP`. Requer uma rodada que autorize playback, pois o
+caso `stopped + faixa selecionada` inicia áudio. Com fila concluída, selecionar
+uma faixa diferente da atual usando ↑/↓ e pressionar Enter deve iniciar essa
+faixa; durante `playing`, Enter pausa; durante `paused`, Enter retoma. Com fila
+vazia ou seleção inválida, Enter não deve iniciar faixa arbitrária. Confirmar
+cada estado por `music status`, observar uptime/log serial e parar conforme o
+protocolo de validação autorizado. Preservar os limites de segurança e a regra
+de não repetir automaticamente após panic/reboot.
+
 ## 5.1. Seek em faixa VBR — AC-MUSIC-16
 
 Cenário de playback; exige a mesma autorização explícita da seção 4, boot normal

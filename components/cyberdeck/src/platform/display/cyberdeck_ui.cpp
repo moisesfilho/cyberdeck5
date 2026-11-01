@@ -956,6 +956,7 @@ void process_music_status(lv_timer_t *) {
     s_header_view.update_music(music.has_playback());
     const bool music_is_foreground = cyberdeck_apps::global_runtime().active_foreground() == "cyberdeck.music";
     if (s_music_ui_active && !music_is_foreground) {
+        (void)s_keyboard_dispatch.invalidate_pending();
         s_music_ui_active = false;
         s_music_manager.deactivate();
         s_music_view.destroy();
@@ -986,6 +987,11 @@ void process_music_status(lv_timer_t *) {
         text += s_music_command_input.feedback();
         s_music_view.render(text);
         s_music_view.set_visible(true);
+        if (!s_keyboard_dispatch.invalidate_pending()) {
+            s_music_view.set_visible(false);
+            s_music_manager.deactivate();
+            return;
+        }
         (void)s_music_manager.activate();
         s_music_ui_active = true;
     }
@@ -1600,9 +1606,7 @@ bool music_manager_action(cyberdeck_music_manager::action action, void *) {
         return false;
     switch (action) {
     case cyberdeck_music_manager::action::toggle:
-        return app.player_command(state.state == cyberdeck_music::playback_state::playing ? "pause" :
-                                  state.state == cyberdeck_music::playback_state::paused ? "resume" : "play").status ==
-               cyberdeck_apps::result_status::handled;
+        return app.toggle_selected(s_music_view.selected_track());
     case cyberdeck_music_manager::action::seek_back:
     case cyberdeck_music_manager::action::seek_forward: {
         const bool forward = action == cyberdeck_music_manager::action::seek_forward;

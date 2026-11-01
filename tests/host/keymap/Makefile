@@ -2394,7 +2394,7 @@ test_keyboard_dispatch/test.o: test_keyboard_dispatch.cpp shim/full/lvgl.h shim/
 	@mkdir -p $(@D)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 
-test_keyboard_dispatch/keyboard_dispatch.o: ../../../components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp Makefile
+test_keyboard_dispatch/keyboard_dispatch.o: $(KEYBOARD_DISPATCH_SRC) shim/full/lvgl.h shim/full/esp_lvgl_port.h shim/full/freertos/FreeRTOS.h shim/full/freertos/queue.h shim/full/freertos/semphr.h Makefile
 	@mkdir -p $(@D)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 

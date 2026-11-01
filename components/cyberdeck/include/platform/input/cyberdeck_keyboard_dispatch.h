@@ -12,6 +12,7 @@ class dispatcher {
 public:
     bool start(callback handler, void *context);
     void stop();
+    bool invalidate_pending();
     void submit(const char *text, std::size_t length, std::uint8_t modifier,
                 std::uint32_t special_key);
 
