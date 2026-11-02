@@ -9,8 +9,8 @@ extern const lv_font_t cyberdeck_font;
 
 namespace cyberdeck_music_view {
 namespace {
-constexpr const char *kActions[] = {"prev", "toggle", "next", "seek_back", "seek_forward", "volume_down", "volume_up", "command_open"};
-constexpr const char *kLabels[] = {"Previous", "Play / Pause", "Next", "-10s", "+10s", "Vol -", "Vol +", "Command"};
+constexpr const char *kActions[] = {"prev", "toggle", "next", "seek_back", "seek_forward", "volume_down", "volume_up", "command_open", "play_selected"};
+constexpr const char *kLabels[] = {"Previous", "Play / Pause", "Next", "-10s", "+10s", "Vol -", "Vol +", "Command", "Play Selected"};
 constexpr int kMinimumButtonSize = 44;
 /* `card()` applies `pad_all = 8` (plus a 1 px border). Children are positioned
  * relative to the card *content* area, which already starts at `border + pad`
@@ -30,9 +30,9 @@ constexpr int kCardInset = 8;
  * same shortcuts in two rows after "seek". The break is explicit: the layout
  * decides by orientation and never measures text at runtime. */
 constexpr const char *kMusicControlsHint =
-    "Enter play/pause  left/right track  up/down list  +/- volume  Esc close";
+        "Enter play/pause  P play selected  left/right track  up/down list  +/- volume  Esc close";
 constexpr const char *kMusicControlsHintPortrait =
-    "Enter play/pause  left/right track\nup/down list  +/- volume  Esc close";
+        "Enter play/pause  P play selected\nleft/right track  up/down list  +/- volume  Esc close";
 const lv_color_t kBlack = lv_color_hex(0x000000);
 const lv_color_t kSurface = lv_color_hex(0x0A0A0A);
 const lv_color_t kBorder = lv_color_hex(0x2A2A2A);
@@ -217,7 +217,9 @@ void view::destroy() {
     surface_ = title_ = now_title_ = browser_title_ = status_ = now_playing_ = time_ = volume_ = progress_ = command_ = list_ = footer_ = controls_ = nullptr;
     parent_ = nullptr;
     tracks_.fill(nullptr); buttons_.fill(nullptr);
-    callback_ = nullptr; context_ = nullptr; visible_ = false; command_open_ = false; selected_track_ = 0;
+    callback_ = nullptr; context_ = nullptr; visible_ = false; command_open_ = false;
+    selection_pending_sync_ = false;
+    selected_track_ = 0;
     footer_landscape_ = -1;
 }
 
@@ -288,8 +290,13 @@ void view::render(std::string_view text) {
         const std::size_t end = value.find('/', begin);
         if (end != std::string::npos) {
             const int selected = std::atoi(value.substr(begin, end - begin).c_str());
-            if (selected > 0 && static_cast<std::size_t>(selected) <= line)
-                selected_track_ = static_cast<std::size_t>(selected - 1);
+            if (selected > 0 && static_cast<std::size_t>(selected) <= line) {
+                const std::size_t status_selection = static_cast<std::size_t>(selected - 1);
+                if (!selection_pending_sync_ || status_selection == selected_track_) {
+                    selected_track_ = status_selection;
+                    selection_pending_sync_ = false;
+                }
+            }
         }
     }
     for (std::size_t i = 0; i < tracks_.size(); ++i)
@@ -345,6 +352,7 @@ bool view::move_selection(int direction) {
         : (selected_track_ == 0 ? 0 : selected_track_ - 1);
     if (next == selected_track_) return false;
     selected_track_ = next;
+    selection_pending_sync_ = true;
     for (std::size_t i = 0; i < track_count; ++i)
         lv_obj_set_style_bg_color(tracks_[i], i == selected_track_ ? kSelected : kSurface, 0);
     lv_obj_scroll_to_view(tracks_[selected_track_], LV_ANIM_OFF);
@@ -483,6 +491,7 @@ void view::selected(lv_event_t *event) {
     for (std::size_t i = 0; i < self->tracks_.size(); ++i)
         if (self->tracks_[i] == target && !lv_obj_is_hidden(static_cast<lv_obj_t *>(target))) {
             self->selected_track_ = i;
+            self->selection_pending_sync_ = true;
             self->callback_("select", self->context_);
             return;
         }

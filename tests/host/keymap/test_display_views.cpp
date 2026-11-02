@@ -32,6 +32,22 @@ static void record_music_action(std::string_view action, void *context)
     log->actions.emplace_back(action);
     if (context == log->expected_context) ++log->context_calls;
 }
+struct stopped_playback_harness {
+    cyberdeck_music_view::view *view{};
+    std::size_t application_selection{};
+    std::vector<std::string> played_paths;
+};
+static void run_stopped_playback_harness(std::string_view action, void *context)
+{
+    auto &harness = *static_cast<stopped_playback_harness *>(context);
+    if (action == "select") {
+        harness.application_selection = harness.view->selected_track();
+    } else if (action == "toggle" && harness.played_paths.empty()) {
+        static constexpr std::string_view paths[]{"/music/first.mp3", "/music/second.mp3",
+                                                  "/music/third.mp3"};
+        harness.played_paths.emplace_back(paths[harness.application_selection]);
+    }
+}
 
 static void assert_visible_lines_fit(const cyberdeck_terminal_view::view &terminal,
                                      int32_t width)
@@ -586,7 +602,7 @@ int main()
     assert(music_footer->text_font == &cyberdeck_font);
     assert(music_footer->long_mode == LV_LABEL_LONG_MODE_DOTS);
     assert_not_scrollable(controls);
-    assert(controls->children.size() == 8);
+    assert(controls->children.size() == 9);
     for (const auto *button : controls->children) {
         const auto *label = button->children[0];
         assert(button->width >= 44 && button->height >= 44);
@@ -648,11 +664,12 @@ int main()
         assert(browser->children[index]->shadow_width == 0);
         assert(browser->children[index]->shadow_opa == 0);
     }
-    const std::array<std::string, 7> music_labels{
-        "Previous", "Play / Pause", "Next", "-10s", "+10s", "Vol -", "Vol +"};
-    const std::array<std::string, 7> music_actions{
+    const std::array<std::string, 9> music_labels{
+        "Previous", "Play / Pause", "Next", "-10s", "+10s", "Vol -", "Vol +", "Command",
+        "Play Selected"};
+    const std::array<std::string, 9> music_actions{
         "prev", "toggle", "next", "seek_back", "seek_forward",
-        "volume_down", "volume_up"};
+        "volume_down", "volume_up", "command_open", "play_selected"};
     for (std::size_t i = 0; i < music_labels.size(); ++i) {
         auto *button = controls->children[i];
         assert(button->children[0]->text == music_labels[i]);
@@ -660,12 +677,14 @@ int main()
         lv_shim_emit_event(button, LV_EVENT_CLICKED);
         assert(music_log.actions.back() == music_actions[i]);
     }
-    assert(music_log.actions.size() == 7 && music_log.context_calls == 7);
+    assert(music_log.actions.size() == 9 && music_log.context_calls == 9);
     auto *command_button = controls->children[7];
     assert(command_button->children[0]->text == "Command");
     assert(command_button->color == 0x303030);
     lv_shim_emit_event(command_button, LV_EVENT_CLICKED);
     assert(music_log.actions.back() == "command_open");
+    auto *play_selected_button = controls->children[8];
+    assert(play_selected_button->children[0]->text == "Play Selected");
     music_view.set_command_open(true);
     const auto *command_field = now_playing->children[5];
     assert(!command_field->hidden);
@@ -682,9 +701,9 @@ int main()
      * content is 680 px wide, so the break is orientation-driven and never
      * derived from runtime text metrics. */
     const std::string music_footer_landscape =
-        "Enter play/pause  left/right track  up/down list  +/- volume  Esc close";
+        "Enter play/pause  P play selected  left/right track  up/down list  +/- volume  Esc close";
     const std::string music_footer_portrait =
-        "Enter play/pause  left/right track\nup/down list  +/- volume  Esc close";
+        "Enter play/pause  P play selected\nleft/right track  up/down list  +/- volume  Esc close";
     /* TEST-MUSIC-FOOTER-LAYOUT: the footer owns the bottom `pad + label height`
      * band of the surface and both cards must end above it, in portrait
      * (696x1203) and landscape (1256x643). The old `height - y - pad` card
@@ -778,7 +797,7 @@ int main()
     music_view.set_command_cursor(99);
     music_view.set_command_open(false);
     lv_shim_emit_event(browser->children[1], LV_EVENT_CLICKED);
-    assert(music_log.actions.size() == 9 && music_log.actions.back() == "select");
+    assert(music_log.actions.size() == 11 && music_log.actions.back() == "select");
     assert(music_view.selected_track() == 0);
     music_view.render("Now playing: track.mp3");
     assert(music_status_label->text == "Now playing: track.mp3");
@@ -1060,6 +1079,9 @@ int main()
     assert(music_log.actions.size() == selection_actions_before_navigation + 1);
     assert(music_log.actions.back() == "select");
     assert(landscape_list->children[2]->color == 0x303030);
+    music_view.render("state: stopped\ntrack: 1/2\nmusic queue:\n1. track-1.mp3\n2. track-2.mp3\n");
+    assert(music_view.selected_track() == 1);
+    assert(landscape_list->children[2]->color == 0x303030);
     assert(music_view.move_selection(-1));
     assert(music_view.selected_track() == 0);
     assert(!music_view.move_selection(-1));
@@ -1074,12 +1096,73 @@ int main()
     lv_shim_emit_event(landscape_list->children[2], LV_EVENT_CLICKED);
     assert(music_log.actions.back() == "select");
     assert(music_view.selected_track() == 1);
+    music_view.render("state: stopped\ntrack: 1/2\nmusic queue:\n1. track-1.mp3\n2. track-2.mp3\n");
+    assert(music_view.selected_track() == 1);
+    assert(landscape_list->children[2]->color == 0x303030);
     const auto callback_count = music_log.actions.size();
     music_view.set_command_open(true);
     lv_shim_emit_event(controls->children[1], LV_EVENT_CLICKED);
     lv_shim_emit_event(landscape_list->children[1], LV_EVENT_CLICKED);
     assert(music_log.actions.size() == callback_count);
     music_view.set_command_open(false);
+
+    /* TEST-ENTER-SELECTED-START / TEST-MUSIC-SELECT-RENDER-ENTER: exercise
+     * actual LVGL view events and rendering around a fake app/player boundary.
+     * A status snapshot queued before selection must not revert either input
+     * path before stopped-state Enter consumes the selected track. */
+    cyberdeck_music_view::view integrated_view;
+    stopped_playback_harness playback_harness;
+    playback_harness.view = &integrated_view;
+    assert(integrated_view.create(&music_content, run_stopped_playback_harness,
+                                  &playback_harness));
+    integrated_view.render("state: stopped\ntrack: 1/3\nmusic queue:\n"
+                           "1. first.mp3\n2. second.mp3\n3. third.mp3\n");
+    assert(integrated_view.move_selection(1));
+    assert(playback_harness.application_selection == 1);
+    integrated_view.render("state: stopped\ntrack: 1/3\nmusic queue:\n"
+                           "1. first.mp3\n2. second.mp3\n3. third.mp3\n");
+    assert(integrated_view.selected_track() == 1);
+    auto *integrated_surface = music_content.children.back();
+    auto *integrated_list = integrated_surface->children[2];
+    auto *integrated_controls = integrated_surface->children[1]->children[6];
+    assert(integrated_list->children[2]->color == 0x303030);
+    assert(playback_harness.played_paths.empty());
+    lv_shim_emit_event(integrated_controls->children[1], LV_EVENT_CLICKED);
+    assert(playback_harness.played_paths.size() == 1);
+    assert(playback_harness.played_paths[0] == "/music/second.mp3");
+
+    playback_harness.played_paths.clear();
+    lv_shim_emit_event(integrated_list->children[3], LV_EVENT_CLICKED);
+    assert(playback_harness.application_selection == 2);
+    integrated_view.render("state: stopped\ntrack: 1/3\nmusic queue:\n"
+                           "1. first.mp3\n2. second.mp3\n3. third.mp3\n");
+    assert(integrated_view.selected_track() == 2);
+    assert(integrated_list->children[3]->color == 0x303030);
+    lv_shim_emit_event(integrated_controls->children[1], LV_EVENT_CLICKED);
+    assert(playback_harness.played_paths.size() == 1);
+    assert(playback_harness.played_paths[0] == "/music/third.mp3");
+
+    /* TEST-MUSIC-SELECT-RENDER-ENTER-03: a replacement queue can invalidate
+     * the pending index. A later valid touch must recover to a visible row;
+     * stale status cannot move it back, and converged status restores normal
+     * selection synchronization. */
+    integrated_view.render("state: stopped\ntrack: 1/2\nmusic queue:\n"
+                           "1. replacement-a.mp3\n2. replacement-b.mp3\n");
+    assert(integrated_view.selected_track() == 2);
+    assert(integrated_list->children[3]->hidden);
+    lv_shim_emit_event(integrated_list->children[2], LV_EVENT_CLICKED);
+    assert(integrated_view.selected_track() == 1);
+    assert(playback_harness.application_selection == 1);
+    integrated_view.render("state: stopped\ntrack: 1/2\nmusic queue:\n"
+                           "1. replacement-a.mp3\n2. replacement-b.mp3\n");
+    assert(integrated_view.selected_track() == 1);
+    assert(integrated_list->children[2]->color == 0x303030);
+    integrated_view.render("state: stopped\ntrack: 2/2\nmusic queue:\n"
+                           "1. replacement-a.mp3\n2. replacement-b.mp3\n");
+    assert(integrated_view.selected_track() == 1);
+    assert(integrated_list->children[2]->color == 0x303030);
+    assert(integrated_list->children[1]->color == 0x0A0A0A);
+    integrated_view.destroy();
     cyberdeck_music_view::view no_music_callback;
     assert(no_music_callback.create(&music_content, nullptr, nullptr));
     auto *no_callback_surface = music_content.children.back();

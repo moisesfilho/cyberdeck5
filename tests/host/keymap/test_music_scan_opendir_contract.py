@@ -77,6 +77,11 @@ checks = {
         'if (s_music_ui_active) {' in physical_handler and
         physical_handler.index('if (s_music_ui_active) {') < physical_handler.index('insert_physical_text') and
         'local_key(special_key);' in physical_handler,
+    "physical P dispatches play-selected while command text retains precedence":
+        "text[0] == 'p' || text[0] == 'P'" in physical_handler and
+        'key::play_selected' in physical_handler and
+        physical_handler.index('s_music_view.command_open()') < physical_handler.index("text[0] == 'p'") <
+        physical_handler.index('insert_physical_text'),
     "music foreground opening consumes early input before the view becomes active":
         'bool music_view_opening()' in ui_source and
         'active_foreground() != "cyberdeck.music"' in ui_source and
@@ -118,7 +123,7 @@ checks = {
         'select <index>' in music_source,
     "music view owns clickable actions and adapter preserves bounded player controls":
         'lv_obj_set_clickable(track, true)' in view_source and 'LV_EVENT_CLICKED' in view_source and
-        '"prev", "toggle", "next", "seek_back", "seek_forward", "volume_down", "volume_up"' in view_source and
+        '"prev", "toggle", "next", "seek_back", "seek_forward", "volume_down", "volume_up", "command_open", "play_selected"' in view_source and
         's_music_manager.handle(cyberdeck_music_manager::key::right)' in view_action and
         's_music_view.move_selection(1)' in action_adapter and 'lv_obj_scroll_to_view' in view_source and
         "length == 1 && (text[0] == '+' || text[0] == '-')" in physical_handler and
@@ -130,9 +135,7 @@ checks = {
         'cyberdeck_music_manager::key::volume_up' in virtual_insert_handler and
         'cyberdeck_music_manager::key::volume_down' in virtual_insert_handler and
         "text[0] == 'n'" not in physical_handler and "text[0] == 'N'" not in physical_handler and
-        "text[0] == 'p'" not in physical_handler and "text[0] == 'P'" not in physical_handler and
         "inserted[0] == 'n'" not in virtual_insert_handler and "inserted[0] == 'N'" not in virtual_insert_handler and
-        "inserted[0] == 'p'" not in virtual_insert_handler and "inserted[0] == 'P'" not in virtual_insert_handler and
         'action::seek_forward' in action_adapter and 'std::clamp<int>' in action_adapter and
         'player_command("seek "' in action_adapter and 'player_command("volume "' in action_adapter and
          'bool view::create(' in view_source and 'void view::destroy()' in view_source and

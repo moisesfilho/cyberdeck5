@@ -247,6 +247,8 @@ MUSIC_METADATA_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_mus
 MUSIC_METADATA_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_metadata.h
 MUSIC_DURATION_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_duration.cpp
 MUSIC_DURATION_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_duration.h
+MUSIC_TRACE_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_trace.cpp
+MUSIC_TRACE_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_trace.h
 MUSIC_DURATION_TEST := test_music_duration.cpp
 MUSIC_DURATION_BIN := test_music_duration_bin
 MUSIC_DURATION_OBJS := test_music_duration/test.o test_music_duration/duration.o
@@ -283,6 +285,8 @@ MUSIC_VBR_FIXTURE := fixtures/music/vbr-1s.mp3
 MUSIC_COMMAND_INPUT_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_music_command_input.cpp
 MUSIC_COMMAND_INPUT_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_music_command_input.h
 MUSIC_PLAYER_SOURCES := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp \
+	../../../components/cyberdeck/src/apps/music/cyberdeck_music_diagnostics.cpp \
+	$(MUSIC_TRACE_SRC) \
 	$(MUSIC_DURATION_SRC) \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
 	$(MUSIC_METADATA_SRC) \
@@ -2759,8 +2763,13 @@ test_music_player: test_music_player_bin
 
 test_music_player_bin: $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) $(MUSIC_PLAYER_SHIMS) $(MUSIC_APP_HDRS) $(MUSIC_METADATA_HDR) $(MUSIC_DURATION_HDR) $(MUSIC_AUDIO_HDR) music_traceability.md $(MUSIC_VBR_FIXTURE) Makefile
 	$(CXX) $(CXXFLAGS) -Wno-error=stringop-truncation -ffunction-sections -fdata-sections -pthread -Imusic_runtime_shim \
-		-I../../../components/cyberdeck/include -I../../../components/cyberdeck $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) \
+		-DCYBERDECK_MUSIC_TRACE_TESTING -I../../../components/cyberdeck/include -I../../../components/cyberdeck $(MUSIC_PLAYER_TEST) $(MUSIC_PLAYER_SOURCES) \
 		-Wl,--wrap=close -Wl,--wrap=read -Wl,--gc-sections -o $@
+
+.PHONY: test_music_trace
+test_music_trace:
+	$(CXX) $(CXXFLAGS) -DCYBERDECK_MUSIC_TRACE_TESTING -pthread -I../../../components/cyberdeck/include test_music_trace.cpp $(MUSIC_TRACE_SRC) -o /tmp/opencode/test_music_trace
+	/tmp/opencode/test_music_trace
 
 .PHONY: test_esp_hosted_cpu_staging
 test_esp_hosted_cpu_staging:

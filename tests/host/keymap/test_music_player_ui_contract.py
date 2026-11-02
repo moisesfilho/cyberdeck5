@@ -50,8 +50,8 @@ SYMBOL_MAP = Path(__file__).resolve().with_name("lv_symbol_codepoints.json")
 # The landscape variant is one row; portrait splits the same shortcuts after
 # "track" because the shortcut row may exceed the portrait width at the real font advance
 # (adv_w 173/16 = 10.8125 px/char) and the portrait surface only offers 680 px.
-MUSIC_HINT = "Enter play/pause  left/right track  up/down list  +/- volume  Esc close"
-MUSIC_HINT_PORTRAIT = MUSIC_HINT.replace("track  up/down", "track\nup/down")
+MUSIC_HINT = "Enter play/pause  P play selected  left/right track  up/down list  +/- volume  Esc close"
+MUSIC_HINT_PORTRAIT = MUSIC_HINT.replace("  left/right track", "\nleft/right track")
 
 # Macros used (or reserved for the header) by the UI that must stay covered.
 REQUIRED_COVERED_SYMBOLS = (
@@ -1003,6 +1003,13 @@ def main() -> int:
         "a commented LV_SYMBOL_PLAY must not become a literal")
 
     view_source = VIEW.read_text(encoding="utf-8")
+    require('"Play Selected"' in view_source and '"play_selected"' in view_source,
+            "the ninth touch control must dispatch Play Selected")
+    require("inserted[0] == 'p' || inserted[0] == 'P'" in ui_source and
+            "key::play_selected" in ui_source,
+            "P must route to Play Selected through the foreground music input")
+    require("inserted[0] == 'n' || inserted[0] == 'N'" not in ui_source,
+            "N must remain unbound")
     require(view_source.count(MUSIC_HINT) == 1,
             "the player view must define the controls hint exactly once, as the "
             "footer literal")
@@ -1312,7 +1319,8 @@ def main() -> int:
         require(footer_issues(flat_text) != [],
                 "mutation applying the flat hint in portrait must be rejected")
         unbroken_portrait = view_source.replace(
-            "left/right track\\nup/down list", "left/right track  up/down list")
+            "P play selected\\nleft/right track",
+            "P play selected  left/right track")
         require(unbroken_portrait != view_source,
                 "the portrait break must stay replaceable for the mutation proof")
         require(footer_issues(unbroken_portrait) != [],

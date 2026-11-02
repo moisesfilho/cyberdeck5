@@ -39,13 +39,13 @@ int main() {
     check(input.handle(key::enter) && input.handle(key::enter) && state.actions.empty(),
           "repeated Enter while the player view is opening is consumed without playback");
     check(input.activate(), "successfully created player view activates input");
-    check(input.handle(key::enter) && input.handle(key::left) && input.handle(key::right) && input.handle(key::up) &&
+    check(input.handle(key::enter) && input.handle(key::play_selected) && input.handle(key::left) && input.handle(key::right) && input.handle(key::up) &&
               input.handle(key::down) && input.handle(key::volume_up) && input.handle(key::volume_down),
           "active controls are consumed");
-    check(state.actions.size() == 7, "active controls map to seven player actions");
-    check(state.actions[1] == action::previous && state.actions[2] == action::next &&
-              state.actions[3] == action::select_previous && state.actions[4] == action::select_next &&
-              state.actions[5] == action::volume_up && state.actions[6] == action::volume_down,
+    check(state.actions.size() == 8, "active controls map to eight player actions");
+    check(state.actions[1] == action::play_selected && state.actions[2] == action::previous && state.actions[3] == action::next &&
+              state.actions[4] == action::select_previous && state.actions[5] == action::select_next &&
+              state.actions[6] == action::volume_up && state.actions[7] == action::volume_down,
           "arrows navigate tracks/list while dedicated volume keys adjust volume");
     state.close_ok = false;
     check(!input.handle(key::escape) && input.active(), "failed close retains active foreground ownership");

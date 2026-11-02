@@ -111,7 +111,7 @@ uptime reiniciado, pare; não repita nem tente playback.
 
 A surface contém status, lista rolável de até 64 faixas e controles de toque:
 `Previous`, `Play/Pause`, `Next`, `Seek -10s`, `Seek +10s`, `Volume -`,
-`Volume +` e `Command`. A lista deve mostrar scrollbar quando exceder o painel;
+`Volume +`, `Command` e `Play Selected`. A lista deve mostrar scrollbar quando exceder o painel;
 inspecione a lista e seus limites por `ui.dump`/captura, sem interagir com ela.
 Em portrait e landscape, confirme que os labels permanecem dentro de seus
 controles/linhas; nomes excessivos podem terminar em pontos, mas não devem
@@ -129,7 +129,20 @@ reprodução. Evite toda entrada interativa no player após as consultas `status
 
 ### 3.1. Captura de tela e entrada durante a inspeção
 
-Com a surface do player aberta, **Enter inicia playback** (play/pause): ele não
+### 3.2. Cenário Play Selected (somente rodada explicitamente autorizada)
+
+Este cenário não faz parte da inspeção passiva acima. Após autorização específica
+para playback, selecione outra faixa enquanto uma estiver tocando/pausada e use
+`P` ou o botão `Play Selected`: a faixa destacada deve iniciar do começo, uma
+única vez. Enter continua sendo toggle da faixa corrente (playing→pause,
+paused→resume); em stopped inicia a faixa destacada. Alterar highlight sozinho
+não deve iniciar áudio. Em fila vazia/seleção inválida, a ação deve falhar sem
+substituir playback. Verifique status/posição via `music status`, sem enviar
+comandos de controle duplicados. N permanece sem binding; comandos textuais
+`music select` e `music play` devem manter o comportamento existente.
+
+Com a surface do player aberta, **Enter alterna playback** (pausa/resume; inicia
+a seleção somente quando stopped): ele não
 serve para "acordar" a tela. Se a proteção de tela apagar o display, religue com
 injeção vazia (`ui.type ""`) e só então retome a inspeção — esse evento é
 consumido apenas para religar e não executa comando.
@@ -312,6 +325,12 @@ cada estado por `music status`, observar uptime/log serial e parar conforme o
 protocolo de validação autorizado. Preservar os limites de segurança e a regra
 de não repetir automaticamente após panic/reboot.
 
+Regressão host adicional: entre selecionar a faixa (por seta ou toque) e Enter,
+o timer pode renderizar um snapshot de status produzido antes da seleção. Esse
+snapshot não deve trocar o highlight nem a faixa tocada. A reprodução física
+relatada anteriormente não deve ser repetida sem nova autorização; a correção
+permanece pendente de validação independente no Tab5.
+
 ## 5.1. Seek em faixa VBR — AC-MUSIC-16
 
 Cenário de playback; exige a mesma autorização explícita da seção 4, boot normal
@@ -350,3 +369,73 @@ seek; resta apenas o aceite visual (áudio/barra) no dispositivo.
 **Falha do cenário:** `state: error`, `error_stage: decode`, posição que não
 avança depois do seek, `discard_ms > 5000`, reboot ou ausência de resposta
 NDJSON. Registre o alvo, as amostras e o log e não repita automaticamente.
+
+## Snapshot de diagnóstico (read-only)
+
+Com o app/player já aberto, envie pela ponte Serial-JTAG uma linha NDJSON:
+
+```bash
+{"rid":"audio-diag","type":"music.diagnostics"}
+```
+
+O resultado deve ter `version:1`, `read_only:true`, geração e contadores/timings
+RAM (microsegundos) de read/decode/codec-start/write, submétricas independentes
+de route-check/backend-write e pause. `generation` é a
+última solicitação de playback aceita na fila; campos de operação, pausa,
+falhas e `failure_stage` pertencem estritamente a ela e são zerados no enqueue
+aceito, antes de o worker começar. `generations_queued/started/retired` são
+acumuladores da sessão e não são zerados ao trocar de faixa. Queue-full rejeitado
+não avança geração nem queued count. Stop/halt invalidam trabalho ativo, mas não
+criam geração enfileirada nem limpam os diagnósticos da última solicitação aceita;
+trabalho superseded pode incrementar somente o retired acumulado e nunca publicar
+métricas/erros na geração atual. Falha pré-PCM registra o estágio e contador da
+geração nova, mantendo zero nas operações não realizadas. Para cada operação
+read/decode/codec-start/write, `*_time_us` é o acumulado saturante e `*_max_us`
+é a maior duração observada; cada máximo deve ser menor ou igual ao total.
+`route_check_*` conta somente quando `update_route()` realmente é chamado (não
+quando o throttle retorna cedo); `backend_write_*` conta somente se o callback
+de escrita é chamado. Estes campos apenas separam tempos e não diagnosticam
+causalidade nem alteram áudio.
+A consulta nunca
+inicia o app/player e deve retornar `player_not_running` se o worker não foi
+inicializado. `esp_timer_get_time()` é consultado em torno de cada operação
+medida; esse custo de timestamp ocorre no worker, não no caminho de snapshot/UI.
+Os contadores saturam em `UINT64_MAX`. Não use esta verificação para autorizar
+playback físico: flash e reprodução exigem autorização explícita separada.
+
+## Trace temporal (read-only, sem playback)
+
+Com o player aberto, solicitar páginas sem abrir monitor concorrente:
+
+```bash
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 '{"rid":"audio-trace","type":"music.trace","limit":16}'
+python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 '{"rid":"audio-trace-next","type":"music.trace","cursor":16,"limit":16}'
+```
+
+Usar `next` retornado como cursor da próxima página. `truncated` indica cursor
+anterior ao ring; `lost` conta sobrescritas/slots instáveis. Este trace mede
+somente operações do worker e não atesta underrun/DMA físico nem identifica
+causa isoladamente. Não executar playback para gerar eventos sem autorização
+separada. Comparar timestamps monotônicos e durações de SD read/decode/codec
+start/output write por geração, preservando a resposta e log de boot.
+
+### Registro da rodada de trocas — 2026-11-02
+
+Firmware SHA-256 `67a2358a14fd3130df0564d272cf68e441ab4bc2ceaf32f43583bb26e8013daa`;
+snapshot HEAD `d2236a4b94bc7a2ada4482991732dcd6d7a00d66` + diff
+`1b1710ba0bf7a87d8eb60570d2b74bfcccee0784b46fff0ec0e2f23105028f49`.
+O usuário fez várias trocas, esperou segundos e também trocou rapidamente; relatou
+nenhum engasgo. Resultado: teste manual direcionado de stutter nas trocas relatadas
+PASS por observação do usuário; não implica aceite completo do player.
+
+`music.diagnostics`: generation=7; queued/started/retired=7/7/6; failures=0;
+max read/decode/codec-start/write = 5465/11603/18720/27827 us; route
+35/max 1341 us; backend 734/max 27803 us. `sys.info` uptime 00:20:03→00:20:18,
+safe_mode=false, interrupted_boots=0, recovery_persisted=true.
+Trace `/tmp/opencode/music-trace-user-run-20261102.jsonl`, SHA-256
+`224166835af56b2e39e585dfdd79869152131d1cac63ca9af151754d9efda7d6`: 4 páginas,
+64 eventos; primeira `truncated=true`, `lost=10176`, eventos capturados somente
+seq 10176..10239 da generation 7. Transições anteriores foram sobrescritas;
+trace do worker não detecta underrun DMA nem prova causalidade. Nenhuma correção
+funcional foi feita. Causa raiz não confirmada; speaker/jack e demais gates de
+aceite integral continuam separados.

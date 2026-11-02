@@ -1,5 +1,72 @@
 # Music player host-test traceability
 
+## Manual stutter-swap observation — 2026-11-02
+
+Targeted device observation: user performed multiple track changes, waited
+several seconds, then changed tracks rapidly and reported no audible stutter.
+PASS applies only to this reported scenario, not complete player acceptance or
+root-cause closure. Firmware SHA-256
+`67a2358a14fd3130df0564d272cf68e441ab4bc2ceaf32f43583bb26e8013daa`; worktree
+snapshot HEAD `d2236a4b94bc7a2ada4482991732dcd6d7a00d66` + diff
+`1b1710ba0bf7a87d8eb60570d2b74bfcccee0784b46fff0ec0e2f23105028f49`.
+Read-only diagnostics: generation 7, queued/started/retired 7/7/6, failures 0;
+max read/decode/codec-start/write 5465/11603/18720/27827 us; route 35/max 1341
+us; backend 734/max 27803 us. `sys.info` uptime 00:20:03→00:20:18,
+safe_mode=false, interrupted_boots=0, recovery_persisted=true.
+Trace `/tmp/opencode/music-trace-user-run-20261102.jsonl` SHA-256
+`224166835af56b2e39e585dfdd79869152131d1cac63ca9af151754d9efda7d6`: 4 pages,
+64 events, `truncated=true`, `lost=10176`, captured seq 10176..10239 only
+(generation 7). Earlier transitions were overwritten. Worker trace cannot prove
+DMA underrun or causality; no functional fix was made and root cause remains
+unconfirmed. Tester/device validation remains pending only for the separate full
+acceptance gates, not for this reported targeted scenario.
+
+## Per-generation output submetrics (cycle 7)
+
+## Bounded worker trace for stutter investigation (cycle 10)
+
+`REQ/AC-AUDIO-TEMP-01..06`: additive read-only `music.trace`; existing
+`music.diagnostics` schema v1 is unchanged. Ring holds 64 fixed records (2048 B
+atomic slots), one worker producer, 16-event page cap, explicit cursor/next,
+truncation and saturating overwrite/inconsistent-slot loss. Publication and every
+payload word are lock-free atomic uint32; timestamp is represented as two such
+words. Reader validates publication before/after and never waits or locks. Worker
+records request start/retire, SD read, decode, codec start, output write and
+failure, with monotonic timestamp, generation, result, duration and available
+byte counts. No ISR, physical underrun, DMA generation, allocation, log or lock
+is introduced in the trace write path; data is observational, not a root-cause
+claim.
+
+| Test | Evidence / limitation |
+| --- | --- |
+| TEST-AUDIO-TEMP-01 | `test_music_trace`: empty ring, chronological cursor/page, wrap, truncation, 64-slot capacity, timestamp split and field coherence. Test compiles `sizeof(trace_recorder) <= 4096` and `sizeof(trace_page) <= 4096`; current host measurements are recorder=2056 B and page=664 B. Eight atomic uint32 fields × 64 = 2048 B before counters/padding; the actual `sizeof` assertion avoids relying on the stale 28-byte estimate. |
+| TEST-AUDIO-TEMP-02 | Concurrent snapshots during 100k writes verify cross-field coherence; TEST-07 additionally forces an in-progress publication and verifies omission rather than a torn event. |
+| TEST-AUDIO-TEMP-03 | `test_music_player` verifies worker request-start event/generation through the real player; SD/decode/output event payload checks are not yet exhaustive. |
+| TEST-AUDIO-TEMP-04 | `test_serial_ndjson_dispatch` checks paged schema, event fields, read-only marker, invalid limit rejection and no provider invocation on invalid input. |
+| TEST-AUDIO-TEMP-05 | `music.diagnostics` serializer/route tests remain unchanged and pass; additions are a separate request type. |
+| TEST-AUDIO-TEMP-06 | IDF 6.1 build compiles static lock-free assertion for the P4 target; no hardware execution or stutter causality claim. |
+| TEST-AUDIO-TEMP-07 | Host-only `CYBERDECK_MUSIC_TRACE_TESTING` barrier pauses the real producer after payload writes but before release-publication. A concurrent snapshot returns while the writer is held and omits the partial record; after release it returns the complete record. Hook code is preprocessed out of firmware. |
+| TEST-AUDIO-TEMP-08 | `test_music_player` observes the request-start event with the accepted generation and covers queued replacement/retirement accounting. Recorder generation is payload-only; it does not own player lifecycle. Detailed every-event payload coverage remains limited. |
+| TEST-AUDIO-TEMP-09 | `test_music_player` compiles a host-only lifecycle barrier into the real player TU. It forces snapshot-first (snapshot holds lifecycle lock while stop is issued, then both complete) and stop-first (stop owns the lifecycle lock after setting `shutting_down`, snapshot returns unavailable immediately), then confirms unavailable after teardown with no stale snapshot. Hooks are preprocessed out of firmware. Independent tester validation remains required. |
+| TEST-AUDIO-TEMP-10 | Focused route checks validate invalid limit before provider access and bounded response for a populated page; serializer clamps count to the fixed 16-event storage even for an invalid provider result. No claim is made about arbitrary unbounded JSON input (NDJSON framing caps requests at 4096 bytes). |
+
+`TEST-AUDIO-WRITE-SUB-01..07` cover the real `cyberdeck_audio_output.cpp` with
+an injected backend and fake monotonic clock, plus player-generation publication
+and NDJSON serialization. Route timing is returned from both `start()` and
+`write()`: successful forced open checks and actual same-format reentry checks
+are counted, throttle fast returns are omitted, and failed attempts retain time.
+The player aggregates each returned route attempt once alongside (not inside)
+the existing codec-start and overall-write measurements. Tests cover start/open,
+same-format reentry after throttle, failure, write path, no double-counting,
+generation reset, bounded totals/max, and serialization. They distinguish actual (non-throttled) route checks
+from backend writes, retain durations on failed stages, omit backend metrics when
+route/arguments prevent the call, preserve the existing overall `write_*` fields,
+and reset/add only to the active generation. Snapshot serialization adds
+`route_check_{calls,time_us,max_us}` and
+`backend_write_{calls,time_us,max_us}`. No playback status, call order, or hardware
+behavior is changed; no causal diagnosis is asserted. Device validation remains
+separately authorized and is not part of this cycle.
+
 ## Vendor I2S diagnostic harness (cycle 6)
 
 REQ-AUDIO-I2S-01..03 / AC-01..04 are exercised by the standalone focused targets
@@ -69,6 +136,39 @@ TEST-MUSIC-ESC-01..08 and TEST-MUSIC-DUR-01..14
 scenarios. This matrix records tested behavior versus seams that are not
 currently host-executable; structural/source inspection is not treated as
 runtime proof.
+
+## Read-only post-playback observability specification (additive)
+
+Dependency rationale: the approved explicit post-playback telemetry query needs
+player snapshot data, but no API outside the snapshot player exposes it. The
+minimum dependency is a new read-only NDJSON Serial-JTAG request route. This is
+not a textual/music-shell command; do not extend command manifests, help, or
+`music status`, and do not change playback behavior. The route may read only a
+safe singleton/runtime snapshot; it must not lazy-start/open the app when closed,
+call player controls, serialize LVGL state, or perform hardware/I/O work.
+The existing music shell/status path and the planned telemetry acceptance IDs
+`AC-AUDIO-OBS-*` and telemetry `TEST 01..08` remain retained and unchanged.
+
+| Requirement / acceptance | New independent test specification |
+| --- | --- |
+| AC-AUDIO-OBS route accepts one bounded request kind, returns a bounded/versioned schema with an explicit read-only result, and rejects unknown kind or non-running player without side effects | TEST-AUDIO-OBS-ROUTE-01: valid request dispatch and schema bounds; TEST-AUDIO-OBS-ROUTE-02: unknown kind and player-not-running are typed failures and do not start/open the app |
+| AC-AUDIO-OBS is observational only | TEST-AUDIO-OBS-ROUTE-03: exact before/after invariance of playback generation, state and position; assert no player/control calls and no audio/hardware output |
+| AC-AUDIO-OBS preserves the existing bridge protocol and shell contract | TEST-AUDIO-OBS-ROUTE-04: coexistence with `rid` correlation/envelopes, interleaved log lines, oversize and unknown requests; existing `music status` output/dispatch remains unchanged |
+| AC-AUDIO-OBS snapshot fields distinguish empty/invalid data from valid values | TEST-AUDIO-OBS-ROUTE-05: zero-valued snapshot and validity/availability fields; TEST-AUDIO-OBS-ROUTE-06: valid snapshot field mapping and schema bounds |
+| AC-AUDIO-OBS route is host-verifiable without hardware | TEST-AUDIO-OBS-ROUTE-07: deterministic host seam exercises production route dispatch/serializer with controlled snapshot; TEST-AUDIO-OBS-ROUTE-08: repeatable request/result and failure mapping, no timing/device dependency |
+
+The route is implemented as additive `music.diagnostics`; telemetry acceptance
+IDs `TEST-BUG-AUDIO-OBS-01..08` remain the behavior matrix for timing/counter
+semantics, generation lifecycle, saturation, and concurrent stop snapshots.
+`TEST-AUDIO-OBS-ROUTE-01..08` remain the independent route/schema/error contract.
+Host execution in this implementation is focused and is not a substitute for
+the tester's independent coverage review. Manual validation remains pending;
+this cycle performs no device, flash, or playback.
+
+| Test ID | Evidence mapping |
+| --- | --- |
+| TEST-BUG-AUDIO-OBS-01..09 | `test_music_player` exercises initialized-only availability, real worker failure-stage counters, and queued/started/retired generation paths. A completed generation with read/decode/start/write/pause metrics is followed by an accepted early-open-failure request: the new generation immediately exposes zero operation/pause fields, then only its open failure; cumulative lifecycle counters remain monotonic. Queue-full rejection preserves latest generation and queued count. TEST-09 blocks A in PCM write, accepts B, releases A and verifies A cannot publish metrics into B before B's early open failure; queued/started/retired lifecycle counters account for both. Production helpers test saturating counts/totals and operation max as the actual maximum elapsed delta, plus deterministic pause intervals including reversed timestamps. Cases cover zero, one and multiple operations, `max<=total`, and saturated totals; route tests verify all four `*_max_us` fields serialize. Limitation: worker clock is not injected, so actual runtime durations and every queue-reset/concurrent retirement schedule are not proven. |
+| TEST-AUDIO-OBS-ROUTE-01..08 | `test_serial_ndjson_dispatch` covers known route parse and typed not-running host result; production ESP route reads `global_player()` directly and emits versioned bounded JSON. Device-only route dispatch/schema invariance remains for independent structural review/manual validation. |
 
 ## Requirement traceability
 

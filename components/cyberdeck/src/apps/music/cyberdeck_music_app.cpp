@@ -520,6 +520,24 @@ bool application::toggle_selected(std::size_t selected) {
     player_.select(selected);
     return player_.play(item->path.data());
 }
+bool application::play_selected(std::size_t selected) {
+    snapshot playback{};
+    if (!player_.status(playback))
+        return false;
+    if (playback.state != playback_state::playing && playback.state != playback_state::paused &&
+        playback.state != playback_state::stopped)
+        return false;
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    const auto queue = queue_.status();
+    if (queue.track_count == 0 || queue.track_count != playback.track_count || playback.selected >= playback.track_count ||
+        selected >= queue.track_count)
+        return false;
+    const track *item = queue_.at(selected);
+    if (item == nullptr || item->path[0] == '\0' || !queue_.select(selected))
+        return false;
+    player_.select(selected);
+    return player_.play(item->path.data());
+}
 bool application::poweroff_quiesce(std::uint32_t timeout_ms) {
     const TickType_t started = xTaskGetTickCount();
     const TickType_t budget = pdMS_TO_TICKS(timeout_ms);

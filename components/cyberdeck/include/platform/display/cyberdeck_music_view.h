@@ -50,11 +50,12 @@ class view final {
     lv_obj_t *footer_ = nullptr;
     lv_obj_t *controls_ = nullptr;
     std::array<lv_obj_t *, 64> tracks_{};
-     std::array<lv_obj_t *, 8> buttons_{};
+    std::array<lv_obj_t *, 9> buttons_{};
     callback callback_ = nullptr;
     void *context_ = nullptr;
     bool visible_ = false;
     bool command_open_ = false;
+    bool selection_pending_sync_ = false;
     /* Orientation whose footer text is already applied: -1 = never applied
      * (fresh label). `layout()` runs on every status refresh, so the footer
      * setter is gated by this value instead of re-writing the same string. */

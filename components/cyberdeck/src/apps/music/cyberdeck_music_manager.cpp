@@ -37,6 +37,7 @@ bool manager::handle(key value) {
         return true;
     switch (value) {
     case key::enter: (void)perform_(action::toggle, context_); break;
+    case key::play_selected: (void)perform_(action::play_selected, context_); break;
     case key::left: (void)perform_(action::previous, context_); break;
     case key::right: (void)perform_(action::next, context_); break;
     case key::up: (void)perform_(action::select_previous, context_); break;

@@ -23,6 +23,7 @@
  * O teste falha em compilacao ate o coder criar os modulos (RED por design).
  */
 #include "apps/serial/cyberdeck_serial_bridge.h"
+#include "apps/music/cyberdeck_music_player.h"
 
 #include <cstdio>
 #include <cstring>
@@ -40,6 +41,51 @@ inline std::string esc(const std::string& s){
     std::string r; for(unsigned char c: s){ if(c=='\n') r+="\\n"; else if(c=='\r') r+="\\r"; else if(c==0) r+="\\0"; else if(c<32||c>=127){ char b[8]; std::snprintf(b,sizeof(b),"\\x%02X",c); r+=b;} else r+=char(c);} return r;
 }
 #define CHECK_STR_EQ(actual, expected) do { ++s_checks; if ((actual)!=(expected)) { ++s_failures; std::printf("FAIL %s:%d expected '%s' actual '%s'\n", __FILE__, __LINE__, esc(expected).c_str(), esc(actual).c_str()); } } while(0)
+
+struct diagnostics_fixture { int calls = 0; bool available = true; };
+bool provide_diagnostics(void *context, cyberdeck_music::diagnostics_snapshot &out) {
+    auto &fixture = *static_cast<diagnostics_fixture *>(context);
+    ++fixture.calls;
+    out.generation = 17;
+    out.read_max_us = 11;
+    out.decode_max_us = 22;
+    out.codec_start_max_us = 33;
+    out.write_max_us = 44;
+    out.route_check_calls = 4;
+    out.route_check_time_us = 55;
+    out.route_check_max_us = 22;
+    out.backend_write_calls = 3;
+    out.backend_write_time_us = 66;
+    out.backend_write_max_us = 33;
+    out.pause_count = 2;
+    out.pause_time_us = 900;
+    return fixture.available;
+}
+bool provide_trace(void *context, std::uint32_t cursor, std::uint32_t limit,
+                   cyberdeck_music::trace_page &out) {
+    auto &fixture = *static_cast<diagnostics_fixture *>(context);
+    ++fixture.calls;
+    if (!fixture.available) return false;
+    if (cursor == 99 && limit == 2) {
+        out.count = UINT32_MAX;
+        out.next = cursor;
+        return true;
+    }
+    if (cursor == 0 && limit == cyberdeck_music::k_trace_page_capacity) {
+        out.count = cyberdeck_music::k_trace_page_capacity;
+        out.cursor = 0;
+        out.next = cyberdeck_music::k_trace_page_capacity;
+        for (std::uint32_t i = 0; i < out.count; ++i)
+            out.events[i] = {UINT32_MAX, UINT64_MAX, UINT32_MAX,
+                             cyberdeck_music::trace_kind::failure, INT32_MIN, UINT32_MAX, UINT32_MAX};
+        return true;
+    }
+    if (cursor != 4 || limit != 2) return false;
+    out.count = 1;
+    out.next = 5;
+    out.events[0] = {4, 123456789ULL, 9, cyberdeck_music::trace_kind::sd_read, 16, 27, 16};
+    return true;
+}
 
 void test_bounded_max_line_rejected() {
     CHECK(cyberdeck_serial::k_max_ndjson_line == 4096);
@@ -121,6 +167,11 @@ void test_invalid_json_and_missing_fields() {
         const char* s = "{\"rid\":\"r1\",\"type\":\"unknown.cmd\"}";
         CHECK(!cyberdeck_serial::parse_ndjson_line(s, std::strlen(s), req, err));
         CHECK(err == cyberdeck_serial::dispatch_error::unknown_type);
+    }
+    {
+        const char *line = "{\"rid\":\"audio\",\"type\":\"music.diagnostics\"}";
+        CHECK(cyberdeck_serial::parse_ndjson_line(line, std::strlen(line), req, err));
+        CHECK(req.type == "music.diagnostics");
     }
     // invalid UTF-8 byte inside string must be invalid_utf8 (or at least invalid_json), never none
     {
@@ -288,6 +339,93 @@ int main(){
     test_ui_commands_dispatch();
     test_bounded_determinism_and_no_overflow();
     test_error_envelope_is_valid_ndjson();
+    {
+        cyberdeck_music::diagnostics_snapshot zero{};
+        const std::string json = cyberdeck_serial::music_diagnostics_to_json(zero);
+        CHECK(json.find("\"version\":1,\"read_only\":true") == 1);
+        CHECK(json.find("\"read_calls\":0") != std::string::npos);
+        CHECK(json.find("\"read_max_us\":0") != std::string::npos);
+        CHECK(json.find("\"decode_max_us\":0") != std::string::npos);
+        CHECK(json.find("\"codec_start_max_us\":0") != std::string::npos);
+        CHECK(json.find("\"write_max_us\":0") != std::string::npos);
+        CHECK(json.find("\"route_check_calls\":0") != std::string::npos);
+        CHECK(json.find("\"backend_write_calls\":0") != std::string::npos);
+        CHECK(json.find("\"pause_time_us\":0") != std::string::npos);
+        CHECK(json.find("\"failure_counts\":{\"open\":0,\"id3\":0,\"decode\":0,\"codec_start\":0,\"codec_write\":0,\"read\":0,\"io\":0}") != std::string::npos);
+        zero.failure_stage = 4;
+        CHECK(cyberdeck_serial::music_diagnostics_to_json(zero).find("\"failure_stage\":\"codec_start\"") != std::string::npos);
+        zero.failure_stage = 255;
+        CHECK(cyberdeck_serial::music_diagnostics_to_json(zero).find("\"failure_stage\":null") != std::string::npos);
+        zero.write_calls = UINT64_MAX;
+        const std::string saturated = cyberdeck_serial::music_diagnostics_to_json(zero);
+        CHECK(saturated.size() < 768);
+        CHECK(saturated.find("\"write_calls\":18446744073709551615") != std::string::npos);
+    }
+    {
+        const char *line = "{\"rid\":\"diag\",\"type\":\"music.diagnostics\"}";
+        diagnostics_fixture fixture;
+        cyberdeck_serial::set_music_diagnostics_provider_for_test(provide_diagnostics, &fixture);
+        const auto result = cyberdeck_serial::dispatch_one(line, std::strlen(line));
+        CHECK(result.ok);
+        CHECK(result.envelope_json.find("\"read_only\":true") != std::string::npos);
+        CHECK(result.envelope_json.find("\"generation\":17") != std::string::npos);
+        CHECK(result.envelope_json.find("\"pause_time_us\":900") != std::string::npos);
+        CHECK(result.envelope_json.find("\"read_max_us\":11") != std::string::npos);
+        CHECK(result.envelope_json.find("\"decode_max_us\":22") != std::string::npos);
+        CHECK(result.envelope_json.find("\"codec_start_max_us\":33") != std::string::npos);
+        CHECK(result.envelope_json.find("\"write_max_us\":44") != std::string::npos);
+        CHECK(result.envelope_json.find("\"route_check_calls\":4") != std::string::npos);
+        CHECK(result.envelope_json.find("\"route_check_time_us\":55") != std::string::npos);
+        CHECK(result.envelope_json.find("\"route_check_max_us\":22") != std::string::npos);
+        CHECK(result.envelope_json.find("\"backend_write_calls\":3") != std::string::npos);
+        CHECK(result.envelope_json.find("\"backend_write_time_us\":66") != std::string::npos);
+        CHECK(result.envelope_json.find("\"backend_write_max_us\":33") != std::string::npos);
+        CHECK(fixture.calls == 1);
+        fixture.available = false;
+        const auto unavailable = cyberdeck_serial::dispatch_one(line, std::strlen(line));
+        CHECK(!unavailable.ok);
+        CHECK(unavailable.err == cyberdeck_serial::dispatch_error::player_not_running);
+        CHECK(fixture.calls == 2);
+        const char *unknown = "{\"rid\":\"x\",\"type\":\"unknown\"}";
+        cyberdeck_serial::dispatch_one(unknown, std::strlen(unknown));
+        CHECK(fixture.calls == 2);
+        cyberdeck_serial::set_music_diagnostics_provider_for_test(nullptr, nullptr);
+    }
+    {
+        diagnostics_fixture fixture;
+        cyberdeck_serial::set_music_trace_provider_for_test(provide_trace, &fixture);
+        const char *line = "{\"rid\":\"trace\",\"type\":\"music.trace\",\"cursor\":4,\"limit\":2}";
+        const auto result = cyberdeck_serial::dispatch_one(line, std::strlen(line));
+        CHECK(result.ok);
+        CHECK(result.envelope_json.find("\"read_only\":true") != std::string::npos);
+        CHECK(result.envelope_json.find("\"kind\":\"sd_read\"") != std::string::npos);
+        CHECK(result.envelope_json.find("\"time_us\":123456789") != std::string::npos);
+        CHECK(result.envelope_json.find("\"next\":5") != std::string::npos);
+        CHECK(result.envelope_json.size() < cyberdeck_serial::k_max_ndjson_line);
+        CHECK(fixture.calls == 1);
+        const char *max_page = "{\"rid\":\"trace-max\",\"type\":\"music.trace\",\"cursor\":0,\"limit\":16}";
+        const auto bounded = cyberdeck_serial::dispatch_one(max_page, std::strlen(max_page));
+        CHECK(bounded.ok);
+        CHECK(bounded.envelope_json.size() < cyberdeck_serial::k_max_ndjson_line);
+        CHECK(bounded.envelope_json.find("\"time_us\":18446744073709551615") != std::string::npos);
+        const char *bad_count = "{\"rid\":\"trace-count\",\"type\":\"music.trace\",\"cursor\":99,\"limit\":2}";
+        const auto clamped = cyberdeck_serial::dispatch_one(bad_count, std::strlen(bad_count));
+        CHECK(clamped.ok && clamped.envelope_json.size() < cyberdeck_serial::k_max_ndjson_line);
+        std::size_t seq_count = 0;
+        for (std::size_t pos = 0; (pos = clamped.envelope_json.find("\"seq\":", pos)) != std::string::npos;
+             pos += 6)
+            ++seq_count;
+        CHECK(seq_count == cyberdeck_music::k_trace_page_capacity);
+        CHECK(fixture.calls == 3);
+        fixture.available = false;
+        const auto stopped = cyberdeck_serial::dispatch_one(line, std::strlen(line));
+        CHECK(!stopped.ok && stopped.err == cyberdeck_serial::dispatch_error::player_not_running);
+        CHECK(fixture.calls == 4);
+        const char *bad = "{\"rid\":\"trace\",\"type\":\"music.trace\",\"limit\":17}";
+        CHECK(!cyberdeck_serial::dispatch_one(bad, std::strlen(bad)).ok);
+        CHECK(fixture.calls == 4);
+        cyberdeck_serial::set_music_trace_provider_for_test(nullptr, nullptr);
+    }
     if (s_failures==0) { std::printf("PASS: serial_ndjson_dispatch (%d checks)\n", s_checks); return 0; }
     std::printf("FAIL: %d de %d checks falharam\n", s_failures, s_checks); return 1;
 }

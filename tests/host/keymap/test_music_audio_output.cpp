@@ -34,6 +34,8 @@ struct codec_probe {
     std::vector<std::string> calls;
 };
 TickType_t now = 0;
+std::uint64_t clock_now_us = 0;
+std::uint64_t fake_clock() { return clock_now_us; }
 
 void *initialize(void *context) {
     auto &p = *static_cast<codec_probe *>(context);
@@ -55,6 +57,7 @@ bool set_volume(void *context, void *, std::uint8_t volume) {
 }
 bool write_samples(void *context, void *, const std::int16_t *, std::size_t count) {
     auto &p = *static_cast<codec_probe *>(context);
+    clock_now_us += 17;
     p.calls.emplace_back("write:" + std::to_string(count)); ++p.writes; return !p.fail_write;
 }
 bool close_codec(void *context, void *) {
@@ -62,12 +65,13 @@ bool close_codec(void *context, void *) {
     p.calls.emplace_back("close"); ++p.closes; return !p.fail_close;
 }
 bool headset_connected(void *context) {
-    auto &p = *static_cast<codec_probe *>(context); p.calls.emplace_back("headset"); return p.headset;
+    auto &p = *static_cast<codec_probe *>(context); p.calls.emplace_back("headset"); clock_now_us += 5; return p.headset;
 }
 bool set_amplifier(void *context, bool enabled) {
     auto &p = *static_cast<codec_probe *>(context);
     p.calls.emplace_back(enabled ? "amp-on" : "amp-off");
     if (enabled) ++p.amp_on; else ++p.amp_off;
+    clock_now_us += 7;
     return !p.fail_amplifier;
 }
 
@@ -78,6 +82,7 @@ bool contains_after(const std::vector<std::string> &calls, std::size_t from, con
 }
 
 TickType_t xTaskGetTickCount() { return now; }
+extern "C" std::int64_t esp_timer_get_time(void) { return static_cast<std::int64_t>(clock_now_us); }
 
 void *bsp_audio_codec_speaker_init() { return nullptr; }
 bool bsp_headphone_is_connected() { return false; }
@@ -89,6 +94,7 @@ int esp_codec_dev_write(esp_codec_dev_handle_t, std::int16_t *, int) { return ES
 int esp_codec_dev_close(esp_codec_dev_handle_t) { return ESP_CODEC_DEV_OK; }
 
 int main() {
+    cyberdeck_audio_output::set_clock_for_test(fake_clock);
     codec_probe probe;
     const cyberdeck_audio_output::backend device{
         &probe, initialize, mute, open_codec, set_volume, write_samples,
@@ -130,8 +136,11 @@ int main() {
     CHECK(contains_after(probe.calls, 0, "open:16000:1"));
     CHECK(contains_after(probe.calls, 0, "amp-on"));
     const std::int16_t sample = 1;
-    CHECK(cyberdeck_audio_output::write(&sample, 1));
-    CHECK(!cyberdeck_audio_output::write(nullptr, 1));
+    cyberdeck_audio_output::write_timing timing{};
+    CHECK(cyberdeck_audio_output::write(&sample, 1, &timing));
+    CHECK(!timing.route.attempted && timing.backend_attempted && timing.backend_us == 17);
+    CHECK(!cyberdeck_audio_output::write(nullptr, 1, &timing));
+    CHECK(!timing.backend_attempted);
     const std::int16_t samples[2305]{};
     CHECK(!cyberdeck_audio_output::write(samples, 0));
     CHECK(!cyberdeck_audio_output::write(samples, 2305));
@@ -143,8 +152,9 @@ int main() {
     CHECK(cyberdeck_audio_output::write(&sample, 1));
     CHECK(probe.amp_off == 0);
     now += 1;
-    CHECK(cyberdeck_audio_output::write(&sample, 1));
+    CHECK(cyberdeck_audio_output::write(&sample, 1, &timing));
     CHECK(probe.amp_off == 1);
+    CHECK(timing.route.attempted && timing.route.elapsed_us == 12 && timing.backend_attempted && timing.backend_us == 17);
     probe.headset = false;
     now += 500;
     CHECK(cyberdeck_audio_output::write(&sample, 1));
@@ -156,7 +166,8 @@ int main() {
     CHECK(contains_after(probe.calls, 0, "open:44100:2"));
 
     probe.fail_write = true;
-    CHECK(!cyberdeck_audio_output::write(&sample, 1));
+    CHECK(!cyberdeck_audio_output::write(&sample, 1, &timing));
+    CHECK(timing.backend_attempted && timing.backend_us == 17);
     probe.fail_write = false;
     cyberdeck_audio_output::stop();
     CHECK(probe.amp_off >= 2);
@@ -164,7 +175,8 @@ int main() {
     const int calls_when_idle = static_cast<int>(probe.calls.size());
     cyberdeck_audio_output::stop();
     CHECK(static_cast<int>(probe.calls.size()) == calls_when_idle + 1); // mute only; already closed
-    CHECK(!cyberdeck_audio_output::write(&sample, 1));
+    CHECK(!cyberdeck_audio_output::write(&sample, 1, &timing));
+    CHECK(!timing.route.attempted && !timing.backend_attempted);
 
     CHECK(cyberdeck_audio_output::start(16000, 1, 20));
     probe.fail_amplifier = true;
@@ -172,7 +184,8 @@ int main() {
     const int opens_after_failed_amp_off = probe.opens;
     CHECK(!cyberdeck_audio_output::start(16000, 1, 20));
     CHECK(probe.opens == opens_after_failed_amp_off);
-    CHECK(!cyberdeck_audio_output::write(&sample, 1));
+    CHECK(!cyberdeck_audio_output::write(&sample, 1, &timing));
+    CHECK(!timing.route.attempted && !timing.backend_attempted);
     CHECK(!cyberdeck_audio_output::set_volume(20));
     probe.fail_amplifier = false;
     CHECK(cyberdeck_audio_output::start(16000, 1, 20));
@@ -211,14 +224,18 @@ int main() {
     };
     const int volumes_before_burst = count_calls("volume:");
     const int headset_before_burst = count_calls("headset");
-    CHECK(cyberdeck_audio_output::start(48000, 2, 20));
+    cyberdeck_audio_output::route_timing open_route{};
+    CHECK(cyberdeck_audio_output::start(48000, 2, 20, &open_route));
+    CHECK(open_route.attempted && open_route.elapsed_us == 12);
     const int volumes_after_open = count_calls("volume:");
     const int headset_after_open = count_calls("headset");
     CHECK(volumes_after_open == volumes_before_burst + 1);
     CHECK(headset_after_open == headset_before_burst + 1);
 
+    cyberdeck_audio_output::route_timing throttled_route{};
     for (int i = 0; i < 100; ++i)
-        CHECK(cyberdeck_audio_output::start(48000, 2, 20));
+        CHECK(cyberdeck_audio_output::start(48000, 2, 20, i == 0 ? &throttled_route : nullptr));
+    CHECK(!throttled_route.attempted);
     const int burst_volumes = count_calls("volume:") - volumes_after_open;
     const int burst_headsets = count_calls("headset") - headset_after_open;
     std::cout << "identical start() burst: set_volume=" << burst_volumes << " headphone_connected=" << burst_headsets
@@ -227,7 +244,9 @@ int main() {
     CHECK(burst_headsets == 0);
 
     now += 500;
-    CHECK(cyberdeck_audio_output::start(48000, 2, 20));
+    cyberdeck_audio_output::route_timing periodic_route{};
+    CHECK(cyberdeck_audio_output::start(48000, 2, 20, &periodic_route));
+    CHECK(periodic_route.attempted && periodic_route.elapsed_us == 5);
     CHECK(count_calls("headset") - headset_after_open == 1);
     CHECK(count_calls("volume:") - volumes_after_open == 0);
 
@@ -275,11 +294,14 @@ int main() {
     probe.headset = true;
     probe.fail_amplifier = true;
     now += 500;
-    CHECK(!cyberdeck_audio_output::start(48000, 2, 22));
+    cyberdeck_audio_output::route_timing failed_route{};
+    CHECK(!cyberdeck_audio_output::start(48000, 2, 22, &failed_route));
+    CHECK(failed_route.attempted && failed_route.elapsed_us == 12);
     CHECK(probe.amp_off == amp_attempts_before_fault + 1); // one attempt, rejected
     CHECK(count_calls("volume:") == volumes_before_fault);
     CHECK(probe.opens == opens_before_fault);
-    CHECK(!cyberdeck_audio_output::write(&sample, 1));
+    CHECK(!cyberdeck_audio_output::write(&sample, 1, &timing));
+    CHECK(timing.route.attempted && !timing.backend_attempted && timing.route.elapsed_us == 12);
     CHECK(probe.amp_off == amp_attempts_before_fault + 2); // write() retries it too
     CHECK(!cyberdeck_audio_output::set_volume(22));
     now += 1; // the route fault bypasses the throttle and keeps retrying

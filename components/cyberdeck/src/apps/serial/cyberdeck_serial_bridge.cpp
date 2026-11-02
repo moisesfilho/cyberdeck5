@@ -1,5 +1,6 @@
 #include "apps/serial/cyberdeck_serial_bridge.h"
 #include "apps/serial/cyberdeck_ui_dump_serializer.h"
+#include "apps/music/cyberdeck_music_player.h"
 
 #include "apps/screenshot/screenshot_bmp.h"
 
@@ -547,12 +548,14 @@ std::string error_name(dispatch_error err)
         return "io_error";
     case dispatch_error::screen_off:
         return "screen_off";
+    case dispatch_error::player_not_running:
+        return "player_not_running";
     }
     return "internal";
 }
 
 const std::vector<std::string> k_request_fields = {"rid",   "type", "text",     "x",      "y",
-                                                    "target", "symbol", "path", "data_b64", "size"};
+                                                    "target", "symbol", "path", "data_b64", "size", "cursor", "limit"};
 
 bool get_field(const std::vector<json_field> &fields, const std::string &name, json_field &out)
 {
@@ -706,7 +709,7 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
     static const char *const k_known[] = {"ping",       "ui.echo",     "ui.clear",  "ui.click",  "ui.tap",
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
                                            "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear",
-                                           "screen.status", "screen.wake"};
+                                            "screen.status", "screen.wake", "music.diagnostics", "music.trace"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -874,6 +877,92 @@ std::string wifi_scan_to_json(const std::vector<WifiNet> &nets)
     return out;
 }
 
+std::string music_diagnostics_to_json(const cyberdeck_music::diagnostics_snapshot &stats)
+{
+    std::string json = "{\"version\":1,\"read_only\":true";
+#define APPEND_DIAG_FIELD(name) do { json += ",\"" #name "\":"; json += std::to_string(stats.name); } while (false)
+    APPEND_DIAG_FIELD(generation);
+    APPEND_DIAG_FIELD(generations_queued);
+    APPEND_DIAG_FIELD(generations_started);
+    APPEND_DIAG_FIELD(generations_retired);
+    APPEND_DIAG_FIELD(failures);
+    json += ",\"failure_counts\":{";
+    json += "\"open\":" + std::to_string(stats.failure_counts[1]);
+    json += ",\"id3\":" + std::to_string(stats.failure_counts[2]);
+    json += ",\"decode\":" + std::to_string(stats.failure_counts[3]);
+    json += ",\"codec_start\":" + std::to_string(stats.failure_counts[4]);
+    json += ",\"codec_write\":" + std::to_string(stats.failure_counts[5]);
+    json += ",\"read\":" + std::to_string(stats.failure_counts[6]);
+    json += ",\"io\":" + std::to_string(stats.failure_counts[7]) + "}";
+    json += ",\"failure_stage\":";
+    switch (stats.failure_stage) {
+    case 0: json += "\"none\""; break;
+    case 1: json += "\"open\""; break;
+    case 2: json += "\"id3\""; break;
+    case 3: json += "\"decode\""; break;
+    case 4: json += "\"codec_start\""; break;
+    case 5: json += "\"codec_write\""; break;
+    case 6: json += "\"read\""; break;
+    case 7: json += "\"io\""; break;
+    default: json += "null"; break;
+    }
+    APPEND_DIAG_FIELD(read_calls);
+    APPEND_DIAG_FIELD(read_time_us);
+    APPEND_DIAG_FIELD(read_max_us);
+    APPEND_DIAG_FIELD(decode_calls);
+    APPEND_DIAG_FIELD(decode_time_us);
+    APPEND_DIAG_FIELD(decode_max_us);
+    APPEND_DIAG_FIELD(codec_start_calls);
+    APPEND_DIAG_FIELD(codec_start_time_us);
+    APPEND_DIAG_FIELD(codec_start_max_us);
+    APPEND_DIAG_FIELD(write_calls);
+    APPEND_DIAG_FIELD(write_time_us);
+    APPEND_DIAG_FIELD(write_max_us);
+    APPEND_DIAG_FIELD(route_check_calls);
+    APPEND_DIAG_FIELD(route_check_time_us);
+    APPEND_DIAG_FIELD(route_check_max_us);
+    APPEND_DIAG_FIELD(backend_write_calls);
+    APPEND_DIAG_FIELD(backend_write_time_us);
+    APPEND_DIAG_FIELD(backend_write_max_us);
+    APPEND_DIAG_FIELD(pause_count);
+    APPEND_DIAG_FIELD(pause_time_us);
+#undef APPEND_DIAG_FIELD
+    json.push_back('}');
+    return json;
+}
+
+std::string music_trace_to_json(const cyberdeck_music::trace_page &page)
+{
+    std::string json = "{\"version\":1,\"read_only\":true,\"cursor\":";
+    json += std::to_string(page.cursor);
+    json += ",\"next\":" + std::to_string(page.next);
+    json += ",\"truncated\":" + std::string(page.truncated ? "true" : "false");
+    json += ",\"lost\":" + std::to_string(page.lost) + ",\"events\":[";
+    const auto count = std::min<std::uint32_t>(page.count, cyberdeck_music::k_trace_page_capacity);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (i) json.push_back(',');
+        const auto &event = page.events[i];
+        static constexpr const char *names[] = {"request_start", "request_retire", "sd_read", "decode",
+                                                "codec_start", "output_write", "failure"};
+        const auto kind = static_cast<std::uint32_t>(event.kind);
+        json += "{\"seq\":" + std::to_string(event.sequence);
+        json += ",\"time_us\":" + std::to_string(event.timestamp_us);
+        json += ",\"kind\":\"" + std::string(kind < sizeof(names) / sizeof(names[0]) ? names[kind] : "unknown") + "\"";
+        json += ",\"generation\":" + std::to_string(event.generation);
+        json += ",\"duration_us\":" + std::to_string(event.duration_us);
+        json += ",\"result\":" + std::to_string(event.result);
+        json += ",\"bytes\":" + std::to_string(event.bytes) + "}";
+    }
+    json += "]}";
+    return json;
+}
+
+#ifndef ESP_PLATFORM
+music_diagnostics_provider s_music_diagnostics_provider = nullptr;
+music_trace_provider s_music_trace_provider = nullptr;
+void *s_music_diagnostics_context = nullptr;
+#endif
+
 std::string handle_sys_info(const std::string &rid)
 {
     SysInfo info;
@@ -969,6 +1058,20 @@ struct crc32_table_gen {
 constexpr crc32_table_gen k_crc_table{};
 
 } // namespace
+
+#ifndef ESP_PLATFORM
+void set_music_diagnostics_provider_for_test(music_diagnostics_provider provider, void *context)
+{
+    s_music_diagnostics_provider = provider;
+    s_music_diagnostics_context = context;
+}
+
+void set_music_trace_provider_for_test(music_trace_provider provider, void *context)
+{
+    s_music_trace_provider = provider;
+    s_music_diagnostics_context = context;
+}
+#endif
 
 std::uint32_t crc32(const std::uint8_t *data, std::size_t len)
 {
@@ -3006,6 +3109,87 @@ dispatch_result dispatch_one(const char *line, std::size_t len)
         res.ok = false;
         res.err = dispatch_error::invalid_json;
         res.envelope_json = build_error_envelope(req.rid, dispatch_error::invalid_json, "invalid_json");
+        return res;
+    }
+
+    if (req.type == "music.diagnostics") {
+        cyberdeck_music::diagnostics_snapshot stats{};
+#ifdef ESP_PLATFORM
+        const bool available = cyberdeck_music::global_player().diagnostics_snapshot(stats);
+#else
+        const bool available = s_music_diagnostics_provider != nullptr &&
+                               s_music_diagnostics_provider(s_music_diagnostics_context, stats);
+#endif
+        if (!available) {
+            res.ok = false;
+            res.err = dispatch_error::player_not_running;
+            res.envelope_json = build_error_envelope(req.rid, res.err, "music player not running");
+            return res;
+        }
+        response diagnostics_response{};
+        diagnostics_response.rid = req.rid;
+        diagnostics_response.ok = true;
+        diagnostics_response.result_json = music_diagnostics_to_json(stats);
+        res.ok = true;
+        res.envelope_json = build_envelope(diagnostics_response);
+        return res;
+    }
+
+    if (req.type == "music.trace") {
+        json_field cursor_field, limit_field;
+        std::uint32_t cursor = 0;
+        std::uint32_t limit = 16;
+        if (get_field(fields, "cursor", cursor_field)) {
+            if (!is_number_literal(cursor_field) || cursor_field.raw[0] == '-') {
+                res.ok = false;
+                res.err = dispatch_error::invalid_json;
+                res.envelope_json = build_error_envelope(req.rid, res.err, "invalid cursor");
+                return res;
+            }
+            const auto parsed = std::strtoull(cursor_field.raw.c_str(), nullptr, 10);
+            if (parsed > UINT32_MAX) {
+                res.ok = false;
+                res.err = dispatch_error::invalid_json;
+                res.envelope_json = build_error_envelope(req.rid, res.err, "cursor out of range");
+                return res;
+            }
+            cursor = static_cast<std::uint32_t>(parsed);
+        }
+        if (get_field(fields, "limit", limit_field)) {
+            if (!is_number_literal(limit_field) || limit_field.raw[0] == '-') {
+                res.ok = false;
+                res.err = dispatch_error::invalid_json;
+                res.envelope_json = build_error_envelope(req.rid, res.err, "invalid limit");
+                return res;
+            }
+            const auto parsed = std::strtoull(limit_field.raw.c_str(), nullptr, 10);
+            if (parsed == 0 || parsed > 16) {
+                res.ok = false;
+                res.err = dispatch_error::invalid_json;
+                res.envelope_json = build_error_envelope(req.rid, res.err, "limit must be 1..16");
+                return res;
+            }
+            limit = static_cast<std::uint32_t>(parsed);
+        }
+        cyberdeck_music::trace_page page{};
+#ifdef ESP_PLATFORM
+        const bool available = cyberdeck_music::global_player().trace_snapshot(cursor, limit, page);
+#else
+        const bool available = s_music_trace_provider != nullptr &&
+                               s_music_trace_provider(s_music_diagnostics_context, cursor, limit, page);
+#endif
+        if (!available) {
+            res.ok = false;
+            res.err = dispatch_error::player_not_running;
+            res.envelope_json = build_error_envelope(req.rid, res.err, "music player not running");
+            return res;
+        }
+        response trace_response{};
+        trace_response.rid = req.rid;
+        trace_response.ok = true;
+        trace_response.result_json = music_trace_to_json(page);
+        res.ok = true;
+        res.envelope_json = build_envelope(trace_response);
         return res;
     }
 

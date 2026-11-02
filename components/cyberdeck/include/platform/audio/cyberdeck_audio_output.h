@@ -2,6 +2,15 @@
 #include <cstddef>
 #include <cstdint>
 namespace cyberdeck_audio_output {
+struct route_timing {
+    bool attempted = false;
+    std::uint64_t elapsed_us = 0;
+};
+struct write_timing {
+    route_timing route{};
+    bool backend_attempted = false;
+    std::uint64_t backend_us = 0;
+};
 struct backend {
     void *context;
     void *(*initialize)(void *context);
@@ -14,8 +23,13 @@ struct backend {
     bool (*set_speaker_amplifier)(void *context, bool enabled);
 };
 bool install_backend(const backend &device);
-bool start(std::uint32_t sample_rate, std::uint8_t channels, std::uint8_t volume);
-bool write(const std::int16_t *samples, std::size_t sample_count);
+bool start(std::uint32_t sample_rate, std::uint8_t channels, std::uint8_t volume,
+           route_timing *route = nullptr);
+bool write(const std::int16_t *samples, std::size_t sample_count, write_timing *timing = nullptr);
+#ifndef ESP_PLATFORM
+using clock_us_fn = std::uint64_t (*)();
+void set_clock_for_test(clock_us_fn clock);
+#endif
 bool set_volume(std::uint8_t volume);
 void stop();
 }

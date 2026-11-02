@@ -1,7 +1,7 @@
 # Plano 03 — Player de áudio local
 
-**Estado:** implementação integrada; aceite físico do player/layout/teclado ainda
-pendente. O fluxo de trabalho é testes focados -> validação no Tab5 do
+**Estado:** implementação integrada; aceite físico integral do player/layout/
+teclado ainda pendente. O fluxo de trabalho é testes focados -> validação no Tab5 do
 comportamento-alvo -> revisão final ampla. A revisão ampla não substitui o teste
 físico. Se o dispositivo/cenário estiver indisponível ou inseguro, os gates locais
 podem ser finalizados, mas a validação física permanece pending e a tarefa não
@@ -556,6 +556,22 @@ de RPC timeout, RX OOM, WDT ou panic. A abertura serial ainda registrou
 **Não houve nova tentativa de playback; não declarar áudio audível nem atribuir
 o reset anterior a causa exclusiva sem backtrace.**
 
+### Trace temporal bounded — investigação de stutter
+
+O usuário aprovou instrumentação observacional apenas no worker; não há fix
+funcional nem causa comprovada. `music.diagnostics` permanece schema v1
+inalterado. Novo `music.trace` é somente leitura, pagina até 16 eventos por
+resposta e fornece cursor/next/truncated/lost explícitos. Ring de 64 registros
+(≤4 KiB), timestamp monotônico, geração, tipo, resultado, duração e bytes onde
+há valor já disponível. Só o worker grava: início/retirada de geração, leitura
+SD, decode, codec start, output write e falha. Não observa ISR/underrun/DMA real.
+Cada campo concorrente é atomic uint32 lock-free; publication sequence por slot
+permite snapshot bounded sem espera, omitindo slots instáveis. P4 build e testes
+host direcionados são necessários antes de qualquer alegação de segurança.
+Esta telemetria correlaciona durações/cadência, mas não prova causalidade; a
+validação física do novo trace continua pendente e nenhum playback/flash é
+autorizado por este trabalho.
+
 ### Regressão manual após correção de scratch
 
 O usuário repetiu o teste no firmware corrigido, diretamente no Tab5, e relatou
@@ -569,9 +585,50 @@ restante ocorre no decode, init do codec, I2S ou outra task. Próxima etapa depe
 de diagnóstico com captura passiva já aberta antes de uma eventual tentativa
 **explicitamente autorizada**; não repetir playback às cegas.
 
+### Correção do escopo da métrica de rota — ciclo 1
+
+O snapshot físico mostrou `route_check_calls=0`, mas `start()` também chama
+`update_route()` (abertura forçada e reentrada same-format após throttle), enquanto
+a métrica anterior só era propagada por `write()`. Portanto zero não demonstrava
+ausência de checks I2C/expander e não sustentava atribuição ao backend/I2S. A
+instrumentação agora recebe o resultado opcional de timing em ambos os caminhos;
+conta uma vez cada chamada real, inclui tentativas que falham e exclui o retorno
+rápido throttled. `codec_start_*` e `write_*` permanecem intactos. Sem alteração
+de playback/I2S/DMA/codec e sem nova reprodução nesta rodada. A nova imagem exige
+validação posterior pelo usuário; diagnóstico acústico permanece pendente.
+
 Host/build aprovado não substitui o aceite físico. Para concluir, confirmar no
 Tab5 que o app pode ser iniciado após boot normal, que uma faixa real toca e
 que controles/lifecycle funcionam; testar speaker e jack, amp desligado em idle,
 ausência de ruído/consumo anormal, coexistência e poweroff. Confirmar que a fonte
 MP3 não é alterada. A tentativa fica bloqueada até boot normal estável e
 diagnóstico Hosted/C6 suficiente; safe mode/recovery deve ser resolvido primeiro.
+
+### Observação manual de trocas e stutter — 2026-11-02
+
+Snapshot de trabalho: HEAD `d2236a4b94bc7a2ada4482991732dcd6d7a00d66` + diff
+`1b1710ba0bf7a87d8eb60570d2b74bfcccee0784b46fff0ec0e2f23105028f49`.
+Firmware testado: SHA-256 `67a2358a14fd3130df0564d272cf68e441ab4bc2ceaf32f43583bb26e8013daa`.
+O usuário relatou várias trocas de faixa, esperas de segundos e trocas rápidas;
+nenhum engasgo foi ouvido. Diagnóstico read-only posterior: generation=7,
+generations queued/started/retired=7/7/6, failures=0; máximos read=5465 us,
+decode=11603 us, codec-start=18720 us, write=27827 us; route checks=35/max
+1341 us; backend writes=734/max 27803 us. `sys.info` uptime avançou de
+00:20:03 para 00:20:18, `safe_mode=false`, `interrupted_boots=0`,
+`recovery_persisted=true`.
+
+Trace `/tmp/opencode/music-trace-user-run-20261102.jsonl`, SHA-256
+`224166835af56b2e39e585dfdd79869152131d1cac63ca9af151754d9efda7d6`:
+quatro páginas/64 eventos; primeira página `truncated=true`, `lost=10176`,
+somente sequências 10176..10239 da generation 7. Eventos de trocas anteriores
+foram sobrescritos; a observação confirma ausência de stutter percebido nessa
+rodada, mas não permite correlacionar cada troca nem comprovar underrun DMA.
+O teste manual direcionado de stutter nas trocas relatadas fica PASS conforme
+observação do usuário; causa raiz permanece não confirmada e nenhuma correção
+funcional foi feita. O usuário considera o problema resolvido, mas isso não
+substitui aceite técnico causal nem os gates físicos restantes do player.
+
+No Tab5-OS o app de música é UI e o engine de áudio pertence ao OS; não há
+correção de stutter diretamente transferível identificada. A correção prévia
+específica do cyberdeck5 permanece o ring I2S DMA `8 x 512` (b90f191); esta
+rodada não demonstra causalidade nova.

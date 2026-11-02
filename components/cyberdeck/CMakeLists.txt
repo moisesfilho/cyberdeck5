@@ -51,6 +51,8 @@ idf_component_register(
          "src/apps/music/cyberdeck_music_metadata.cpp"
          "src/apps/music/cyberdeck_music_duration.cpp"
          "src/apps/music/cyberdeck_music_player.cpp"
+          "src/apps/music/cyberdeck_music_diagnostics.cpp"
+          "src/apps/music/cyberdeck_music_trace.cpp"
          "src/apps/music/cyberdeck_music_app.cpp"
          "src/apps/music/cyberdeck_music_manager.cpp"
          "src/platform/audio/cyberdeck_audio_output.cpp"

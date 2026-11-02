@@ -22,6 +22,7 @@ class application final : public cyberdeck_apps::application {
     bool has_playback() const;
     bool player_snapshot(snapshot &out) const { return player_.status(out); }
     bool toggle_selected(std::size_t selected);
+    bool play_selected(std::size_t selected);
     cyberdeck_apps::result player_command(std::string_view args) { return execute("music", args); }
     bool consume_player_request() { return player_requested_.exchange(false, std::memory_order_acq_rel); }
     bool poweroff_quiesce(std::uint32_t timeout_ms);

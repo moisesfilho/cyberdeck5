@@ -361,6 +361,35 @@ int main() {
     CHECK(music.toggle_selected(2));
     CHECK(player.played.size() == play_requests_before_selected_enter + 1 &&
           player.played.back() == "/music/nested/inside.mp3" && player.selected_track == 2);
+    for (const auto state : {cyberdeck_music::playback_state::playing, cyberdeck_music::playback_state::paused,
+                             cyberdeck_music::playback_state::stopped}) {
+        player.state.state = state;
+        const auto before_selected = player.played.size();
+        CHECK(music.play_selected(1));
+        CHECK(player.played.size() == before_selected + 1 && player.played.back() == "/music/alpha.mp3" &&
+              player.selected_track == 1 && player.state.selected == 1);
+    }
+    player.state.state = cyberdeck_music::playback_state::error;
+    const auto before_error_selected = player.played.size();
+    const auto before_error_selection = player.selected_track;
+    const auto before_error_pauses = player.pauses;
+    const auto before_error_resumes = player.resumes;
+    CHECK(!music.play_selected(0) && player.played.size() == before_error_selected &&
+          player.pauses == before_error_pauses && player.resumes == before_error_resumes &&
+          player.selected_track == before_error_selection);
+    player.state.state = static_cast<cyberdeck_music::playback_state>(0xff);
+    const auto before_unknown_selected = player.selected_track;
+    const auto before_unknown_plays = player.played.size();
+    const auto before_unknown_pauses = player.pauses;
+    const auto before_unknown_resumes = player.resumes;
+    CHECK(!music.play_selected(0) && player.played.size() == before_unknown_plays &&
+          player.pauses == before_unknown_pauses && player.resumes == before_unknown_resumes &&
+          player.selected_track == before_unknown_selected);
+    player.state.state = cyberdeck_music::playback_state::stopped;
+    CHECK(!music.play_selected(64) && player.played.size() == before_error_selected);
+    player.state.selected = player.queue_count;
+    CHECK(!music.play_selected(0) && player.played.size() == before_error_selected);
+    player.state.selected = 1;
     const auto play_requests_after_selected_enter = player.played.size();
     CHECK(!music.toggle_selected(4) && player.played.size() == play_requests_after_selected_enter);
     const auto selected_before_mismatch = player.selected_track;

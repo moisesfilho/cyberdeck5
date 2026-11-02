@@ -1,6 +1,7 @@
 #pragma once
 
 #include "apps/music/cyberdeck_music_model.h"
+#include "apps/music/cyberdeck_music_trace.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
@@ -8,6 +9,36 @@
 #include <string_view>
 
 namespace cyberdeck_music {
+struct diagnostics_snapshot {
+    std::uint32_t generation = 0;
+    std::uint64_t generations_queued = 0;
+    std::uint64_t generations_started = 0;
+    std::uint64_t generations_retired = 0;
+    std::uint64_t failures = 0;
+    std::uint8_t failure_stage = 0;
+    std::uint64_t failure_counts[8]{};
+    std::uint64_t read_calls = 0;
+    std::uint64_t read_time_us = 0;
+    std::uint64_t read_max_us = 0;
+    std::uint64_t decode_calls = 0;
+    std::uint64_t decode_time_us = 0;
+    std::uint64_t decode_max_us = 0;
+    std::uint64_t codec_start_calls = 0;
+    std::uint64_t codec_start_time_us = 0;
+    std::uint64_t codec_start_max_us = 0;
+    std::uint64_t write_calls = 0;
+    std::uint64_t write_time_us = 0;
+    std::uint64_t write_max_us = 0;
+    std::uint64_t route_check_calls = 0;
+    std::uint64_t route_check_time_us = 0;
+    std::uint64_t route_check_max_us = 0;
+    std::uint64_t backend_write_calls = 0;
+    std::uint64_t backend_write_time_us = 0;
+    std::uint64_t backend_write_max_us = 0;
+    std::uint64_t pause_count = 0;
+    std::uint64_t pause_time_us = 0;
+};
+
 class player_interface {
   public:
     virtual ~player_interface() = default;
@@ -24,11 +55,18 @@ class player_interface {
     virtual void set_repeat(repeat_mode mode) = 0;
     virtual void set_shuffle(bool enabled) = 0;
     virtual bool status(snapshot &out) const = 0;
+    virtual bool diagnostics_snapshot(diagnostics_snapshot &) const { return false; }
+    virtual bool trace_snapshot(std::uint32_t, std::uint32_t, trace_page &) const { return false; }
     virtual bool running() const = 0;
 };
 
 class player final : public player_interface {
   public:
+#if defined(CYBERDECK_MUSIC_TRACE_TESTING)
+    enum class trace_lifecycle_test_stage { stop_teardown_started, snapshot_lock_acquired };
+    using trace_lifecycle_test_hook = void (*)(trace_lifecycle_test_stage, void *);
+    static void set_trace_lifecycle_test_hook(trace_lifecycle_test_hook hook, void *context);
+#endif
     bool start(cyberdeck_sd_io::coordinator *storage, cyberdeck_apps::grant access) override;
     bool stop(std::uint32_t timeout_ms) override;
     bool play(std::string_view path) override;
@@ -42,6 +80,8 @@ class player final : public player_interface {
     void set_repeat(repeat_mode mode) override;
     void set_shuffle(bool enabled) override;
     bool status(snapshot &out) const override;
+    bool diagnostics_snapshot(cyberdeck_music::diagnostics_snapshot &out) const override;
+    bool trace_snapshot(std::uint32_t cursor, std::uint32_t limit, trace_page &out) const override;
     bool running() const override;
   private:
     struct impl;

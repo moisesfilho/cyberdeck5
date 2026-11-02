@@ -1,4 +1,5 @@
 #include "apps/music/cyberdeck_music_player.h"
+#include "apps/music/cyberdeck_music_diagnostics.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/runtime/cyberdeck_app_storage.h"
 #include "apps/shell/cyberdeck_local_shell.h"
@@ -30,9 +31,29 @@
 #include <unistd.h>
 #include <vector>
 
+extern "C" std::int64_t esp_timer_get_time(void) {
+    static std::atomic<std::int64_t> ticks{0};
+    return ticks.fetch_add(10, std::memory_order_relaxed);
+}
+
 namespace {
 int checks = 0;
 int failures = 0;
+struct trace_lifecycle_barrier {
+    std::mutex mutex;
+    std::condition_variable changed;
+    cyberdeck_music::player::trace_lifecycle_test_stage target{};
+    bool entered = false;
+    bool released = false;
+};
+void trace_lifecycle_hook(cyberdeck_music::player::trace_lifecycle_test_stage stage, void *context) {
+    auto &barrier = *static_cast<trace_lifecycle_barrier *>(context);
+    if (stage != barrier.target) return;
+    std::unique_lock<std::mutex> lock(barrier.mutex);
+    barrier.entered = true;
+    barrier.changed.notify_all();
+    barrier.changed.wait(lock, [&] { return barrier.released; });
+}
 #define CHECK(condition) do { \
     ++checks; \
     if (!(condition)) { ++failures; std::cerr << "FAIL " << __LINE__ << ": " #condition "\n"; } \
@@ -446,10 +467,17 @@ extern "C" ssize_t __wrap_read(int fd, void *buffer, size_t count) {
 }
 
 namespace cyberdeck_audio_output {
-bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t) {
-    return !fail_audio_start && rate >= 8000 && rate <= 48000 && (channels == 1 || channels == 2);
+bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t, route_timing *timing) {
+    const bool result = !fail_audio_start && rate >= 8000 && rate <= 48000 && (channels == 1 || channels == 2);
+    if (timing != nullptr && result)
+        *timing = {true, 2};
+    return result;
 }
-bool write(const std::int16_t *samples, std::size_t count) {
+bool write(const std::int16_t *samples, std::size_t count, write_timing *timing) {
+    if (timing != nullptr) {
+        *timing = {};
+        timing->backend_attempted = true;
+    }
     if (samples == nullptr || count == 0) return false;
     std::unique_lock<std::mutex> lock(audio_mutex);
     ++audio_write_count;
@@ -562,6 +590,30 @@ int main() {
     CHECK(!subject.play("/outside.mp3"));
     CHECK(!subject.pause());
     CHECK(!subject.set_volume(51));
+    cyberdeck_music::diagnostics_snapshot diag{};
+    CHECK(cyberdeck_music::diagnostics_saturating_add(UINT64_MAX - 2, 3) == UINT64_MAX);
+    std::uint64_t operation_calls = 0, operation_total_us = 0, operation_max_us = 0;
+    CHECK(operation_calls == 0 && operation_total_us == 0 && operation_max_us == 0);
+    cyberdeck_music::diagnostics_record_operation(operation_calls, operation_total_us, operation_max_us, 10, 10);
+    CHECK(operation_calls == 1 && operation_total_us == 0 && operation_max_us == 0);
+    cyberdeck_music::diagnostics_record_operation(operation_calls, operation_total_us, operation_max_us, 10, 15);
+    CHECK(operation_calls == 2 && operation_total_us == 5 && operation_max_us == 5);
+    cyberdeck_music::diagnostics_record_operation(operation_calls, operation_total_us, operation_max_us, 20, 23);
+    CHECK(operation_calls == 3 && operation_total_us == 8 && operation_max_us == 5);
+    cyberdeck_music::diagnostics_record_operation(operation_calls, operation_total_us, operation_max_us, 30, 42);
+    CHECK(operation_calls == 4 && operation_total_us == 20 && operation_max_us == 12);
+    CHECK(operation_max_us <= operation_total_us);
+    operation_total_us = UINT64_MAX - 1;
+    cyberdeck_music::diagnostics_record_operation(operation_calls, operation_total_us, operation_max_us, 50, 53);
+    CHECK(operation_total_us == UINT64_MAX && operation_max_us == 12);
+    CHECK(operation_max_us <= operation_total_us);
+    cyberdeck_music::diagnostics_snapshot pause_metrics{};
+    cyberdeck_music::diagnostics_accumulate_pause(pause_metrics, 100, 175);
+    cyberdeck_music::diagnostics_accumulate_pause(pause_metrics, 175, 200);
+    CHECK(pause_metrics.pause_time_us == 100);
+    cyberdeck_music::diagnostics_accumulate_pause(pause_metrics, 300, 200);
+    CHECK(pause_metrics.pause_time_us == 100);
+    CHECK(!subject.diagnostics_snapshot(diag));
     music_test_fail_caps_queue_create = true;
     CHECK(!subject.start(&storage, access));
     CHECK(music_test_last_queue_caps == static_cast<unsigned>(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -593,6 +645,8 @@ int main() {
     CHECK(music_test_last_task_stack_bytes == 8192);
     CHECK(music_test_last_queue_caps == static_cast<unsigned>(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     CHECK(subject.running());
+    CHECK(subject.diagnostics_snapshot(diag));
+    CHECK(diag.generations_queued == 0 && diag.read_calls == 0 && diag.write_calls == 0);
     /* TEST-MUSIC-ESC-08: a session that never played anything reports stopped
      * with an empty current track and no position. */
     {
@@ -619,6 +673,8 @@ int main() {
     CHECK(!subject.set_queue(queue, 1, 1));
     CHECK(!subject.set_queue(nullptr, 1, 0));
     CHECK(subject.play("/stream.mp3"));
+    CHECK(subject.diagnostics_snapshot(diag));
+    CHECK(diag.generations_queued == 1 && diag.generation != 0);
 
     {
         std::unique_lock<std::mutex> lock(open_mutex);
@@ -626,7 +682,19 @@ int main() {
     }
     CHECK(storage.active_leases() == 1);
     for (int i = 0; i < 8; ++i) CHECK(subject.play("/stream.mp3"));
+    cyberdeck_music::diagnostics_snapshot full_queue{};
+    CHECK(subject.diagnostics_snapshot(full_queue));
+    const auto full_generation = full_queue.generation;
+    const auto full_queued_count = full_queue.generations_queued;
     CHECK(!subject.play("/stream.mp3"));
+    CHECK(subject.diagnostics_snapshot(full_queue));
+    CHECK(full_queue.generation == full_generation);
+    CHECK(full_queue.generations_queued == full_queued_count);
+    cyberdeck_music::trace_page trace{};
+    CHECK(subject.trace_snapshot(0, 16, trace));
+    CHECK(trace.count >= 1);
+    CHECK(trace.events[0].kind == cyberdeck_music::trace_kind::request_start);
+    CHECK(trace.events[0].generation == diag.generation);
 
     /* TEST-MUSIC-ESC-03: a timed-out stop keeps the worker, queue, semaphore
      * and initialized state untouched so the same call can be retried. */
@@ -693,6 +761,7 @@ int main() {
     fail_secure_open = true;
     CHECK(subject.play("/stream.mp3"));
     CHECK(wait_for_failure(subject, cyberdeck_music::error_stage::open));
+    CHECK(subject.diagnostics_snapshot(diag) && diag.failure_counts[1] == 1);
     fail_secure_open = false;
     {
         std::ofstream malformed(fixture_path, std::ios::binary | std::ios::trunc);
@@ -700,20 +769,24 @@ int main() {
     }
     CHECK(subject.play("/stream.mp3"));
     CHECK(wait_for_failure(subject, cyberdeck_music::error_stage::id3));
+    CHECK(subject.diagnostics_snapshot(diag) && diag.failure_counts[2] == 1);
     {
         std::ofstream invalid(fixture_path, std::ios::binary | std::ios::trunc);
         invalid.write(reinterpret_cast<const char *>(invalid_mp3), sizeof(invalid_mp3));
     }
     CHECK(subject.play("/stream.mp3"));
     CHECK(wait_for_failure(subject, cyberdeck_music::error_stage::decode));
+    CHECK(subject.diagnostics_snapshot(diag) && diag.failure_counts[3] == 1);
 
     CHECK(write_valid_silent_mp3(fixture_path));
     fail_player_read = true;
     CHECK(subject.play("/stream.mp3"));
     CHECK(wait_for_failure(subject, cyberdeck_music::error_stage::read));
+    CHECK(subject.diagnostics_snapshot(diag) && diag.failure_counts[6] == 1);
     fail_player_close = true;
     CHECK(subject.play("/stream.mp3"));
     CHECK(wait_for_failure(subject, cyberdeck_music::error_stage::io));
+    CHECK(subject.diagnostics_snapshot(diag) && diag.failure_counts[7] == 1);
     {
         std::lock_guard<std::mutex> lock(audio_mutex);
         gate_audio_write = true;
@@ -730,10 +803,12 @@ int main() {
     fail_audio_start = true;
     CHECK(subject.play("/stream.mp3"));
     CHECK(wait_for_failure(subject, cyberdeck_music::error_stage::codec_start));
+    CHECK(subject.diagnostics_snapshot(diag) && diag.failure_counts[4] == 1);
     fail_audio_start = false;
     fail_audio_write = true;
     CHECK(subject.play("/stream.mp3"));
     CHECK(wait_for_failure(subject, cyberdeck_music::error_stage::codec_write));
+    CHECK(subject.diagnostics_snapshot(diag) && diag.failure_counts[5] == 1);
     fail_audio_write = false;
     {
         std::lock_guard<std::mutex> lock(audio_mutex);
@@ -758,6 +833,19 @@ int main() {
     }, std::chrono::seconds(2)));
     cyberdeck_music::snapshot paused{};
     CHECK(subject.status(paused) && paused.state == cyberdeck_music::playback_state::paused && paused.position_ms > 0);
+    CHECK(subject.diagnostics_snapshot(diag));
+    CHECK(diag.read_calls > 0 && diag.read_time_us > 0);
+    CHECK(diag.decode_calls > 0 && diag.decode_time_us > 0);
+    CHECK(diag.codec_start_calls > 0 && diag.codec_start_time_us > 0);
+    CHECK(diag.write_calls > 0 && diag.write_time_us > 0);
+    CHECK(diag.route_check_calls == diag.codec_start_calls);
+    CHECK(diag.route_check_time_us == diag.route_check_calls * 2);
+    CHECK(diag.backend_write_calls > 0);
+    CHECK(diag.route_check_max_us <= diag.route_check_time_us);
+    CHECK(diag.backend_write_max_us <= diag.backend_write_time_us);
+    CHECK(diag.pause_count > 0);
+    const auto completed_generation = diag.generation;
+    const auto queued_before_next = diag.generations_queued;
     CHECK(subject.seek(500));
     CHECK(subject.resume());
     CHECK(wait_until([&] {
@@ -770,6 +858,27 @@ int main() {
           completed.selected == 1);
     CHECK(audio_write_count > 1);
     CHECK(storage.active_leases() == 1);
+    fail_secure_open = true;
+    CHECK(subject.play("/stream.mp3"));
+    cyberdeck_music::diagnostics_snapshot queued_generation{};
+    CHECK(subject.diagnostics_snapshot(queued_generation));
+    CHECK(queued_generation.generation != completed_generation);
+    CHECK(queued_generation.generations_queued == queued_before_next + 1);
+    CHECK(queued_generation.generations_started >= 1);
+    CHECK(queued_generation.read_calls == 0 && queued_generation.decode_calls == 0);
+    CHECK(queued_generation.codec_start_calls == 0 && queued_generation.write_calls == 0 &&
+          queued_generation.route_check_calls == 0 && queued_generation.backend_write_calls == 0);
+    CHECK(queued_generation.pause_count == 0 && queued_generation.pause_time_us == 0);
+    CHECK(wait_for_failure(subject, cyberdeck_music::error_stage::open));
+    CHECK(subject.diagnostics_snapshot(diag));
+    CHECK(diag.generation == queued_generation.generation);
+    CHECK(diag.failure_stage == static_cast<std::uint8_t>(cyberdeck_music::error_stage::open));
+    CHECK(diag.failures == 1 && diag.failure_counts[1] == 1);
+    CHECK(diag.read_calls == 0 && diag.decode_calls == 0 && diag.write_calls == 0 &&
+          diag.route_check_calls == 0 && diag.backend_write_calls == 0);
+    CHECK(diag.generations_queued == queued_generation.generations_queued);
+    CHECK(diag.generations_started >= queued_generation.generations_started);
+    fail_secure_open = false;
     std::ifstream persisted(fixture_path, std::ios::binary);
     const std::string after((std::istreambuf_iterator<char>(persisted)), std::istreambuf_iterator<char>());
     CHECK(after.size() == 24U * 417U);
@@ -1307,6 +1416,108 @@ int main() {
         CHECK(failed_start.position_ms == 0);
         CHECK(failed_start.volume == 31);
     }
+    /* TEST-BUG-AUDIO-OBS-09: hold generation A inside its real PCM write,
+     * accept B, then release A so its post-write metrics/publish path runs only
+     * after B owns the diagnostics. B's early open failure is the terminal
+     * observation; it must retain B's zero operation metrics. */
+    CHECK(subject.start(&storage, access));
+    CHECK(write_valid_silent_mp3(fixture_path));
+    CHECK(subject.set_queue(queue, 1, 0));
+    subject.set_repeat(cyberdeck_music::repeat_mode::off);
+    {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        gate_audio_write = true;
+        audio_write_entered = false;
+        release_audio_write = false;
+    }
+    CHECK(subject.play("/stream.mp3"));
+    {
+        std::unique_lock<std::mutex> lock(audio_mutex);
+        CHECK(audio_changed.wait_for(lock, std::chrono::seconds(2), [] { return audio_write_entered; }));
+    }
+    cyberdeck_music::diagnostics_snapshot generation_a{};
+    CHECK(subject.diagnostics_snapshot(generation_a));
+    const auto generations_before_b = generation_a.generations_queued;
+    const auto started_before_b = generation_a.generations_started;
+    const auto retired_before_b = generation_a.generations_retired;
+    fail_secure_open = true;
+    CHECK(subject.play("/stream.mp3"));
+    cyberdeck_music::diagnostics_snapshot generation_b{};
+    CHECK(subject.diagnostics_snapshot(generation_b));
+    CHECK(generation_b.generation != generation_a.generation);
+    CHECK(generation_b.generations_queued == generations_before_b + 1);
+    CHECK(generation_b.read_calls == 0 && generation_b.decode_calls == 0);
+    CHECK(generation_b.codec_start_calls == 0 && generation_b.write_calls == 0 &&
+          generation_b.route_check_calls == 0 && generation_b.backend_write_calls == 0);
+    {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        gate_audio_write = false;
+        release_audio_write = true;
+    }
+    audio_changed.notify_all();
+    CHECK(wait_for_failure(subject, cyberdeck_music::error_stage::open));
+    cyberdeck_music::diagnostics_snapshot after_stale_a{};
+    CHECK(subject.diagnostics_snapshot(after_stale_a));
+    CHECK(after_stale_a.generation == generation_b.generation);
+    CHECK(after_stale_a.failure_stage == static_cast<std::uint8_t>(cyberdeck_music::error_stage::open));
+    CHECK(after_stale_a.failures == 1 && after_stale_a.failure_counts[1] == 1);
+    CHECK(after_stale_a.read_calls == 0 && after_stale_a.decode_calls == 0);
+    CHECK(after_stale_a.codec_start_calls == 0 && after_stale_a.write_calls == 0 &&
+          after_stale_a.route_check_calls == 0 && after_stale_a.backend_write_calls == 0);
+    CHECK(after_stale_a.generations_queued == generations_before_b + 1);
+    CHECK(after_stale_a.generations_started >= started_before_b + 1);
+    CHECK(after_stale_a.generations_retired == retired_before_b + 2);
+    fail_secure_open = false;
+    /* TEST-AUDIO-TEMP-09: force snapshot-first and stop-first ownership of the
+     * real lifecycle mutex; no sleep or timing assumption establishes either. */
+    trace_lifecycle_barrier snapshot_barrier{};
+    snapshot_barrier.target = cyberdeck_music::player::trace_lifecycle_test_stage::snapshot_lock_acquired;
+    cyberdeck_music::player::set_trace_lifecycle_test_hook(trace_lifecycle_hook, &snapshot_barrier);
+    bool snapshot_result = false;
+    std::thread snapshot_thread([&] {
+        cyberdeck_music::trace_page page{};
+        snapshot_result = subject.trace_snapshot(0, 16, page);
+    });
+    {
+        std::unique_lock<std::mutex> lock(snapshot_barrier.mutex);
+        CHECK(snapshot_barrier.changed.wait_for(lock, std::chrono::seconds(2), [&] { return snapshot_barrier.entered; }));
+    }
+    std::atomic<bool> stop_invoked{false};
+    bool trace_overlap_stop_result = false;
+    std::thread stop_thread([&] { stop_invoked = true; trace_overlap_stop_result = subject.stop(2000); });
+    while (!stop_invoked.load()) std::this_thread::yield();
+    {
+        std::lock_guard<std::mutex> lock(snapshot_barrier.mutex);
+        snapshot_barrier.released = true;
+    }
+    snapshot_barrier.changed.notify_all();
+    snapshot_thread.join();
+    stop_thread.join();
+    CHECK(snapshot_result && trace_overlap_stop_result);
+    cyberdeck_music::trace_page unavailable_page{};
+    CHECK(!subject.trace_snapshot(0, 16, unavailable_page));
+    CHECK(subject.start(&storage, access));
+    trace_lifecycle_barrier stop_barrier{};
+    stop_barrier.target = cyberdeck_music::player::trace_lifecycle_test_stage::stop_teardown_started;
+    cyberdeck_music::player::set_trace_lifecycle_test_hook(trace_lifecycle_hook, &stop_barrier);
+    bool teardown_result = false;
+    std::thread teardown_thread([&] { teardown_result = subject.stop(2000); });
+    {
+        std::unique_lock<std::mutex> lock(stop_barrier.mutex);
+        CHECK(stop_barrier.changed.wait_for(lock, std::chrono::seconds(2), [&] { return stop_barrier.entered; }));
+    }
+    CHECK(!subject.trace_snapshot(0, 16, unavailable_page));
+    {
+        std::lock_guard<std::mutex> lock(stop_barrier.mutex);
+        stop_barrier.released = true;
+    }
+    stop_barrier.changed.notify_all();
+    teardown_thread.join();
+    CHECK(teardown_result);
+    CHECK(!subject.trace_snapshot(0, 16, unavailable_page));
+    cyberdeck_music::player::set_trace_lifecycle_test_hook(nullptr, nullptr);
+    CHECK(subject.start(&storage, access));
+    CHECK(stop_releases_once());
     CHECK(subject.stop(0));
     CHECK(!subject.running());
     CHECK(wait_until([] { return music_test_delete_without_completion_count() == 0; }, std::chrono::seconds(1)));

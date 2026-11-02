@@ -204,6 +204,60 @@ quebra de compatibilidade de fonte intencional. Snapshots privados não têm get
 são inspecionados, limitação registrada na matriz. Não prova execução ESP-IDF
 nem hardware. A matriz está em
 `tests/host/keymap/music_traceability.md`.
+The read-only post-playback observation route is additive NDJSON
+`music.diagnostics` in `cyberdeck_serial_bridge.cpp`; `dispatch_one` routes it
+through the same provider-backed branch on host and device (device provider is
+the global player's read-only snapshot; host tests inject a snapshot provider).
+It never opens/starts the app and returns typed `player_not_running` if unavailable.
+The bounded JSON includes a typed failure-stage field. It exposes operation
+counts, saturating accumulated `*_time_us`, and actual maximum observed
+`*_max_us` for read/decode/codec-start/write, plus pause timing. Player diagnostics are
+separate from the UI `snapshot`: `generation` identifies the latest accepted
+queued request. Its operation/pause/failure fields reset atomically when that
+request is enqueued and belong only to that generation; session lifecycle
+`generations_queued/started/retired` remain cumulative until session restart.
+Queue-full rejection does not advance generation or queued count. Stop/halt
+invalidate active work but do not create a queued generation or erase the latest
+generation metrics; retired queued/stale requests contribute only to the
+cumulative retired count. Worker metrics/errors publish only when request,
+worker snapshot, and current generation all match, including failures before the
+first PCM frame. `diagnostics_snapshot(out)` takes lifecycle then
+state mutex, matching `start/stop/play`; it performs no hardware/I/O. Operation
+timestamps use `esp_timer_get_time()` around worker read/decode/codec-start/write
+and pause intervals; route checks performed by either `cyberdeck_audio_output::start()`
+or `write()` are returned as optional timing results and aggregated once as an
+actual non-throttled check, separately from codec-start, overall-write, and
+backend-write series. The throttle fast path is not counted; attempted failed
+route checks are. This adds clock reads per
+measured stage (per decoded frame for decode/start/write) and none on the UI query. Saturating
+aggregation, per-operation max-delta, and pause-interval helpers are
+production-shared and deterministically tested (zero/single/multiple samples,
+`max<=total`, and total saturation);
+the worker clock itself is not injected, so exact runtime pause duration remains
+unproven. The snapshot exposes per-stage failure counters (open/id3/decode/read/
+codec_start/codec_write/io). Stale queued requests and superseded workers retire
+without publishing stale errors. Queue-reset and all concurrent retirement
+ schedules remain for independent tester validation. `music_traceability.md` maps TEST-BUG-AUDIO-OBS-01..09 and
+TEST-AUDIO-OBS-ROUTE-01..08; this does not replace independent tester validation
+or the manual device gate.
+The separate `cyberdeck_music_trace.{h,cpp}` is a worker-only 64-slot recorder
+using lock-free atomic uint32 fields and per-slot publication validation; it
+backs additive read-only NDJSON `music.trace` pagination (16 events/page) without
+changing the `music.diagnostics` v1 schema. `test_music_trace` covers ring wrap,
+pagination, stress coherence, a host-only publication barrier, and actual
+recorder/page `sizeof <= 4096` (host sizes: 2056 B/664 B). Barrier hooks are
+preprocessed out of firmware. `trace_snapshot` uses lifecycle `try_lock`, so a
+query overlapping stop fails promptly. `test_music_player` verifies worker
+generation wiring and `test_serial_ndjson_dispatch` covers route/page bounds.
+`music_traceability.md` maps REQ/AC-AUDIO-TEMP-01..06 and TEST-AUDIO-TEMP-01..10;
+`test_music_player` now uses a `CYBERDECK_MUSIC_TRACE_TESTING`-only lifecycle
+barrier in the real player TU to force snapshot-first and stop-first overlap,
+including immediate unavailable response after `shutting_down` is set and after teardown. The
+hook is compiled out of firmware; independent tester validation remains due.
+Physical trace capture is recorded in the 2026-11-02 observation in the audio
+plan/traceability/manual ledger: targeted swaps had no user-reported stutter,
+but the bounded ring had lost 10176 events and cannot prove DMA underrun or
+causality. Full player acceptance remains separate.
 Os três arquivos modificados do fork têm notice destacado `Modified by
 cyberdeck5` nos cabeçalhos SPDX, sem remover avisos upstream. A revalidação
 física pontual I2S de 2026-11-01 e seus limites estão registrados no plano e na
@@ -222,7 +276,7 @@ em paisagem e `2 * line + 2` em retrato, e ausência de sobreposição com os do
 cartões em retrato (696x1203) e paisagem (1256x643). Cada linha renderizada do
 rodapé precisa caber na largura do label (avanço do shim 11 px/char, conservador
 frente aos 10,8125 px/char reais; a truncagem DOTS real não é renderizada no
-host). Os oito botões têm no mínimo
+host). Os nove botões têm no mínimo
 44x44 px nas duas orientações; labels com truncagem por pontos permanecem dentro
 dos botões, e a matriz de conteúdo/controles sem sobreposição é verificada em
 ambas. Resize percorre portrait→landscape→portrait→landscape. TEST-MUSIC-FOOTER-GUARD
@@ -350,8 +404,8 @@ Ao ficar visível, a surface é movida à frente da textarea criada posteriormen
 no topo e que a surface passa ao último filho após ficar visível. O shim host de
 `lv_obj_move_foreground` modela essa reordenação removendo e anexando o objeto.
 O contrato `test_music_scan_opendir_contract.py` protege o roteamento (incluindo
-setas remapeadas, ambos os sinais de +/- nos caminhos físico e virtual, e a
-ausência de N/P em ambas as caixas), mas é estrutural e não prova eventos LVGL
+setas remapeadas, ambos os sinais de +/- nos caminhos físico e virtual, N sem
+binding e P físico→play-selected com precedência do campo Command), mas é estrutural e não prova eventos LVGL
 ou teclado real. `test_music_manager` cobre o mapeamento. `test_display_views` cobre bounds, highlight e scroll de seleção sem
 playback. `player_traceability.md` relaciona REQ-MUSIC-KEYS-01..05 aos testes
 TEST-MUSIC-KEYS-MAPPING/BOUNDS/LIST/REMOVED/REGRESSION/HINT.
@@ -362,7 +416,19 @@ no-op. Mismatch também é no-op em playing/paused/stopped. `test_music_app` cob
 estados, início selecionado, fila/índices inválidos, mismatch por estado, error
 e enum fora do domínio sem chamada de player ou mutação de seleção; matriz
 `player_traceability.md` e cenário Tab5 seção 6 documentam os requisitos
-aditivos. A validação física permanece pendente.
+aditivos. A ação separada `application::play_selected` também admite somente
+playing/paused/stopped antes de validar fila ou alterar seleção; error e enum fora
+do domínio são rejeitados sem chamada de player nem mutação de seleção
+(`TEST-MUSIC-PLAY-SELECTED-05`). A validação física permanece pendente.
+`cyberdeck_music_view::render` não pode substituir uma seleção local ainda não
+confirmada pelo player por um snapshot anterior: setas/clique marcam a seleção
+pendente até o status convergir. `test_display_views` integra o TU real da view
+com um fake app/player, intercalando status antigo antes do toggle parado e
+verificando highlight e path para ambas as formas de seleção; também reduz a fila
+com seleção pendente, verifica que faixa oculta não fica destacada e que uma
+seleção válida posterior converge. Pause/resume seguem cobertos por
+`test_music_app`. A view TU não oferece seam para rejeição real do comando de
+seleção pelo app/manager; esse caso permanece limitação de integração.
 O runtime conserva estado foreground, grant
 e quota quando teardown falha, para que stop/join possa ser repetido sem liberar
 recursos vivos; somente teardown bem-sucedido revoga o grant e registra o app
@@ -1146,7 +1212,8 @@ destrói recursos potencialmente usados.
         input/render. A view ocupa o display, reajusta layout em `LV_EVENT_SIZE_CHANGED`,
          mostra status/progresso, controles e lista rolável bounded a 64 itens; ↑/↓
          movem seleção/highlight e fazem `lv_obj_scroll_to_view` sem playback,
-         ←/→ navegam faixas, +/− ajustam volume e N/P não são atalhos; status
+          ←/→ navegam faixas, +/− ajustam volume, P inicia a faixa selecionada e N
+          permanece sem binding; status
         ocupa até três linhas; labels de faixa/controle têm dimensões fixas e
         `LV_LABEL_LONG_MODE_DOTS` preserva o texto da origem sem invadir widgets
         vizinhos. Um rodapé fixo `footer_` (label `kMuted` #8A8A8A, criado depois
@@ -1187,7 +1254,7 @@ destrói recursos potencialmente usados.
       pintaria com o primário azul) e
       o KNOB fica invisível (`bg_opa` transparente + `pad_all`/`radius`/`border_width`/
       `shadow_width` zerados), porque `draw_knob` sempre desenha um retângulo nessa
-      parte. Os oito botões de controle usam `kSelected` (#303030, o mesmo cinza
+      parte. Os nove botões de controle usam `kSelected` (#303030, o mesmo cinza
       elevado da linha selecionada da biblioteca) sem borda, raio ou sombra, no
       mesmo padrão das linhas da biblioteca — `kBlack` continua sendo apenas o
       fundo da surface da view, porque é mais escuro que o cartão; `test_display_views` verifica os valores
@@ -1437,11 +1504,15 @@ destrói recursos potencialmente usados.
   alocado por `shared()` e nunca destruído (as tasks destacadas podem tocar o
   registro durante a saída do processo); `music_test_task_state` continua sendo
   alocado por `spawn_task` e liberado apenas pela própria task; e
-  `test_music_audio_output.cpp` para volume, mute, falhas e roteamento via backend
-  codec injetável, incluindo o burst de 100 `start()` idênticos (0 escrita de
-  volume e 0 leitura de jack), a reaplicação de volume apenas quando muda, a
-  troca de jack durante o play aplicada uma vez por janela de 500 ms e a falha
-  de amplificador fail-closed no caminho reentrante (206 checks). A geometria do
+   `test_music_audio_output.cpp` para volume, mute, falhas e roteamento via backend
+   codec injetável, incluindo o burst de 100 `start()` idênticos (0 escrita de
+   volume e 0 leitura de jack), a reaplicação de volume apenas quando muda, a
+   troca de jack durante o play aplicada uma vez por janela de 500 ms e a falha
+   de amplificador fail-closed no caminho reentrante; o timing de escrita usa
+   clock host controlável para separar somente route check efetivamente tentado
+   e backend write real. Player publica ambas as séries por geração e o serializer
+   NDJSON as acrescenta sem remover os campos `write_*` antigos
+   (`TEST-AUDIO-WRITE-SUB-01..07`). A geometria do
   DMA de I2S é fixada estruturalmente por
   `test_music_audio_buffer_contract.py` (17 checks, no agregado `test`): valores
   `8`/`512`, `auto_clear = true`, atribuições antes de `i2s_new_channel()`,
@@ -1460,8 +1531,9 @@ destrói recursos potencialmente usados.
  - `cyberdeck_header_view.{h,cpp}` adiciona botão global acionável enquanto há
    playback. O app foreground `cyberdeck.music` possui view dedicada e manager;
    o timer atualiza metadados, estado, progresso e volume da mesma instância.
-   Touch oferece previous, play/pause, next, seek ±10 s e volume ±1; teclado
-   roteia Enter, setas, N/P e Esc. Esc/troca fazem stop/join antes de destruir a
+   Touch oferece previous, play/pause, next, seek ±10 s, volume ±1, Command e
+   Play Selected (nove botões); Enter mantém toggle, P inicia do começo a faixa
+   destacada e setas navegam. N permanece sem binding. Esc/troca fazem stop/join antes de destruir a
    view; em falha o foreground e seus grants são preservados para retry.
     `test_music_manager` cobre input/close/ownership com callbacks host;
     `test_music_app` retém secure-open durante close para provar cancel/join antes
@@ -1469,7 +1541,7 @@ destrói recursos potencialmente usados.
     falha e retry. `test_display_views` verifica bounds, truncagem visual e
     geometrias portrait/landscape. REQ-PLAYER-LAYOUT-READABLE e
     REQ-PLAYER-ESC-STABLE, incluindo `AC-ESC-NO-REBOOT`, estão em
-    `player_traceability.md`; nenhum teste host prova ausência de reboot físico.
+    `player_traceability.md`, inclusive REQ-MUSIC-PLAY-SELECTED / TEST-MUSIC-PLAY-SELECTED-01..10; nenhum teste host prova ausência de reboot físico.
    `test_app_runtime` cobre falha de teardown, incluindo estado running preservado
    e revogação de grants somente após stop concluído. A view LVGL real e o áudio
    continuam dependentes de validação manual.
@@ -1528,7 +1600,7 @@ destrói recursos potencialmente usados.
   foreground, abre a surface e inicia o scan de `/musica`), que `app start`
   isolado não abre a surface, que subcomandos exigem foreground ativo, que o
   console e a ponte Serial-JTAG seguem vivos com o player aberto e a tabela de
-  controles (Enter, setas com seek de 10 s e volume 0..50, N/P, Esc -> shell via
+  controles (Enter, P, setas com seek de 10 s e volume 0..50, Esc -> shell via
   stop/join);
   `version.txt=3` identifica o próximo firmware integrado.
 

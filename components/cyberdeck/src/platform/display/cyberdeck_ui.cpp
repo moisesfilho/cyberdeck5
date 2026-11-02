@@ -843,6 +843,8 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
         if (text != nullptr && length == 1 && (text[0] == '+' || text[0] == '-')) {
             (void)s_music_manager.handle(text[0] == '+' ? cyberdeck_music_manager::key::volume_up
                                                          : cyberdeck_music_manager::key::volume_down);
+        } else if (text != nullptr && length == 1 && (text[0] == 'p' || text[0] == 'P')) {
+            (void)s_music_manager.handle(cyberdeck_music_manager::key::play_selected);
         } else if (text != nullptr && length > 0) {
             (void)s_music_manager.handle(cyberdeck_music_manager::key::other);
         } else if (special_key) {
@@ -1607,6 +1609,8 @@ bool music_manager_action(cyberdeck_music_manager::action action, void *) {
     switch (action) {
     case cyberdeck_music_manager::action::toggle:
         return app.toggle_selected(s_music_view.selected_track());
+    case cyberdeck_music_manager::action::play_selected:
+        return app.play_selected(s_music_view.selected_track());
     case cyberdeck_music_manager::action::seek_back:
     case cyberdeck_music_manager::action::seek_forward: {
         const bool forward = action == cyberdeck_music_manager::action::seek_forward;
@@ -1698,7 +1702,8 @@ void music_view_action(std::string_view name, void *) {
     else if (name == "volume_up" || name == "volume_down") {
         (void)s_music_manager.handle(name == "volume_up" ? cyberdeck_music_manager::key::volume_up
                                                             : cyberdeck_music_manager::key::volume_down);
-    } else if (name == "next") (void)s_music_manager.handle(cyberdeck_music_manager::key::right);
+    } else if (name == "play_selected") (void)s_music_manager.handle(cyberdeck_music_manager::key::play_selected);
+    else if (name == "next") (void)s_music_manager.handle(cyberdeck_music_manager::key::right);
     else if (name == "prev") (void)s_music_manager.handle(cyberdeck_music_manager::key::left);
     else if (name == "select_next") (void)s_music_view.move_selection(1);
     else if (name == "select_previous") (void)s_music_view.move_selection(-1);
@@ -2018,6 +2023,10 @@ void terminal_insert(lv_event_t *event) {
     }
 
     if (s_music_ui_active) {
+        if (inserted[1] == '\0' && (inserted[0] == 'p' || inserted[0] == 'P')) {
+            (void)s_music_manager.handle(cyberdeck_music_manager::key::play_selected);
+            return;
+        }
         if (inserted[1] == '\0' && (inserted[0] == '+' || inserted[0] == '-'))
             (void)s_music_manager.handle(inserted[0] == '+' ? cyberdeck_music_manager::key::volume_up
                                                              : cyberdeck_music_manager::key::volume_down);
