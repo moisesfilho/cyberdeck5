@@ -1514,11 +1514,12 @@ destrói recursos potencialmente usados.
    NDJSON as acrescenta sem remover os campos `write_*` antigos
    (`TEST-AUDIO-WRITE-SUB-01..07`). A geometria do
   DMA de I2S é fixada estruturalmente por
-  `test_music_audio_buffer_contract.py` (17 checks, no agregado `test`): valores
+  `test_music_audio_buffer_contract.py` (19 checks, no agregado `test`): valores
   `8`/`512`, `auto_clear = true`, atribuições antes de `i2s_new_channel()`,
   janela derivada de 60..200 ms (o default `6 x 240` calcula 30 ms e é
-  rejeitado), limite de descritor, cap `count <= 2304` dentro do ring e fonte
-   única dos valores (TEST-DMA-01..03 são cobertos por esse contrato; sem lógica
+  rejeitado), limite de descritor, teto de 2304 amostras (`count > 2304`
+  retorna false) dentro do ring, com controles negativos para remoção/elevação,
+   e fonte única dos valores (TEST-DMA-01..03 são cobertos por esse contrato; sem lógica
    compartilhada adicional, não se duplica teste de fórmula). `MUSIC_METADATA_SRC`/`MUSIC_METADATA_HDR` entram em
   `MUSIC_APP_SOURCES`/`MUSIC_PLAYER_SOURCES` e nas dependências dos dois alvos;
   `MUSIC_DURATION_SRC`/`MUSIC_DURATION_HDR` entram em `MUSIC_PLAYER_SOURCES` e

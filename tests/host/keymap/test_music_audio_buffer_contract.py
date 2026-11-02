@@ -96,6 +96,12 @@ def descriptor_bytes(frame_num: int) -> int:
     return frame_num * SLOT_COUNT * BYTES_PER_SAMPLE
 
 
+def write_sample_limit(source: str) -> int | None:
+    # The cap is a fail-closed `count > N` branch that returns false.
+    match = re.search(r"if\s*\([^)]*\bcount\s*>\s*(\d+)[^)]*\)\s*return\s+false\s*;", source)
+    return int(match.group(1)) if match else None
+
+
 check(BSP_AUDIO.is_file(), f"{BSP_AUDIO} must exist")
 check(OUTPUT.is_file(), f"{OUTPUT} must exist")
 
@@ -146,10 +152,15 @@ if desc_num is not None and frame_num is not None:
           f"dma_frame_num and the duration above is a lie)")
     # A single esp_codec_dev_write() larger than the whole ring would block
     # forever, so the adapter's write cap must fit in the ring.
-    write_cap = re.search(r"count\s*<=\s*(\d+)", output)
-    check(write_cap is not None, "cyberdeck_audio_output::write must cap the sample count")
-    if write_cap:
-        cap_bytes = int(write_cap.group(1)) * BYTES_PER_SAMPLE
+    write_cap = write_sample_limit(output)
+    check(write_cap == 2304,
+          f"cyberdeck_audio_output::write must reject counts above 2304 samples, got {write_cap}")
+    check(write_sample_limit(output.replace("count > 2304", "count > 2305")) != 2304,
+          "write-cap matcher must reject an elevated sample limit")
+    check(write_sample_limit(output.replace("count > 2304", "count != 0")) is None,
+          "write-cap matcher must reject removal of the sample limit")
+    if write_cap is not None:
+        cap_bytes = write_cap * BYTES_PER_SAMPLE
         ring_bytes = desc_num * frame_num * SLOT_COUNT * BYTES_PER_SAMPLE
         check(cap_bytes <= ring_bytes,
               f"one write of {cap_bytes} B must fit the {ring_bytes} B ring")
