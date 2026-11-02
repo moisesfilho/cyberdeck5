@@ -258,6 +258,14 @@ Physical trace capture is recorded in the 2026-11-02 observation in the audio
 plan/traceability/manual ledger: targeted swaps had no user-reported stutter,
 but the bounded ring had lost 10176 events and cannot prove DMA underrun or
 causality. Full player acceptance remains separate.
+The user separately confirmed physical `P` and the on-screen `Play Selected`
+button on firmware SHA-256 `67a2358a14fd3130df0564d272cf68e441ab4bc2ceaf32f43583bb26e8013daa`;
+only test/documentation follow-up `09bdd39` changed since that build, with no
+production changes. This is scoped evidence, not full player acceptance. Several
+normal and rapid swaps were separately reported without stutter; root cause stays
+unknown and no functional fix is established. Speaker/jack and other applicable
+physical gates remain pending. See the canonical audio plan, manual route and
+`player_traceability.md`.
 Os três arquivos modificados do fork têm notice destacado `Modified by
 cyberdeck5` nos cabeçalhos SPDX, sem remover avisos upstream. A revalidação
 física pontual I2S de 2026-11-01 e seus limites estão registrados no plano e na

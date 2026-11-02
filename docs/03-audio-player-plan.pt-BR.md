@@ -1,7 +1,9 @@
 # Plano 03 — Player de áudio local
 
 **Estado:** implementação integrada; aceite físico integral do player/layout/
-teclado ainda pendente. O fluxo de trabalho é testes focados -> validação no Tab5 do
+teclado ainda pendente. O atalho físico P e o botão de tela Play Selected foram
+confirmados pelo usuário como funcionais na imagem registrada abaixo; isso não
+implica aceite integral do player. O fluxo de trabalho é testes focados -> validação no Tab5 do
 comportamento-alvo -> revisão final ampla. A revisão ampla não substitui o teste
 físico. Se o dispositivo/cenário estiver indisponível ou inseguro, os gates locais
 podem ser finalizados, mas a validação física permanece pending e a tarefa não
@@ -627,6 +629,21 @@ O teste manual direcionado de stutter nas trocas relatadas fica PASS conforme
 observação do usuário; causa raiz permanece não confirmada e nenhuma correção
 funcional foi feita. O usuário considera o problema resolvido, mas isso não
 substitui aceite técnico causal nem os gates físicos restantes do player.
+
+### Confirmação manual de Play Selected — 2026-11-02
+
+O usuário confirmou que tanto o atalho físico `P` quanto o botão de tela
+`Play Selected` funcionaram corretamente. A imagem gravada tinha SHA-256
+`67a2358a14fd3130df0564d272cf68e441ab4bc2ceaf32f43583bb26e8013daa`; desde
+essa compilação, somente o follow-up de teste/documentação `09bdd39` mudou, sem
+alteração de produção. Esta evidência cobre especificamente esses dois meios de
+acionar Play Selected, por relato do usuário; não infere validação virtual de P,
+outras teclas, touch/controles distintos, speaker/jack ou aceite integral.
+Separadamente, o usuário relatou várias trocas normais e rápidas sem engasgos,
+conforme observação de stutter acima. Causa-raiz do stutter continua desconhecida
+e não houve fix funcional; o trace bounded não prova ausência de underrun DMA.
+Os demais gates físicos do player, incluindo speaker/jack, ESC/lifecycle e os
+critérios de coexistência/idle/poweroff aplicáveis, continuam pendentes.
 
 No Tab5-OS o app de música é UI e o engine de áudio pertence ao OS; não há
 correção de stutter diretamente transferível identificada. A correção prévia

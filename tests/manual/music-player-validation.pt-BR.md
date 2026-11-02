@@ -129,12 +129,20 @@ reprodução. Evite toda entrada interativa no player após as consultas `status
 
 ### 3.1. Captura de tela e entrada durante a inspeção
 
-### 3.2. Cenário Play Selected (somente rodada explicitamente autorizada)
+### 3.2. Cenário Play Selected (registro de validação manual)
 
-Este cenário não faz parte da inspeção passiva acima. Após autorização específica
-para playback, selecione outra faixa enquanto uma estiver tocando/pausada e use
-`P` ou o botão `Play Selected`: a faixa destacada deve iniciar do começo, uma
-única vez. Enter continua sendo toggle da faixa corrente (playing→pause,
+Este cenário não faz parte da inspeção passiva acima e requer autorização
+específica para playback. **Registro 2026-11-02:** o usuário confirmou que tanto
+o atalho físico `P` quanto o botão de tela `Play Selected` funcionaram
+corretamente na imagem SHA-256
+`67a2358a14fd3130df0564d272cf68e441ab4bc2ceaf32f43583bb26e8013daa`. Desde essa
+compilação, somente follow-up de teste/documentação `09bdd39` mudou; produção
+permaneceu igual. Evidência por relato do usuário, limitada a esses dois caminhos;
+não inferir P virtual, outros periféricos/controles ou aceite integral.
+
+Em uma execução autorizada, selecione outra faixa enquanto uma estiver
+tocando/pausada e use `P` ou o botão `Play Selected`: a faixa destacada deve
+iniciar do começo, uma única vez. Enter continua sendo toggle da faixa corrente (playing→pause,
 paused→resume); em stopped inicia a faixa destacada. Alterar highlight sozinho
 não deve iniciar áudio. Em fila vazia/seleção inválida, a ação deve falhar sem
 substituir playback. Verifique status/posição via `music status`, sem enviar
@@ -182,7 +190,8 @@ executados:
   player ativo e bloqueia a troca de foreground;
 - scan cancelado ou falho não pode publicar fila parcial.
 
-**Estado deste ciclo:** não enviar Escape nem fazer nova ação física. O reboot
+**Estado dos demais gates:** esta confirmação não valida Escape nem outras ações
+físicas; consulte as seções próprias e não infira o aceite completo do player. O reboot
 reportado após Esc ainda não tem causa demonstrada. Os logs `music: stop
 stage=cancel_scan`, `scan_join_complete`, `player_stop` (ou `stop failed
 stage=...`) são evidência diagnóstica para uma rodada autorizada futura; host
@@ -419,7 +428,7 @@ causa isoladamente. Não executar playback para gerar eventos sem autorização
 separada. Comparar timestamps monotônicos e durações de SD read/decode/codec
 start/output write por geração, preservando a resposta e log de boot.
 
-### Registro da rodada de trocas — 2026-11-02
+### Registro da rodada de trocas sem stutter — 2026-11-02
 
 Firmware SHA-256 `67a2358a14fd3130df0564d272cf68e441ab4bc2ceaf32f43583bb26e8013daa`;
 snapshot HEAD `d2236a4b94bc7a2ada4482991732dcd6d7a00d66` + diff
@@ -427,6 +436,10 @@ snapshot HEAD `d2236a4b94bc7a2ada4482991732dcd6d7a00d66` + diff
 O usuário fez várias trocas, esperou segundos e também trocou rapidamente; relatou
 nenhum engasgo. Resultado: teste manual direcionado de stutter nas trocas relatadas
 PASS por observação do usuário; não implica aceite completo do player.
+
+Causa-raiz do stutter permanece desconhecida e não houve correção funcional.
+O resultado é somente a observação subjetiva desta rodada, não prova ausência de
+underrun DMA ou de stutter em outras condições.
 
 `music.diagnostics`: generation=7; queued/started/retired=7/7/6; failures=0;
 max read/decode/codec-start/write = 5465/11603/18720/27827 us; route
