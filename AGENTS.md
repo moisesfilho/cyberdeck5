@@ -36,6 +36,24 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 - Prefira a menor alteracao correta e valide referencias e testes relacionados
   quando o trabalho estiver concluido.
 
+## Versionamento do firmware e aplicativos
+
+- A versão do firmware tem exatamente três segmentos decimais sem zero-padding,
+  `MAJOR.MINOR.PATCH`; o valor inicial é exatamente `1.0.0`. `version.txt` é sua
+  única fonte. O ESP-IDF a propaga para `PROJECT_VER` e `esp_app_desc_t::version`,
+  consumida pela UI; não duplique nem fixe a versão em código.
+- `MAJOR` é controle pessoal do usuário e nunca é incrementado automaticamente;
+  só muda por solicitação explícita. Mudanças diretas no firmware/base incrementam
+  `MINOR`; cada mudança funcional de app incrementa `PATCH` e a versão própria
+  desse app no manifesto, preservando `api_version`.
+- Mudanças que afetem mais de um escopo incrementam todos os segmentos
+  correspondentes. Segmentos podem ter mais de dois dígitos, desde que caibam no
+  campo `esp_app_desc_t::version` e no título da UI. Se o próximo incremento não
+  couber nesses limites técnicos, pare e solicite orientação; não faça rollover
+  nem altere outro segmento como substituição.
+- Versões dos manifests de apps seguem o semver próprio do app e não derivam da
+  versão do firmware.
+
 ## Execucao dos testes host
 
 - Os alvos ficam em `tests/host/keymap/Makefile`. Para um teste focado, execute

@@ -1,7 +1,10 @@
 #include "platform/display/cyberdeck_header_view.h"
 
+#include "esp_app_desc.h"
 #include "platform/display/cyberdeck_wifi_icon.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 
 extern const lv_font_t cyberdeck_font;
@@ -14,6 +17,46 @@ constexpr int32_t CYBERDECK_PERCENTAGE_BOLD_OFFSET = 1;
 const lv_color_t kBlack = lv_color_hex(0x000000);
 const lv_color_t kWhite = lv_color_hex(0xF2F2F2);
 const lv_color_t kMuted = lv_color_hex(0x8A8A8A);
+
+bool is_firmware_version_supported(const char *version, std::size_t field_size) {
+    if (version == nullptr || field_size == 0)
+        return false;
+    const auto is_digit = [](char value) { return value >= '0' && value <= '9'; };
+    std::size_t index = 0;
+    for (int segment = 0; segment < 3; ++segment) {
+        const std::size_t segment_start = index;
+        if (index >= field_size)
+            return false;
+        if (!is_digit(version[index]))
+            return false;
+        while (index < field_size && is_digit(version[index]))
+            ++index;
+        if (version[segment_start] == '0' && index - segment_start > 1)
+            return false;
+        if (segment < 2) {
+            if (index >= field_size || version[index] != '.')
+                return false;
+            ++index;
+        }
+    }
+    return index < field_size && version[index] == '\0';
+}
+
+bool title_fits_portrait(const char *text) {
+    constexpr uint32_t kMinimumPortraitWidth = 720;
+    constexpr uint32_t kTitleWidthPercent = 30;
+    constexpr uint32_t kGlyphWidthFraction = 16;
+    constexpr uint32_t kMaximumTitleWidth = kMinimumPortraitWidth * kTitleWidthPercent * kGlyphWidthFraction / 100;
+
+    uint32_t width = 0;
+    for (std::size_t index = 0; text[index] != '\0'; ++index) {
+        const uint32_t next = text[index + 1] == '\0' ? 0 : static_cast<unsigned char>(text[index + 1]);
+        width += lv_font_get_glyph_width(&cyberdeck_font, static_cast<unsigned char>(text[index]), next);
+        if (width > kMaximumTitleWidth)
+            return false;
+    }
+    return true;
+}
 
 void disable_scrolling(lv_obj_t *object)
 {
@@ -62,6 +105,18 @@ bool view::create(lv_obj_t *parent)
 {
     if (parent == nullptr) return false;
 
+    const esp_app_desc_t *app_description = esp_app_get_description();
+    if (app_description == nullptr ||
+        !is_firmware_version_supported(app_description->version, sizeof(app_description->version)))
+        return false;
+    char title_text[32] = {};
+    const int title_length = std::snprintf(title_text, sizeof(title_text), "CYBERDECK5 %s", app_description->version);
+    if (title_length < 0 || static_cast<std::size_t>(title_length) >= sizeof(title_text)) {
+        return false;
+    }
+    if (!title_fits_portrait(title_text))
+        return false;
+
     lv_obj_t *header = lv_obj_create(parent);
     if (header == nullptr) return false;
     lv_obj_set_size(header, lv_pct(100), 42);
@@ -76,8 +131,9 @@ bool view::create(lv_obj_t *parent)
     disable_scrolling(header);
 
     lv_obj_t *title = lv_label_create(header);
-    lv_label_set_text(title, "CYBERDECK5");
+    lv_label_set_text(title, title_text);
     lv_obj_set_width(title, LV_PCT(30));
+    lv_label_set_long_mode(title, LV_LABEL_LONG_CLIP);
     style_base(title, kBlack, kWhite);
     apply_header_font(title);
 

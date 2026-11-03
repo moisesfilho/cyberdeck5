@@ -1,7 +1,8 @@
-#include "platform/display/cyberdeck_header_view.h"
-#include "platform/display/cyberdeck_terminal_view.h"
+#include "esp_app_desc.h"
 #include "platform/display/cyberdeck_editor_view.h"
+#include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_music_view.h"
+#include "platform/display/cyberdeck_terminal_view.h"
 
 #include <algorithm>
 #include <array>
@@ -107,15 +108,23 @@ int main()
     lv_obj_set_size(&screen, 720, 1280);
     cyberdeck_header_view::view header;
     assert(!header.create(nullptr));
+    std::memcpy(lv_shim_app_description().version, "1.0", 4);
+    assert(!header.create(&screen));
+    std::memcpy(lv_shim_app_description().version, "01.0.0", 7);
+    assert(!header.create(&screen));
+    std::memcpy(lv_shim_app_description().version, "1.0.0", 6);
     assert(header.create(&screen));
     assert(screen.children.size() == 1);
     const auto *header_bar = screen.children[0];
     assert(header_bar->height == 42);
     assert(header_bar->children.size() == 3);
-    const auto *title = header_bar->children[0];
+    auto *title = header_bar->children[0];
     const auto *clock = header_bar->children[1];
     const auto *right = header_bar->children[2];
+    assert(title->text == "CYBERDECK5 1.0.0");
+    assert(title->long_mode == LV_LABEL_LONG_CLIP);
     assert(title->width == LV_PCT(30));
+    assert(lv_shim_text_width(title->text_font, title->text) <= 216);
     assert(clock->width == LV_PCT(40));
     assert(right->width == LV_PCT(30) && right->height == 42);
     assert(header_bar->flex_main == LV_FLEX_ALIGN_START);
@@ -1261,5 +1270,61 @@ int main()
     assert(editor_action == "scroll");
     editor.destroy();
     assert(!editor.visible() && editor.surface() == nullptr);
+
+    /* TEST-VERSION-01..05: read the actual app-description seam, reject invalid
+     * semver and reject versions whose measured title exceeds portrait width. */
+    static_assert(sizeof(lv_shim_app_description().version) == 32);
+    lv_obj_t version_screen{};
+    lv_obj_set_size(&version_screen, 720, 1280);
+    cyberdeck_header_view::view version_header;
+    std::memset(lv_shim_app_description().version, 0, sizeof(lv_shim_app_description().version));
+    std::memcpy(lv_shim_app_description().version, "100.0.0", 8);
+    assert(version_header.create(&version_screen));
+    auto *version_title = version_screen.children[0]->children[0];
+    assert(version_title->text == "CYBERDECK5 100.0.0");
+    assert(version_title->width == LV_PCT(30));
+    assert(version_title->long_mode == LV_LABEL_LONG_CLIP);
+    assert(lv_shim_text_width(version_title->text_font, version_title->text) <= 216);
+
+    lv_obj_t maximum_version_screen{};
+    lv_obj_set_size(&maximum_version_screen, 720, 1280);
+    cyberdeck_header_view::view maximum_version_header;
+    constexpr char kMaximumDisplayedVersion[] = "1000.0.0";
+    std::memset(lv_shim_app_description().version, 0, sizeof(lv_shim_app_description().version));
+    std::memcpy(lv_shim_app_description().version, kMaximumDisplayedVersion, sizeof(kMaximumDisplayedVersion));
+    assert(maximum_version_header.create(&maximum_version_screen));
+    const auto *maximum_title = maximum_version_screen.children[0]->children[0];
+    assert(maximum_title->text == "CYBERDECK5 1000.0.0");
+    assert(maximum_title->long_mode == LV_LABEL_LONG_CLIP);
+    assert(maximum_title->width == LV_PCT(30));
+    assert(lv_shim_text_width(maximum_title->text_font, maximum_title->text) <= 216);
+
+    lv_obj_t too_wide_version_screen{};
+    lv_obj_set_size(&too_wide_version_screen, 720, 1280);
+    cyberdeck_header_view::view too_wide_version_header;
+    constexpr char kTooWideVersion[] = "10000.0.0";
+    std::memset(lv_shim_app_description().version, 0, sizeof(lv_shim_app_description().version));
+    std::memcpy(lv_shim_app_description().version, kTooWideVersion, sizeof(kTooWideVersion));
+    assert(!too_wide_version_header.create(&too_wide_version_screen));
+    assert(too_wide_version_screen.children.empty());
+
+    std::memset(lv_shim_app_description().version, 0, sizeof(lv_shim_app_description().version));
+    std::memcpy(lv_shim_app_description().version, "1234567890123456.0.0", 21);
+    assert(!maximum_version_header.create(&too_wide_version_screen));
+    assert(too_wide_version_screen.children.empty());
+
+    lv_obj_t overflowing_version_screen{};
+    lv_obj_set_size(&overflowing_version_screen, 720, 1280);
+    cyberdeck_header_view::view overflowing_version_header;
+    std::memset(lv_shim_app_description().version, 0, sizeof(lv_shim_app_description().version));
+    std::memcpy(lv_shim_app_description().version, "12345678901234567.0.0", 22);
+    assert(!overflowing_version_header.create(&overflowing_version_screen));
+    assert(overflowing_version_screen.children.empty());
+
+    constexpr char kNoTerminatorVersion[] = "1234567890123456789012345678.0.0";
+    static_assert(sizeof(kNoTerminatorVersion) - 1 == sizeof(lv_shim_app_description().version));
+    std::memcpy(lv_shim_app_description().version, kNoTerminatorVersion, sizeof(lv_shim_app_description().version));
+    assert(!overflowing_version_header.create(&overflowing_version_screen));
+    assert(overflowing_version_screen.children.empty());
     std::cout << "display view tests passed\n";
 }

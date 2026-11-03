@@ -105,6 +105,9 @@ inline int32_t lv_obj_get_width(lv_obj_t *o){return o?o->width:0;} inline int32_
 inline void lv_obj_set_x(lv_obj_t*o,int32_t v){if(o)o->x=v;} inline void lv_obj_set_y(lv_obj_t*o,int32_t v){if(o)o->y=v;}
 inline void lv_obj_set_pos(lv_obj_t*o,int32_t x,int32_t y){if(o){o->x=x;o->y=y;}}
 inline int32_t lv_font_get_line_height(const lv_font_t*f){return f?f->line_height:0;}
+inline uint16_t lv_font_get_glyph_width(const lv_font_t *, uint32_t, uint32_t) {
+    return 176;
+}
 inline void lv_obj_set_hidden(lv_obj_t*o,bool v){if(o)o->hidden=v;} inline bool lv_obj_is_hidden(const lv_obj_t*o){return o&&o->hidden;} inline bool lv_obj_has_flag(lv_obj_t*o,int){return o&&o->hidden;}
 inline void lv_obj_move_foreground(lv_obj_t*o){if(!o||!o->parent)return;auto&children=o->parent->children;const auto found=std::find(children.begin(),children.end(),o);if(found!=children.end()){children.erase(found);children.push_back(o);}}
 inline void lv_obj_add_flag(lv_obj_t*, int) {}

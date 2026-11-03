@@ -2411,11 +2411,11 @@ test_keyboard_dispatch: test_keyboard_dispatch_bin
 	@./test_keyboard_dispatch_bin
 
 .PHONY: test_display_views
-test_display_views/test.o: test_display_views.cpp shim/full/lvgl.h Makefile
+test_display_views/test.o: test_display_views.cpp shim/full/lvgl.h shim/full/esp_app_desc.h Makefile
 	@mkdir -p $(@D)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 
-test_display_views/header_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp Makefile
+test_display_views/header_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp shim/full/esp_app_desc.h Makefile
 	@mkdir -p $(@D)
 	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -Ishim/full -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 
