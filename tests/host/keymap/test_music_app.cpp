@@ -222,18 +222,21 @@ int main() {
     CHECK(runtime.register_application(log));
     CHECK(runtime.register_application(music));
     CHECK(music.execute("music", "status").status == cyberdeck_apps::result_status::rejected);
-    CHECK(runtime.start_application("cyberdeck.music"));
-    CHECK(music.running() && player.active);
-    CHECK(player.starts == 1 && player.storage == &storage && player.grant_valid);
     fs::create_directories(fs::path(scan_root) / "musica");
     write_file(fs::path(scan_root) / "musica" / "opening.mp3", "opening-data");
-    cyberdeck_apps::result result = music.execute("music", "");
+    cyberdeck_apps::result result = runtime.execute_line("music");
     CHECK(result.status == cyberdeck_apps::result_status::handled);
     CHECK(music.consume_player_request());
+    CHECK(music.running() && player.active);
+    CHECK(player.starts == 1 && player.storage == &storage && player.grant_valid);
     CHECK(wait_until([&] {
         return music.execute("music", "status").output.find("queue: scan complete") != std::string::npos;
     }, std::chrono::seconds(2)));
     CHECK(music.execute("music", "status").status == cyberdeck_apps::result_status::handled);
+    const int player_starts_before_alias = player.starts;
+    result = runtime.execute_line("player");
+    CHECK(result.status == cyberdeck_apps::result_status::not_handled);
+    CHECK(player.starts == player_starts_before_alias && !music.consume_player_request());
     cyberdeck_music_command_input::controller command_input;
     command_app_probe command_probe{&music};
     command_input.open();

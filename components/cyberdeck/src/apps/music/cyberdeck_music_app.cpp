@@ -38,13 +38,12 @@ constexpr cyberdeck_apps::manifest k_manifest{
     1,
     8192,
     8,
-     {"music", "player"},
-     2,
+     {"music"},
+     1,
      false,
      {{{"music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume "
-       "<0-50> | shuffle | repeat | status",
-        "MP3 playback from SD; volume is capped at 50\n"},
-        {"player", "open the music player surface\n"}}},
+        "<0-50> | shuffle | repeat | status",
+         "MP3 playback from SD; volume is capped at 50\n"}}},
     true};
 
 std::string_view trim(std::string_view value) {
@@ -382,14 +381,6 @@ cyberdeck_apps::result application::status() const {
 }
 
 cyberdeck_apps::result application::execute(std::string_view command, std::string_view args) {
-    if (command == "player") {
-        if (!running_ || !app_grant().valid())
-            return {cyberdeck_apps::result_status::rejected, "player: music service unavailable\n"};
-        if (!scan_directory("/musica"))
-            return {cyberdeck_apps::result_status::rejected, "player: scan unavailable\n"};
-        player_requested_.store(true, std::memory_order_release);
-        return {cyberdeck_apps::result_status::handled, "player: opening\n"};
-    }
     if (command != "music")
         return {};
     if (!running_ || !app_grant().valid())

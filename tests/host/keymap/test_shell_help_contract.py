@@ -99,7 +99,6 @@ NETDIAG_USAGE = (
 MUSIC_USAGE = (
     ("music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
       "MP3 playback from SD; volume is capped at 50\n"),
-    ("player", "open the music player surface\n"),
 )
 DEMO_USAGE = (
     ("demo", "arguments are not declared; extra arguments are currently ignored\n"),
@@ -152,7 +151,7 @@ EXPECTED_APPS = (
      "usage": NETDIAG_USAGE, "owns_console": False},
     {"symbol": "&cyberdeck_music::global_application()", "source": "music",
      "id": "cyberdeck.music", "name": "Music", "description": "Foreground local MP3 player",
-     "type": "foreground", "commands": ("music", "player"), "command": "", "usage": MUSIC_USAGE,
+     "type": "foreground", "commands": ("music",), "command": "", "usage": MUSIC_USAGE,
      "owns_console": False, "commands_require_active_foreground": True},
 )
 
@@ -168,6 +167,7 @@ FIXTURE_USAGE_FUNCTIONS = {
 
 # Scenario identifiers of this contract, mapped in help_traceability.md.
 SCENARIOS = (
+    "TEST-1",
     "TEST-HELP-APP-MANIFEST-01",
     "TEST-HELP-APP-MANIFEST-02",
     "TEST-HELP-APP-MANIFEST-03",
@@ -917,7 +917,7 @@ def main() -> int:
                        and not manifests[app["id"]]["owns_console"]]
         console_owners = [app for app in EXPECTED_APPS if manifests[app["id"]]["owns_console"]]
         require(len(command_bearing) == COMMAND_BEARING_COUNT,
-                "exactly 3 compiled-in applications must declare a command")
+                "exactly 4 compiled-in applications must declare a command")
         require(len(commandless) == COMMANDLESS_SERVICE_COUNT,
                 "exactly 7 compiled-in services must declare no command")
         require(len(console_owners) == CONSOLE_OWNER_COUNT,

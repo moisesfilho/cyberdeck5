@@ -479,6 +479,11 @@ commit `59f4758`, verifica 176 depfiles, `BINS`, wrappers, agregado e limpeza;
 o alvo `test_incremental_final_contract` roda no agregado após o build.
 `test_shell_help_contract.py` reconcilia metadados aprovados de help, incluindo
 `music select <index>`, com manifests de produção e fixtures comportamentais.
+O manifesto de música declara somente `music` como comando de abertura; o alias
+`player` não abre a aplicação nem é anunciado no help. `test_music_app.cpp`
+cobre dispatch comportamental de `music`/`player`, enquanto os testes de help
+validam os goldens e a reconciliação estrutural; os demais comandos musicais
+continuam declarados em `cyberdeck_music_app.cpp`.
 Os contratos `test_window_manager_contract.py` e `test_coverage_scope_guard.py`
 verificam as ligações por objeto/depfile após a migração, sem exigir a receita
 monolítica antiga.

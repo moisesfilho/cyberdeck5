@@ -416,13 +416,11 @@ cyberdeck_apps::manifest music_usage_manifest()
     item.description = "Foreground local MP3 player";
     item.type = cyberdeck_apps::app_type::foreground;
     item.commands[0] = "music";
-    item.commands[1] = "player";
-    item.command_count = 2;
+    item.command_count = 1;
     item.commands_require_active_foreground = true;
     item.command_help_entries[0] = {
         "music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
         "MP3 playback from SD; volume is capped at 50\n"};
-    item.command_help_entries[1] = {"player", "open the music player surface\n"};
     return item;
 }
 
@@ -802,9 +800,7 @@ int main()
             "  Music (cyberdeck.music) version 1.0.0\n"
             "  Foreground local MP3 player\n"
             "  usage: music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status\n"
-            "  MP3 playback from SD; volume is capped at 50\n"
-            "  usage: player\n"
-            "  open the music player surface\n";
+            "  MP3 playback from SD; volume is capped at 50\n";
         check_eq(h.output, expected, "TEST-HELP-APP-USAGE-MUSIC: complete independent golden");
         check(music.executions == 0 && h.apps.state("cyberdeck.music") == cyberdeck_apps::app_state::registered,
               "TEST-HELP-APP-USAGE-MUSIC: help does not execute or start music");
@@ -922,11 +918,9 @@ int main()
             "netdiag [app]\n"
             "  start compiled application\n"
             "music [app]\n"
-            "  start compiled application\n"
-            "player [app]\n"
             "  start compiled application\n";
         check_eq(h.output, inventory_expected,
-                 "TEST-HELP-APP-INVENTORY: general help appends exactly the 3 command-bearing rows once, in order");
+                  "TEST-HELP-APP-INVENTORY: general help appends exactly the 4 command-bearing rows once, in order");
         for (const char *service_id : {"cyberdeck.event_log", "cyberdeck.wifi", "cyberdeck.serial",
                                        "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth",
                                        "cyberdeck.time_sync"})

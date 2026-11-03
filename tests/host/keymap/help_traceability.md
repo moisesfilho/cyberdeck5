@@ -1,5 +1,16 @@
 # Help: requisitos, cenários e evidência host (REQ-HELP-01..05)
 
+## REQ-1 / REQ-2 / AC-1 / AC-2 (TEST-1): abertura do player
+
+O manifesto musical declara somente `music` como comando de abertura; `player`
+não é alias e não aparece no help da aplicação nem no inventário geral. O teste
+comportamental `test_music_app.cpp` abre pelo `runtime.execute_line("music")`
+e confirma que `runtime.execute_line("player")` não é tratado nem inicia player;
+`test_shell_help.cpp` compara os blocos de help por golden literal, e
+`test_shell_help_contract.py` reconcilia o manifesto e a fixture. Os demais
+comandos/subcomandos de música permanecem no uso de `music`. Validação host não
+substitui a verificação visual do help no dispositivo.
+
 ## Atualização do inventário music (TEST-MUSIC-HELP-01)
 
 O inventário vigente possui 12 aplicações: 4 comandadas (`demo`, `editor`,
