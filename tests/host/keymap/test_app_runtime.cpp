@@ -134,10 +134,7 @@ class hooked_app final : public cyberdeck_apps::application {
         running_ = true;
         return true;
     }
-    bool stop() override {
-        running_ = false;
-        return true;
-    }
+    bool stop() override { return teardown(); }
     bool teardown() override {
         ++teardown_calls;
         running_ = false;
@@ -156,6 +153,67 @@ class hooked_app final : public cyberdeck_apps::application {
   private:
     const cyberdeck_apps::manifest manifest_{"hooked.app", "Hooked app", "1.0.0", "explicit lifecycle hooks", {}};
     bool running_ = false;
+};
+
+class tracked_foreground_app final : public cyberdeck_apps::application {
+  public:
+    tracked_foreground_app(std::string_view id, std::string_view command) {
+        manifest_.id = id;
+        manifest_.name = id;
+        manifest_.command = command;
+        manifest_.type = cyberdeck_apps::app_type::foreground;
+    }
+    void set_owns_console(bool owns) { manifest_.owns_console = owns; }
+    void set_commands_require_active_foreground(bool required) { manifest_.commands_require_active_foreground = required; }
+    const cyberdeck_apps::manifest &get_manifest() const override { return manifest_; }
+    bool init() override {
+        ++init_calls;
+        running_ = false;
+        return true;
+    }
+    bool start() override {
+        ++start_calls;
+        running_ = true;
+        return true;
+    }
+    bool stop() override {
+        ++stop_calls;
+        if (!teardown_ok)
+            return false;
+        ++teardown_calls;
+        running_ = false;
+        return true;
+    }
+    bool teardown() override { return stop(); }
+    bool running() const override { return running_; }
+    cyberdeck_apps::result execute(std::string_view, std::string_view) override {
+        return running_ ? cyberdeck_apps::result{cyberdeck_apps::result_status::handled, "active\n"}
+                        : cyberdeck_apps::result{cyberdeck_apps::result_status::rejected, "inactive\n"};
+    }
+    bool teardown_ok = true;
+    int start_calls = 0;
+    int init_calls = 0;
+    int stop_calls = 0;
+    int teardown_calls = 0;
+  private:
+    cyberdeck_apps::manifest manifest_{};
+    bool running_ = false;
+};
+
+class failed_foreground_app final : public cyberdeck_apps::application {
+  public:
+    const cyberdeck_apps::manifest &get_manifest() const override { return manifest_; }
+    bool start() override { return false; }
+    bool stop() override { return true; }
+    bool running() const override { return false; }
+    cyberdeck_apps::result execute(std::string_view, std::string_view) override { return {}; }
+  private:
+    cyberdeck_apps::manifest manifest_ = [] {
+        cyberdeck_apps::manifest value{};
+        value.id = "failed.foreground";
+        value.type = cyberdeck_apps::app_type::foreground;
+        return value;
+    }();
 };
 
 /* Regression: a start hook that exceeds the declared budget but still returns
@@ -226,13 +284,19 @@ class failing_app final : public cyberdeck_apps::application {
         return manifest_;
     }
     bool start() override {
+        ++start_calls;
+        if (start_calls > 1) {
+            running_ = true;
+            return true;
+        }
         return false;
     }
     bool stop() override {
+        running_ = false;
         return true;
     }
     bool running() const override {
-        return false;
+        return running_;
     }
     cyberdeck_apps::result execute(std::string_view, std::string_view) override {
         return {};
@@ -240,6 +304,8 @@ class failing_app final : public cyberdeck_apps::application {
 
   private:
     const cyberdeck_apps::manifest manifest_{"failing.app", "Failing app", "1.0.0", "start always fails", {}};
+    int start_calls = 0;
+    bool running_ = false;
 };
 
 class failing_dependent_app final : public cyberdeck_apps::application {
@@ -391,6 +457,106 @@ int main() {
     check(runtime.register_application(dependent), "dependent application registers");
     check(!runtime.register_application(app), "duplicate application is rejected");
 
+    runtime.set_command_dispatch_ready(false);
+    auto early_command = runtime.execute_line("testapp");
+    check(early_command.status == cyberdeck_apps::result_status::rejected,
+          "commands are rejected while system startup is in progress");
+    check(early_command.output == "system startup in progress\n",
+          "startup rejection explains why command dispatch is unavailable");
+    check(!app.running(), "startup-time command cannot race application lifecycle start");
+    runtime.set_command_dispatch_ready(true);
+
+    cyberdeck_apps::runtime exclusive_runtime;
+    tracked_foreground_app console("console.test", "console"), music("music.test", "music"),
+        editor("editor.test", "editor");
+    console.set_owns_console(true);
+    check(exclusive_runtime.register_application(console) && exclusive_runtime.register_application(music) &&
+              exclusive_runtime.register_application(editor),
+          "exclusive foreground fixtures register");
+    check(exclusive_runtime.start_application("console.test"), "console foreground starts");
+    check(console.stop_calls == 0, "foreground start does not stop itself");
+    check(exclusive_runtime.active_foreground() == "console.test", "active foreground is tracked");
+    check(exclusive_runtime.start_application("console.test"),
+          "starting the active console foreground is idempotent");
+    check(!exclusive_runtime.switch_foreground("console.test"),
+          "console cannot deactivate itself through foreground switch");
+    check(exclusive_runtime.active_foreground() == "console.test" && console.running(),
+          "refused console switch preserves the command surface");
+    check(exclusive_runtime.switch_foreground("music.test"), "foreground switch starts requested app");
+    check(console.stop_calls == 0, "foreground switch preserves the console owner");
+    check(console.running() && music.running() && exclusive_runtime.active_foreground() == "music.test",
+          "foreground switch activates the target without dismantling the console");
+    check(music.stop_calls == 0, "new foreground has not been stopped before it is switched out");
+    check(exclusive_runtime.execute_line("editor").status == cyberdeck_apps::result_status::handled,
+          "foreground command dispatch activates its app");
+    check(music.stop_calls == 1, "switching by command stops the previous foreground");
+    check(!music.running() && editor.running() && exclusive_runtime.active_foreground() == "editor.test",
+          "command dispatch also enforces single foreground ownership");
+    editor.teardown_ok = false;
+    check(!exclusive_runtime.switch_foreground("music.test"), "failed teardown blocks foreground switch");
+    check(editor.running() && !music.running() && exclusive_runtime.active_foreground() == "editor.test",
+          "failed teardown preserves current app and does not start target");
+    editor.teardown_ok = true;
+    check(exclusive_runtime.stop_application("editor.test") &&
+              exclusive_runtime.active_foreground() == "console.test",
+          "stopping foreground returns ownership to the preserved console");
+    check(exclusive_runtime.switch_foreground("music.test"), "foreground can start after explicit stop");
+    check(exclusive_runtime.restart_application("music.test") && music.start_calls == 3,
+          "foreground restart performs lifecycle cleanup and a fresh start");
+    failed_foreground_app failed_foreground;
+    check(exclusive_runtime.register_application(failed_foreground), "failed foreground fixture registers");
+    check(!exclusive_runtime.switch_foreground("failed.foreground"), "failed target start is reported");
+    check(exclusive_runtime.active_foreground() == "console.test" && !music.running() && console.running(),
+          "failed target start leaves the preserved console as active owner");
+
+    cyberdeck_apps::runtime music_dispatch_runtime;
+    tracked_foreground_app shell_owner("shell.owner", "shell"), foreground_music("music.foreground", "music");
+    configurable_app serial_service("serial.service");
+    shell_owner.set_owns_console(true);
+    foreground_music.set_commands_require_active_foreground(true);
+    serial_service.manifest_.type = cyberdeck_apps::app_type::service;
+    serial_service.manifest_.dependencies[0] = "shell.owner";
+    serial_service.manifest_.dependency_count = 1;
+    check(music_dispatch_runtime.register_application(shell_owner) &&
+              music_dispatch_runtime.register_application(foreground_music) &&
+              music_dispatch_runtime.register_application(serial_service),
+          "music active-dispatch fixtures register");
+    check(music_dispatch_runtime.start_application("serial.service"),
+          "serial service starts with its console dependency");
+    check(shell_owner.running() && serial_service.running() && music_dispatch_runtime.active_foreground().empty(),
+          "boot services are live before opening music");
+    check(music_dispatch_runtime.execute_line("music status").status == cyberdeck_apps::result_status::rejected &&
+              !foreground_music.running() && foreground_music.start_calls == 0,
+          "inactive foreground subcommand is rejected without starting app");
+    check(music_dispatch_runtime.execute_line("music").status == cyberdeck_apps::result_status::handled &&
+              foreground_music.running() && music_dispatch_runtime.active_foreground() == "music.foreground",
+          "primary music command activates foreground app");
+    check(shell_owner.running() && shell_owner.stop_calls == 0 && serial_service.running() &&
+              music_dispatch_runtime.execute_line("music status").status ==
+                  cyberdeck_apps::result_status::handled,
+          "opening music preserves shell, session owner, serial service and command dispatch");
+    check(music_dispatch_runtime.execute_line("music status").status == cyberdeck_apps::result_status::handled,
+          "active foreground accepts its subcommands");
+    foreground_music.teardown_ok = false;
+    const int shell_start_calls_before_failure = shell_owner.start_calls;
+    const auto failed_foreground_switch = music_dispatch_runtime.execute_line("shell");
+    check(failed_foreground_switch.status == cyberdeck_apps::result_status::rejected,
+          "foreground stop failure rejects destination command");
+    check(foreground_music.running(), "foreground stop failure keeps the current app running");
+    check(shell_owner.start_calls == shell_start_calls_before_failure,
+          "foreground stop failure does not restart the destination");
+    foreground_music.teardown_ok = true;
+    check(music_dispatch_runtime.execute_line("music status").status == cyberdeck_apps::result_status::handled,
+          "foreground remains usable after failed switch");
+    check(music_dispatch_runtime.execute_line("shell").status == cyberdeck_apps::result_status::handled &&
+              !foreground_music.running() && shell_owner.running() && serial_service.running() &&
+              music_dispatch_runtime.active_foreground() == "shell.owner",
+          "returning to the console stops music and retains its session and serial dependency");
+    check(music_dispatch_runtime.execute_line("app stop shell.owner").status ==
+                  cyberdeck_apps::result_status::rejected &&
+              shell_owner.running() && serial_service.running(),
+          "explicit stop still refuses the console owner and preserves serial service");
+
     auto list = runtime.execute_line("app list");
     check(list.status == cyberdeck_apps::result_status::handled, "app list is handled");
     check(list.output == "test.app 1.0.0 registered\ndependent.app 1.0.0 registered\n", "app list is deterministic");
@@ -504,6 +670,16 @@ int main() {
     const auto failure_info = failing_runtime.execute_line("app info failing.app");
     check(failure_info.output.find("failure: start hook failed\n") != std::string::npos,
           "app info exposes the last failure reason");
+    check(failing_runtime.start_application("failing.app"), "failed app can start on a later attempt");
+    check(failing_runtime.state("failing.app") == cyberdeck_apps::app_state::running,
+          "successful retry transitions failed app to running");
+    check(failing_runtime.failure_reason("failing.app").empty(),
+          "successful retry clears stale start failure");
+    const auto recovered_info = failing_runtime.execute_line("app info failing.app");
+    check(recovered_info.output.find("state: running\n") != std::string::npos &&
+              recovered_info.output.find("last_error: none\n") != std::string::npos &&
+              recovered_info.output.find("failure: start hook failed\n") == std::string::npos,
+          "app info does not report stale failure after recovery");
 
     // TEST-GRANT-08: default-invalid behavior and the exact declared resource mask.
     cyberdeck_apps::grant invalid_grant;
@@ -534,7 +710,8 @@ int main() {
     check(app_snapshot.valid() && app_snapshot.allows(cyberdeck_apps::resource::input),
           "application returns a usable by-value grant snapshot");
 
-    // TEST-GRANT-02: teardown observes revocation before its bounded completion barrier.
+    // TEST-GRANT-02: the grant remains valid while teardown owns live resources
+    // and is revoked after successful teardown completes.
     std::mutex barrier_mutex;
     std::condition_variable barrier_cv;
     bool teardown_observed = false;
@@ -555,10 +732,10 @@ int main() {
     }
     stopper.join();
     check(stop_succeeded, "grant app stops");
-    // TEST-GRANT-01: stop revokes the live grant and all retained copies.
-    check(!teardown_grant_valid && !first_grant.valid() && !app_snapshot.valid() &&
+    // TEST-GRANT-01: successful stop revokes the live grant and all retained copies.
+    check(teardown_grant_valid && !first_grant.valid() && !app_snapshot.valid() &&
               !first_grant.allows(cyberdeck_apps::resource::display),
-          "grant revocation linearizes before teardown and invalidates saved copies");
+          "grant is valid through teardown then invalidates saved copies");
 
     // TEST-GRANT-03: grants captured by failed init/start hooks are invalidated.
     grant_test_app init_failure("grant.init-failure");
@@ -737,9 +914,8 @@ int main() {
               cycle_runtime.state("cycle.b") == cyberdeck_apps::app_state::failed,
           "both sides of the cycle end up failed");
 
-    // TEST-RT-CONSOLE-01..05: the shell must never stop the console owner,
-    // directly or through its dependent chain, while the supervisor lifecycle
-    // API keeps working.
+    // TEST-RT-CONSOLE-01..08: runtime stop APIs preserve the console owner and
+    // its dependency chain; unrelated applications remain stoppable.
     cyberdeck_apps::runtime console_runtime;
     configurable_app console_base("console.base");
     configurable_app console_cycle1("console.cycle1");
@@ -762,6 +938,9 @@ int main() {
           "console dependency graph registers");
     check(console_runtime.start_application("console.other") && console_runtime.start_application("console.owner"),
           "console graph starts through the lifecycle API");
+    check(!console_runtime.switch_foreground("console.owner") &&
+              console_runtime.state("console.owner") == cyberdeck_apps::app_state::running,
+          "foreground switch refuses to dismantle the console owner");
     check(console_runtime.stops_console_owner("console.base"),
           "stopping a transitive dependency of the console owner is detected");
     check(!console_runtime.stops_console_owner("console.cycle1"),
@@ -776,12 +955,50 @@ int main() {
     check(console_runtime.state("console.owner") == cyberdeck_apps::app_state::running &&
               console_runtime.state("console.other") == cyberdeck_apps::app_state::running,
           "the refused stop leaves the whole console graph running");
-    check(console_runtime.stop_application("console.base"),
-          "the supervisor lifecycle API still cascades the stop");
-    check(console_runtime.state("console.owner") == cyberdeck_apps::app_state::registered &&
-              console_runtime.state("console.other") == cyberdeck_apps::app_state::registered &&
-              console_runtime.state("console.base") == cyberdeck_apps::app_state::registered,
-          "the supervisor cascade stops dependents before the target");
+    check(!console_runtime.stop_application("console.base") &&
+              !console_runtime.restart_application("console.base") &&
+              !console_runtime.stop_application("console.owner") &&
+              !console_runtime.restart_application("console.owner"),
+          "explicit stop and restart reject direct or cascading console teardown");
+    check(console_runtime.state("console.owner") == cyberdeck_apps::app_state::running &&
+              console_runtime.state("console.base") == cyberdeck_apps::app_state::running,
+          "rejected stop/restart preserve the console owner and its dependency");
+    check(!console_runtime.stop_all(), "stop_all reports retained console-owned applications");
+    check(console_runtime.state("console.owner") == cyberdeck_apps::app_state::running &&
+              console_runtime.state("console.base") == cyberdeck_apps::app_state::running &&
+              console_runtime.state("console.other") == cyberdeck_apps::app_state::registered,
+          "stop_all stops unrelated apps while preserving console owner and dependency chain");
+
+    // TEST-RT-STOP-ALL-PROTECTED-FAILURE-01..05: stop_all keeps the complete
+    // console/Serial chain and continues attempting an independent failed stop.
+    cyberdeck_apps::runtime stop_all_runtime;
+    configurable_app protected_shell("protected.shell");
+    protected_shell.manifest_.owns_console = true;
+    configurable_app protected_serial("protected.serial");
+    protected_serial.manifest_.type = cyberdeck_apps::app_type::service;
+    protected_shell.manifest_.dependencies[0] = "protected.serial";
+    protected_shell.manifest_.dependency_count = 1;
+    tracked_foreground_app independent_failure("independent.failure", "independent");
+    independent_failure.teardown_ok = false;
+    check(stop_all_runtime.register_application(protected_shell) &&
+              stop_all_runtime.register_application(protected_serial) &&
+              stop_all_runtime.register_application(independent_failure),
+          "stop_all protected-chain and independent-failure fixtures register");
+    check(stop_all_runtime.start_application("protected.shell") &&
+              stop_all_runtime.start_application("protected.serial") &&
+              stop_all_runtime.start_application("independent.failure"),
+          "stop_all protected-chain and independent-failure fixtures start");
+    check(!stop_all_runtime.stop_all() && independent_failure.stop_calls == 1,
+          "stop_all reports failure after attempting independent teardown");
+    check(protected_shell.running() && stop_all_runtime.state("protected.shell") ==
+                                            cyberdeck_apps::app_state::running &&
+              stop_all_runtime.state("protected.serial") == cyberdeck_apps::app_state::running &&
+              independent_failure.running(),
+          "failed stop_all retains console owner, dependent Serial service, and failed app state");
+    check(!stop_all_runtime.stop_all() && independent_failure.stop_calls == 2 &&
+              protected_shell.running() &&
+              stop_all_runtime.state("protected.serial") == cyberdeck_apps::app_state::running,
+          "repeated stop_all safely retries only the independent failed teardown");
 
     // TEST-RT-COMMAND-01: a foreground command whose start hook fails is
     // rejected at its dispatch boundary, never half-started.
@@ -806,8 +1023,8 @@ int main() {
     check(stop_failure_runtime.start_application("stop.failure"), "stop-failure app starts");
     check(!stop_failure_runtime.restart_application("stop.failure"),
           "restart cannot proceed when the stop hook fails");
-    check(stop_failure_runtime.state("stop.failure") == cyberdeck_apps::app_state::failed,
-          "failed stop hook is reported as failed");
+    check(stop_failure_runtime.state("stop.failure") == cyberdeck_apps::app_state::running,
+          "failed stop hook preserves running state for safe retry");
     check(stop_failure_runtime.failure_reason("stop.failure") == "stop hook failed",
           "failed stop hook exposes its diagnostic");
 

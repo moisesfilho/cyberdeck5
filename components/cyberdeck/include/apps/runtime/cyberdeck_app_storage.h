@@ -40,6 +40,7 @@ class storage_facade final {
         return access_.allows(resource::storage);
     }
     read_result bounded_read(std::string_view path, char *buffer, std::size_t capacity) const;
+    int open_readonly_stream(std::string_view path, std::size_t max_bytes, std::size_t &file_size) const;
     write_result write_temp(std::string_view path, const char *bytes, std::size_t size) const;
     write_result flush_or_fsync(std::string_view temp_path) const;
     write_result rename_atomic(std::string_view temp_path, std::string_view path) const;

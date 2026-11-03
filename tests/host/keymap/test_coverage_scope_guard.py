@@ -37,13 +37,13 @@ PRE_EXISTING_ALLOWLIST = frozenset({
     "components/cyberdeck/src/platform/sensors/ina226_reader.cpp",
 })
 
-# The four adapters added to the allowlist: no host build exists for them.
+# Adapters with no host build; the recovery adapter now has a host runtime test.
 NEWLY_ALLOWLISTED = frozenset({
     "components/cyberdeck/src/apps/system/cyberdeck_service_ports.cpp",
     "components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp",
-    "components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp",
     "components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp",
     "components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp",
+    "components/cyberdeck/src/platform/display/cyberdeck_lvgl_dispatch.cpp",
 })
 
 # The reviewed allowlist as a whole.  The counterfactual fixtures below build
@@ -66,6 +66,7 @@ REQUIRED_FORBIDDEN = frozenset({
 # be reported by gcovr, never allowlisted.
 DEMO_APP = "components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp"
 EDITOR_VIEW = "components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp"
+MUSIC_VIEW = "components/cyberdeck/src/platform/display/cyberdeck_music_view.cpp"
 ELIGIBLE = "components/cyberdeck/src/apps/pure.cpp"
 NETDIAG_APP = "components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp"
 REQUIRED_COVERED = frozenset({
@@ -171,7 +172,7 @@ def test_allowlist_is_exactly_the_reviewed_set() -> None:
 
 
 def test_new_entries_are_real_production_sources() -> None:
-    """TEST-COV-002: the 4 new entries exist under the real production root."""
+    """TEST-COV-002: the 5 new entries exist under the real production root."""
     assert SOURCE_ROOT.is_dir(), f"production source root is missing: {SOURCE_ROOT}"
     production = production_sources(ROOT, SOURCE_ROOT)
     for path in sorted(NEWLY_ALLOWLISTED):
@@ -218,6 +219,17 @@ def test_editor_view_is_host_covered_and_not_allowlisted() -> None:
     makefile = (ROOT / "tests/host/keymap/Makefile").read_text()
     assert "test_display_views/editor_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_editor_view.cpp Makefile" in makefile
     assert "test_display_views/editor_view.o" in makefile
+
+
+def test_music_view_is_host_covered_and_not_allowlisted() -> None:
+    """TEST-COV-012: the music view uses the real host display harness."""
+    assert (ROOT / MUSIC_VIEW).is_file(), f"{MUSIC_VIEW} must exist"
+    assert MUSIC_VIEW not in ALLOWLIST
+    assert MUSIC_VIEW not in FORBIDDEN_ALLOWLIST
+    assert MUSIC_VIEW in production_sources(ROOT, SOURCE_ROOT)
+    makefile = (ROOT / "tests/host/keymap/Makefile").read_text()
+    assert "test_display_views/music_view.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_music_view.cpp" in makefile
+    assert "test_display_views/music_view.o" in makefile
 
 
 def test_netdiag_app_is_required_covered_and_not_allowlisted() -> None:

@@ -5,6 +5,7 @@
 #include "bsp/m5stack_tab5.h"
 #include "esp_io_expander.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -63,11 +64,20 @@ esp_err_t init_expander()
         return ESP_OK;
     }
 
+    const int64_t expander_started_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "HOSTED_DIAG battery stage=expander_init begin t_us=%lld",
+             static_cast<long long>(expander_started_us));
     s_expander = bsp_io_expander1_init();
     if (s_expander == nullptr) {
+        ESP_LOGE(TAG, "HOSTED_DIAG battery stage=expander_init end result=ESP_FAIL duration_ms=%lld t_us=%lld",
+                 static_cast<long long>((esp_timer_get_time() - expander_started_us) / 1000),
+                 static_cast<long long>(esp_timer_get_time()));
         ESP_LOGE(TAG, "Failed to init expander-B");
         return ESP_FAIL;
     }
+    ESP_LOGI(TAG, "HOSTED_DIAG battery stage=expander_init end result=ESP_OK duration_ms=%lld t_us=%lld",
+             static_cast<long long>((esp_timer_get_time() - expander_started_us) / 1000),
+             static_cast<long long>(esp_timer_get_time()));
 
     esp_err_t err = esp_io_expander_set_dir(s_expander,
                                             IO_EXPANDER_PIN_NUM_6,  // CHG_STAT

@@ -6,7 +6,25 @@
 
 namespace cyberdeck_poweroff {
 
-enum class stage { idle, ui, screen_nvs, fence, cat, audit, time_sync, ssh, http, ble, wifi, serial, drain, log, storage, signal };
+enum class stage {
+    idle,
+    ui,
+    screen_nvs,
+    fence,
+    cat,
+    music,
+    audit,
+    time_sync,
+    ssh,
+    http,
+    ble,
+    wifi,
+    serial,
+    drain,
+    log,
+    storage,
+    signal
+};
 enum class state { idle, queued, running, signaling, failed, signal_sent };
 enum class admission_result {
     admitted,

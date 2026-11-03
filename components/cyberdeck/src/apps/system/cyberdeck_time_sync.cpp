@@ -97,7 +97,7 @@ esp_err_t http_event(esp_http_client_event_t *event) {
 bool parse_utc_fields(int year, int month, int day, int hour, int minute, int second, time_t &out) {
     if (year < 1970 || year > 2100)
         return false;
-    struct tm value {};
+    struct tm value{};
     value.tm_year = year - 1900;
     value.tm_mon = month - 1;
     value.tm_mday = day;
@@ -106,7 +106,7 @@ bool parse_utc_fields(int year, int month, int day, int hour, int minute, int se
     value.tm_sec = second;
     value.tm_isdst = 0;
     const time_t candidate = utc_epoch(value);
-    struct tm round_trip {};
+    struct tm round_trip{};
     if (candidate < 1577836800 || gmtime_r(&candidate, &round_trip) == nullptr || round_trip.tm_year != value.tm_year ||
         round_trip.tm_mon != value.tm_mon || round_trip.tm_mday != value.tm_mday ||
         round_trip.tm_hour != value.tm_hour || round_trip.tm_min != value.tm_min || round_trip.tm_sec != value.tm_sec)
@@ -150,7 +150,7 @@ bool parse_worldtime_response(const char *payload, time_t &out) {
     const cJSON *zone = cJSON_GetObjectItemCaseSensitive(root, "timezone");
     const cJSON *stamp = cJSON_GetObjectItemCaseSensitive(root, "utc_datetime");
     bool valid = cJSON_IsString(zone) && std::strcmp(zone->valuestring, "Etc/UTC") == 0 && cJSON_IsString(stamp);
-    struct tm value {};
+    struct tm value{};
     if (valid) {
         const char *text = stamp->valuestring;
         const size_t length = std::strlen(text);
@@ -187,7 +187,7 @@ bool parse_worldtime_response(const char *payload, time_t &out) {
     }
     if (valid) {
         const time_t candidate = utc_epoch(value);
-        struct tm round_trip {};
+        struct tm round_trip{};
         valid = candidate >= 1577836800 && gmtime_r(&candidate, &round_trip) != nullptr &&
                 round_trip.tm_year == value.tm_year && round_trip.tm_mon == value.tm_mon &&
                 round_trip.tm_mday == value.tm_mday && round_trip.tm_hour == value.tm_hour &&
@@ -228,9 +228,7 @@ bool fetch_and_parse(const char *url, bool (*parser)(const char *, time_t &), ti
 }
 
 esp_err_t set_clock(time_t timestamp) {
-    struct timeval tv {
-        timestamp, 0
-    };
+    struct timeval tv{timestamp, 0};
     if (settimeofday(&tv, nullptr) != 0)
         return ESP_FAIL;
     /* Do not expose success until events.log has acknowledged the fsync. */

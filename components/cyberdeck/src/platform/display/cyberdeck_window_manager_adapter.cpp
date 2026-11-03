@@ -20,6 +20,7 @@ bool adapter::init()
     if (screen_ != nullptr) return true;
     screen_ = lv_scr_act();
     if (screen_ == nullptr) return false;
+    disable_scrolling(screen_);
     lv_obj_set_style_bg_color(screen_, k_black, 0);
     lv_obj_set_style_text_color(screen_, k_white, 0);
     lv_obj_set_style_pad_all(screen_, 12, 0);

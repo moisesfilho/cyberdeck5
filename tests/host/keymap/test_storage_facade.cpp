@@ -95,17 +95,21 @@ extern "C" cyberdeck_local_shell_result wrap_cat(const char *, const char *cwd, 
 namespace {
 class storage_app final : public cyberdeck_apps::application {
   public:
+    bool is_running = false;
+
     const cyberdeck_apps::manifest &get_manifest() const override {
         return manifest_;
     }
     bool start() override {
+        is_running = true;
         return true;
     }
     bool stop() override {
+        is_running = false;
         return true;
     }
     bool running() const override {
-        return true;
+        return is_running;
     }
     cyberdeck_apps::result execute(std::string_view, std::string_view) override {
         return {};

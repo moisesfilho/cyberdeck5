@@ -100,6 +100,8 @@ FAIL_CLOSED_PHASES = (
     ("editor surface registration",
      (r"window_manager\s*\.\s*policy\s*\(\s*\)\s*\.\s*create\s*\(\s*2\s*,\s*s_editor_view_context",
       r"view_status\s*::\s*ok"), True),
+    ("music view",
+     (r"!\s*s_music_view\.create\s*\(",), True),
     ("header view",
      (r"!\s*s_header_view\.create\s*\(",), True),
     ("LVGL timers",
@@ -114,6 +116,14 @@ def main() -> int:
     source = UI.read_text(encoding="utf-8")
     init = function_body(source, "extern \"C\" esp_err_t cyberdeck_ui_init(")
     cleanup = function_body(source, "void destroy_ui_resource_handles(")
+    music_create_calls = re.findall(r"s_music_view\.create\(([^,]+),", source)
+    require(music_create_calls == ["s_menu", "s_menu"],
+            "music view must be layered inside the shell content area")
+    require("disable_scrolling(s_menu);" in init,
+            "the shared content parent must not scroll or chain events into the global root")
+    require("s_menu = window_manager.content();" in init and
+            "s_header_view.create(window_manager.system_bar())" in init,
+            "music content and fixed system bar must remain distinct root regions")
     require("ssh_stopped = cyberdeck_apps::service_ports::ssh_disconnect_and_wait(k_ssh_disconnect_timeout_ms)" in cleanup,
             "cleanup must join SSH before deleting its event queue")
     require(cleanup.index("ssh_disconnect_and_wait") < cleanup.index("vQueueDelete(s_ssh_event_queue)"),
@@ -180,8 +190,10 @@ def main() -> int:
             "late cat results must be quiesced during UI teardown")
     require(cleanup.count("wifi_set_state_callback(nullptr, nullptr)") == 1,
             "Wi-Fi state callback must be unregistered exactly once per cleanup pass")
-    require(cleanup.count("lv_timer_del(") == 9,
-            "all nine LVGL timers, including Wi-Fi survey, must be explicitly canceled on teardown")
+    require(cleanup.count("lv_timer_del(") == 10 and
+            re.search(r"if\s*\(\s*s_music_status_timer\s*!=\s*nullptr\s*\)", cleanup)
+            is not None and "s_music_status_timer = nullptr;" in cleanup,
+            "all ten LVGL timers, including music status, must be explicitly canceled on teardown")
 
     # Survey export queues/task are deliberately process-lifetime, unlike UI
     # handles. They must be initialized once and never reclaimed by UI teardown.

@@ -13,8 +13,9 @@
 using namespace cyberdeck_poweroff;
 
 namespace {
-constexpr std::array<stage, 15> sequence{stage::ui, stage::fence, stage::serial, stage::screen_nvs, stage::cat, stage::audit,
-    stage::time_sync, stage::ssh, stage::http, stage::ble, stage::wifi, stage::drain, stage::log, stage::storage, stage::signal};
+constexpr std::array<stage, 16> sequence{stage::ui, stage::fence, stage::serial, stage::screen_nvs, stage::cat, stage::music,
+    stage::audit, stage::time_sync, stage::ssh, stage::http, stage::ble, stage::wifi, stage::drain, stage::log, stage::storage,
+    stage::signal};
 
 struct fake_ports final : ports {
     std::uint64_t clock = 0;

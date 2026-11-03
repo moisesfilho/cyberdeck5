@@ -107,6 +107,13 @@ def main() -> int:
         failures.append("system app source must be registered in CMake")
     if "cyberdeck_service_ports.cpp" not in cmake:
         failures.append("service port source must be registered in CMake")
+    bluetooth_manifest = re.search(
+        r'service_application s_bluetooth\{(?P<body>.*?)\n\s*start_bluetooth, stop_bluetooth, (?P<idempotent>true|false)\};',
+        apps,
+        re.S,
+    )
+    if bluetooth_manifest is None or bluetooth_manifest.group("idempotent") != "false":
+        failures.append("BLE startup must remain fail-closed after a partial NimBLE init failure")
 
     if failures:
         for failure in failures:

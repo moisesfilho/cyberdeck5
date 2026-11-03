@@ -1,6 +1,8 @@
 dependencies:
   idf: ">=6.1"
-  espressif/esp_lvgl_port: "^2"
+  espressif/esp_lvgl_port:
+    version: "^2"
+    override_path: "../components/esp_lvgl_port"
   lvgl/lvgl: ">=9.6.0,<10.0.0"
   espressif/esp_hosted: "^3.0.9"
   espressif/esp_wifi_remote: "^1.6.4"
@@ -11,3 +13,8 @@ dependencies:
   sock_utils:
     version: "*"
     override_path: "../components/sock_utils"
+  # Keep the pinned codec package local so its I2S/open/close error handling can
+  # be corrected without mutating generated managed_components.
+  espressif/esp_codec_dev:
+    version: "1.6.2"
+    override_path: "../components/esp_codec_dev"

@@ -1,7 +1,10 @@
 #include "platform/display/cyberdeck_header_view.h"
 
+#include "esp_app_desc.h"
 #include "platform/display/cyberdeck_wifi_icon.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 
 extern const lv_font_t cyberdeck_font;
@@ -15,11 +18,56 @@ const lv_color_t kBlack = lv_color_hex(0x000000);
 const lv_color_t kWhite = lv_color_hex(0xF2F2F2);
 const lv_color_t kMuted = lv_color_hex(0x8A8A8A);
 
+bool is_firmware_version_supported(const char *version, std::size_t field_size) {
+    if (version == nullptr || field_size == 0)
+        return false;
+    const auto is_digit = [](char value) { return value >= '0' && value <= '9'; };
+    std::size_t index = 0;
+    for (int segment = 0; segment < 3; ++segment) {
+        const std::size_t segment_start = index;
+        if (index >= field_size)
+            return false;
+        if (!is_digit(version[index]))
+            return false;
+        while (index < field_size && is_digit(version[index]))
+            ++index;
+        if (version[segment_start] == '0' && index - segment_start > 1)
+            return false;
+        if (segment < 2) {
+            if (index >= field_size || version[index] != '.')
+                return false;
+            ++index;
+        }
+    }
+    return index < field_size && version[index] == '\0';
+}
+
+bool title_fits_portrait(const char *text) {
+    constexpr uint32_t kMinimumPortraitWidth = 720;
+    constexpr uint32_t kTitleWidthPercent = 30;
+    constexpr uint32_t kGlyphWidthFraction = 16;
+    constexpr uint32_t kMaximumTitleWidth = kMinimumPortraitWidth * kTitleWidthPercent * kGlyphWidthFraction / 100;
+
+    uint32_t width = 0;
+    for (std::size_t index = 0; text[index] != '\0'; ++index) {
+        const uint32_t next = text[index + 1] == '\0' ? 0 : static_cast<unsigned char>(text[index + 1]);
+        width += lv_font_get_glyph_width(&cyberdeck_font, static_cast<unsigned char>(text[index]), next);
+        if (width > kMaximumTitleWidth)
+            return false;
+    }
+    return true;
+}
+
 void disable_scrolling(lv_obj_t *object)
 {
     lv_obj_set_scroll_dir(object, LV_DIR_NONE);
     lv_obj_set_scroll_chain(object, false);
     lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_OFF);
+}
+
+void music_clicked(lv_event_t *event) {
+    auto *view = static_cast<cyberdeck_header_view::view *>(lv_event_get_user_data(event));
+    if (view != nullptr) view->dispatch_music_action();
 }
 
 void style_base(lv_obj_t *object, lv_color_t background, lv_color_t text)
@@ -57,6 +105,18 @@ bool view::create(lv_obj_t *parent)
 {
     if (parent == nullptr) return false;
 
+    const esp_app_desc_t *app_description = esp_app_get_description();
+    if (app_description == nullptr ||
+        !is_firmware_version_supported(app_description->version, sizeof(app_description->version)))
+        return false;
+    char title_text[32] = {};
+    const int title_length = std::snprintf(title_text, sizeof(title_text), "CYBERDECK5 %s", app_description->version);
+    if (title_length < 0 || static_cast<std::size_t>(title_length) >= sizeof(title_text)) {
+        return false;
+    }
+    if (!title_fits_portrait(title_text))
+        return false;
+
     lv_obj_t *header = lv_obj_create(parent);
     if (header == nullptr) return false;
     lv_obj_set_size(header, lv_pct(100), 42);
@@ -71,8 +131,9 @@ bool view::create(lv_obj_t *parent)
     disable_scrolling(header);
 
     lv_obj_t *title = lv_label_create(header);
-    lv_label_set_text(title, "CYBERDECK5");
+    lv_label_set_text(title, title_text);
     lv_obj_set_width(title, LV_PCT(30));
+    lv_label_set_long_mode(title, LV_LABEL_LONG_CLIP);
     style_base(title, kBlack, kWhite);
     apply_header_font(title);
 
@@ -156,6 +217,34 @@ bool view::create(lv_obj_t *parent)
     lv_obj_set_hidden(s_battery_percentage_bold, true);
     lv_obj_set_hidden(s_battery_status, true);
 
+    s_music_button = lv_btn_create(right);
+    if (s_music_button == nullptr)
+        return false;
+    lv_obj_set_size(s_music_button, 26, 36);
+    lv_obj_set_style_bg_color(s_music_button, kBlack, 0);
+    lv_obj_set_style_bg_opa(s_music_button, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_music_button, 0, 0);
+    lv_obj_set_style_radius(s_music_button, 0, 0);
+    lv_obj_set_style_outline_width(s_music_button, 0, 0);
+    /* The default theme is light (`CONFIG_LV_THEME_DEFAULT_DARK` is unset), so
+     * every `lv_btn` inherits a grey drop shadow even with a transparent fill.
+     * Left alone it paints a capsule around the glyph. */
+    lv_obj_set_style_shadow_width(s_music_button, 0, 0);
+    lv_obj_set_style_shadow_opa(s_music_button, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(s_music_button, 0, 0);
+    lv_obj_set_hidden(s_music_button, true);
+    lv_obj_add_event_cb(s_music_button, music_clicked, LV_EVENT_CLICKED, this);
+    lv_obj_t *music_icon = lv_label_create(s_music_button);
+    if (music_icon == nullptr)
+        return false;
+    /* ASCII on purpose: `cyberdeck_font` only covers 0x20-0x7E, 0xA0-0xFF and
+     * the sparse Font Awesome block, so LV_SYMBOL_PLAY (U+F04B) would render
+     * as a missing-glyph box. */
+    lv_label_set_text(music_icon, ">");
+    style_base(music_icon, kBlack, kWhite);
+    apply_header_font(music_icon);
+    lv_obj_center(music_icon);
+
     lv_obj_update_layout(header);
     lv_obj_update_layout(right);
     cyberdeck_wifi_icon_update_layout(s_wifi_status, lv_obj_get_width(s_wifi_status));
@@ -210,6 +299,21 @@ void view::update_battery(const cyberdeck_battery_view::presentation &presentati
                    lv_obj_get_y(s_battery_percentage));
     lv_obj_set_hidden(s_battery_percentage_bold, !presentation.show_percentage);
     lv_obj_set_hidden(s_battery_status, false);
+}
+
+void view::update_music(bool active) {
+    if (s_music_button != nullptr)
+        lv_obj_set_hidden(s_music_button, !active);
+}
+
+void view::set_music_action(void (*action)(void *), void *context) {
+    music_action_ = action;
+    music_context_ = context;
+}
+
+void view::dispatch_music_action() {
+    if (music_action_ != nullptr)
+        music_action_(music_context_);
 }
 
 } // namespace cyberdeck_header_view

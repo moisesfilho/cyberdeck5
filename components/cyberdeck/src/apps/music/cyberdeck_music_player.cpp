@@ -1,0 +1,914 @@
+#include "apps/music/cyberdeck_music_player.h"
+#include "apps/music/cyberdeck_music_diagnostics.h"
+#include "apps/music/cyberdeck_music_duration.h"
+#include "apps/music/cyberdeck_music_metadata.h"
+#include "apps/runtime/cyberdeck_app_storage.h"
+#include "apps/shell/cyberdeck_local_shell.h"
+#include "platform/audio/cyberdeck_audio_output.h"
+#define MINIMP3_IMPLEMENTATION
+#include "third_party/minimp3/minimp3.h"
+
+#include "esp_log.h"
+#include "esp_heap_caps.h"
+#ifdef ESP_PLATFORM
+#include "esp_timer.h"
+#else
+extern "C" std::int64_t esp_timer_get_time(void);
+#endif
+#include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cerrno>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <new>
+#include <sys/types.h>
+#include <unistd.h>
+
+namespace cyberdeck_music {
+namespace {
+#if defined(CYBERDECK_MUSIC_TRACE_TESTING)
+player::trace_lifecycle_test_hook s_trace_lifecycle_test_hook = nullptr;
+void *s_trace_lifecycle_test_context = nullptr;
+void trace_lifecycle_test_checkpoint(player::trace_lifecycle_test_stage stage) {
+    if (s_trace_lifecycle_test_hook != nullptr)
+        s_trace_lifecycle_test_hook(stage, s_trace_lifecycle_test_context);
+}
+#endif
+constexpr char k_tag[] = "music";
+constexpr std::size_t k_io_size = 4096;
+/* Queue items contain a bounded path and are not passed to peripherals or
+ * DMA. Keep their bulk storage in PSRAM when available; queue control remains
+ * allocated by FreeRTOS with the required internal-memory capabilities. */
+constexpr UBaseType_t k_queue_depth = 8;
+constexpr std::uint32_t k_worker_stack = 8192;
+/* A seek that lands in the middle of a VBR frame makes minimp3 report a
+ * plausible header (rate/channels) with zero samples for the frame it already
+ * consumed.  Skipping those is safe; a stream that never decodes anything still
+ * fails once this many consecutive empty frames are seen. */
+constexpr unsigned k_max_empty_frames = 64;
+/* Upper bound of the discarded audio window after a TOC seek: the TOC entry is
+ * an estimate, so the extra audio is dropped instead of played.  A wrong entry
+ * can therefore never mute more than five seconds. */
+constexpr std::uint32_t k_max_seek_discard_ms = 5000;
+enum class request_kind : std::uint8_t { play, stop };
+struct request {
+    request_kind kind;
+    std::uint32_t generation;
+    char path[k_max_path_bytes + 1];
+};
+
+std::uint32_t next_generation(std::uint32_t current) {
+    ++current;
+    return current == 0 ? 1 : current;
+}
+
+bool id3_offset(int fd, std::size_t file_size, std::size_t &offset) {
+    offset = 0;
+    unsigned char header[10]{};
+    if (pread(fd, header, sizeof(header), 0) != static_cast<ssize_t>(sizeof(header)) ||
+        std::memcmp(header, "ID3", 3) != 0)
+        return true;
+    if (header[3] < 2 || header[3] > 4 || (header[6] | header[7] | header[8] | header[9]) & 0x80)
+        return false;
+    const std::size_t bytes =
+        (std::size_t(header[6]) << 21) | (std::size_t(header[7]) << 14) | (std::size_t(header[8]) << 7) | header[9];
+    offset = 10 + bytes + ((header[5] & 0x10) ? 10 : 0);
+    if (bytes > file_size || offset > file_size || offset < bytes)
+        return false;
+    return lseek(fd, static_cast<off_t>(offset), SEEK_SET) >= 0;
+}
+
+void add_saturated(std::uint64_t &value, std::uint64_t increment) {
+    value = diagnostics_saturating_add(value, increment);
+}
+
+const char *failure_stage_name(error_stage stage) {
+    switch (stage) {
+    case error_stage::none:
+        return "none";
+    case error_stage::open:
+        return "open";
+    case error_stage::id3:
+        return "id3";
+    case error_stage::decode:
+        return "decode";
+    case error_stage::codec_start:
+        return "codec_start";
+    case error_stage::codec_write:
+        return "codec_write";
+    case error_stage::read:
+        return "read";
+    case error_stage::io:
+        return "io";
+    }
+    return "unknown";
+}
+} // namespace
+
+#if defined(CYBERDECK_MUSIC_TRACE_TESTING)
+void player::set_trace_lifecycle_test_hook(trace_lifecycle_test_hook hook, void *context) {
+    s_trace_lifecycle_test_context = context;
+    s_trace_lifecycle_test_hook = hook;
+}
+#endif
+
+struct player::impl {
+    cyberdeck_sd_io::coordinator *storage = nullptr;
+    cyberdeck_apps::grant access{};
+    QueueHandle_t queue = nullptr;
+    SemaphoreHandle_t finished = nullptr;
+    TaskHandle_t task = nullptr;
+    mutable std::mutex state_mutex;
+    mutable std::mutex lifecycle_mutex;
+    snapshot state{};
+    cyberdeck_music::diagnostics_snapshot diagnostics{};
+    cyberdeck_music::trace_recorder trace{};
+    std::array<track, k_max_tracks> queue_tracks{};
+    std::size_t queue_count = 0;
+    std::size_t queue_selected = 0;
+    std::uint32_t shuffle_counter = 1;
+    std::atomic<std::uint32_t> playback_generation{0};
+    std::atomic<bool> shutting_down{false};
+    std::atomic<bool> paused{false};
+    std::atomic<std::uint32_t> seek_to_ms{0};
+    std::atomic<std::uint8_t> volume{20};
+    bool initialized = false;
+    std::atomic<bool> worker_exited{false};
+
+    void reset_generation_diagnostics(std::uint32_t generation) {
+        const std::uint64_t queued = diagnostics.generations_queued;
+        const std::uint64_t started = diagnostics.generations_started;
+        const std::uint64_t retired = diagnostics.generations_retired;
+        diagnostics = cyberdeck_music::diagnostics_snapshot{};
+        diagnostics.generation = generation;
+        diagnostics.generations_queued = queued;
+        diagnostics.generations_started = started;
+        diagnostics.generations_retired = retired;
+    }
+
+    void publish_worker_diagnostics(const cyberdeck_music::diagnostics_snapshot &worker) {
+        if (worker.generation != diagnostics.generation ||
+            worker.generation != playback_generation.load(std::memory_order_acquire))
+            return;
+        diagnostics.read_calls = worker.read_calls;
+        diagnostics.read_time_us = worker.read_time_us;
+        diagnostics.read_max_us = worker.read_max_us;
+        diagnostics.decode_calls = worker.decode_calls;
+        diagnostics.decode_time_us = worker.decode_time_us;
+        diagnostics.decode_max_us = worker.decode_max_us;
+        diagnostics.codec_start_calls = worker.codec_start_calls;
+        diagnostics.codec_start_time_us = worker.codec_start_time_us;
+        diagnostics.codec_start_max_us = worker.codec_start_max_us;
+        diagnostics.write_calls = worker.write_calls;
+        diagnostics.write_time_us = worker.write_time_us;
+        diagnostics.write_max_us = worker.write_max_us;
+        diagnostics.route_check_calls = worker.route_check_calls;
+        diagnostics.route_check_time_us = worker.route_check_time_us;
+        diagnostics.route_check_max_us = worker.route_check_max_us;
+        diagnostics.backend_write_calls = worker.backend_write_calls;
+        diagnostics.backend_write_time_us = worker.backend_write_time_us;
+        diagnostics.backend_write_max_us = worker.backend_write_max_us;
+        diagnostics.pause_count = worker.pause_count;
+        diagnostics.pause_time_us = worker.pause_time_us;
+    }
+    void discard_queued_requests() {
+        request discarded{};
+        std::uint64_t count = 0;
+        while (xQueueReceive(queue, &discarded, 0) == pdTRUE)
+            ++count;
+        xQueueReset(queue);
+        std::lock_guard<std::mutex> lock(state_mutex);
+        add_saturated(diagnostics.generations_retired, count);
+    }
+
+    static void task_entry(void *arg) {
+        auto *self = static_cast<impl *>(arg);
+        self->run();
+    }
+    bool publish_if_current(const request &req, playback_state value, std::uint32_t position = 0,
+                            std::uint32_t duration = 0,
+                            const cyberdeck_music::diagnostics_snapshot *worker_stats = nullptr) {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        if (shutting_down.load(std::memory_order_acquire) ||
+            req.generation != playback_generation.load(std::memory_order_acquire))
+            return false;
+        state.state = value;
+        if (value != playback_state::error)
+            state.failure_stage = error_stage::none;
+        if (value != playback_state::error)
+            diagnostics.failure_stage = 0;
+        state.position_ms = position;
+        if (duration != 0)
+            state.current.duration_ms = duration;
+        if (worker_stats != nullptr)
+            publish_worker_diagnostics(*worker_stats);
+        return true;
+    }
+    void publish_error(const request &req, error_stage stage, std::uint32_t position = 0, std::uint32_t duration = 0) {
+        bool current = false;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            current = !shutting_down.load(std::memory_order_acquire) &&
+                      req.generation == playback_generation.load(std::memory_order_acquire);
+            if (current) {
+                state.state = playback_state::error;
+                state.failure_stage = stage;
+                state.position_ms = position;
+                add_saturated(diagnostics.failures, 1);
+                add_saturated(diagnostics.failure_counts[static_cast<std::size_t>(stage)], 1);
+                add_saturated(diagnostics.generations_retired, 1);
+                diagnostics.failure_stage = static_cast<std::uint8_t>(stage);
+                if (duration != 0) state.current.duration_ms = duration;
+            }
+        }
+        if (!current) {
+            trace.record(static_cast<std::uint64_t>(esp_timer_get_time()), req.generation,
+                         cyberdeck_music::trace_kind::request_retire, -1);
+            return;
+        }
+        trace.record(static_cast<std::uint64_t>(esp_timer_get_time()), req.generation,
+                     cyberdeck_music::trace_kind::failure, static_cast<std::int32_t>(stage));
+        trace.record(static_cast<std::uint64_t>(esp_timer_get_time()), req.generation,
+                     cyberdeck_music::trace_kind::request_retire, static_cast<std::int32_t>(stage));
+        ESP_LOGE(k_tag, "playback failed generation=%lu stage=%s position_ms=%lu",
+                 static_cast<unsigned long>(req.generation), failure_stage_name(stage),
+                 static_cast<unsigned long>(position));
+    }
+    bool is_current(const request &req) const {
+        return !shutting_down.load(std::memory_order_acquire) &&
+               req.generation == playback_generation.load(std::memory_order_acquire);
+    }
+    void run() {
+        for (;;) {
+            request req{};
+            if (xQueueReceive(queue, &req, portMAX_DELAY) != pdTRUE)
+                continue;
+            if (shutting_down.load(std::memory_order_acquire))
+                break;
+            if (req.kind == request_kind::stop) {
+                trace.record(static_cast<std::uint64_t>(esp_timer_get_time()), req.generation,
+                             cyberdeck_music::trace_kind::request_retire, 0);
+                (void)publish_if_current(req, playback_state::stopped);
+                {
+                    std::lock_guard<std::mutex> lock(state_mutex);
+                    if (req.generation == playback_generation.load(std::memory_order_acquire)) {
+                        diagnostics.generation = req.generation;
+                        add_saturated(diagnostics.generations_retired, 1);
+                    }
+                }
+                continue;
+            }
+            bool request_is_current = false;
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                request_is_current = req.generation == playback_generation.load(std::memory_order_acquire);
+                if (!request_is_current)
+                    add_saturated(diagnostics.generations_retired, 1);
+            }
+            if (!request_is_current)
+            {
+                trace.record(static_cast<std::uint64_t>(esp_timer_get_time()), req.generation,
+                             cyberdeck_music::trace_kind::request_retire, -1);
+                continue;
+            }
+            ESP_LOGI(k_tag, "playback worker started generation=%lu", static_cast<unsigned long>(req.generation));
+            trace.record(static_cast<std::uint64_t>(esp_timer_get_time()), req.generation,
+                         cyberdeck_music::trace_kind::request_start);
+            cyberdeck_music::diagnostics_snapshot worker_stats{};
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                worker_stats.generation = req.generation;
+                diagnostics.generation = req.generation;
+                add_saturated(diagnostics.generations_started, 1);
+            }
+            auto lease =
+                storage == nullptr ? cyberdeck_sd_io::lease{} : storage->acquire(cyberdeck_sd_io::access::read);
+            if (!lease || !access.allows(cyberdeck_apps::resource::storage)) {
+                publish_error(req, error_stage::open);
+                continue;
+            }
+            cyberdeck_apps::storage_facade facade(access);
+            std::size_t file_size = 0;
+            const int fd = facade.open_readonly_stream(req.path, k_max_track_bytes, file_size);
+            if (fd < 0) {
+                publish_error(req, error_stage::open);
+                continue;
+            }
+            ESP_LOGI(k_tag, "playback file opened generation=%lu size_bytes=%lu",
+                     static_cast<unsigned long>(req.generation), static_cast<unsigned long>(file_size));
+            if (!is_current(req)) {
+                close(fd);
+                continue;
+            }
+            std::size_t data_offset = 0;
+            if (!id3_offset(fd, file_size, data_offset)) {
+                close(fd);
+                publish_error(req, error_stage::id3);
+                continue;
+            }
+            /* Resolve the whole-track duration once, before playback starts.
+             * `info.bitrate_kbps` describes the frame just decoded, so a VBR
+             * track used to publish a different total on every frame and the
+             * progress bar jumped back and forth.  The probe owns its heap
+             * buffers (this worker only has an 8192-byte stack) and, without a
+             * Xing/Info tag, samples windows spread over the whole payload.  The
+             * probe is also the session constant the seek maps through (TOC and
+             * frame count), instead of assuming CBR. */
+            const mp3_probe session_probe =
+                mp3_probe_fd(fd, std::uint64_t(file_size), std::uint64_t(data_offset));
+            std::uint32_t session_duration_ms = session_probe.duration_ms;
+            ESP_LOGI(k_tag, "playback duration generation=%lu duration_ms=%lu has_toc=%d source=%s",
+                     static_cast<unsigned long>(req.generation),
+                     static_cast<unsigned long>(session_duration_ms), session_probe.has_toc ? 1 : 0,
+                     session_duration_ms != 0 ? "probe" : "pending_fallback");
+            track current{};
+            std::memcpy(current.path.data(), req.path, std::strlen(req.path) + 1);
+            const char *base = std::strrchr(req.path, '/');
+            base = base == nullptr ? req.path : base + 1;
+            sanitize_display_text(base, current.title.data(), k_max_title_bytes);
+            current.size_bytes = static_cast<std::uint32_t>(file_size);
+            metadata tags{};
+            read_metadata(fd, file_size, tags);
+            if (tags.title[0] != '\0')
+                current.title = tags.title;
+            if (tags.artist[0] != '\0')
+                current.artist = tags.artist;
+            bool metadata_request_is_current = false;
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                metadata_request_is_current = !shutting_down.load(std::memory_order_acquire) &&
+                                     req.generation == playback_generation.load(std::memory_order_acquire);
+                if (metadata_request_is_current) {
+                    state.current = current;
+                    /* Session constant: every later publish is idempotent. */
+                    state.current.duration_ms = session_duration_ms;
+                    state.position_ms = 0;
+                    state.volume = volume.load(std::memory_order_acquire);
+                }
+            }
+            if (!metadata_request_is_current) {
+                close(fd);
+                continue;
+            }
+            std::unique_ptr<mp3dec_t> decoder(new (std::nothrow) mp3dec_t{});
+            std::unique_ptr<mp3dec_scratch_t> scratch(new (std::nothrow) mp3dec_scratch_t);
+            std::unique_ptr<unsigned char[]> input(new (std::nothrow) unsigned char[k_io_size * 2]{});
+            std::unique_ptr<mp3d_sample_t[]> pcm(new (std::nothrow) mp3d_sample_t[MINIMP3_MAX_SAMPLES_PER_FRAME]{});
+            if (!decoder || !scratch || !input || !pcm) {
+                close(fd);
+                publish_error(req, error_stage::decode);
+                continue;
+            }
+            mp3dec_init(decoder.get());
+            std::size_t buffered = 0;
+            std::size_t file_position = data_offset;
+            std::uint32_t played_ms = 0;
+            std::uint32_t played_base_ms = 0;
+            std::uint64_t played_samples = 0;
+            /* Seek discard window: the TOC byte is only accurate to ~1% of the
+             * track, so decoded audio before `seek_target_ms` is dropped. */
+            std::uint32_t seek_target_ms = 0;
+            std::uint32_t seek_skip_ms = 0;
+            std::uint64_t seek_skip_samples = 0;
+            unsigned empty_frames = 0;
+            unsigned decoded_frames = 0;
+            bool failed = false;
+            error_stage failure = error_stage::none;
+            bool eof = false;
+            bool continue_with_next = false;
+            bool first_pcm_write = true;
+            if (!publish_if_current(req, playback_state::playing)) {
+                close(fd);
+                continue;
+            }
+            std::uint64_t pause_started_us = 0;
+            bool pause_active = false;
+            while (req.generation == playback_generation.load(std::memory_order_acquire) &&
+                   !shutting_down.load(std::memory_order_acquire)) {
+                if (paused.load(std::memory_order_acquire)) {
+                    if (!pause_active) {
+                        pause_started_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                        pause_active = true;
+                        add_saturated(worker_stats.pause_count, 1);
+                    }
+                    cyberdeck_audio_output::stop();
+                    (void)publish_if_current(req, playback_state::paused, played_ms, session_duration_ms, &worker_stats);
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                    continue;
+                }
+                if (pause_active) {
+                    const auto now_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                    diagnostics_accumulate_pause(worker_stats, pause_started_us, now_us);
+                    (void)publish_if_current(req, playback_state::playing, played_ms, session_duration_ms,
+                                             &worker_stats);
+                    pause_started_us = 0;
+                    pause_active = false;
+                }
+                const std::uint32_t seek_value = seek_to_ms.exchange(0, std::memory_order_acq_rel);
+                if (seek_value != 0 && session_duration_ms != 0) {
+                    const std::uint32_t target_ms = std::min(seek_value - 1, session_duration_ms);
+                    const std::uint64_t audio_bytes = std::uint64_t(file_size) - data_offset;
+                    const mp3_seek_point point =
+                        mp3_seek_target(session_probe, data_offset, audio_bytes, target_ms);
+                    if (lseek(fd, static_cast<off_t>(point.byte), SEEK_SET) < 0) {
+                        failed = true;
+                        failure = error_stage::io;
+                        break;
+                    }
+                    file_position = static_cast<std::size_t>(point.byte);
+                    buffered = 0;
+                    mp3dec_init(decoder.get());
+                    /* The sample accumulator restarts at the seek point so the
+                     * elapsed time never rewinds or double-counts. */
+                    played_ms = point.position_ms;
+                    played_base_ms = point.position_ms;
+                    played_samples = 0;
+                    seek_target_ms = target_ms;
+                    seek_skip_samples = 0;
+                    seek_skip_ms = target_ms > point.position_ms
+                                       ? std::min(target_ms - point.position_ms, k_max_seek_discard_ms)
+                                       : 0;
+                    ESP_LOGI(k_tag,
+                             "playback seek generation=%lu target_ms=%lu byte=%llu toc_position_ms=%lu "
+                             "discard_ms=%lu",
+                             static_cast<unsigned long>(req.generation), static_cast<unsigned long>(target_ms),
+                             static_cast<unsigned long long>(point.byte),
+                             static_cast<unsigned long>(point.position_ms),
+                             static_cast<unsigned long>(seek_skip_ms));
+                }
+                if (buffered < k_io_size && file_position < file_size) {
+                    const auto started_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                    const ssize_t got = read(fd, input.get() + buffered, k_io_size);
+                    const auto ended_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                    trace.record(ended_us, req.generation, cyberdeck_music::trace_kind::sd_read,
+                                 got < 0 ? -1 : static_cast<std::int32_t>(got),
+                                 static_cast<std::uint32_t>(std::min<std::uint64_t>(ended_us - started_us, UINT32_MAX)),
+                                 got > 0 ? static_cast<std::uint32_t>(got) : 0);
+                    diagnostics_record_operation(worker_stats.read_calls, worker_stats.read_time_us,
+                                                 worker_stats.read_max_us, started_us, ended_us);
+                    if (got < 0) {
+                        failed = true;
+                        failure = error_stage::read;
+                        break;
+                    }
+                    if (got == 0) {
+                        failed = decoded_frames == 0;
+                        if (failed)
+                            failure = error_stage::decode;
+                        eof = !failed;
+                        break;
+                    }
+                    file_position += static_cast<std::size_t>(got);
+                    buffered += static_cast<std::size_t>(got);
+                }
+                if (buffered == 0) {
+                    eof = true;
+                    break;
+                }
+                mp3dec_frame_info_t info{};
+                const auto decode_started_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                const int samples =
+                    mp3dec_decode_frame_with_scratch(decoder.get(), input.get(), static_cast<int>(buffered),
+                                                     pcm.get(), &info, scratch.get());
+                const auto decode_ended_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                trace.record(decode_ended_us, req.generation, cyberdeck_music::trace_kind::decode, samples,
+                             static_cast<std::uint32_t>(std::min<std::uint64_t>(decode_ended_us - decode_started_us,
+                                                                               UINT32_MAX)),
+                             info.frame_bytes > 0 ? static_cast<std::uint32_t>(info.frame_bytes) : 0);
+                diagnostics_record_operation(worker_stats.decode_calls, worker_stats.decode_time_us,
+                                             worker_stats.decode_max_us, decode_started_us, decode_ended_us);
+                if (info.frame_bytes <= 0) {
+                    if (buffered >= k_io_size) {
+                        std::memmove(input.get(), input.get() + k_io_size, buffered - k_io_size);
+                        buffered -= k_io_size;
+                    } else if (file_position >= file_size) {
+                        failed = decoded_frames == 0;
+                        if (failed)
+                            failure = error_stage::decode;
+                        eof = !failed;
+                        break;
+                    }
+                    continue;
+                }
+                if (static_cast<std::size_t>(info.frame_bytes) > buffered) {
+                    failed = true;
+                    failure = error_stage::decode;
+                    break;
+                }
+                std::memmove(input.get(), input.get() + info.frame_bytes,
+                             buffered - static_cast<std::size_t>(info.frame_bytes));
+                buffered -= static_cast<std::size_t>(info.frame_bytes);
+                /* The frame was consumed above, so an empty one cannot be
+                 * "retried": a VBR seek that lands in the middle of a frame
+                 * yields a plausible header with zero samples, and playback
+                 * used to die here with a decode error.  Only a run of empty
+                 * frames (a really corrupt stream) is fatal. */
+                if (samples == 0 && info.frame_bytes > 0) {
+                    if (++empty_frames > k_max_empty_frames) {
+                        failed = true;
+                        failure = error_stage::decode;
+                        break;
+                    }
+                    /* The empty frame consumed the last bytes and nothing was
+                     * ever decoded: that is a corrupt file, not a finished
+                     * track, so the `decoded_frames == 0` failure still
+                     * applies. */
+                    if (buffered == 0 && file_position >= file_size && decoded_frames == 0) {
+                        failed = true;
+                        failure = error_stage::decode;
+                        break;
+                    }
+                    continue;
+                }
+                if (samples < 0 || (info.channels != 1 && info.channels != 2) || info.hz < 8000 ||
+                    info.hz > 48000) {
+                    failed = true;
+                    failure = error_stage::decode;
+                    break;
+                }
+                empty_frames = 0;
+                if (seek_skip_ms != 0) {
+                    /* Drop the audio between the TOC point and the requested
+                     * time instead of playing it, without publishing a
+                     * position: the accumulator restarts at the target. */
+                    seek_skip_samples += static_cast<std::uint64_t>(samples);
+                    if (static_cast<std::uint32_t>(seek_skip_samples * 1000 / info.hz) < seek_skip_ms)
+                        continue;
+                    played_base_ms = seek_target_ms;
+                    played_samples = 0;
+                    seek_skip_ms = 0;
+                    seek_skip_samples = 0;
+                    continue;
+                }
+                const auto current_volume = volume.load(std::memory_order_acquire);
+                if (decoded_frames == 0)
+                    ESP_LOGI(k_tag, "playback codec_start begin generation=%lu rate=%d channels=%d",
+                             static_cast<unsigned long>(req.generation), info.hz, info.channels);
+                const auto start_started_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                cyberdeck_audio_output::route_timing route_timing{};
+                const bool started = cyberdeck_audio_output::start(info.hz, static_cast<std::uint8_t>(info.channels),
+                                                                   current_volume, &route_timing);
+                const auto start_ended_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                trace.record(start_ended_us, req.generation, cyberdeck_music::trace_kind::codec_start,
+                             started ? 0 : -1,
+                             static_cast<std::uint32_t>(std::min<std::uint64_t>(start_ended_us - start_started_us,
+                                                                               UINT32_MAX)));
+                diagnostics_record_operation(worker_stats.codec_start_calls, worker_stats.codec_start_time_us,
+                                             worker_stats.codec_start_max_us, start_started_us, start_ended_us);
+                if (route_timing.attempted)
+                    diagnostics_record_operation(worker_stats.route_check_calls, worker_stats.route_check_time_us,
+                                                 worker_stats.route_check_max_us, 0, route_timing.elapsed_us);
+                if (!started) {
+                    failed = true;
+                    failure = error_stage::codec_start;
+                    break;
+                }
+                if (decoded_frames == 0)
+                    ESP_LOGI(k_tag, "playback codec_start complete generation=%lu",
+                             static_cast<unsigned long>(req.generation));
+                if (first_pcm_write)
+                    ESP_LOGI(k_tag, "playback codec_write begin generation=%lu samples=%d",
+                             static_cast<unsigned long>(req.generation), samples * info.channels);
+                const auto write_started_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                cyberdeck_audio_output::write_timing write_timing{};
+                const bool written = cyberdeck_audio_output::write(
+                    pcm.get(), static_cast<std::size_t>(samples * info.channels), &write_timing);
+                const auto write_ended_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                trace.record(write_ended_us, req.generation, cyberdeck_music::trace_kind::output_write,
+                             written ? 0 : -1,
+                             static_cast<std::uint32_t>(std::min<std::uint64_t>(write_ended_us - write_started_us,
+                                                                               UINT32_MAX)),
+                             static_cast<std::uint32_t>(samples * info.channels * sizeof(std::int16_t)));
+                diagnostics_record_operation(worker_stats.write_calls, worker_stats.write_time_us,
+                                             worker_stats.write_max_us, write_started_us, write_ended_us);
+                if (write_timing.route.attempted)
+                    diagnostics_record_operation(worker_stats.route_check_calls, worker_stats.route_check_time_us,
+                                                 worker_stats.route_check_max_us, 0, write_timing.route.elapsed_us);
+                if (write_timing.backend_attempted)
+                    diagnostics_record_operation(worker_stats.backend_write_calls,
+                                                 worker_stats.backend_write_time_us,
+                                                 worker_stats.backend_write_max_us, 0, write_timing.backend_us);
+                if (!written) {
+                    failed = true;
+                    failure = error_stage::codec_write;
+                    break;
+                }
+                if (first_pcm_write) {
+                    ESP_LOGI(k_tag, "playback first_pcm_write complete generation=%lu",
+                             static_cast<unsigned long>(req.generation));
+                    first_pcm_write = false;
+                }
+                if (decoded_frames == 0 && session_duration_ms == 0) {
+                    /* The probe could not resolve the track (for example a
+                     * stream with a damaged first frame): freeze the estimate
+                     * from the first decoded frame and never re-estimate, so
+                     * the published total stays constant for the whole track. */
+                    if (info.bitrate_kbps > 0) {
+                        session_duration_ms = static_cast<std::uint32_t>(
+                            std::uint64_t(file_size - data_offset) * 8 / info.bitrate_kbps);
+                        ESP_LOGI(k_tag, "playback duration fallback generation=%lu duration_ms=%lu",
+                                 static_cast<unsigned long>(req.generation),
+                                 static_cast<unsigned long>(session_duration_ms));
+                    }
+                }
+                ++decoded_frames;
+                played_samples += static_cast<std::uint64_t>(samples);
+                played_ms = played_base_ms +
+                            static_cast<std::uint32_t>(played_samples * 1000 / info.hz);
+                (void)publish_if_current(req, playback_state::playing, played_ms, session_duration_ms, &worker_stats);
+            }
+            if (pause_active) {
+                const auto now_us = static_cast<std::uint64_t>(esp_timer_get_time());
+                diagnostics_accumulate_pause(worker_stats, pause_started_us, now_us);
+            }
+            cyberdeck_audio_output::stop();
+            if (close(fd) != 0)
+                failed = true;
+            if (failed && failure == error_stage::none)
+                failure = error_stage::io;
+            if (failed) {
+                {
+                    std::lock_guard<std::mutex> lock(state_mutex);
+                    if (req.generation == playback_generation.load(std::memory_order_acquire)) {
+                        publish_worker_diagnostics(worker_stats);
+                    }
+                }
+                publish_error(req, failure, played_ms, session_duration_ms);
+            } else {
+                (void)publish_if_current(req, playback_state::stopped, played_ms, session_duration_ms, &worker_stats);
+                std::lock_guard<std::mutex> lock(state_mutex);
+                if (req.generation == playback_generation.load(std::memory_order_acquire) && eof &&
+                    state.repeat != repeat_mode::off && queue_count != 0) {
+                    if (state.repeat == repeat_mode::one) {
+                        // Repeat the current track without adding another queued request.
+                    } else if (state.shuffle && queue_count > 1) {
+                        shuffle_counter = shuffle_counter * 1664525U + 1013904223U;
+                        queue_selected = (queue_selected + 1 + shuffle_counter % (queue_count - 1)) % queue_count;
+                    } else if (queue_selected + 1 < queue_count)
+                        ++queue_selected;
+                    else
+                        queue_selected = 0;
+                    state.selected = queue_selected;
+                    const track &item = queue_tracks[queue_selected];
+                    std::memcpy(req.path, item.path.data(), item.path.size());
+                    req.path[k_max_path_bytes] = '\0';
+                    continue_with_next = true;
+                }
+            }
+            if (continue_with_next)
+                (void)xQueueSend(queue, &req, 0);
+            else {
+                trace.record(static_cast<std::uint64_t>(esp_timer_get_time()), req.generation,
+                             cyberdeck_music::trace_kind::request_retire, 0);
+                std::lock_guard<std::mutex> lock(state_mutex);
+                add_saturated(diagnostics.generations_retired, 1);
+            }
+        }
+        cyberdeck_audio_output::stop();
+        worker_exited.store(true, std::memory_order_release);
+        xSemaphoreGive(finished);
+        /* The worker must never return: this build enables
+         * CONFIG_FREERTOS_TASK_FUNCTION_WRAPPER, so leaving the entry point
+         * calls panic_abort and reboots the device.  Park the task after the
+         * completion signal and let stop() delete it through the handle. */
+        vTaskSuspend(nullptr);
+        for (;;)
+            vTaskDelay(portMAX_DELAY);
+    }
+};
+
+bool player::start(cyberdeck_sd_io::coordinator *storage, cyberdeck_apps::grant access) {
+    if (impl_ == nullptr)
+        impl_ = new (std::nothrow) impl{};
+    if (impl_ == nullptr)
+        return false;
+    std::lock_guard<std::mutex> lifecycle_lock(impl_->lifecycle_mutex);
+    if (impl_->initialized)
+        return true;
+    impl_->storage = storage;
+    impl_->access = access;
+    /* A new session must not inherit the previous snapshot: after stop() the
+     * state could still read playing/position/current from the closed session,
+     * which made a reopened player look like it was playing.  The volume is a
+     * separate field and intentionally survives. */
+    {
+        std::lock_guard<std::mutex> state_lock(impl_->state_mutex);
+        impl_->state = snapshot{};
+        impl_->diagnostics = cyberdeck_music::diagnostics_snapshot{};
+    }
+    impl_->queue = xQueueCreateWithCaps(k_queue_depth, sizeof(request), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (impl_->queue == nullptr) {
+        ESP_LOGE(k_tag, "player start failed stage=queue depth=%u item_bytes=%u",
+                 static_cast<unsigned>(k_queue_depth), static_cast<unsigned>(sizeof(request)));
+        return false;
+    }
+    impl_->finished = xSemaphoreCreateBinary();
+    if (impl_->finished == nullptr) {
+        ESP_LOGE(k_tag, "player start failed stage=completion_semaphore");
+        if (impl_->queue != nullptr)
+            vQueueDeleteWithCaps(impl_->queue);
+        impl_->queue = nullptr;
+        return false;
+    }
+    impl_->shutting_down = false;
+    impl_->worker_exited.store(false, std::memory_order_release);
+    impl_->task = nullptr;
+    const BaseType_t worker_created =
+        xTaskCreateWithCaps(impl::task_entry, "music_player", k_worker_stack, impl_, 5, &impl_->task,
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (worker_created != pdPASS || impl_->task == nullptr) {
+        ESP_LOGE(k_tag, "player start failed stage=worker_task stack_bytes=%lu",
+                 static_cast<unsigned long>(k_worker_stack));
+        vQueueDeleteWithCaps(impl_->queue);
+        vSemaphoreDelete(impl_->finished);
+        impl_->queue = nullptr;
+        impl_->finished = nullptr;
+        return false;
+    }
+    impl_->initialized = true;
+    return true;
+}
+
+bool player::stop(std::uint32_t timeout_ms) {
+    if (impl_ == nullptr)
+        return true;
+    std::unique_lock<std::mutex> lifecycle_lock(impl_->lifecycle_mutex);
+    if (!impl_->initialized)
+        return true;
+    impl_->shutting_down.store(true, std::memory_order_release);
+#if defined(CYBERDECK_MUSIC_TRACE_TESTING)
+    trace_lifecycle_test_checkpoint(trace_lifecycle_test_stage::stop_teardown_started);
+#endif
+    std::uint32_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(impl_->state_mutex);
+        generation = next_generation(impl_->playback_generation.load(std::memory_order_relaxed));
+        impl_->playback_generation.store(generation, std::memory_order_release);
+    }
+    impl_->discard_queued_requests();
+    request req{};
+    req.kind = request_kind::stop;
+    req.generation = generation;
+    if (xQueueSend(impl_->queue, &req, 0) != pdTRUE)
+        return false;
+    if (xSemaphoreTake(impl_->finished, pdMS_TO_TICKS(timeout_ms)) != pdTRUE)
+        return false;
+    if (!impl_->worker_exited.load(std::memory_order_acquire) || impl_->task == nullptr)
+        return false;
+    vTaskDeleteWithCaps(impl_->task);
+    impl_->task = nullptr;
+    vQueueDeleteWithCaps(impl_->queue);
+    impl_->queue = nullptr;
+    vSemaphoreDelete(impl_->finished);
+    impl_->finished = nullptr;
+    impl_->initialized = false;
+    return true;
+}
+
+bool player::play(std::string_view path) {
+    if (impl_ == nullptr || !is_mp3_path(path))
+        return false;
+    std::lock_guard<std::mutex> lifecycle_lock(impl_->lifecycle_mutex);
+    if (!impl_->initialized || impl_->shutting_down.load(std::memory_order_acquire))
+        return false;
+    request req{};
+    req.kind = request_kind::play;
+    std::memcpy(req.path, path.data(), path.size());
+    req.path[path.size()] = 0;
+    {
+        std::lock_guard<std::mutex> lock(impl_->state_mutex);
+        req.generation = next_generation(impl_->playback_generation.load(std::memory_order_relaxed));
+        if (xQueueSend(impl_->queue, &req, 0) != pdTRUE)
+            return false;
+        impl_->playback_generation.store(req.generation, std::memory_order_release);
+        impl_->reset_generation_diagnostics(req.generation);
+        add_saturated(impl_->diagnostics.generations_queued, 1);
+    }
+    impl_->paused.store(false, std::memory_order_release);
+    return true;
+}
+bool player::pause() {
+    if (!running())
+        return false;
+    impl_->paused.store(true, std::memory_order_release);
+    return true;
+}
+bool player::resume() {
+    if (!running())
+        return false;
+    impl_->paused.store(false, std::memory_order_release);
+    return true;
+}
+bool player::halt() {
+    if (impl_ == nullptr)
+        return false;
+    std::lock_guard<std::mutex> lifecycle_lock(impl_->lifecycle_mutex);
+    if (!impl_->initialized || impl_->shutting_down.load(std::memory_order_acquire))
+        return false;
+    std::uint32_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(impl_->state_mutex);
+        generation = next_generation(impl_->playback_generation.load(std::memory_order_relaxed));
+        impl_->playback_generation.store(generation, std::memory_order_release);
+    }
+    impl_->discard_queued_requests();
+    request req{};
+    req.kind = request_kind::stop;
+    req.generation = generation;
+    return xQueueSend(impl_->queue, &req, 0) == pdTRUE;
+}
+bool player::seek(std::uint32_t position_ms) {
+    if (!running() || position_ms == UINT32_MAX)
+        return false;
+    impl_->seek_to_ms.store(position_ms + 1, std::memory_order_release);
+    return true;
+}
+bool player::set_volume(std::uint8_t volume) {
+    if (!running() || volume > 50)
+        return false;
+    impl_->volume.store(volume, std::memory_order_release);
+    return true;
+}
+bool player::set_queue(const track *tracks, std::size_t count, std::size_t selected) {
+    if (!running() || count > k_max_tracks || (tracks == nullptr && count != 0) || (count != 0 && selected >= count))
+        return false;
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    impl_->queue_tracks = {};
+    if (count != 0)
+        std::copy(tracks, tracks + count, impl_->queue_tracks.begin());
+    impl_->queue_count = count;
+    impl_->queue_selected = selected;
+    impl_->state.track_count = count;
+    impl_->state.selected = selected;
+    return true;
+}
+void player::select(std::size_t index) {
+    if (impl_ == nullptr)
+        return;
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    if (index < impl_->queue_count) {
+        impl_->queue_selected = index;
+        impl_->state.selected = index;
+    }
+}
+void player::set_repeat(repeat_mode mode) {
+    if (impl_ != nullptr) {
+        std::lock_guard<std::mutex> lock(impl_->state_mutex);
+        impl_->state.repeat = mode;
+    }
+}
+void player::set_shuffle(bool enabled) {
+    if (impl_ != nullptr) {
+        std::lock_guard<std::mutex> lock(impl_->state_mutex);
+        impl_->state.shuffle = enabled;
+    }
+}
+bool player::status(snapshot &out) const {
+    if (impl_ == nullptr)
+        return false;
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    out = impl_->state;
+    out.volume = impl_->volume.load(std::memory_order_acquire);
+    return true;
+}
+bool player::diagnostics_snapshot(cyberdeck_music::diagnostics_snapshot &out) const {
+    if (impl_ == nullptr)
+        return false;
+    std::lock_guard<std::mutex> lifecycle_lock(impl_->lifecycle_mutex);
+    if (!impl_->initialized || impl_->shutting_down.load(std::memory_order_acquire))
+        return false;
+    std::lock_guard<std::mutex> state_lock(impl_->state_mutex);
+    out = impl_->diagnostics;
+    return true;
+}
+
+bool player::trace_snapshot(std::uint32_t cursor, std::uint32_t limit, trace_page &out) const {
+    if (impl_ == nullptr) return false;
+    std::unique_lock<std::mutex> lifecycle_lock(impl_->lifecycle_mutex, std::try_to_lock);
+    if (!lifecycle_lock.owns_lock()) return false;
+#if defined(CYBERDECK_MUSIC_TRACE_TESTING)
+    trace_lifecycle_test_checkpoint(trace_lifecycle_test_stage::snapshot_lock_acquired);
+#endif
+    if (!impl_->initialized || impl_->shutting_down.load(std::memory_order_acquire)) return false;
+    impl_->trace.snapshot(cursor, limit, out);
+    return true;
+}
+bool player::running() const {
+    if (impl_ == nullptr)
+        return false;
+    std::lock_guard<std::mutex> lifecycle_lock(impl_->lifecycle_mutex);
+    return impl_->initialized;
+}
+player &global_player() {
+    static player instance;
+    return instance;
+}
+} // namespace cyberdeck_music

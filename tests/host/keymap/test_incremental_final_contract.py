@@ -4,6 +4,7 @@
 import json
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 from test_incremental_batch_contract import Model, expand_vars
@@ -23,7 +24,48 @@ def check() -> None:
     clean = model.rule("clean")
     aggregate = model.rule("test")
     assert clean and aggregate
-    assert len(bins) == len(set(bins)) == 74
+    music_header_visibility = "test_music_header_visibility"
+    music_header_visibility_bin = music_header_visibility + "_bin"
+    assert len(bins) == len(set(bins)) == 86
+    assert music_header_visibility_bin in bins
+    assert music_header_visibility in model.phony()
+    visibility_wrapper = model.rule_resolved(music_header_visibility)
+    assert visibility_wrapper and music_header_visibility_bin in expand_vars(
+        visibility_wrapper["prereqs_raw"], model
+    ).split()
+    assert sum(line.strip().lstrip("@").startswith("$(MAKE)")
+               and line.split()[-1] == music_header_visibility
+               for line in aggregate["recipe"]) == 1
+    assert any("$(BINS)" in line for line in clean["recipe"])
+    screen_off_active = "test_screen_off_active"
+    screen_off_active_bin = screen_off_active + "_bin"
+    assert screen_off_active_bin in bins
+    assert screen_off_active in model.phony()
+    screen_off_active_wrapper = model.rule_resolved(screen_off_active)
+    assert screen_off_active_wrapper and screen_off_active_bin in expand_vars(
+        screen_off_active_wrapper["prereqs_raw"], model
+    ).split()
+    assert any(screen_off_active in line for line in model.rule("test")["recipe"])
+    assert "test_music_manager_bin" in bins
+    music_controller = "test_music_command_controller"
+    music_controller_bin = music_controller + "_bin"
+    assert music_controller_bin in bins
+    assert music_controller in model.phony()
+    controller_wrapper = model.rule_resolved(music_controller)
+    assert controller_wrapper and music_controller_bin in expand_vars(
+        controller_wrapper["prereqs_raw"], model
+    ).split()
+    assert any(music_controller in line for line in model.rule("test")["recipe"])
+    lvgl_dispatch = "test_lvgl_dispatch_state"
+    lvgl_dispatch_bin = lvgl_dispatch + "_bin"
+    assert lvgl_dispatch_bin in bins
+    assert lvgl_dispatch in model.phony()
+    dispatch_wrapper = model.rule_resolved(lvgl_dispatch)
+    assert dispatch_wrapper and lvgl_dispatch_bin in expand_vars(
+        dispatch_wrapper["prereqs_raw"], model
+    ).split()
+    assert any(lvgl_dispatch in line for line in model.rule("test")["recipe"])
+    assert any("$(BINS)" in line for line in model.rule("clean")["recipe"])
     assert len(baseline) == 27
 
     clean_dirs = set()
@@ -76,8 +118,16 @@ def check() -> None:
         assert wrapper, name
         assert artifact in expand_vars(wrapper["prereqs_raw"], model).split(), name
         invocations = [line.strip().lstrip("@") for line in wrapper["recipe"]]
-        assert len(invocations) == 1, name
-        assert expand_vars(invocations[0], model) == f"./{artifact}", name
+        if name == "test_local_shell":
+            # The wrapper also owns the ESP opendir integration contract; keep
+            # both checks ordered and exact instead of treating the extra
+            # required scenario as an unexpected duplicate binary invocation.
+            assert len(invocations) == 2, name
+            assert expand_vars(invocations[0], model) == f"./{artifact}", name
+            assert expand_vars(invocations[1], model) == "python3 test_music_scan_opendir_contract.py", name
+        else:
+            assert len(invocations) == 1, name
+            assert expand_vars(invocations[0], model) == f"./{artifact}", name
 
         production_depfile = (HERE / f"{objects[1]}.d").read_text()
         first_rule = production_depfile.split("\n\n", 1)[0]
@@ -95,10 +145,33 @@ def check() -> None:
         for obj in set(objects) - set(consumers):
             assert f"-o {obj}" not in dry_run, f"{name}: header rebuilds unrelated {obj}"
 
+    music_object = "test_music_app/music_app.o"
+    assert music_object + ".d" in depfiles
+    assert model.expanded_var("MUSIC_APP_OBJ").strip() == music_object
+    assert (HERE / f"{music_object}.d").is_file(), "missing music app depfile"
+
     # Makefile edits invalidate all 176 TUs; a second no-op build does not.
     built = subprocess.run(["make", "-s", "-n", "test-build"], cwd=HERE,
                            check=True, capture_output=True, text=True).stdout
     assert not re.search(r"(?:g\+\+|clang\+\+) .* -c ", built), "second build recompiles"
+
+    music_dir = Path("test_music_app")
+    assert music_dir.name in clean_dirs
+    with tempfile.TemporaryDirectory(prefix="incremental-clean-") as sandbox:
+        sandbox_path = Path(sandbox)
+        isolated_music_dir = sandbox_path / music_dir
+        isolated_music_dir.mkdir()
+        for artifact in ("music_app.o", "music_app.o.d", "music_app.gcda"):
+            (isolated_music_dir / artifact).touch()
+        music_bin = sandbox_path / "test_music_app_bin"
+        unrelated_bin = sandbox_path / "test_terminal_filter_bin"
+        music_bin.touch()
+        unrelated_bin.touch()
+        subprocess.run(["make", "-s", "-f", str(MAKEFILE), "-C", sandbox,
+                        "clean"], check=True)
+        assert not isolated_music_dir.exists(), "clean must remove music objects and coverage data"
+        assert not music_bin.exists(), "clean must remove listed BINS"
+        assert not unrelated_bin.exists(), "clean must remove all declared BINS in sandbox"
 
 
 if __name__ == "__main__":

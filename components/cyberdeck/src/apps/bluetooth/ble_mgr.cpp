@@ -6,6 +6,7 @@
 #include "platform/logging/event_log.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_idf_version.h"
 #include "sdkconfig.h"
 #include "esp_hosted.h"
@@ -337,8 +338,11 @@ esp_err_t ble_mgr_start(void)
 
     err = nimble_port_init();
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "nimble_port_init failed: %s (%d); BLE disabled",
-                 esp_err_to_name(err), err);
+        ESP_LOGW(TAG,
+                 "nimble_port_init failed: %s (%d); BLE disabled, internal_free=%lu internal_largest=%lu",
+                 esp_err_to_name(err), err,
+                 static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
         vSemaphoreDelete(s_dispatch_mutex);
         s_dispatch_mutex = NULL;
         vSemaphoreDelete(s_ble_mutex);
@@ -607,7 +611,8 @@ static void start_scan_command(const ble_mgr_cmd_t &cmd)
     s_scan_next_generation_ready = false;
     s_scan_cancel_token = 0;
     uint64_t token = s_scan_token = s_dispatch.begin_scan(cmd.token);
-    if (token == 0) return;
+    if (token == 0)
+        return;
     s_scan_cancel_pending = false;
     s_scan_stats = {};
     s_scan_peer_count = 0;
@@ -769,7 +774,8 @@ static void ble_mgr_task(void *arg)
         }
         case BLE_MGR_CMD_PAIR: {
             uint64_t token = s_pair_token = s_dispatch.begin_pairing(cmd.token, "");
-            if (token == 0) break;
+            if (token == 0)
+                break;
             memcpy(s_pair_addr, cmd.pair.addr, sizeof(s_pair_addr));
             s_pair_addr_type = cmd.pair.addr_type;
             char addr_str[18];
@@ -921,12 +927,13 @@ static void ble_mgr_task(void *arg)
             if (cmd.token == 0 || cmd.token <= s_connection_token) break;
             char address[18];
             format_addr(cmd.connect.addr, address, sizeof(address));
-             const auto addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
-             uint64_t token = s_connection_token = s_dispatch.begin_connection(cmd.token, address, addr_type, true);
-            if (token == 0) break;
+            const auto addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
+            uint64_t token = s_connection_token = s_dispatch.begin_connection(cmd.token, address, addr_type, true);
+            if (token == 0)
+                break;
             s_connection_automatic = true;
-             strlcpy(s_connection_address, address, sizeof(s_connection_address));
-             s_connection_addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
+            strlcpy(s_connection_address, address, sizeof(s_connection_address));
+            s_connection_addr_type = static_cast<cyberdeck_ble::address_type>(cmd.connect.addr_type);
             s_connection_gap_token = token;
             s_connection_conn = BLE_HS_CONN_HANDLE_NONE;
             s_pair_conn = BLE_HS_CONN_HANDLE_NONE;

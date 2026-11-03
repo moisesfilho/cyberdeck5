@@ -50,6 +50,12 @@ esp_err_t bsp_audio_init(const i2s_std_config_t *i2s_config)
     /* Setup I2S peripheral */
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(CONFIG_BSP_I2S_NUM, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true; // Auto clear the legacy data in the DMA buffer
+    /* Aumenta o buffer de DMA para ~85 ms a 48 kHz (8 x 512 frames estereo, 16 bit)
+     * em vez dos ~30 ms do default do IDF (6 x 240). Isso absorve hiccups de
+     * SD/Wi-Fi/redraw que causavam cortes/engasgos na reproducao; a implementacao
+     * de referencia do Tab5 (tab5-cyberdeck deck_audio) usa esses mesmos valores. */
+    chan_cfg.dma_desc_num = 8;
+    chan_cfg.dma_frame_num = 512;
     BSP_ERROR_CHECK_RETURN_ERR(i2s_new_channel(&chan_cfg, &i2s_tx_chan, &i2s_rx_chan));
 
     /* Setup I2S channels */

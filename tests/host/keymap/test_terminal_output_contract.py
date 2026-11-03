@@ -218,7 +218,7 @@ def main() -> int:
                      "test_remote_prompt_survives_partition_invariance"):
         assert scenario in filter_test_source, f"missing filter scenario {scenario}"
     composer_test = COMPOSER_TEST.read_text(encoding="utf-8")
-    for scenario in ("test_remote_prompt_never_matches_the_echo_guard",):
+    for scenario in ("test_remote_prompt_is_preserved_by_composer",):
         assert scenario in composer_test, f"missing composer scenario {scenario}"
 
     # T-REG-03 (REQ-SSH-01/AC-SSH-01 + REQ-2/AC-2 + AC-4): o scrollback e aparado
@@ -264,7 +264,7 @@ def main() -> int:
     for scenario in ("test_echo_suppressed_without_artificial_lf",
                      "test_no_echo_output_is_verbatim",
                      "test_output_starting_with_newline",
-                     "test_remote_prompt_never_matches_the_echo_guard"):
+                     "test_remote_prompt_is_preserved_by_composer"):
         assert scenario in composer_test, f"missing composer scenario {scenario}"
     for behaviour in ("feed_ok(g, \"cmd\\n\");", "CHECK_EQ(f, \"\");",
                       "feed_ok(g, \"result\\n\");", "CHECK_EQ(f, \"result\\n\");"):
@@ -320,7 +320,12 @@ def main() -> int:
     assert "if (!complete && output.size() > available)" in rendered
     assert "constexpr size_t viewport_bytes = 4096;" in source
     term_dump = body(source, "extern \"C\" esp_err_t cyberdeck_ui_term_dump(")
-    assert "const std::string rendered = get_rendered_output(view, true) + view.text();" in term_dump
+    assert "std::string rendered = get_rendered_output(view, true);" in term_dump
+    # term.dump is the console-only text API. Music is rendered by its
+    # dedicated view and must not be overlaid into this console snapshot.
+    assert "s_music_ui_active" not in term_dump
+    assert "music_tui_panel()" not in term_dump
+    assert "rendered += view.text();" in term_dump
     assert "truncate_left_utf8(rendered, capacity)" in term_dump
     assert "*out_bytes = snapshot.size();" in term_dump
     assert "*out_truncated = rendered.size() > snapshot.size() ? 1 : 0;" in term_dump
@@ -398,11 +403,13 @@ def main() -> int:
     assert "void cyberdeck_terminal_filter::resync_after_gap()" in filter_filter_source
     assert "m_discard_gap_tail = true;" in filter_filter_source
     assert "m_gap_parameter_bytes >= k_gap_parameter_limit" in filter_filter_source
-    # The gap resynchronises the ANSI filter only: the echo guard/composer stays
-    # armed, because a gap must never suppress or duplicate a legitimate echo.
+    # The gap resynchronises the ANSI filter only. It must not flush or discard
+    # the pending composer state: otherwise a later legitimate echo can leak or
+    # the local command can be duplicated.
     assert ssh_events.count("reset_ssh_output_filter()") == 1
-    assert "discard_ssh_line_composer" not in ssh_events
-    assert "s_ssh_line_composer" not in ssh_events
+    for operation in ("s_ssh_line_composer.begin", "s_ssh_line_composer.feed",
+                      "s_ssh_line_composer.flush", "discard_ssh_line_composer"):
+        assert operation not in ssh_events, f"gap handling must not mutate composer via {operation}"
     # A successful connect adopts the current epoch so a new session never
     # inherits a pending reset; a failed one adopts nothing.
     connect = body(source, "esp_err_t shell_session_host::ssh_connect(")
@@ -430,10 +437,13 @@ def main() -> int:
                       "req04_oversized_payload_is_rejected_fail_closed_and_signalled",
                       "req04_full_chunks_respect_the_scrollback_budget",
                       "req04_state_only_queue_keeps_counters_separate",
-                     "req04_connect_adopts_the_current_discard_epoch",
-                     "req04_gap_reset_preserves_the_payload_and_echo_invariants",
-                     "req04_only_the_explicit_flush_disarms_the_composer"):
+                      "req04_connect_adopts_the_current_discard_epoch",
+                      "req04_gap_reset_preserves_the_payload_and_echo_invariants",
+                      "req04_only_the_explicit_flush_disarms_the_composer"):
         assert scenario in gap_source, f"missing gap scenario {scenario}"
+    for scenario in ("test_echo_suppressed_without_artificial_lf",
+                     "test_remote_prompt_is_preserved_by_composer"):
+        assert scenario in composer_test, f"missing composer scenario {scenario}"
     for scenario in ("test_ansi_prompt_is_lossless_and_partition_invariant",
                      "test_eight_bit_csi_bytes_stay_opaque_text",
                      "test_gap_resync_discards_only_the_bounded_ansi_tail"):

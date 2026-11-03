@@ -51,6 +51,15 @@ read_result storage_facade::bounded_read(std::string_view path, char *buffer, st
     return {read_status::eof, count, 0};
 }
 
+int storage_facade::open_readonly_stream(std::string_view path, std::size_t max_bytes, std::size_t &file_size) const {
+    file_size = 0;
+    if (!available() || path.empty() || path.size() > 256 || max_bytes == 0) {
+        errno = k_invalid_argument;
+        return -1;
+    }
+    return cyberdeck_local_shell_open_readonly("/sdcard", "/", path, max_bytes, file_size);
+}
+
 write_result storage_facade::write_temp(std::string_view path, const char *bytes, std::size_t size) const {
     if (!available() || path.empty() || path.size() > 256 || bytes == nullptr || size > k_max_read_bytes)
         return invalid_write(write_stage::write_temp, k_invalid_argument);

@@ -53,6 +53,34 @@ def main() -> int:
     assert "esp_hosted_connect_to_slave failed" in prepare
     assert "s_hosted_transport_ready" in prepare
     assert "wifi_mgr_hosted_transport_prepare()" in start
+
+    hosted_stages = (
+        (prepare, "power_enable", "bsp_feature_enable(BSP_FEATURE_WIFI, true)"),
+        (prepare, "esp_hosted_init", "esp_hosted_init()"),
+        (prepare, "connect_to_slave", "esp_hosted_connect_to_slave()"),
+        (start, "esp_wifi_init", "esp_wifi_init(&cfg)"),
+        (start, "esp_wifi_start", "esp_wifi_start()"),
+    )
+    for function, stage, invocation in hosted_stages:
+        begin = function.index(f"HOSTED_DIAG {'hosted' if function is prepare else 'wifi'} stage={stage} begin")
+        call = function.index(invocation)
+        end = function.index(f"HOSTED_DIAG {'hosted' if function is prepare else 'wifi'} stage={stage} end")
+        assert begin < call < end, f"TEST-DIAG-WIFI-{stage}: logs must bracket the existing API call"
+        assert function.count(invocation) == 1, f"TEST-DIAG-WIFI-{stage}: instrumentation must not duplicate the API call"
+        assert "result=%s" in function[end : end + 220]
+        assert "duration_ms=%lld" in function[end : end + 220] or stage == "power_enable"
+
+    set_config = source[source.index("esp_err_t config_err = esp_wifi_set_config") - 400:
+                        source.index("if (config_err != ESP_OK)")]
+    assert set_config.count("esp_wifi_set_config(WIFI_IF_STA, &wcfg)") == 1
+    assert set_config.index("esp_timer_get_time()") < set_config.index("esp_wifi_set_config")
+    assert set_config.index("esp_wifi_set_config") < set_config.index("HOSTED_DIAG wifi stage=set_config")
+    assert "result=%s duration_ms=%lld" in set_config
+    diagnostic_lines = [line for line in source.splitlines() if "HOSTED_DIAG" in line]
+    assert all("password" not in line.lower() and "ssid" not in line.lower()
+               for line in diagnostic_lines), "TEST-DIAG-PRIVACY: diagnostic messages must not name credentials"
+    assert "esp_wifi_set_config(WIFI_IF_STA, &wcfg);" in source
+    print("PASS: TEST-DIAG-WIFI stage order, timing/results, call cardinality and credential-safe logs")
     print("PASS: Wi-Fi manager lifecycle contract")
     return 0
 

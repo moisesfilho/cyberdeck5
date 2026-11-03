@@ -70,7 +70,7 @@ size_t screenshot_bmp_calc_size(int width, int height);
  * bgr[0] = azul, bgr[1] = verde, bgr[2] = vermelho (ordem BMP). */
 void screenshot_bmp_rgb565_to_bgr888(uint16_t rgb565, uint8_t bgr[3]);
 
-/* Preenche o header BMP para uma imagem 24-bit top-down.
+/* Preenche o header BMP para uma imagem 24-bit bottom-up.
  * Preenche todos os campos do header com base em width/height.
  * biSizeImage eh calculado automaticamente.
  * Se hdr == NULL, a funcao nao modifica memoria e nao causa crash. */

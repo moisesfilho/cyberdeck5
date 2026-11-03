@@ -37,6 +37,11 @@ void test_sys_info_json_contract(){
     info.idf_version="5.5.5";
     info.chip="esp32p4";
     info.free_heap=123456;
+    info.internal_free=64000;
+    info.internal_largest=32000;
+    info.dma_free=24000;
+    info.dma_largest=12000;
+    info.psram_free=2000000;
     info.uptime="00:01:23";
     std::string j = cyberdeck_serial::sys_info_to_json(info);
     CHECK(j.find("\"fw_version\"")!=std::string::npos);
@@ -44,6 +49,9 @@ void test_sys_info_json_contract(){
     CHECK(j.find("\"idf_version\"")!=std::string::npos);
     CHECK(j.find("\"chip\"")!=std::string::npos);
     CHECK(j.find("\"free_heap\"")!=std::string::npos);
+    CHECK(j.find("\"internal_largest\":32000")!=std::string::npos);
+    CHECK(j.find("\"dma_largest\":12000")!=std::string::npos);
+    CHECK(j.find("\"psram_free\":2000000")!=std::string::npos);
     CHECK(j.front()=='{' && j.back()=='}');
     CHECK(j.find('\n')==std::string::npos);
     // No secrets should leak in sys.info (password/psk etc must not appear)
@@ -58,6 +66,8 @@ void test_sys_info_json_contract(){
     CHECK(out.idf_version=="5.5.5");
     CHECK(out.chip=="esp32p4");
     CHECK(out.free_heap==123456);
+    CHECK(out.internal_free==64000 && out.internal_largest==32000);
+    CHECK(out.dma_free==24000 && out.dma_largest==12000 && out.psram_free==2000000);
     CHECK(out.uptime=="00:01:23");
     // out must be deterministic across parses
     cyberdeck_serial::SysInfo out2; CHECK(cyberdeck_serial::sys_info_from_json(j, out2));
@@ -66,6 +76,9 @@ void test_sys_info_json_contract(){
     CHECK(!cyberdeck_serial::sys_info_from_json("not json", out));
     CHECK(!cyberdeck_serial::sys_info_from_json("", out));
     CHECK(!cyberdeck_serial::sys_info_from_json("{\"fw_version\":\"1\",\"idf_version\":\"2\",\"chip\":\"x\"}", out)); // missing free_heap
+    const std::string legacy = "{\"fw_version\":\"1\",\"idf_version\":\"2\",\"chip\":\"x\",\"free_heap\":12,\"uptime\":\"00:00:01\"}";
+    CHECK(cyberdeck_serial::sys_info_from_json(legacy, out));
+    CHECK(out.dma_free == 0 && out.psram_free == 0);
 }
 
 void test_wifi_scan_json_contract(){

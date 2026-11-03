@@ -1,0 +1,27 @@
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+namespace cyberdeck_music_manager {
+enum class key : std::uint8_t { enter, play_selected, left, right, up, down, volume_up, volume_down, escape, other };
+enum class action : std::uint8_t { toggle, play_selected, seek_back, seek_forward, volume_up, volume_down, select_next, select_previous, next, previous };
+class manager final {
+  public:
+    using action_callback = bool (*)(action value, void *context);
+    using close_callback = bool (*)(void *context);
+    void bind(action_callback perform, close_callback close, void *context);
+    bool open();
+    bool activate();
+    bool close();
+    bool handle(key value);
+    void deactivate();
+    bool active() const { return active_; }
+  private:
+    action_callback perform_ = nullptr;
+    close_callback close_ = nullptr;
+    void *context_ = nullptr;
+    bool active_ = false;
+    bool ready_ = false;
+};
+} // namespace cyberdeck_music_manager

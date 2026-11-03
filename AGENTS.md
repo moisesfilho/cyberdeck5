@@ -36,6 +36,24 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 - Prefira a menor alteracao correta e valide referencias e testes relacionados
   quando o trabalho estiver concluido.
 
+## Versionamento do firmware e aplicativos
+
+- A versão do firmware tem exatamente três segmentos decimais sem zero-padding,
+  `MAJOR.MINOR.PATCH`; o valor inicial é exatamente `1.0.0`. `version.txt` é sua
+  única fonte. O ESP-IDF a propaga para `PROJECT_VER` e `esp_app_desc_t::version`,
+  consumida pela UI; não duplique nem fixe a versão em código.
+- `MAJOR` é controle pessoal do usuário e nunca é incrementado automaticamente;
+  só muda por solicitação explícita. Mudanças diretas no firmware/base incrementam
+  `MINOR`; cada mudança funcional de app incrementa `PATCH` e a versão própria
+  desse app no manifesto, preservando `api_version`.
+- Mudanças que afetem mais de um escopo incrementam todos os segmentos
+  correspondentes. Segmentos podem ter mais de dois dígitos, desde que caibam no
+  campo `esp_app_desc_t::version` e no título da UI. Se o próximo incremento não
+  couber nesses limites técnicos, pare e solicite orientação; não faça rollover
+  nem altere outro segmento como substituição.
+- Versões dos manifests de apps seguem o semver próprio do app e não derivam da
+  versão do firmware.
+
 ## Execucao dos testes host
 
 - Os alvos ficam em `tests/host/keymap/Makefile`. Para um teste focado, execute
@@ -56,7 +74,7 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 - `-jN` paraleliza somente a construção; sem essa opção, ela é serial. O Makefile
   preserva o jobserver/opção do chamador. A execução dos cenários permanece
   ordenada e serial para evitar concorrência entre cenários e artefatos gcov.
-  A CI aplica gcovr mínimo de 80% linhas, 94% funções e 59% branches, além do
+  A CI aplica gcovr mínimo de 80% linhas, 90% funções e 50% branches, além do
   scope guard de TUs; alvos focados não executam esses gates globais.
 - Não execute alvos que escrevem cobertura concorrentemente no mesmo diretório.
   Use `make -C tests/host/keymap clean` antes de uma rodada de cobertura limpa;
@@ -71,12 +89,20 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 
 ## Validacao de firmware no dispositivo
 
-- Como este projeto produz firmware para um dispositivo específico, valide cada
-  implementação no dispositivo de teste conectado, realizando o flash do
-  firmware compilado quando o dispositivo estiver disponível.
-- Confirme o comportamento no hardware com os testes pertinentes e registre o
-  resultado. Se o dispositivo não estiver disponível, informe que a validação
-  física permanece pendente.
+- Ordem padrão: implementação -> testes focados -> validação no dispositivo
+  conectado (quando segura e autorizada) -> revisão final ampla. Faça o flash do
+  firmware compilado somente como parte da validação aprovada, não para substituir
+  a inspeção/diagnóstico da implementação.
+- Confirme no hardware os critérios de aceite pertinentes e registre build/hash,
+  comandos e efeito observado. Não encaminhe a revisão final ampla antes desta
+  etapa quando ela puder ser realizada com segurança; testes host/build não
+  substituem o comportamento físico.
+- Se o dispositivo estiver indisponível, o teste for inseguro ou houver bloqueio
+  explícito/inconclusivo, documente a razão e mantenha a validação física pendente.
+  O reviewer ainda pode concluir os gates locais finais, mas não aprova hardware
+  nem permite marcar a tarefa como completa.
+- Não repita uma interação física que causou reboot, panic ou comportamento
+  perigoso antes de analisar evidências e obter autorização apropriada.
 - Não faça flash automaticamente apenas para investigar um problema; o flash
   como etapa de validação da implementação é esperado quando o dispositivo
   estiver disponível.

@@ -44,8 +44,9 @@ bool controller::execute(ports &backend, std::uint32_t budget_ms) {
     auto expected = state::queued;
     if (!state_.compare_exchange_strong(expected, state::running, std::memory_order_acq_rel)) return false;
     const auto started = backend.now_ms();
-    for (auto step : {stage::ui, stage::fence, stage::serial, stage::screen_nvs, stage::cat, stage::audit, stage::time_sync,
-                      stage::ssh, stage::http, stage::ble, stage::wifi, stage::drain, stage::log, stage::storage, stage::signal}) {
+    for (auto step : {stage::ui, stage::fence, stage::serial, stage::screen_nvs, stage::cat, stage::music, stage::audit,
+                      stage::time_sync, stage::ssh, stage::http, stage::ble, stage::wifi, stage::drain, stage::log,
+                      stage::storage, stage::signal}) {
         stage_.store(step, std::memory_order_release);
         const auto elapsed = backend.now_ms() - started;
         bool admitted = elapsed < budget_ms;
@@ -72,9 +73,14 @@ const char *stage_name(stage value) {
     case stage::idle: return "idle";
     case stage::ui: return "UI";
     case stage::screen_nvs: return "screen NVS persistence";
-    case stage::fence: return "SD admission fence";
-    case stage::cat: return "cat worker";
-    case stage::audit: return "Wi-Fi audit";
+    case stage::fence:
+        return "SD admission fence";
+    case stage::cat:
+        return "cat worker";
+    case stage::music:
+        return "music player";
+    case stage::audit:
+        return "Wi-Fi audit";
     case stage::time_sync: return "time sync";
     case stage::ssh: return "SSH";
     case stage::http: return "HTTP readers";
@@ -92,23 +98,24 @@ const char *stage_name(stage value) {
 } // namespace cyberdeck_poweroff
 
 #if defined(ESP_PLATFORM)
-#include "apps/shell/cyberdeck_cat_worker.h"
 #include "apps/bluetooth/ble_mgr.h"
-#include "apps/serial/cyberdeck_serial_bridge.h"
+#include "apps/music/cyberdeck_music_player.h"
 #include "apps/screenshot/screenshot_server.h"
+#include "apps/serial/cyberdeck_serial_bridge.h"
+#include "apps/shell/cyberdeck_cat_worker.h"
 #include "apps/ssh/ssh_client.h"
 #include "apps/system/cyberdeck_time_sync.h"
 #include "apps/wifi/wifi_mgr.h"
+#include "bsp/esp-bsp.h"
+#include "diskio.h"
+#include "esp_heap_caps.h"
+#include "esp_io_expander_pi4ioe5v6408.h"
+#include "esp_timer.h"
+#include "ff.h"
+#include "freertos/task.h"
 #include "platform/display/cyberdeck_ui.h"
 #include "platform/display/screen_off.h"
 #include "platform/logging/event_log.h"
-#include "bsp/esp-bsp.h"
-#include "esp_io_expander_pi4ioe5v6408.h"
-#include "esp_heap_caps.h"
-#include "esp_timer.h"
-#include "freertos/task.h"
-#include "ff.h"
-#include "diskio.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -188,16 +195,26 @@ class firmware_ports final : public cyberdeck_poweroff::ports {
             return remaining_ms < maximum ? remaining_ms : maximum;
         };
         switch (step) {
-        case stage::ui: return cyberdeck_ui_poweroff_freeze(cap(1000));
-        case stage::screen_nvs: return screen_off_quiesce(cap(2000)) == ESP_OK;
+        case stage::ui:
+            return cyberdeck_ui_poweroff_freeze(cap(1000));
+        case stage::screen_nvs:
+            return screen_off_quiesce(cap(2000)) == ESP_OK;
         case stage::fence:
             return fence_owner != 0 && sd_io->state() == cyberdeck_sd_io::gate_state::closing;
-        case stage::cat: return cyberdeck_cat_worker_quiesce(cap(2000));
-        case stage::audit: return cyberdeck_ui_audit_quiesce(cap(5000));
-        case stage::time_sync: return cyberdeck_time_sync_stop(cap(9000)) == ESP_OK;
-        case stage::ssh: return ssh_client_disconnect_and_wait(cap(12000));
-        case stage::http: return screenshot_server_stop(cap(2000)) == ESP_OK;
-        case stage::ble: return ble_mgr_stop() == ESP_OK;
+        case stage::cat:
+            return cyberdeck_cat_worker_quiesce(cap(2000));
+        case stage::music:
+            return cyberdeck_music_poweroff_quiesce(cap(10000));
+        case stage::audit:
+            return cyberdeck_ui_audit_quiesce(cap(5000));
+        case stage::time_sync:
+            return cyberdeck_time_sync_stop(cap(9000)) == ESP_OK;
+        case stage::ssh:
+            return ssh_client_disconnect_and_wait(cap(12000));
+        case stage::http:
+            return screenshot_server_stop(cap(2000)) == ESP_OK;
+        case stage::ble:
+            return ble_mgr_stop() == ESP_OK;
         case stage::wifi: return wifi_mgr_stop(cap(8000)) == ESP_OK;
         case stage::serial: return cyberdeck_serial::bridge_stop(cap(2000));
         case stage::drain:

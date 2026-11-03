@@ -170,10 +170,8 @@ def test_saved_networks_menu_contract(session: str) -> None:
 
 
 def test_ui_delegates_to_session(source: str) -> None:
-    local_key_def = re.search(
-        r"void\s+local_key\s*\(\s*uint32_t\s+\w+\s*\)\s*\{[^}]*\}", source)
-    require(local_key_def is not None and
-            "s_shell_app.handle_key(translate_session_key(key))" in local_key_def.group(0),
+    local_key_def = function_body(source, "void local_key(uint32_t key)")
+    require("s_shell_app.handle_key(translate_session_key(key))" in local_key_def,
             "UI local_key facade must delegate to the extracted session key handler")
 
 

@@ -1,4 +1,6 @@
 #include "apps/serial/cyberdeck_serial_bridge.h"
+#include "apps/serial/cyberdeck_ui_dump_serializer.h"
+#include "apps/music/cyberdeck_music_player.h"
 
 #include "apps/screenshot/screenshot_bmp.h"
 
@@ -27,6 +29,7 @@
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "apps/wifi/wifi_mgr.h"
@@ -36,6 +39,8 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "platform/display/cyberdeck_ui.h"
+#include "platform/display/cyberdeck_lvgl_dispatch.h"
+#include "platform/display/screen_off.h"
 #include <cstdarg>
 #endif
 
@@ -541,12 +546,16 @@ std::string error_name(dispatch_error err)
         return "invalid_payload";
     case dispatch_error::io_error:
         return "io_error";
+    case dispatch_error::screen_off:
+        return "screen_off";
+    case dispatch_error::player_not_running:
+        return "player_not_running";
     }
     return "internal";
 }
 
 const std::vector<std::string> k_request_fields = {"rid",   "type", "text",     "x",      "y",
-                                                    "target", "symbol", "path", "data_b64", "size"};
+                                                    "target", "symbol", "path", "data_b64", "size", "cursor", "limit"};
 
 bool get_field(const std::vector<json_field> &fields, const std::string &name, json_field &out)
 {
@@ -581,8 +590,8 @@ void rgb565_to_bgr888_local(std::uint16_t px, std::uint8_t out3[3])
     out3[2] = static_cast<std::uint8_t>((r5 << 3) | (r5 >> 2));
 }
 
-/* Mesmo layout byte a byte de screenshot_bmp_fill_header (top-down storage,
- * biHeight positivo), preenchido localmente para nao depender do objeto. */
+/* Mesmo layout de screenshot_bmp_fill_header, preenchido localmente para nao
+ * depender do objeto. */
 void fill_header_local(screenshot_bmp_header_t *hdr, int width, int height)
 {
     std::memset(hdr, 0, sizeof(*hdr));
@@ -699,7 +708,8 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
 
     static const char *const k_known[] = {"ping",       "ui.echo",     "ui.clear",  "ui.click",  "ui.tap",
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
-                                           "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear"};
+                                           "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear",
+                                            "screen.status", "screen.wake", "music.diagnostics", "music.trace"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -769,19 +779,46 @@ std::string sys_info_to_json(const SysInfo &info)
     out += std::to_string(info.interrupted_boots);
     out += ",\"recovery_persisted\":";
     out += info.recovery_persisted ? "true" : "false";
+    out += ",\"internal_free\":";
+    out += std::to_string(info.internal_free);
+    out += ",\"internal_largest\":";
+    out += std::to_string(info.internal_largest);
+    out += ",\"dma_free\":";
+    out += std::to_string(info.dma_free);
+    out += ",\"dma_largest\":";
+    out += std::to_string(info.dma_largest);
+    out += ",\"psram_free\":";
+    out += std::to_string(info.psram_free);
     out.push_back('}');
     return out;
 }
 
 bool sys_info_from_json(const std::string &json, SysInfo &out)
 {
-    static const std::vector<std::string> wanted = {"fw_version", "idf_version", "chip", "free_heap", "uptime"};
+    static const std::vector<std::string> wanted = {"fw_version", "idf_version", "chip", "free_heap", "uptime",
+                                                    "internal_free", "internal_largest", "dma_free", "dma_largest",
+                                                    "psram_free"};
     std::vector<json_field> fields(wanted.size());
-    if (!parse_document(json.data(), json.size(), wanted, fields)) {
+    static const std::vector<std::string> legacy_wanted = {"fw_version", "idf_version", "chip", "free_heap",
+                                                           "uptime"};
+    std::vector<json_field> legacy_fields(legacy_wanted.size());
+    if (!parse_document(json.data(), json.size(), wanted, fields) &&
+        !parse_document(json.data(), json.size(), legacy_wanted, legacy_fields)) {
         return false;
     }
+    const bool parsed_extended = fields[0].k != json_field::kind::absent;
+    const bool has_memory_fields = fields[5].k != json_field::kind::absent ||
+                                   fields[6].k != json_field::kind::absent ||
+                                   fields[7].k != json_field::kind::absent ||
+                                   fields[8].k != json_field::kind::absent ||
+                                   fields[9].k != json_field::kind::absent;
+    if (!parsed_extended) {
+        std::copy(legacy_fields.begin(), legacy_fields.end(), fields.begin());
+        for (std::size_t i = legacy_fields.size(); i < fields.size(); ++i)
+            fields[i] = {};
+    }
     for (std::size_t i = 0; i < wanted.size(); ++i) {
-        if (fields[i].k == json_field::kind::absent) {
+        if (i < legacy_fields.size() && fields[i].k == json_field::kind::absent) {
             return false;
         }
     }
@@ -797,6 +834,24 @@ bool sys_info_from_json(const std::string &json, SysInfo &out)
     out.chip = fields[2].s;
     out.free_heap = std::atoi(fields[3].raw.c_str());
     out.uptime = fields[4].s;
+    if (has_memory_fields) {
+        if (fields[5].k != json_field::kind::absent)
+            out.internal_free = static_cast<std::uint32_t>(std::strtoul(fields[5].raw.c_str(), nullptr, 10));
+        if (fields[6].k != json_field::kind::absent)
+            out.internal_largest = static_cast<std::uint32_t>(std::strtoul(fields[6].raw.c_str(), nullptr, 10));
+        if (fields[7].k != json_field::kind::absent)
+            out.dma_free = static_cast<std::uint32_t>(std::strtoul(fields[7].raw.c_str(), nullptr, 10));
+        if (fields[8].k != json_field::kind::absent)
+            out.dma_largest = static_cast<std::uint32_t>(std::strtoul(fields[8].raw.c_str(), nullptr, 10));
+        if (fields[9].k != json_field::kind::absent)
+            out.psram_free = static_cast<std::uint32_t>(std::strtoul(fields[9].raw.c_str(), nullptr, 10));
+    } else {
+        out.internal_free = 0;
+        out.internal_largest = 0;
+        out.dma_free = 0;
+        out.dma_largest = 0;
+        out.psram_free = 0;
+    }
     return true;
 }
 
@@ -822,6 +877,92 @@ std::string wifi_scan_to_json(const std::vector<WifiNet> &nets)
     return out;
 }
 
+std::string music_diagnostics_to_json(const cyberdeck_music::diagnostics_snapshot &stats)
+{
+    std::string json = "{\"version\":1,\"read_only\":true";
+#define APPEND_DIAG_FIELD(name) do { json += ",\"" #name "\":"; json += std::to_string(stats.name); } while (false)
+    APPEND_DIAG_FIELD(generation);
+    APPEND_DIAG_FIELD(generations_queued);
+    APPEND_DIAG_FIELD(generations_started);
+    APPEND_DIAG_FIELD(generations_retired);
+    APPEND_DIAG_FIELD(failures);
+    json += ",\"failure_counts\":{";
+    json += "\"open\":" + std::to_string(stats.failure_counts[1]);
+    json += ",\"id3\":" + std::to_string(stats.failure_counts[2]);
+    json += ",\"decode\":" + std::to_string(stats.failure_counts[3]);
+    json += ",\"codec_start\":" + std::to_string(stats.failure_counts[4]);
+    json += ",\"codec_write\":" + std::to_string(stats.failure_counts[5]);
+    json += ",\"read\":" + std::to_string(stats.failure_counts[6]);
+    json += ",\"io\":" + std::to_string(stats.failure_counts[7]) + "}";
+    json += ",\"failure_stage\":";
+    switch (stats.failure_stage) {
+    case 0: json += "\"none\""; break;
+    case 1: json += "\"open\""; break;
+    case 2: json += "\"id3\""; break;
+    case 3: json += "\"decode\""; break;
+    case 4: json += "\"codec_start\""; break;
+    case 5: json += "\"codec_write\""; break;
+    case 6: json += "\"read\""; break;
+    case 7: json += "\"io\""; break;
+    default: json += "null"; break;
+    }
+    APPEND_DIAG_FIELD(read_calls);
+    APPEND_DIAG_FIELD(read_time_us);
+    APPEND_DIAG_FIELD(read_max_us);
+    APPEND_DIAG_FIELD(decode_calls);
+    APPEND_DIAG_FIELD(decode_time_us);
+    APPEND_DIAG_FIELD(decode_max_us);
+    APPEND_DIAG_FIELD(codec_start_calls);
+    APPEND_DIAG_FIELD(codec_start_time_us);
+    APPEND_DIAG_FIELD(codec_start_max_us);
+    APPEND_DIAG_FIELD(write_calls);
+    APPEND_DIAG_FIELD(write_time_us);
+    APPEND_DIAG_FIELD(write_max_us);
+    APPEND_DIAG_FIELD(route_check_calls);
+    APPEND_DIAG_FIELD(route_check_time_us);
+    APPEND_DIAG_FIELD(route_check_max_us);
+    APPEND_DIAG_FIELD(backend_write_calls);
+    APPEND_DIAG_FIELD(backend_write_time_us);
+    APPEND_DIAG_FIELD(backend_write_max_us);
+    APPEND_DIAG_FIELD(pause_count);
+    APPEND_DIAG_FIELD(pause_time_us);
+#undef APPEND_DIAG_FIELD
+    json.push_back('}');
+    return json;
+}
+
+std::string music_trace_to_json(const cyberdeck_music::trace_page &page)
+{
+    std::string json = "{\"version\":1,\"read_only\":true,\"cursor\":";
+    json += std::to_string(page.cursor);
+    json += ",\"next\":" + std::to_string(page.next);
+    json += ",\"truncated\":" + std::string(page.truncated ? "true" : "false");
+    json += ",\"lost\":" + std::to_string(page.lost) + ",\"events\":[";
+    const auto count = std::min<std::uint32_t>(page.count, cyberdeck_music::k_trace_page_capacity);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (i) json.push_back(',');
+        const auto &event = page.events[i];
+        static constexpr const char *names[] = {"request_start", "request_retire", "sd_read", "decode",
+                                                "codec_start", "output_write", "failure"};
+        const auto kind = static_cast<std::uint32_t>(event.kind);
+        json += "{\"seq\":" + std::to_string(event.sequence);
+        json += ",\"time_us\":" + std::to_string(event.timestamp_us);
+        json += ",\"kind\":\"" + std::string(kind < sizeof(names) / sizeof(names[0]) ? names[kind] : "unknown") + "\"";
+        json += ",\"generation\":" + std::to_string(event.generation);
+        json += ",\"duration_us\":" + std::to_string(event.duration_us);
+        json += ",\"result\":" + std::to_string(event.result);
+        json += ",\"bytes\":" + std::to_string(event.bytes) + "}";
+    }
+    json += "]}";
+    return json;
+}
+
+#ifndef ESP_PLATFORM
+music_diagnostics_provider s_music_diagnostics_provider = nullptr;
+music_trace_provider s_music_trace_provider = nullptr;
+void *s_music_diagnostics_context = nullptr;
+#endif
+
 std::string handle_sys_info(const std::string &rid)
 {
     SysInfo info;
@@ -831,6 +972,11 @@ std::string handle_sys_info(const std::string &rid)
     info.idf_version = esp_get_idf_version();
     info.chip = "esp32p4";
     info.free_heap = static_cast<int>(esp_get_free_heap_size());
+    info.internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    info.internal_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    info.dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    info.dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+    info.psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     const std::int64_t total_secs = esp_timer_get_time() / 1000000;
     char up[16] = {0};
     std::snprintf(up, sizeof(up), "%02d:%02d:%02d", static_cast<int>(total_secs / 3600),
@@ -864,6 +1010,32 @@ std::string handle_wifi_scan(const std::string &rid, const std::vector<WifiNet> 
 }
 
 /* ================================================================== */
+/* Guarda da protecao de tela (screen.status / screen.wake)            */
+/* ================================================================== */
+
+bool ui_command_needs_screen_on(const std::string &type)
+{
+    /* Lista fechada, documentada no header. Um tipo novo que leia/opere a
+     * arvore ativa precisa entrar aqui explicitamente (fail-closed apenas
+     * para o que esta enumerado; os demais seguem sem estado de tela). */
+    return type == "ui.click" || type == "ui.tap" || type == "ui.type" || type == "ui.clear" ||
+           type == "ui.dump" || type == "term.dump" || type == "screen.shot" ||
+           type == "screen.dump";
+}
+
+std::string screen_status_result(bool off)
+{
+    return off ? "{\"ok\":true,\"off\":true}" : "{\"ok\":true,\"off\":false}";
+}
+
+bool screen_wake_should_turn_on(bool off) { return off; }
+
+std::string screen_wake_result(bool woke)
+{
+    return woke ? "{\"ok\":true,\"woke\":true}" : "{\"ok\":true,\"woke\":false}";
+}
+
+/* ================================================================== */
 /* screen.dump: CRC32 / tamanho / sessao                               */
 /* ================================================================== */
 
@@ -886,6 +1058,20 @@ struct crc32_table_gen {
 constexpr crc32_table_gen k_crc_table{};
 
 } // namespace
+
+#ifndef ESP_PLATFORM
+void set_music_diagnostics_provider_for_test(music_diagnostics_provider provider, void *context)
+{
+    s_music_diagnostics_provider = provider;
+    s_music_diagnostics_context = context;
+}
+
+void set_music_trace_provider_for_test(music_trace_provider provider, void *context)
+{
+    s_music_trace_provider = provider;
+    s_music_diagnostics_context = context;
+}
+#endif
 
 std::uint32_t crc32(const std::uint8_t *data, std::size_t len)
 {
@@ -943,6 +1129,29 @@ bool screen_dump_init(const char *rid, int width, int height, const std::uint16_
                       std::size_t pixel_count, std::size_t *out_total_bmp_bytes,
                       std::uint32_t *out_total_crc, std::uint32_t *out_total_chunks)
 {
+    if (width <= 0) {
+        if (out_total_bmp_bytes != nullptr) *out_total_bmp_bytes = 0;
+        if (out_total_crc != nullptr) *out_total_crc = 0;
+        if (out_total_chunks != nullptr) *out_total_chunks = 0;
+        return false;
+    }
+    if (pixel_count > SIZE_MAX / sizeof(std::uint16_t)) {
+        if (out_total_bmp_bytes != nullptr) *out_total_bmp_bytes = 0;
+        if (out_total_crc != nullptr) *out_total_crc = 0;
+        if (out_total_chunks != nullptr) *out_total_chunks = 0;
+        return false;
+    }
+    const auto row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint16_t);
+    return screen_dump_init_strided(rid, width, height, rgb565, row_bytes,
+                                    pixel_count * sizeof(std::uint16_t), out_total_bmp_bytes,
+                                    out_total_crc, out_total_chunks);
+}
+
+bool screen_dump_init_strided(const char *rid, int width, int height, const std::uint16_t *rgb565,
+                              std::size_t source_stride_bytes, std::size_t source_bytes,
+                              std::size_t *out_total_bmp_bytes, std::uint32_t *out_total_crc,
+                              std::uint32_t *out_total_chunks)
+{
     if (out_total_bmp_bytes != nullptr) {
         *out_total_bmp_bytes = 0;
     }
@@ -959,8 +1168,11 @@ bool screen_dump_init(const char *rid, int width, int height, const std::uint16_
     if (width <= 0 || height <= 0) {
         return false;
     }
-    const auto expected = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-    if (expected == 0 || pixel_count < expected) {
+    const auto row_bytes = static_cast<std::size_t>(width) * sizeof(std::uint16_t);
+    const auto preceding_rows = static_cast<std::size_t>(height - 1);
+    if (source_stride_bytes < row_bytes ||
+        preceding_rows > (SIZE_MAX - row_bytes) / source_stride_bytes ||
+        source_bytes < preceding_rows * source_stride_bytes + row_bytes) {
         return false;
     }
     const std::size_t total = screen_bmp_size(width, height);
@@ -968,8 +1180,7 @@ bool screen_dump_init(const char *rid, int width, int height, const std::uint16_
         return false;
     }
 
-    /* BMP top-down: linha y=0 do framebuffer primeiro, header com biHeight
-     * positivo — paridade byte a byte com o oracle do teste. */
+    /* biHeight positivo exige pixels BMP em ordem bottom-up. */
     std::vector<std::uint8_t> bmp(total, 0);
     screenshot_bmp_header_t hdr{};
     fill_header_local(&hdr, width, height);
@@ -977,9 +1188,11 @@ bool screen_dump_init(const char *rid, int width, int height, const std::uint16_
 
     const std::size_t stride = bmp_stride_local(static_cast<std::size_t>(width));
     std::uint8_t *pixels = bmp.data() + SCREENSHOT_BMP_HEADER_SIZE;
-    for (int y = 0; y < height; ++y) {
-        const std::uint16_t *src = rgb565 + static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
-        std::uint8_t *dst = pixels + static_cast<std::size_t>(y) * stride;
+    for (int row = 0; row < height; ++row) {
+        const int source_y = height - 1 - row;
+        const auto *src = reinterpret_cast<const std::uint16_t *>(
+            reinterpret_cast<const std::uint8_t *>(rgb565) + static_cast<std::size_t>(source_y) * source_stride_bytes);
+        std::uint8_t *dst = pixels + static_cast<std::size_t>(row) * stride;
         for (int x = 0; x < width; ++x) {
             std::uint8_t bgr[3];
             rgb565_to_bgr888_local(src[x], bgr);
@@ -1383,66 +1596,40 @@ lv_obj_t *find_clickable_by_text(lv_obj_t *root, const std::string &want)
 }
 
 /* ---- ui.dump: arvore visivel como JSON (limitada) ---- */
-constexpr int k_dump_max_nodes = 64;
-constexpr std::size_t k_dump_max_bytes = 3500;
-constexpr std::size_t k_dump_max_text = 120;
-
-std::string clamp_text(const char *text)
-{
-    std::string s = text != nullptr ? text : "";
-    if (s.size() <= k_dump_max_text) {
-        return s;
-    }
-    std::size_t cut = k_dump_max_text;
-    while (cut > 0 && is_utf8_continuation(s[cut])) {
-        --cut;
-    }
-    s.resize(cut);
-    return s;
-}
-
 void dump_obj(lv_obj_t *obj, std::string &out, int &count, bool &truncated)
 {
-    if (obj == nullptr || count >= k_dump_max_nodes || truncated) {
+    if (obj == nullptr || truncated) {
         return;
     }
     if (lv_obj_is_hidden(obj)) {
         return;
     }
+    if (count >= static_cast<int>(ui_dump::k_max_nodes)) {
+        truncated = true;
+        return;
+    }
     const char *cls = "other";
     std::string text;
+    bool text_truncated = false;
     if (lv_obj_check_type(obj, &lv_label_class)) {
         cls = "label";
-        text = clamp_text(lv_label_get_text(obj));
+        auto clamped = ui_dump::clamp_text(lv_label_get_text(obj));
+        text = std::move(clamped.value);
+        text_truncated = clamped.truncated;
     } else if (lv_obj_check_type(obj, &lv_textarea_class)) {
         cls = "textarea";
-        text = clamp_text(lv_textarea_get_text(obj));
+        auto clamped = ui_dump::clamp_text(lv_textarea_get_text(obj));
+        text = std::move(clamped.value);
+        text_truncated = clamped.truncated;
     } else if (lv_obj_check_type(obj, &lv_button_class)) {
         cls = "button";
     }
     lv_area_t area{};
     lv_obj_get_coords(obj, &area);
-    if (count > 0) {
-        out.push_back(',');
-    }
-    out += "{\"class\":";
-    append_json_string(out, cls);
-    out += ",\"text\":";
-    append_json_string(out, text);
-    out += ",\"x\":";
-    out += std::to_string(area.x1);
-    out += ",\"y\":";
-    out += std::to_string(area.y1);
-    out += ",\"w\":";
-    out += std::to_string(area.x2 - area.x1 + 1);
-    out += ",\"h\":";
-    out += std::to_string(area.y2 - area.y1 + 1);
-    out.push_back('}');
+    const std::string node_json = ui_dump::serialize_node(
+        cls, text, text_truncated, area.x1, area.y1, area.x2 - area.x1 + 1, area.y2 - area.y1 + 1);
+    if (!ui_dump::append_node(out, static_cast<std::size_t>(count), node_json, truncated)) return;
     ++count;
-    if (out.size() >= k_dump_max_bytes) {
-        truncated = true;
-        return;
-    }
     const auto child_count = static_cast<std::int32_t>(lv_obj_get_child_count(obj));
     for (std::int32_t i = 0; i < child_count; ++i) {
         dump_obj(lv_obj_get_child(obj, i), out, count, truncated);
@@ -1454,43 +1641,80 @@ void dump_obj(lv_obj_t *obj, std::string &out, int &count, bool &truncated)
 
 /* ---- captura de tela ---- */
 struct capture {
-    lv_draw_buf_t *snap = nullptr;
-    std::vector<std::uint16_t> packed;
+    const lv_draw_buf_t *snap = nullptr;
     int width = 0;
     int height = 0;
 };
 
+constexpr std::size_t k_snapshot_max_bytes = static_cast<std::size_t>(BSP_LCD_H_RES) * BSP_LCD_V_RES *
+                                             sizeof(std::uint16_t);
+constexpr std::size_t k_snapshot_alignment_slack = 64;
+lv_draw_buf_t s_snapshot_draw_buf{};
+void *s_snapshot_storage = nullptr;
+bool s_snapshot_draw_buf_initialized = false;
+lv_result_t s_snapshot_result = LV_RESULT_INVALID;
+int s_snapshot_width = 0;
+int s_snapshot_height = 0;
+
+bool ensure_snapshot_storage()
+{
+    if (s_snapshot_storage == nullptr) {
+        s_snapshot_storage = heap_caps_malloc(k_snapshot_max_bytes + k_snapshot_alignment_slack,
+                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    return s_snapshot_storage != nullptr;
+}
+
+bool initialize_snapshot_draw_buf()
+{
+    if (s_snapshot_draw_buf_initialized) return true;
+    if (lv_draw_buf_init(&s_snapshot_draw_buf, BSP_LCD_H_RES, BSP_LCD_V_RES,
+                         LV_COLOR_FORMAT_RGB565, 0, s_snapshot_storage,
+                         k_snapshot_max_bytes + k_snapshot_alignment_slack) != LV_RESULT_OK) {
+        heap_caps_free(s_snapshot_storage);
+        s_snapshot_storage = nullptr;
+        return false;
+    }
+    s_snapshot_draw_buf_initialized = true;
+    return true;
+}
+
+void capture_screen_on_lvgl(void *)
+{
+    s_snapshot_result = lv_snapshot_take_to_draw_buf(lv_screen_active(), LV_COLOR_FORMAT_RGB565,
+                                                      &s_snapshot_draw_buf);
+    if (s_snapshot_result == LV_RESULT_OK) {
+        s_snapshot_width = s_snapshot_draw_buf.header.w;
+        s_snapshot_height = s_snapshot_draw_buf.header.h;
+    }
+}
+
 bool capture_screen(capture &out)
 {
-    if (!bsp_display_lock(pdMS_TO_TICKS(1000))) {
-        return false;
-    }
-    out.snap = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
-    if (out.snap == nullptr) {
+    if (!ensure_snapshot_storage()) return false;
+    // Descriptor setup is serialized with LVGL mutations by the dispatcher lock.
+    if (!bsp_display_lock(pdMS_TO_TICKS(1000))) return false;
+    if (!initialize_snapshot_draw_buf()) {
         bsp_display_unlock();
         return false;
     }
-    out.width = out.snap->header.w;
-    out.height = out.snap->header.h;
-    if (out.snap->header.cf != LV_COLOR_FORMAT_RGB565 || out.width <= 0 || out.height <= 0 ||
-        out.snap->header.stride < static_cast<std::uint32_t>(out.width) * sizeof(std::uint16_t)) {
-        lv_draw_buf_destroy(out.snap);
-        out.snap = nullptr;
-        bsp_display_unlock();
-        return false;
-    }
-    /* screen_dump_init espera RGB565 compacto (y*w+x); repack se o stride
-     * do snapshot tiver padding. */
-    const auto packed_stride = static_cast<std::size_t>(out.width) * sizeof(std::uint16_t);
-    out.packed.resize(static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height));
-    const auto *base = static_cast<const std::uint8_t *>(out.snap->data);
-    for (int y = 0; y < out.height; ++y) {
-        std::memcpy(out.packed.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width),
-                    base + static_cast<std::size_t>(y) * out.snap->header.stride, packed_stride);
-    }
-    lv_draw_buf_destroy(out.snap);
-    out.snap = nullptr;
     bsp_display_unlock();
+    // Reset before run() so a capture that never executes cannot leak a previous
+    // frame's metadata. A callback detached by an earlier call may still write
+    // here, but that is benign: admission is only re-armed after the detached
+    // callback finished (it releases the slot on finish), so its late write
+    // lands before the new callback, which is the last writer for this call.
+    s_snapshot_result = LV_RESULT_INVALID;
+    s_snapshot_width = 0;
+    s_snapshot_height = 0;
+    if (!cyberdeck_lvgl_dispatch::run(capture_screen_on_lvgl, &s_snapshot_draw_buf, 2000) ||
+        s_snapshot_result != LV_RESULT_OK) return false;
+
+    out.snap = &s_snapshot_draw_buf;
+    out.width = s_snapshot_width;
+    out.height = s_snapshot_height;
+    if (out.snap->header.cf != LV_COLOR_FORMAT_RGB565 || out.width <= 0 || out.height <= 0 ||
+        out.snap->header.stride < static_cast<std::uint32_t>(out.width) * sizeof(std::uint16_t)) return false;
     return true;
 }
 
@@ -1556,9 +1780,25 @@ device_result exec_screen_dump(const request &req)
     std::size_t total = 0;
     std::uint32_t crc = 0;
     std::uint32_t chunks = 0;
-    if (!screen_dump_init(req.rid.c_str(), cap.width, cap.height, cap.packed.data(), cap.packed.size(), &total,
-                          &crc, &chunks)) {
+    if (!screen_dump_init_strided(req.rid.c_str(), cap.width, cap.height,
+                                  reinterpret_cast<const std::uint16_t *>(cap.snap->data),
+                                  cap.snap->header.stride, cap.snap->data_size,
+                                  &total, &crc, &chunks)) {
         d.result = err_result(req, dispatch_error::internal, "bmp invalido");
+        return d;
+    }
+
+    std::vector<std::uint8_t> first_chunk;
+    std::uint32_t first_chunk_crc = 0;
+    bool first_chunk_is_last = false;
+    if (chunks == 0 || !screen_dump_get_chunk(req.rid.c_str(), 0, first_chunk,
+                                               first_chunk_crc, first_chunk_is_last)) {
+        send_frame(build_error_envelope(req.rid, dispatch_error::internal, "chunk falhou"));
+        return d;
+    }
+
+    if (stop_requested()) {
+        send_frame(build_error_envelope(req.rid, dispatch_error::internal, "cancelado"));
         return d;
     }
 
@@ -1583,7 +1823,11 @@ device_result exec_screen_dump(const request &req)
         std::vector<std::uint8_t> bytes;
         std::uint32_t chunk_crc = 0;
         bool is_last = false;
-        if (!screen_dump_get_chunk(req.rid.c_str(), i, bytes, chunk_crc, is_last)) {
+        if (i == 0) {
+            bytes = std::move(first_chunk);
+            chunk_crc = first_chunk_crc;
+            is_last = first_chunk_is_last;
+        } else if (!screen_dump_get_chunk(req.rid.c_str(), i, bytes, chunk_crc, is_last)) {
             failed = true;
             break;
         }
@@ -1600,6 +1844,7 @@ device_result exec_screen_dump(const request &req)
     }
     if (failed) {
         send_frame(build_error_envelope(req.rid, dispatch_error::internal, "chunk falhou"));
+        return d;
     }
     send_frame(frame_event(req, "end"));
     /* Todos os frames ja foram escritos; envelope vazio = nada a escrever. */
@@ -1770,6 +2015,7 @@ device_result exec_events_read(const request &req)
     d.handled = true;
     constexpr std::size_t k_chunk = 1024;
     const size_t total = event_log_text_size();
+    const size_t recovery_total = cyberdeck_recovery::journal_size();
     std::string start = "{\"rid\":";
     append_json_string(start, req.rid);
     start += ",\"ok\":true,\"event\":\"start\",\"size\":";
@@ -1783,7 +2029,7 @@ device_result exec_events_read(const request &req)
         size_t count = 0;
         if (event_log_text_read(offset, bytes, sizeof(bytes), &count) != ESP_OK || count == 0) {
             send_frame(build_error_envelope(req.rid, dispatch_error::internal, "events.txt indisponivel"));
-            break;
+            return d;
         }
         std::string frame = "{\"rid\":";
         append_json_string(frame, req.rid);
@@ -1797,6 +2043,35 @@ device_result exec_events_read(const request &req)
         send_frame(frame);
         offset += count;
     }
+    std::string recovery_start = "{\"rid\":";
+    append_json_string(recovery_start, req.rid);
+    recovery_start += ",\"ok\":true,\"event\":\"recovery_start\",\"size\":";
+    recovery_start += std::to_string(recovery_total);
+    recovery_start.push_back('}');
+    send_frame(recovery_start);
+    std::size_t recovery_offset = 0;
+    char recovery_bytes[k_chunk];
+    while (recovery_offset < recovery_total && !stop_requested()) {
+        std::size_t count = 0;
+        if (cyberdeck_recovery::journal_read(recovery_offset, recovery_bytes, sizeof(recovery_bytes), &count) != ESP_OK ||
+            count == 0) {
+            send_frame(build_error_envelope(req.rid, dispatch_error::internal, "recovery journal indisponivel"));
+            break;
+        }
+        std::string frame = "{\"rid\":";
+        append_json_string(frame, req.rid);
+        frame += ",\"ok\":true,\"event\":\"recovery_chunk\",\"chunk\":";
+        frame += std::to_string(recovery_offset / k_chunk);
+        frame += ",\"offset\":";
+        frame += std::to_string(recovery_offset);
+        frame += ",\"size\":";
+        frame += std::to_string(count);
+        frame += ",\"b64\":";
+        append_json_string(frame, base64_encode(reinterpret_cast<const std::uint8_t *>(recovery_bytes), count));
+        frame.push_back('}');
+        send_frame(frame);
+        recovery_offset += count;
+    }
     send_frame(frame_event(req, "end"));
     return d;
 }
@@ -1806,6 +2081,46 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
     device_result d;
     json_field f;
 
+    /* Protecao de tela: com a sobreposicao preta ativa a arvore ativa e a da
+     * protecao, nao a da sessao. Recusar aqui, antes de qualquer hit-test,
+     * injecao de teclado ou captura, evita alcancar widgets escondidos e
+     * reportar um estado que o usuario nao ve. Ver o header para a lista
+     * fechada de comandos afetados. */
+    if (ui_command_needs_screen_on(req.type) && screen_off_is_active()) {
+        d.handled = true;
+        d.result = err_result(req, dispatch_error::screen_off, k_screen_off_detail);
+        return d;
+    }
+    /* Os dois comandos de saida da protecao leem s_active e, no wake, trocam a
+     * tela ativa (lv_disp_load_scr) e disparam atividade. Ambos sao estado do
+     * LVGL lido pelo timer de inatividade na task do LVGL, portanto a leitura E
+     * a acao ficam sob o mesmo bsp_display_lock; a resposta e composta depois
+     * do unlock, fora da regiao critica. */
+    if (req.type == "screen.status") {
+        d.handled = true;
+        if (!bsp_display_lock(cyberdeck_lvgl_dispatch::k_display_lock_timeout_ms)) {
+            d.result = err_result(req, dispatch_error::internal, "display busy");
+            return d;
+        }
+        const bool off = screen_off_is_active();
+        bsp_display_unlock();
+        d.result = ok_result(req, screen_status_result(off));
+        return d;
+    }
+    if (req.type == "screen.wake") {
+        d.handled = true;
+        if (!bsp_display_lock(cyberdeck_lvgl_dispatch::k_display_lock_timeout_ms)) {
+            d.result = err_result(req, dispatch_error::internal, "display busy");
+            return d;
+        }
+        const bool was_off = screen_off_is_active();
+        if (screen_wake_should_turn_on(was_off)) {
+            screen_off_turn_on();
+        }
+        bsp_display_unlock();
+        d.result = ok_result(req, screen_wake_result(was_off));
+        return d;
+    }
     if (req.type == "wifi.scan") {
         return exec_wifi_scan(req);
     }
@@ -1911,7 +2226,7 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
     }
     if (req.type == "ui.dump") {
         d.handled = true;
-        std::string nodes = "[";
+        std::string nodes;
         int count = 0;
         bool truncated = false;
         if (bsp_display_lock(pdMS_TO_TICKS(1000))) {
@@ -1924,12 +2239,7 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
             d.result = err_result(req, dispatch_error::internal, "display busy");
             return d;
         }
-        nodes.push_back(']');
-        std::string result = "{\"nodes\":";
-        result += nodes;
-        result += ",\"truncated\":";
-        result += truncated ? "true" : "false";
-        result.push_back('}');
+        std::string result = ui_dump::serialize_result(nodes, truncated);
         d.result = ok_result(req, std::move(result));
         return d;
     }
@@ -2799,6 +3109,87 @@ dispatch_result dispatch_one(const char *line, std::size_t len)
         res.ok = false;
         res.err = dispatch_error::invalid_json;
         res.envelope_json = build_error_envelope(req.rid, dispatch_error::invalid_json, "invalid_json");
+        return res;
+    }
+
+    if (req.type == "music.diagnostics") {
+        cyberdeck_music::diagnostics_snapshot stats{};
+#ifdef ESP_PLATFORM
+        const bool available = cyberdeck_music::global_player().diagnostics_snapshot(stats);
+#else
+        const bool available = s_music_diagnostics_provider != nullptr &&
+                               s_music_diagnostics_provider(s_music_diagnostics_context, stats);
+#endif
+        if (!available) {
+            res.ok = false;
+            res.err = dispatch_error::player_not_running;
+            res.envelope_json = build_error_envelope(req.rid, res.err, "music player not running");
+            return res;
+        }
+        response diagnostics_response{};
+        diagnostics_response.rid = req.rid;
+        diagnostics_response.ok = true;
+        diagnostics_response.result_json = music_diagnostics_to_json(stats);
+        res.ok = true;
+        res.envelope_json = build_envelope(diagnostics_response);
+        return res;
+    }
+
+    if (req.type == "music.trace") {
+        json_field cursor_field, limit_field;
+        std::uint32_t cursor = 0;
+        std::uint32_t limit = 16;
+        if (get_field(fields, "cursor", cursor_field)) {
+            if (!is_number_literal(cursor_field) || cursor_field.raw[0] == '-') {
+                res.ok = false;
+                res.err = dispatch_error::invalid_json;
+                res.envelope_json = build_error_envelope(req.rid, res.err, "invalid cursor");
+                return res;
+            }
+            const auto parsed = std::strtoull(cursor_field.raw.c_str(), nullptr, 10);
+            if (parsed > UINT32_MAX) {
+                res.ok = false;
+                res.err = dispatch_error::invalid_json;
+                res.envelope_json = build_error_envelope(req.rid, res.err, "cursor out of range");
+                return res;
+            }
+            cursor = static_cast<std::uint32_t>(parsed);
+        }
+        if (get_field(fields, "limit", limit_field)) {
+            if (!is_number_literal(limit_field) || limit_field.raw[0] == '-') {
+                res.ok = false;
+                res.err = dispatch_error::invalid_json;
+                res.envelope_json = build_error_envelope(req.rid, res.err, "invalid limit");
+                return res;
+            }
+            const auto parsed = std::strtoull(limit_field.raw.c_str(), nullptr, 10);
+            if (parsed == 0 || parsed > 16) {
+                res.ok = false;
+                res.err = dispatch_error::invalid_json;
+                res.envelope_json = build_error_envelope(req.rid, res.err, "limit must be 1..16");
+                return res;
+            }
+            limit = static_cast<std::uint32_t>(parsed);
+        }
+        cyberdeck_music::trace_page page{};
+#ifdef ESP_PLATFORM
+        const bool available = cyberdeck_music::global_player().trace_snapshot(cursor, limit, page);
+#else
+        const bool available = s_music_trace_provider != nullptr &&
+                               s_music_trace_provider(s_music_diagnostics_context, cursor, limit, page);
+#endif
+        if (!available) {
+            res.ok = false;
+            res.err = dispatch_error::player_not_running;
+            res.envelope_json = build_error_envelope(req.rid, res.err, "music player not running");
+            return res;
+        }
+        response trace_response{};
+        trace_response.rid = req.rid;
+        trace_response.ok = true;
+        trace_response.result_json = music_trace_to_json(page);
+        res.ok = true;
+        res.envelope_json = build_envelope(trace_response);
         return res;
     }
 

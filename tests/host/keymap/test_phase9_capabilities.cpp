@@ -146,8 +146,11 @@ int main()
           "start failure has no grant");
     check(lifecycle_runtime.start_application("teardown-fail"), "teardown-fail starts");
     const grant old_generation = teardown_fail.app_grant();
-    check(!lifecycle_runtime.stop_application("teardown-fail") && !old_generation.valid(),
-          "failed teardown revokes grant");
+    check(!lifecycle_runtime.stop_application("teardown-fail") && old_generation.valid(),
+          "failed teardown preserves grant for safe retry");
+    teardown_fail.teardown_ok = true;
+    check(lifecycle_runtime.stop_application("teardown-fail") && !old_generation.valid(),
+          "successful teardown retry revokes grant");
     check(lifecycle_runtime.start_application("slow") && lifecycle_runtime.failure_reason("slow") ==
               "start hook timeout", "timeout is diagnostic, not authorization bypass");
     check(lifecycle_runtime.start_application("independent"), "independent app starts");

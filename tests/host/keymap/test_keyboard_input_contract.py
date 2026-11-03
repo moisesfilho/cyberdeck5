@@ -14,6 +14,11 @@ DISPATCH = ROOT / "components/cyberdeck/src/platform/input/cyberdeck_keyboard_di
 def function_body(source: str, signature: str) -> str:
     start = source.index(signature)
     opening = source.index("{", start)
+    semicolon = source.find(";", start)
+    while semicolon >= 0 and semicolon < opening:
+        start = source.index(signature, semicolon + 1)
+        opening = source.index("{", start)
+        semicolon = source.find(";", start)
     depth = 0
     for index in range(opening, len(source)):
         if source[index] == "{":
@@ -45,13 +50,21 @@ def main() -> int:
             "keyboard handoff must enqueue snapshots")
     require("free(pending)" in submit,
             "rejected snapshots must be released")
-    require("lv_async_call(process_async, nullptr)" in submit,
-            "physical input must use lv_async_call")
+    require("lv_async_call(process_async, const_cast<void *>(user_data))" in submit,
+            "physical input must schedule its unique opaque ticket identity")
     require("lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr)" in submit,
             "successful async scheduling must wake the LVGL port task")
-    require(submit.index("lv_async_call(process_async, nullptr)") <
+    require(submit.index("lv_async_call(process_async, const_cast<void *>(user_data))") <
             submit.index("lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr)"),
             "the port task must be woken after async scheduling")
+    require("std::uintptr_t s_next_ticket_identity = 1" in dispatch and
+            "s_ticket_identity_exhausted" in dispatch and
+            "s_next_ticket_identity == UINTPTR_MAX" in dispatch,
+            "ticket identities must be monotonic and exhaust without wrapping")
+    require("reinterpret_cast<std::uintptr_t>(user_data)" in process and
+            "find_ticket(identity)" in process and
+            "if (ticket == nullptr)" in process,
+            "unknown or duplicate callback identities must return before queue access")
     require("xSemaphoreTake(s_mutex" in submit and
             "xSemaphoreGive(s_mutex)" in submit,
             "producer must serialize enqueue and async rollback")
@@ -61,7 +74,7 @@ def main() -> int:
             "pending_count < k_queue_capacity" in discard and
             "if (pending[i] == rejected) continue" in discard,
             "rollback must preserve bounded FIFO survivors")
-    require("xQueueReceive(s_queue" in process and
+    require("discard_from_queue(pending)" in process and
             "xSemaphoreGive(s_mutex)" in process and
             "free(pending)" in process,
             "consumer must release the mutex before UI callback and cleanup")
@@ -87,10 +100,8 @@ def main() -> int:
             "the session must implement both physical input paths")
     # The facade definition must delegate to the session key handler; the
     # forward declaration (which has no body) is skipped explicitly.
-    local_key_def = re.search(
-        r"void\s+local_key\s*\(\s*uint32_t\s+\w+\s*\)\s*\{[^}]*\}", ui)
-    require(local_key_def is not None and
-            "s_shell_app.handle_key(translate_session_key(key))" in local_key_def.group(0),
+    local_key_def = function_body(ui, "void local_key(uint32_t key)")
+    require("s_shell_app.handle_key(translate_session_key(key))" in local_key_def,
             "local_key must delegate to the extracted session key handler")
 
     terminal_changed = function_body(ui, "void terminal_changed(")

@@ -10,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -709,6 +710,37 @@ void test_symlink_protection(fixture &f) {
     CHECK(!std::filesystem::exists(f.root / "visible-dir" / "created.txt"));
 }
 
+void test_music_scan_secure_open_primitives(fixture &f) {
+    const std::string root = f.root.string();
+    std::size_t file_size = 99;
+    int descriptor = cyberdeck_local_shell_open_readonly(root.c_str(), "/", "/visible.txt", 32, file_size);
+    CHECK(descriptor >= 0);
+    CHECK(file_size == 7);
+    char contents[8]{};
+    CHECK(::read(descriptor, contents, sizeof(contents)) == 7);
+    CHECK(std::string_view(contents, 7) == "content");
+    CHECK(::close(descriptor) == 0);
+
+    file_size = 99;
+    CHECK(cyberdeck_local_shell_open_readonly(root.c_str(), "/", "/visible.txt", 6, file_size) < 0);
+    CHECK(file_size == 0);
+    CHECK(cyberdeck_local_shell_open_readonly(root.c_str(), "/", "/file-link", 32, file_size) < 0);
+    CHECK(cyberdeck_local_shell_open_readonly(root.c_str(), "/", "/visible-dir", 32, file_size) < 0);
+    CHECK(cyberdeck_local_shell_open_readonly(root.c_str(), "/", "/../outside.mp3", 32, file_size) < 0);
+
+    DIR *directory = cyberdeck_local_shell_opendir(root.c_str(), "/", "/");
+    CHECK(directory != nullptr);
+    if (directory != nullptr) CHECK(::closedir(directory) == 0);
+    directory = cyberdeck_local_shell_opendir(root.c_str(), "/", "/visible-dir");
+    CHECK(directory != nullptr);
+    if (directory != nullptr) CHECK(::closedir(directory) == 0);
+    CHECK(cyberdeck_local_shell_opendir(root.c_str(), "/", "/visible.txt") == nullptr);
+    CHECK(cyberdeck_local_shell_opendir(root.c_str(), "/", "/missing-dir") == nullptr);
+    CHECK(cyberdeck_local_shell_opendir(root.c_str(), "/", "/dir-link") == nullptr);
+    CHECK(cyberdeck_local_shell_opendir(root.c_str(), "/", "/../") == nullptr);
+    CHECK(cyberdeck_local_shell_opendir(root.c_str(), "/", "/sdcard") == nullptr);
+}
+
 void test_relevant_operation_errors(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
     const char *commands[] = {
@@ -937,6 +969,7 @@ int main() {
         fixture f;
         if (f.root.empty()) return 1;
         test_symlink_protection(f);
+        test_music_scan_secure_open_primitives(f);
     }
     {
         fixture f;

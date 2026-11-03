@@ -16,7 +16,7 @@ compile+link recipe to one object per translation unit, with per-TU depfiles:
   test_terminal_filter, test_edit_line,
   test_wifi_indicator_state, test_wifi_icon_layout, test_wifi_menu,
   test_history, test_keyboard_event, test_event_log_recent,
-  test_wifi_state_machine, test_net_coordinator, test_ssh_echo_guard,
+  test_wifi_state_machine, test_net_coordinator,
   test_ssh_line_composer
 
 The first eight were already guarded by this contract; the next three are the
@@ -168,7 +168,6 @@ TARGETS = (
     "test_event_log_recent",
     "test_wifi_state_machine",
     "test_net_coordinator",
-    "test_ssh_echo_guard",
     "test_ssh_line_composer",
     "test_keymap",
     "test_screenshot_bmp",
@@ -210,7 +209,6 @@ AGGREGATE_BASELINE_ORDER = (
     "test_terminal_filter",
     "test_edit_line",
     "test_net_coordinator",
-    "test_ssh_echo_guard",
     "test_ssh_line_composer",
     "test_screenshot_bmp",
     "test_orientation",
@@ -273,7 +271,6 @@ BASELINE_FIXTURE = "\n".join(
         "WIFI_STATE_MACHINE_SRC := ../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp",
         "WIFI_STATE_MACHINE_HDR := ../../../components/cyberdeck/include/apps/wifi/cyberdeck_wifi_state_machine.h",
         "NET_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/networking/cyberdeck_net_coordinator.cpp",
-        "ECHO_GUARD_SRC   := ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_echo_guard.cpp",
         "LINE_COMPOSER_SRC := ../../../components/cyberdeck/src/apps/shell/cyberdeck_ssh_line_composer.cpp",
         "KEYMAP_SRC       := ../../../components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp",
         "ORIENTATION_SRC := ../../../components/cyberdeck/src/platform/sensors/orientation.cpp",
@@ -354,9 +351,6 @@ BASELINE_FIXTURE = "\n".join(
         "",
         "test_net_coordinator: test_net_coordinator.cpp $(NET_COORDINATOR_SRC) ../../../components/cyberdeck/include/platform/networking/cyberdeck_net_coordinator.h",
         "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_net_coordinator.cpp $(NET_COORDINATOR_SRC) -o test_net_coordinator",
-        "",
-        "test_ssh_echo_guard: test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_echo_guard.h",
-        "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_ssh_echo_guard.cpp $(ECHO_GUARD_SRC) -o test_ssh_echo_guard",
         "",
         "test_ssh_line_composer: test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) ../../../components/cyberdeck/include/apps/shell/cyberdeck_ssh_line_composer.h",
         "\t$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_ssh_line_composer.cpp $(LINE_COMPOSER_SRC) -o test_ssh_line_composer",

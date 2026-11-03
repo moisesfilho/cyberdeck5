@@ -36,18 +36,19 @@ def test_recovery_blob_schema_checksum_limits_and_fail_closed():
             "the recovery NVS namespace must fit ESP-IDF's 15-character limit")
     require("k_state_version" in header and "k_max_app_errors" in header,
             "recovery state must have explicit schema version and bounded error count")
-    require("nvs_get_blob" in source and "size != sizeof(s_state)" in source,
+    require("nvs_get_blob" in source and "size != sizeof(candidate)" in source,
             "recovery must validate persisted blob size")
-    require("s_state.version != k_state_version" in source,
+    require("candidate.version != k_state_version" in source,
             "recovery must reject an incompatible schema")
     require("nvs_flash_erase" not in source and "nvs_flash_erase" not in MAIN.read_text(),
             "NVS corruption/unavailability must never trigger automatic erase")
     require("nvs_open(k_namespace, NVS_READWRITE" in source and
-            "nvs_set_blob(handle, k_key, &s_state, sizeof(s_state))" in source and
+            "nvs_set_blob(handle, k_key, &value, sizeof(value))" in source and
             "nvs_commit(handle)" in source,
             "recovery must preserve NVS persistence through the approved namespace")
-    require("nvs_close(handle);\n        return ESP_ERR_INVALID_SIZE" in source,
-            "corrupt recovery data must fail closed before becoming available")
+    require("candidate.version != k_state_version" in source and
+            "state=unavailable" in source,
+            "corrupt recovery data must fail closed and log the diagnosis")
     require("k_app_id_size" in header and "k_error_size" in header,
             "app and error fields need bounded storage")
     require("app.size() >= k_app_id_size" in POLICY.read_text(),
@@ -92,8 +93,23 @@ def test_sys_info_and_app_info_expose_recovery_diagnostics():
             "app info must expose the last app failure")
     require("record_error" in POLICY.read_text() and "error_for" in POLICY.read_text(),
             "last error must be addressable per application")
-    require("record_app_error" in RECOVERY.read_text() and "save()" in RECOVERY.read_text(),
+    require("record_app_error" in RECOVERY.read_text() and "save(candidate)" in RECOVERY.read_text(),
             "recovery diagnostics must remain persisted, not only held in RAM")
+    require("std::lock_guard<std::mutex> lock(s_state_mutex)" in RECOVERY.read_text() and
+            "state candidate = s_state" in RECOVERY.read_text() and
+            "if (err == ESP_OK) s_state = candidate" in RECOVERY.read_text(),
+            "recovery mutation must serialize and publish only after NVS commit")
+    require("return !s_available || s_state.safe_mode_latched" in RECOVERY.read_text(),
+            "unavailable recovery state must choose the fail-closed surface")
+    require('k_journal_key[] = "diag"' in RECOVERY.read_text() and
+            "append_journal_locked" in RECOVERY.read_text() and
+            "prior_safe" in RECOVERY.read_text() and
+            'stage=load result=%s persisted=0 state=unavailable' in RECOVERY.read_text(),
+            "recovery must persist before/after transition diagnostics independently of SD")
+    serial = SERIAL.read_text()
+    require("cyberdeck_recovery::journal_read" in serial and
+            "recovery_chunk" in serial and "recovery_start" in serial,
+            "events.read must export the NVS recovery journal in bounded chunks")
 
 def test_boot_ready_is_the_only_path_to_recovery_commit():
     main = MAIN.read_text()
@@ -105,6 +121,48 @@ def test_boot_ready_is_the_only_path_to_recovery_commit():
             "startup failures must prevent the recovery commit")
     require("recovery checkpoint deferred after startup failure" in main,
             "failed startup must preserve the pending recovery attempt")
+
+def test_optional_service_failures_do_not_block_essential_checkpoint():
+    apps = APPS.read_text()
+    start = body(apps, 'extern "C" esp_err_t cyberdeck_system_apps_start(void)',
+                 'extern "C" esp_err_t cyberdeck_system_apps_start_safe_mode(void)')
+    require("runtime.start_all()" in start,
+            "normal startup must continue attempting the complete service set")
+    require('runtime.state("cyberdeck.shell") == cyberdeck_apps::app_state::running' in start and
+            'runtime.state("cyberdeck.serial") == cyberdeck_apps::app_state::running' in start,
+            "checkpoint readiness must require shell and Serial-JTAG")
+    require('if (!shell_ready || !serial_ready)' in start and 'return ESP_FAIL' in start,
+            "a failed essential service must keep recovery pending")
+    require('if (!all_started)' in start and
+            'essential services ready; optional services remain degraded' in start and
+            'return ESP_OK' in start,
+            "optional service failures must be diagnosed without blocking checkpoint")
+
+def test_command_dispatch_is_fenced_until_boot_startup_finishes():
+    runtime_h = ROOT / "components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h"
+    runtime_cpp = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp"
+    header = runtime_h.read_text()
+    implementation = runtime_cpp.read_text()
+    main = MAIN.read_text()
+    execute = body(implementation, "result runtime::execute_line", "runtime &global_runtime")
+    require("std::atomic<bool> command_dispatch_ready_{true}" in header and
+            "set_command_dispatch_ready(bool ready)" in header,
+            "runtime needs an atomic command admission gate")
+    require("command_dispatch_ready_.load(std::memory_order_acquire)" in execute and
+            'rejected("system startup in progress")' in execute,
+            "shell commands must fail closed while app lifecycle startup is mutating runtime state")
+    begin = main.index("app_runtime.set_command_dispatch_ready(false)")
+    ui_init = main.index("cyberdeck_ui_init()")
+    release = main.index("app_runtime.set_command_dispatch_ready(true)")
+    checkpoint = main.index("cyberdeck_system_apps_commit_ready()")
+    require(begin < ui_init and checkpoint < release,
+            "command admission must close before UI exposure and reopen only after startup/checkpoint")
+
+def test_clear_safe_mode_acknowledges_inflight_boot_checkpoint():
+    clear = body(POLICY.read_text(), "bool clear_safe_mode", "bool record_error")
+    require("value.safe_mode_latched = false" in clear and "value.interrupted_boots = 0" in clear and
+            "value.boot_pending = false" in clear,
+            "explicit clear must unset the latch and acknowledge the interrupted boot")
 
 def test_lifecycle_logs_are_bounded_and_emitted():
     runtime = RUNTIME.read_text()
@@ -119,10 +177,13 @@ def test_lifecycle_logs_are_bounded_and_emitted():
 def main():
     tests = [test_recovery_blob_schema_checksum_limits_and_fail_closed,
              test_boot_attempt_checkpoint_and_three_interruptions,
-             test_safe_mode_latch_and_explicit_reset_services,
-             test_sys_info_and_app_info_expose_recovery_diagnostics,
-             test_boot_ready_is_the_only_path_to_recovery_commit,
-             test_lifecycle_logs_are_bounded_and_emitted]
+              test_safe_mode_latch_and_explicit_reset_services,
+              test_sys_info_and_app_info_expose_recovery_diagnostics,
+              test_boot_ready_is_the_only_path_to_recovery_commit,
+              test_optional_service_failures_do_not_block_essential_checkpoint,
+              test_command_dispatch_is_fenced_until_boot_startup_finishes,
+              test_clear_safe_mode_acknowledges_inflight_boot_checkpoint,
+              test_lifecycle_logs_are_bounded_and_emitted]
     failures = []
     for test in tests:
         try:

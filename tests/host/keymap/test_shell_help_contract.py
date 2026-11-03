@@ -63,6 +63,7 @@ MANIFEST_FIELDS = (
     "lifecycle_timeout_ms", "api_version", "type", "capabilities",
     "capability_count", "stack_bytes", "queue_depth", "commands",
     "command_count", "owns_console", "command_help_entries",
+    "commands_require_active_foreground",
 )
 FIELD_ID = MANIFEST_FIELDS.index("id")
 FIELD_NAME = MANIFEST_FIELDS.index("name")
@@ -95,12 +96,16 @@ NETDIAG_USAGE = (
      "host: 1..253 ASCII letters, digits, dots, or hyphens; port: decimal 1..65535\n"
      "URL: https, at most 512 bytes; no userinfo, fragment, whitespace, or explicit port in authority\n"),
 )
+MUSIC_USAGE = (
+    ("music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
+      "MP3 playback from SD; volume is capped at 50\n"),
+)
 DEMO_USAGE = (
     ("demo", "arguments are not declared; extra arguments are currently ignored\n"),
 )
 
 # Compiled-in inventory, in registration order (REQ-HELP-05): 7 commandless
-# services, the console-owning shell, and 3 command-bearing applications.
+# services, the console-owning shell, and 4 command-bearing applications.
 # `symbol` is the registered expression in `k_apps`; `source` selects where the
 # manifest is declared.  `command` is the manifest's `command` field: the
 # editor and netdiag leave it empty and are therefore reached through their
@@ -144,19 +149,25 @@ EXPECTED_APPS = (
      "description": "Explicit-target connectivity diagnostics",
      "type": "foreground", "commands": ("netdiag",), "command": "",
      "usage": NETDIAG_USAGE, "owns_console": False},
+    {"symbol": "&cyberdeck_music::global_application()", "source": "music",
+     "id": "cyberdeck.music", "name": "Music", "description": "Foreground local MP3 player",
+     "type": "foreground", "commands": ("music",), "command": "", "usage": MUSIC_USAGE,
+     "owns_console": False, "commands_require_active_foreground": True},
 )
 
-COMMAND_BEARING_COUNT = 3
+COMMAND_BEARING_COUNT = 4
 COMMANDLESS_SERVICE_COUNT = 7
 CONSOLE_OWNER_COUNT = 1
 
 FIXTURE_USAGE_FUNCTIONS = {
     "editor": "editor_usage_manifest",
     "netdiag": "netdiag_usage_manifest",
+    "music": "music_usage_manifest",
 }
 
 # Scenario identifiers of this contract, mapped in help_traceability.md.
 SCENARIOS = (
+    "TEST-1",
     "TEST-HELP-APP-MANIFEST-01",
     "TEST-HELP-APP-MANIFEST-02",
     "TEST-HELP-APP-MANIFEST-03",
@@ -371,8 +382,8 @@ def _normalise_type(token):
 def _literal_manifest(source, marker="k_manifest"):
     """Parse a positional `manifest` aggregate into a comparable mapping."""
     fields = _manifest_fields(_brace_body(source, marker))
-    if len(fields) not in (len(MANIFEST_FIELDS) - 1, len(MANIFEST_FIELDS)):
-        raise ContractError(f"{marker!r} has {len(fields)} fields, expected 19 or 20")
+    if len(fields) < len(MANIFEST_FIELDS) - 2 or len(fields) > len(MANIFEST_FIELDS):
+        raise ContractError(f"{marker!r} has {len(fields)} fields, expected 19 to 21")
     command_count = int(fields[FIELD_COMMAND_COUNT])
     commands = _string_list(fields[FIELD_COMMANDS])
     if command_count != len(commands):
@@ -387,8 +398,10 @@ def _literal_manifest(source, marker="k_manifest"):
         "commands": commands,
         "command_count": command_count,
         "owns_console": fields[FIELD_OWNS_CONSOLE].strip() == "true",
+        "commands_require_active_foreground": fields[MANIFEST_FIELDS.index("commands_require_active_foreground")].strip() == "true"
+        if len(fields) > MANIFEST_FIELDS.index("commands_require_active_foreground") else False,
         "entries": _help_entries(fields[FIELD_HELP_ENTRIES])
-        if len(fields) == len(MANIFEST_FIELDS) else (),
+        if len(fields) >= FIELD_HELP_ENTRIES + 1 else (),
     }
 
 
@@ -858,6 +871,7 @@ def main() -> int:
         "demo": DEMO_APP.read_text(encoding="utf-8"),
         "editor": EDITOR_APP.read_text(encoding="utf-8"),
         "netdiag": NETDIAG_APP.read_text(encoding="utf-8"),
+        "music": (ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp").read_text(encoding="utf-8"),
     }
 
     try:
@@ -894,13 +908,16 @@ def main() -> int:
             require(parsed["commands"] == app["commands"], f"{app['id']}: unexpected command list")
             require(parsed["owns_console"] == app["owns_console"],
                     f"{app['id']}: unexpected owns_console")
+            if "commands_require_active_foreground" in app:
+                require(parsed["commands_require_active_foreground"] == app["commands_require_active_foreground"],
+                        f"{app['id']}: commands must require active foreground")
         command_bearing = [app for app in EXPECTED_APPS if manifests[app["id"]]["commands"]]
         commandless = [app for app in EXPECTED_APPS
                        if not manifests[app["id"]]["commands"]
                        and not manifests[app["id"]]["owns_console"]]
         console_owners = [app for app in EXPECTED_APPS if manifests[app["id"]]["owns_console"]]
         require(len(command_bearing) == COMMAND_BEARING_COUNT,
-                "exactly 3 compiled-in applications must declare a command")
+                "exactly 4 compiled-in applications must declare a command")
         require(len(commandless) == COMMANDLESS_SERVICE_COUNT,
                 "exactly 7 compiled-in services must declare no command")
         require(len(console_owners) == CONSOLE_OWNER_COUNT,
@@ -966,6 +983,8 @@ def main() -> int:
                 "the shell fixture must mirror the real manifest")
         require("shell_manifest.owns_console = true;" in help_test,
                 "the shell fixture must mirror owns_console")
+        require("item.commands_require_active_foreground = true;" in help_test,
+                "the music fixture must require active foreground for player commands")
         require(_fixture_helper_version(help_test, "commandless_manifest") == service_version,
                 "the commandless fixture helper must mirror the production service version")
         require("cyberdeck_apps::demo_application demo;" in help_test,
@@ -975,7 +994,7 @@ def main() -> int:
         fixture_symbols = _registration_symbols(help_test, "application *const registered[]")
         require(len(fixture_symbols) == len(EXPECTED_APPS),
                 f"the fixture inventory must register {len(EXPECTED_APPS)} applications")
-        require(fixture_symbols[-COMMAND_BEARING_COUNT:] == ("&demo", "&editor", "&netdiag"),
+        require(fixture_symbols[-COMMAND_BEARING_COUNT:] == ("&demo", "&editor", "&netdiag", "&music"),
                 "the fixture inventory must register the command-bearing apps in production order")
         for app in EXPECTED_APPS:
             if app["source"] not in FIXTURE_USAGE_FUNCTIONS:

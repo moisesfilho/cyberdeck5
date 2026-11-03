@@ -3,6 +3,21 @@
 #include "esp_err.h"
 #include "lvgl.h"
 #include <stdint.h>
+#ifdef __cplusplus
+#include <atomic>
+
+namespace cyberdeck_screen_off_detail {
+inline bool active_snapshot(const std::atomic<bool> &active)
+{
+    return active.load(std::memory_order_acquire);
+}
+
+inline void publish_active(std::atomic<bool> &active, bool value)
+{
+    active.store(value, std::memory_order_release);
+}
+} // namespace cyberdeck_screen_off_detail
+#endif
 
 #ifdef __cplusplus
 extern "C" {

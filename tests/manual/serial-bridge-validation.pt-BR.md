@@ -126,6 +126,65 @@ Atalhos/gestos exigem teclado ou toque físico; repita abrir/fechar/reabrir e
 desconectar/reconectar Serial-JTAG para confirmar estado limpo e ausência de
 callbacks tardios.
 
+### 4.3. Armadilhas de validação via ponte (29/out/2026)
+
+Registradas em validação real; valem para qualquer cenário executado pela ponte.
+
+- **Tela apagada recusa os comandos de UI (desde 30/out/2026).** Com a proteção
+  de tela ativa, `ui.click`, `ui.tap`, `ui.type`, `ui.clear`, `ui.dump`,
+  `term.dump`, `screen.shot` e `screen.dump` falham com
+  `error_code="screen_off"` e `error="tela apagada: use screen.wake antes"`;
+  nenhum deles alcanca a árvore de widgets nem captura o framebuffer.
+  `ping`, `sys.info`, `wifi.*`, `events.read` e `fs.write` continuam
+  funcionando. Roteiro na seção 4.4.
+- **`ui.type` com o player aberto dispara playback.** `ui.type` sempre envia um
+  Enter no fim; no app `music` um Enter vazio é play/pause. Não injete Enter com
+  a surface do player aberta se o playback não estiver autorizado. Para dumps
+  longos, considere `screen timeout 0` **antes** de abrir o player e restaure
+  (`screen timeout 2`) depois.
+- **`screen.dump` é lento** (~30–40 s para 720×1280). O caminho alternativo é o
+  endpoint HTTP: use o IP de `wifi.status` e
+  `curl -s -o out.bmp http://<ip>/screenshot` (~7 s, HTTP 200, mesmo BMP).
+- **BMP é bottom-up** (`biHeight > 0`). Decodificadores conformes à spec
+  renderizam corretamente; não aplique `-flip` nem trate a imagem como invertida.
+- **Diagnóstico de panic.** O panic sai na UART/USB Serial-JTAG e um segundo
+  leitor concorrente (ex.: `cat /dev/ttyACM0`) rouba bytes do protocolo. Use o
+  wrapper de leitura única ou mantenha o monitor sem rodar CLI ao mesmo tempo.
+  `coredump` está desabilitado (`CONFIG_ESP_COREDUMP_ENABLE_TO_NONE`), então o
+  texto do panic é a única evidência — preserve-o.
+
+### 4.4. Proteção de tela: `screen.status` / `screen.wake` (TEST-SCREEN-GUARD)
+
+A ponte não pode operar às cegas sobre a sobreposição preta da proteção: ler ou
+tocar a árvore escondida altera estado que o usuário não vê. Os dois comandos
+abaixo são a única saída de/consulta à proteção pela ponte; os comandos que
+**mudam** a proteção continuam no shell (`ui.type "screen off"`).
+
+`screen.status` → `{"ok":true,"result":{"off":<bool>}}` (usa
+`screen_off_is_active()`).
+`screen.wake` → `{"ok":true,"result":{"woke":<bool>}}`; `woke:true` só quando a
+tela estava apagada e foi religada (`screen_off_turn_on()`), `woke:false` quando
+já estava ligada.
+
+Os dois comandos leem `s_active`/trocam a tela ativa **sob `bsp_display_lock`**
+(`k_display_lock_timeout_ms`), porque esse estado pertence à task do LVGL (o
+timer de inatividade lê `s_active` ali); a resposta é composta depois do
+unlock. Se o lock não for obtido em 1000 ms, a resposta é
+`ok:false`, `error_code="internal"`, `error="display busy"`; nesse caso repita a
+leitura antes de concluir qualquer coisa sobre o estado da tela.
+
+| ID | Acao | Resultado esperado | Pass/Fail | Obs |
+|----|------|--------------------|-----------|-----|
+| SC1 | Tela ligada: `screen.status` | `ok:true`, `result.off=false` |  |  |
+| SC2 | Tela ligada: `screen.wake` | `ok:true`, `result.woke=false`; nenhum efeito visual |  |  |
+| SC3 | `ui.type "screen off"` e depois `screen.status` | `result.off=true` |  |  |
+| SC4 | Com a tela apagada: `ui.click 640 360` | `ok:false`, `error_code="screen_off"`, `error="tela apagada: use screen.wake antes"`; nada executa (nenhum play/pause, nenhuma abertura de tela) |  | regressão do defeito medido |
+| SC5 | Com a tela apagada: `ui.tap "<texto>"`, `ui.type "help"`, `ui.clear`, `ui.dump`, `term.dump`, `screen.shot`, `screen.dump` | Todos falham com o mesmo `error_code`/mensagem; nenhum dump parcial nem captura |  |  |
+| SC6 | Com a tela apagada: `ping`, `sys.info`, `wifi.status`, `fs.write` | `ok:true` (seguem funcionando) |  |  |
+| SC7 | Com a tela apagada: `screen.wake` | `ok:true`, `result.woke=true`; a TUI volta visível |  |  |
+| SC8 | Após SC7: `screen.status` e `ui.dump` | `off=false` e dump retorna a árvore real (não apenas a sobreposição) |  |  |
+| SC9 | `sys.info` antes/depois de SC3..SC7 | Uptime crescente, sem reboot/panic |  |  |
+
 ## 5. `term.dump`: snapshot textual do terminal
 
 `term.dump` nao recebe argumentos de comando. A requisicao NDJSON e
@@ -315,6 +374,9 @@ por aceitação de `ui.type`: validar resultado, readback e uptime.
 | D5 | Dump duas vezes seguidas | Sessao anterior encerrada corretamente; segunda captura consistente (rid novo) |  |  |
 | D6 | `screen.dump` durante rotacao da tela | Sem crash; se falhar, erro tipado + frame `end` quando a sessao ja comecou |  |  |
 
+Custo, alternativa HTTP (`GET /screenshot`) e orientação bottom-up do BMP estão
+em 4.3.
+
 ## 8. Integracao de boot e concorrencia
 
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
@@ -386,6 +448,8 @@ o host não substitui a evidência de append/fsync real em `events.log`.
 | idem | `screen_bmp_size`, `screen_chunk_bounds`, `screen_dump_init/get_chunk`, `crc32` | `tests/host/keymap/test_serial_screen_dump.cpp` |
 | idem | `LineAssembler` (stream intercalado com logs, linha >4096, feeds fragmentados), `is_log_line`/`extract_envelope` | `tests/host/keymap/test_serial_cli_tolerance.cpp` |
 | idem | `sys_info_to_json/from_json`, `wifi_scan_to_json` | `tests/host/keymap/test_serial_sysinfo_wifi.cpp` |
+| idem | `ui_command_needs_screen_on` (lista fechada de comandos recusados com a tela apagada), `screen_status_result`, `screen_wake_should_turn_on`, `screen_wake_result`, `k_screen_off_detail`, envelope `dispatch_error::screen_off` | `tests/host/keymap/test_serial_screen_guard.cpp` |
+| idem (estrutural) | ordem do guard em `device_exec` antes de hit-test/injecao/captura, `screen.status`/`screen.wake` via `screen_off_is_active()`/`screen_off_turn_on()` dentro de `bsp_display_lock` (resposta apos o unlock, `display busy` na falha do lock), ausencia de side channel para `screen on|off|timeout` | `tests/host/keymap/test_serial_screen_guard_contract.py` |
 
 A camada pura e autocontida: fora de `ESP_PLATFORM` nao ha <PII type="CASE_ID" id="99"/> a
 `screenshot_bmp_*` (stride/size/header/conversao espelhados localmente), por
@@ -396,7 +460,9 @@ task `serial_brg`, driver USB Serial-JTAG, `esp_log_set_vprintf`, hooks LVGL
 (`find_click_at`, `exec_ui_*`, `ui.dump`), `cyberdeck_keyboard_input`,
 `wifi_mgr_scan` e a captura `lv_snapshot_take` — exige dispositivo; e o
 escopo obrigatorio deste roteiro (secoes 4-7) alem do `idf.py build` que
-valida a compilacao do lado device.
+valida a compilacao do lado device. O guard de protecao de tela e os ramos
+`screen.status`/`screen.wake` de `device_exec` pertencem a essa secao: ficam
+fixados por contrato estrutural e o comportamento real esta no roteiro 4.4.
 
 **Observacao:** `tests/host/keymap/Makefile` mantem comentarios historicos
 "TDD RED" nos alvos `test_serial_*`; eles ja estao em GREEN com a producao
