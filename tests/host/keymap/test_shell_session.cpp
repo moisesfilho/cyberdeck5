@@ -312,6 +312,15 @@ struct fake_host final : cyberdeck_shell_session::host {
         if (out != nullptr) *out = battery_snapshot;
         return true;
     }
+    mutable int battery_diagnostics_reads{0};
+    bool battery_diagnostics_ok{true};
+    cyberdeck_battery_protection::hardware_diagnostics battery_diagnostics{};
+    bool battery_hardware_diagnostics(cyberdeck_battery_protection::hardware_diagnostics *out) const override
+    {
+        ++battery_diagnostics_reads;
+        if (out) *out = battery_diagnostics;
+        return battery_diagnostics_ok;
+    }
 
     void log_event(char level, const char *tag, const char *message) override
     {
@@ -1166,6 +1175,116 @@ int main()
         submit(s, "battery protection status");
         check(h.output.find("unavailable") != std::string::npos,
               "a stopped adapter reports unavailable");
+    }
+
+    {
+        fake_host h;
+        constexpr std::int64_t uptime_30_days_us = 30LL * 24 * 60 * 60 * 1000000;
+        h.battery_diagnostics.captured_at_us = uptime_30_days_us;
+        h.battery_diagnostics.ina_sampled_at_us = 1;
+        h.battery_diagnostics.chg_stat_sampled_at_us = uptime_30_days_us - 1000;
+        h.battery_diagnostics.policy_sampled_at_us = uptime_30_days_us - 1000;
+        session s(h);
+        submit(s, "battery protection status");
+        check(h.output.find("ina_age_ms=2591999999 stat_age_ms=1 snapshot_age_ms=1") != std::string::npos,
+              "diagnostic ages remain accurate beyond signed 32-bit milliseconds");
+    }
+
+    {
+        fake_host h;
+        h.battery_diagnostics.captured_at_us = 1000000;
+        h.battery_diagnostics.ina_sampled_at_us = 0;
+        h.battery_diagnostics.chg_stat_sampled_at_us = -1;
+        h.battery_diagnostics.policy_sampled_at_us = 1000001;
+        session s(h);
+        submit(s, "battery protection status");
+        check(h.output.find("ina_age_ms=-1 stat_age_ms=-1 snapshot_age_ms=-1") != std::string::npos,
+              "zero, negative, and future sample timestamps use the invalid age sentinel");
+    }
+
+    {
+        fake_host h;
+        h.battery_diagnostics.captured_at_us = INT64_MAX;
+        h.battery_diagnostics.ina_sampled_at_us = 1;
+        session s(h);
+        submit(s, "battery protection status");
+        check(h.output.find("ina_age_ms=9223372036854775") != std::string::npos,
+              "maximum capture timestamp subtracts and formats without signed overflow");
+    }
+
+    {
+        fake_host h;
+        h.battery_diagnostics.expander_available = true;
+        h.battery_diagnostics.chg_qc_read_ok = true;
+        h.battery_diagnostics.chg_qc_enabled = true;
+        h.battery_diagnostics.chg_en_read_ok = true;
+        h.battery_diagnostics.chg_en_enabled = true;
+        h.battery_diagnostics.ina_available = true;
+        h.battery_diagnostics.ina_bus_raw = 0x1770;
+        h.battery_diagnostics.ina_current_raw = 0x0003;
+        h.battery_diagnostics.ina_bus_voltage_mv = 7678;
+        h.battery_diagnostics.ina_current_ma = 3;
+        h.battery_diagnostics.captured_at_us = 9000000;
+        h.battery_diagnostics.ina_sampled_at_us = 8000000;
+        h.battery_diagnostics.chg_stat_available = true;
+        h.battery_diagnostics.chg_stat_raw_low = false;
+        h.battery_diagnostics.chg_stat_sampled_at_us = 8500000;
+        h.battery_diagnostics.policy_sampled_at_us = 8500000;
+        session s(h);
+        submit(s, "battery protection status");
+        check(h.output.find("CHG_QC_EN=enabled CHG_EN=enabled") != std::string::npos,
+              "status reports physical readback without interpreting it as charging");
+        check(h.output.find("bus_raw=0x1770 current_raw=0x0003") != std::string::npos,
+              "status reports raw INA226 registers");
+        check(h.output.find("CHG_STAT_raw=high") != std::string::npos &&
+                  h.output.find("ina_age_ms=1000 stat_age_ms=500 snapshot_age_ms=500") != std::string::npos,
+              "status reports cached signal and measurement ages");
+        check(h.output.find("latch_unobserved,direction_unobserved") != std::string::npos &&
+                  h.output.find("enables_do_not_indicate_charging") != std::string::npos,
+              "status avoids claiming pin mode or charge from enable levels");
+        check(h.battery_diagnostics_reads == 1, "status performs one diagnostic read");
+    }
+
+    {
+        fake_host h;
+        h.battery_diagnostics.expander_available = true;
+        h.battery_diagnostics.chg_qc_read_ok = true;
+        h.battery_diagnostics.chg_qc_enabled = false;
+        h.battery_diagnostics.chg_en_read_ok = false;
+        h.battery_diagnostics.ina_error = true;
+        session s(h);
+        submit(s, "battery protection status");
+        check(h.output.find("CHG_QC_EN=disabled CHG_EN=error CHG_STAT_raw=unavailable INA226=error") != std::string::npos,
+              "independent read failures are reported distinctly from disabled pins");
+        check(h.output.find("bus_raw=none current_raw=none") != std::string::npos,
+              "failed INA sample does not expose stale raw registers");
+        check(h.battery_diagnostics_reads == 1,
+              "failure status performs one diagnostic read, not repeated sampling");
+    }
+
+    {
+        fake_host h;
+        h.battery_diagnostics.expander_available = false;
+        h.battery_diagnostics.chg_qc_read_ok = false;
+        h.battery_diagnostics.chg_en_read_ok = false;
+        h.battery_diagnostics.ina_available = false;
+        session s(h);
+        submit(s, "battery protection status");
+        check(h.output.find("CHG_QC_EN=unavailable CHG_EN=unavailable CHG_STAT_raw=unavailable INA226=unavailable") != std::string::npos,
+              "missing expander and INA sample are reported unavailable, not as pin errors");
+    }
+
+    {
+        fake_host h;
+        h.battery_diagnostics_ok = false;
+        session s(h);
+        submit(s, "battery protection status");
+        check(h.output.find("battery hardware: unavailable\n") != std::string::npos,
+              "diagnostics API failure is reported without suppressing policy status");
+        check(h.output.find("battery: state=") != std::string::npos,
+              "diagnostics failure preserves the existing policy status line");
+        check(h.battery_diagnostics_reads == 1,
+              "API failure is not retried by the shell command");
     }
 
     /* --- bluetooth ------------------------------------------------------ */

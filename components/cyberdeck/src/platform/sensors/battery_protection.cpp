@@ -21,11 +21,16 @@ constexpr char NVS_KEY_PROTECTION[] = "prot_enabled";
 constexpr char TAG[] = "battery_prot";
 
 esp_io_expander_handle_t s_expander = nullptr;
+bool s_expander_configured = false;
 std::atomic<bool> s_started{false};
 std::mutex s_snapshot_mutex;
 std::mutex s_policy_mutex;
 cyberdeck_battery_protection::state s_policy;
 cyberdeck_battery::snapshot s_snapshot{};
+std::int64_t s_policy_sampled_at_us = 0;
+bool s_cached_chg_stat_valid = false;
+bool s_cached_chg_stat_raw_low = false;
+std::int64_t s_chg_stat_sampled_at_us = 0;
 bool s_last_applied_charger_state = true;
 
 bool read_chg_status(bool *out_valid, bool *out_raw_low)
@@ -59,31 +64,73 @@ esp_err_t write_chg_enable(bool enable)
 
 esp_err_t init_expander()
 {
-    // CHG_STAT CHG_EN
-    if (s_expander != nullptr) {
+    // CHG_STAT CHG_QC_EN CHG_EN
+    if (s_expander_configured) {
         return ESP_OK;
     }
 
-    const int64_t expander_started_us = esp_timer_get_time();
-    ESP_LOGI(TAG, "HOSTED_DIAG battery stage=expander_init begin t_us=%lld",
-             static_cast<long long>(expander_started_us));
-    s_expander = bsp_io_expander1_init();
     if (s_expander == nullptr) {
-        ESP_LOGE(TAG, "HOSTED_DIAG battery stage=expander_init end result=ESP_FAIL duration_ms=%lld t_us=%lld",
+        const int64_t expander_started_us = esp_timer_get_time();
+        ESP_LOGI(TAG, "HOSTED_DIAG battery stage=expander_init begin t_us=%lld",
+                 static_cast<long long>(expander_started_us));
+        s_expander = bsp_io_expander1_init();
+        if (s_expander == nullptr) {
+            ESP_LOGE(TAG, "HOSTED_DIAG battery stage=expander_init end result=ESP_FAIL duration_ms=%lld t_us=%lld",
+                     static_cast<long long>((esp_timer_get_time() - expander_started_us) / 1000),
+                     static_cast<long long>(esp_timer_get_time()));
+            ESP_LOGE(TAG, "Failed to init expander-B");
+            return ESP_FAIL;
+        }
+        ESP_LOGI(TAG, "HOSTED_DIAG battery stage=expander_init end result=ESP_OK duration_ms=%lld t_us=%lld",
                  static_cast<long long>((esp_timer_get_time() - expander_started_us) / 1000),
                  static_cast<long long>(esp_timer_get_time()));
-        ESP_LOGE(TAG, "Failed to init expander-B");
-        return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "HOSTED_DIAG battery stage=expander_init end result=ESP_OK duration_ms=%lld t_us=%lld",
-             static_cast<long long>((esp_timer_get_time() - expander_started_us) / 1000),
-             static_cast<long long>(esp_timer_get_time()));
 
     esp_err_t err = esp_io_expander_set_dir(s_expander,
                                             IO_EXPANDER_PIN_NUM_6,  // CHG_STAT
                                             IO_EXPANDER_INPUT);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "CHG_STAT dir failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_io_expander_set_pullupdown(s_expander,
+                                         IO_EXPANDER_PIN_NUM_6,
+                                         IO_EXPANDER_PULL_UP);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "CHG_STAT pull-up failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    // Establish safe inactive latches before enabling either output. The
+    // expander powers up with its pins high-impedance, so direction alone is
+    // insufficient: explicitly select push-pull drive for both controls.
+    err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_5, 1);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "CHG_QC_EN inactive-high preload failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_7, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "CHG_EN inactive-low preload failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_io_expander_set_dir(s_expander, IO_EXPANDER_PIN_NUM_5,
+                                  IO_EXPANDER_OUTPUT);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "CHG_QC_EN dir failed; charging remains inhibited: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_io_expander_set_output_mode(
+        s_expander, IO_EXPANDER_PIN_NUM_5, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "CHG_QC_EN push-pull mode failed: %s", esp_err_to_name(err));
         return err;
     }
 
@@ -95,21 +142,29 @@ esp_err_t init_expander()
         return err;
     }
 
-    err = esp_io_expander_set_pullupdown(s_expander,
-                                         IO_EXPANDER_PIN_NUM_6,
-                                         IO_EXPANDER_PULL_UP);
+    err = esp_io_expander_set_output_mode(
+        s_expander, IO_EXPANDER_PIN_NUM_7, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "CHG_STAT pull-up failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "CHG_EN push-pull mode failed: %s", esp_err_to_name(err));
+        return err;
     }
 
-    // CHG_EN set_level 1 (enabled)
+    err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_5, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "CHG_QC_EN low write failed; charging remains inhibited: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    // CHG_EN set_level 1 (enabled) is deliberately the final hardware stage.
     err = write_chg_enable(true);
     if (err != ESP_OK) {
         return err;
     }
 
-    ESP_LOGI(TAG, "Expander-B initialized: CHG_STAT pin %u (input/pull-up), CHG_EN pin %u (output, high)",
+    ESP_LOGI(TAG, "Expander-B initialized: CHG_STAT pin %u (input/pull-up), CHG_QC_EN pin 5 (push-pull, low), CHG_EN pin %u (push-pull, high)",
              IO_EXPANDER_PIN_NUM_6, IO_EXPANDER_PIN_NUM_7);
+    s_expander_configured = true;
     return ESP_OK;
 }
 
@@ -236,6 +291,13 @@ bool sample_and_publish(cyberdeck_battery_protection::observation *out_observati
         policy_snap = s_policy.observe(obs);
     }
     update_snapshot_from_policy(policy_snap);
+    {
+        std::lock_guard<std::mutex> lock(s_snapshot_mutex);
+        s_policy_sampled_at_us = esp_timer_get_time();
+        s_cached_chg_stat_valid = chg_valid;
+        s_cached_chg_stat_raw_low = raw_chg_stat_low;
+        s_chg_stat_sampled_at_us = chg_valid ? s_policy_sampled_at_us : 0;
+    }
 
     {
         std::lock_guard<std::mutex> lock(s_policy_mutex);
@@ -344,6 +406,18 @@ extern "C" bool battery_protection_get_policy_snapshot(
     return true;
 }
 
+extern "C" bool battery_protection_get_cached_policy_snapshot(
+    cyberdeck_battery_protection::snapshot *out_snapshot)
+{
+    if (out_snapshot == nullptr || !battery_protection_started()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(s_policy_mutex);
+    *out_snapshot = s_policy.snapshot();
+    return true;
+}
+
 extern "C" bool battery_protection_set_enabled(bool enabled)
 {
     if (!battery_protection_started()) {
@@ -393,4 +467,45 @@ extern "C" bool battery_protection_is_active(void)
 extern "C" bool battery_protection_charger_enabled(void)
 {
     return s_policy.charger_enabled();
+}
+
+extern "C" bool battery_protection_get_hardware_diagnostics(
+    cyberdeck_battery_protection::hardware_diagnostics *out)
+{
+    if (out == nullptr) return false;
+    *out = {};
+    if (!battery_protection_started()) return false;
+    out->captured_at_us = esp_timer_get_time();
+    {
+        std::lock_guard<std::mutex> lock(s_snapshot_mutex);
+        out->policy_sampled_at_us = s_policy_sampled_at_us;
+        out->chg_stat_available = s_cached_chg_stat_valid;
+        out->chg_stat_raw_low = s_cached_chg_stat_raw_low;
+        out->chg_stat_sampled_at_us = s_chg_stat_sampled_at_us;
+    }
+    out->expander_available = (s_expander != nullptr);
+    if (out->expander_available) {
+        uint32_t level = 0;
+        if (esp_io_expander_get_level(s_expander, IO_EXPANDER_PIN_NUM_5, &level) == ESP_OK) {
+            out->chg_qc_read_ok = true;
+            out->chg_qc_enabled = (level == 0);
+        }
+        level = 0;
+        if (esp_io_expander_get_level(s_expander, IO_EXPANDER_PIN_NUM_7, &level) == ESP_OK) {
+            out->chg_en_read_ok = true;
+            out->chg_en_enabled = (level != 0);
+        }
+    }
+    cyberdeck_battery::raw_diagnostics ina{};
+    if (ina226_reader_get_raw_diagnostics(&ina)) {
+        out->ina_available = true;
+        out->ina_bus_raw = ina.bus_voltage_register;
+        out->ina_current_raw = ina.current_register;
+        out->ina_bus_voltage_mv = ina.converted.bus_voltage_mv;
+        out->ina_current_ma = ina.converted.current_ma;
+        out->ina_sampled_at_us = ina.sampled_at_us;
+    } else {
+        out->ina_error = ina226_reader_started();
+    }
+    return true;
 }

@@ -57,6 +57,26 @@ struct snapshot {
     bool charger_enabled{true};
 };
 
+struct hardware_diagnostics {
+    std::int64_t captured_at_us{0};
+    std::int64_t policy_sampled_at_us{0};
+    bool chg_stat_available{false};
+    bool chg_stat_raw_low{false};
+    std::int64_t chg_stat_sampled_at_us{0};
+    bool expander_available{false};
+    bool chg_qc_read_ok{false};
+    bool chg_qc_enabled{false};
+    bool chg_en_read_ok{false};
+    bool chg_en_enabled{false};
+    bool ina_available{false};
+    bool ina_error{false};
+    std::uint16_t ina_bus_raw{0};
+    std::uint16_t ina_current_raw{0};
+    std::int32_t ina_bus_voltage_mv{0};
+    std::int32_t ina_current_ma{0};
+    std::int64_t ina_sampled_at_us{0};
+};
+
 struct persisted_option {
     bool protection_enabled{true};
 };

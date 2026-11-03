@@ -3,6 +3,7 @@
 #include "bsp/m5stack_tab5.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -37,6 +38,7 @@ std::atomic<bool> s_started{false};
 std::mutex s_snapshot_mutex;
 cyberdeck_battery::snapshot s_snapshot{};
 cyberdeck_battery::sample s_raw_sample{};
+cyberdeck_battery::raw_diagnostics s_raw_diagnostics{};
 
 void publish_sample(const cyberdeck_battery::sample &value)
 {
@@ -81,7 +83,8 @@ esp_err_t read_register_u16(const uint8_t reg, uint16_t *out)
     return ESP_OK;
 }
 
-bool read_sample(cyberdeck_battery::sample *out)
+bool read_sample(cyberdeck_battery::sample *out,
+                 cyberdeck_battery::raw_diagnostics *out_diagnostics)
 {
     if (out == nullptr) {
         return false;
@@ -113,6 +116,10 @@ bool read_sample(cyberdeck_battery::sample *out)
     /* The INA226 bus-voltage register is the source of the percentage input;
      * the pure battery seam owns the approved 6000..8230 mV window. */
     *out = {true, true, bus_voltage_mv, current_ma};
+    if (out_diagnostics != nullptr) {
+        *out_diagnostics = {true, bus_voltage_raw, current_raw_unsigned, *out};
+        out_diagnostics->sampled_at_us = esp_timer_get_time();
+    }
     return true;
 }
 
@@ -121,12 +128,21 @@ void ina226_reader_task(void *arg)
     (void)arg;
     while (true) {
         cyberdeck_battery::sample value{};
-        if (read_sample(&value)) {
+        cyberdeck_battery::raw_diagnostics diagnostics{};
+        if (read_sample(&value, &diagnostics)) {
+            {
+                std::lock_guard<std::mutex> lock(s_snapshot_mutex);
+                s_raw_diagnostics = diagnostics;
+            }
             publish_sample(value);
         } else {
             /* The sensor was present during startup, but this sample could not
              * be read.  Keep presence separate from read validity so the UI
              * can report unavailable rather than fabricating a percentage. */
+            {
+                std::lock_guard<std::mutex> lock(s_snapshot_mutex);
+                s_raw_diagnostics = {};
+            }
             publish_sample(cyberdeck_battery::sample{true, false, 0, 0});
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -245,4 +261,13 @@ extern "C" bool ina226_reader_get_raw_sample(cyberdeck_battery::sample *out_samp
         *out_sample = s_raw_sample;
     }
     return ina226_reader_started();
+}
+
+extern "C" bool ina226_reader_get_raw_diagnostics(
+    cyberdeck_battery::raw_diagnostics *out_diagnostics)
+{
+    if (out_diagnostics == nullptr) return false;
+    std::lock_guard<std::mutex> lock(s_snapshot_mutex);
+    *out_diagnostics = s_raw_diagnostics;
+    return ina226_reader_started() && out_diagnostics->valid;
 }

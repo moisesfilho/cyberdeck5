@@ -137,6 +137,7 @@ struct host {
     virtual bool battery_protection_set_enabled(bool enabled) = 0;
     virtual bool battery_protection_started() const = 0;
     virtual bool battery_protection_snapshot(cyberdeck_battery_protection::snapshot *out) const = 0;
+    virtual bool battery_hardware_diagnostics(cyberdeck_battery_protection::hardware_diagnostics *out) const = 0;
 
     /* Event log port.  Bounded, oldest first. */
     virtual void log_event(char level, const char *tag, const char *message) = 0;

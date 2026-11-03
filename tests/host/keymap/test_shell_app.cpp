@@ -113,6 +113,8 @@ public:
     {
         return false;
     }
+    bool battery_hardware_diagnostics(cyberdeck_battery_protection::hardware_diagnostics *out) const override
+    { if (out) *out = {}; return true; }
 
     void log_event(char, const char *, const char *) override {}
     std::string recent_events(std::size_t) override { return {}; }

@@ -165,7 +165,8 @@ def check_expander_and_fail_safe(failures: list[str]) -> None:
     for token in (
         "bsp_io_expander1_init", "IO_EXPANDER_PIN_NUM_6", "IO_EXPANDER_PIN_NUM_7",
         "CHG_STAT", "CHG_EN", "esp_io_expander_get_level", "esp_io_expander_set_dir",
-        "esp_io_expander_set_level", "IO_EXPANDER_INPUT", "IO_EXPANDER_OUTPUT",
+        "esp_io_expander_set_level", "esp_io_expander_set_output_mode",
+        "IO_EXPANDER_OUTPUT_MODE_PUSH_PULL", "IO_EXPANDER_INPUT", "IO_EXPANDER_OUTPUT",
     ):
         require_all(failures, token in combined,
                     f"expander protection adapter must expose {token}")
@@ -204,9 +205,78 @@ def check_expander_and_fail_safe(failures: list[str]) -> None:
     require_all(failures, expander_init is not None,
                 "protection adapter must expose the expander initialization path")
     if expander_init is not None:
+        require_all(failures, "s_expander_configured" in expander_init,
+                    "expander setup must track completion separately from handle ownership")
+        require_all(failures, re.search(
+            r"if\s*\(\s*s_expander_configured\s*\)\s*\{\s*return\s+ESP_OK\s*;",
+            expander_init) is not None,
+            "only fully configured expander setup may take the idempotent fast path")
+        require_all(failures, "s_expander = bsp_io_expander1_init()" in expander_init and
+                    "s_expander = nullptr" not in expander_init,
+                    "retry must retain an acquired handle without recreating or clearing it")
+        for pattern, stage in (
+            (r"esp_io_expander_set_dir\s*\(\s*s_expander\s*,\s*IO_EXPANDER_PIN_NUM_6\s*,\s*IO_EXPANDER_INPUT\s*\)", "CHG_STAT input direction"),
+            (r"esp_io_expander_set_pullupdown\s*\(\s*s_expander\s*,\s*IO_EXPANDER_PIN_NUM_6\s*,\s*IO_EXPANDER_PULL_UP\s*\)", "CHG_STAT pull-up"),
+        ):
+            call = re.search(pattern, expander_init)
+            require_all(failures, call is not None,
+                        f"setup must include {stage}")
+            if call is not None:
+                following = expander_init[call.end():]
+                next_call = re.search(r"(?:esp_io_expander_set_(?:dir|level|output_mode|pullupdown)|"
+                                      r"write_chg_enable)\s*\(", following)
+                stage_body = following[:next_call.start()] if next_call else following
+                require_all(failures, re.search(
+                    r"if\s*\(\s*err\s*!=\s*ESP_OK\s*\)\s*\{[^}]*return\s+err\s*;",
+                    stage_body) is not None,
+                    f"{stage} failure must abort initialization")
         require_all(failures, re.search(r"write_chg_enable\s*\(\s*true\s*\)", expander_init)
                     is not None,
                     "init_expander must actively drive CHG_EN high")
+        stages = (
+            (r"esp_io_expander_set_level\s*\(\s*s_expander\s*,\s*IO_EXPANDER_PIN_NUM_5\s*,\s*1\s*\)", "QC inactive-high preload"),
+            (r"esp_io_expander_set_level\s*\(\s*s_expander\s*,\s*IO_EXPANDER_PIN_NUM_7\s*,\s*0\s*\)", "CHG_EN inactive-low preload"),
+            (r"esp_io_expander_set_dir\s*\(\s*s_expander\s*,\s*IO_EXPANDER_PIN_NUM_5\s*,\s*IO_EXPANDER_OUTPUT\s*\)", "QC output direction"),
+            (r"esp_io_expander_set_output_mode\s*\(\s*s_expander\s*,\s*IO_EXPANDER_PIN_NUM_5\s*,\s*IO_EXPANDER_OUTPUT_MODE_PUSH_PULL\s*\)", "QC push-pull mode"),
+            (r"esp_io_expander_set_dir\s*\(\s*s_expander\s*,\s*IO_EXPANDER_PIN_NUM_7\s*,\s*IO_EXPANDER_OUTPUT\s*\)", "CHG_EN output direction"),
+            (r"esp_io_expander_set_output_mode\s*\(\s*s_expander\s*,\s*IO_EXPANDER_PIN_NUM_7\s*,\s*IO_EXPANDER_OUTPUT_MODE_PUSH_PULL\s*\)", "CHG_EN push-pull mode"),
+            (r"esp_io_expander_set_level\s*\(\s*s_expander\s*,\s*IO_EXPANDER_PIN_NUM_5\s*,\s*0\s*\)", "QC enable-low write"),
+            (r"write_chg_enable\s*\(\s*true\s*\)", "CHG_EN enable-high write"),
+        )
+        stage_matches = []
+        for pattern, stage in stages:
+            call = re.search(pattern, expander_init)
+            require_all(failures, call is not None,
+                        f"setup must include {stage}")
+            if call is not None:
+                stage_matches.append((call.start(), call.end(), stage))
+                following = expander_init[call.end():]
+                next_call = re.search(r"(?:esp_io_expander_set_(?:dir|level|output_mode)|"
+                                      r"write_chg_enable)\s*\(", following)
+                stage_body = following[:next_call.start()] if next_call else following
+                require_all(failures, re.search(
+                    r"if\s*\(\s*err\s*!=\s*ESP_OK\s*\)\s*\{[^}]*return\s+err\s*;",
+                    stage_body) is not None,
+                    f"{stage} failure must return before later setup can enable P7")
+        require_all(failures,
+                    [item[0] for item in stage_matches] == sorted(item[0] for item in stage_matches),
+                    "safe preloads, push-pull setup, QC enable, and P7 enable must remain ordered")
+        chg_enable = re.search(r"write_chg_enable\s*\(\s*true\s*\)", expander_init)
+        configured = re.search(r"s_expander_configured\s*=\s*true\s*;", expander_init)
+        require_all(failures, configured is not None and
+                    chg_enable is not None and chg_enable.start() < configured.start(),
+                    "setup completion must be published only after QC and CHG_EN succeed")
+        # Each failed stage, including both safe-level preloads and output-mode
+        # writes, must abort before P7 can be asserted. Incomplete setup remains
+        # retryable and retains the already acquired expander handle.
+        require_all(failures, re.search(
+            r"if\s*\(\s*s_expander\s*==\s*nullptr\s*\)\s*\{\s*"
+            r"const int64_t.*?s_expander\s*=\s*bsp_io_expander1_init\(\)",
+            expander_init, re.S) is not None,
+            "retry with retained expander handle must not recreate it")
+        require_all(failures, "s_last_applied_charger_state" in source and
+                    "s_policy" in source,
+                    "failed setup must not overwrite the last applied charger/policy state")
     require_all(failures, "k_chg_en_init" not in source,
                 "dead k_chg_en_init literal must not remain in the adapter")
 
@@ -340,6 +410,8 @@ def check_traceability(failures: list[str]) -> None:
         "test_battery_protection.cpp", "test_battery_protection_contract.py",
         "cyberdeck_battery_protection.cpp", "CHG_STAT", "CHG_EN",
         "7900", "8330", "90", "85", "5 votos", "battery protection",
+        "CHG_QC_EN", "REQ-CHG-QC-01", "AC-CHG-QC-01..04",
+        "TEST-CHG-QC-01..07",
     ):
         require_all(failures, token in codemap,
                     f"code-map.md must trace battery protection item {token}")
@@ -371,6 +443,43 @@ def check_traceability(failures: list[str]) -> None:
         for token in ("CHG_STAT", "CHG_EN", "battery protection", "7900", "8330", "90", "85"):
             require_all(failures, token in documentation,
                         f"{path.name} must document {token}")
+
+    version = read(ROOT / "version.txt", failures).strip()
+    require_all(failures, version == "1.1.0",
+                "firmware base diagnostic change must increment MINOR to 1.1.0")
+    adapter = strip_comments(read(ADAPTER_SOURCE, failures))
+    cached = function_body(adapter, "battery_protection_get_cached_policy_snapshot(")
+    require_all(failures, cached is not None and
+                "s_policy.snapshot()" in cached and "s_policy.observe(" not in cached and
+                "sample_and_publish" not in cached and "apply_charger_state" not in cached and
+                "write_chg_enable" not in cached,
+                "shell status policy route must only copy the cached policy snapshot")
+    diag = function_body(adapter, "battery_protection_get_hardware_diagnostics(")
+    require_all(failures, diag is not None and
+                "esp_io_expander_get_level" in diag and
+                "ina226_reader_get_raw_diagnostics" in diag and
+                "esp_io_expander_set_" not in diag and "write_chg_enable" not in diag,
+                "read-only diagnostics must read GPIO levels and cached INA sample only")
+    status_text = SESSION.read_text(encoding="utf-8")
+    require_all(failures, "battery hardware:" in status_text and
+                "CHG_QC_EN=" in status_text and "bus_raw[" in status_text and
+                'ina_age_ms=%" PRId64' in status_text and
+                'stat_age_ms=%" PRId64' in status_text and
+                'snapshot_age_ms=%" PRId64' in status_text and
+                "CHG_STAT_raw=%s" in status_text and
+                "latch_unobserved,direction_unobserved" in status_text and
+                "enables_do_not_indicate_charging" in status_text,
+                "status must expose cached read-only evidence, ages and explicit limits")
+    require_all(failures, "out_diagnostics->sampled_at_us = esp_timer_get_time()" in
+                read(READER_SOURCE, failures) and "s_cached_chg_stat_valid = chg_valid" in
+                read(ADAPTER_SOURCE, failures),
+                "diagnostics must timestamp cached INA and CHG_STAT samples")
+    ui = strip_comments(read(UI, failures))
+    status_host = function_body(ui, "bool shell_session_host::battery_protection_snapshot(")
+    require_all(failures, status_host is not None and
+                "battery_protection_get_cached_policy_snapshot" in status_host and
+                "battery_protection_get_policy_snapshot" not in status_host,
+                "battery status adapter must route to the non-sampling cache getter")
 
 
 def main() -> int:

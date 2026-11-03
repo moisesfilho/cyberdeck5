@@ -4,6 +4,7 @@
 #include "apps/shell/cyberdeck_shell_help.h"
 
 #include <array>
+#include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -640,6 +641,37 @@ void session::execute_line(bool line_already_sent)
         char buf[256] = {};
         cyberdeck_battery_protection::format_status_line(buf, sizeof(buf), value);
         host_.append_output_line(buf);
+        cyberdeck_battery_protection::hardware_diagnostics diagnostic{};
+        if (!host_.battery_hardware_diagnostics(&diagnostic)) {
+            host_.append_output_line("battery hardware: unavailable\n");
+            break;
+        }
+        const auto age_ms = [&diagnostic](std::int64_t sampled_at_us) -> std::int64_t {
+            return sampled_at_us > 0 && diagnostic.captured_at_us >= sampled_at_us
+                       ? (diagnostic.captured_at_us - sampled_at_us) / 1000
+                       : -1;
+        };
+        char bus_raw[8] = "none";
+        char current_raw[8] = "none";
+        if (diagnostic.ina_available) {
+            std::snprintf(bus_raw, sizeof(bus_raw), "0x%04X", diagnostic.ina_bus_raw);
+            std::snprintf(current_raw, sizeof(current_raw), "0x%04X", diagnostic.ina_current_raw);
+        }
+        char hardware[384] = {};
+        std::snprintf(hardware, sizeof(hardware),
+                      "battery hardware: CHG_QC_EN=%s CHG_EN=%s CHG_STAT_raw=%s INA226=%s bus_raw=%s current_raw=%s voltage_mv=%ld current_ma=%ld ina_age_ms=%" PRId64 " stat_age_ms=%" PRId64 " snapshot_age_ms=%" PRId64 " modes=latch_unobserved,direction_unobserved; enables_do_not_indicate_charging\n",
+                      !diagnostic.expander_available ? "unavailable" :
+                      !diagnostic.chg_qc_read_ok ? "error" : diagnostic.chg_qc_enabled ? "enabled" : "disabled",
+                      !diagnostic.expander_available ? "unavailable" :
+                      !diagnostic.chg_en_read_ok ? "error" : diagnostic.chg_en_enabled ? "enabled" : "disabled",
+                      diagnostic.chg_stat_available ? (diagnostic.chg_stat_raw_low ? "low" : "high") : "unavailable",
+                      diagnostic.ina_available ? "available" : diagnostic.ina_error ? "error" : "unavailable",
+                      bus_raw, current_raw,
+                      static_cast<long>(diagnostic.ina_bus_voltage_mv),
+                      static_cast<long>(diagnostic.ina_current_ma),
+                      age_ms(diagnostic.ina_sampled_at_us), age_ms(diagnostic.chg_stat_sampled_at_us),
+                      age_ms(diagnostic.policy_sampled_at_us));
+        host_.append_output_line(hardware);
         break;
     }
     case CYBERDECK_CMD_BLUETOOTH_SEARCH:

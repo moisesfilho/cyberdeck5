@@ -270,6 +270,7 @@ struct shell_session_host final : public cyberdeck_shell_session::host {
     bool battery_protection_set_enabled(bool enabled) override;
     bool battery_protection_started() const override;
     bool battery_protection_snapshot(cyberdeck_battery_protection::snapshot *out) const override;
+    bool battery_hardware_diagnostics(cyberdeck_battery_protection::hardware_diagnostics *out) const override;
     void log_event(char level, const char *tag, const char *message) override;
     std::string recent_events(std::size_t count) override;
     bool cat_enqueue(const char *cwd, const char *line) override;
@@ -2451,7 +2452,10 @@ bool shell_session_host::battery_protection_started() const {
     return ::battery_protection_started();
 }
 bool shell_session_host::battery_protection_snapshot(cyberdeck_battery_protection::snapshot *out) const {
-    return ::battery_protection_get_policy_snapshot(out);
+    return ::battery_protection_get_cached_policy_snapshot(out);
+}
+bool shell_session_host::battery_hardware_diagnostics(cyberdeck_battery_protection::hardware_diagnostics *out) const {
+    return ::battery_protection_get_hardware_diagnostics(out);
 }
 void shell_session_host::log_event(char level, const char *tag, const char *message) {
     cyberdeck_apps::logger *logger = cyberdeck_apps::global_runtime().app_logger();

@@ -311,6 +311,8 @@ struct fake_host final : cyberdeck_shell_session::host {
         if (out != nullptr) *out = battery_snapshot;
         return true;
     }
+    bool battery_hardware_diagnostics(cyberdeck_battery_protection::hardware_diagnostics *out) const override
+    { if (out) *out = {}; return true; }
 
     void log_event(char level, const char *tag, const char *message) override
     {
