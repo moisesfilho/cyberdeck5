@@ -28,8 +28,18 @@ def function_body(source: str, signature: str) -> str:
     start = source.find(signature)
     if start < 0:
         return ""
-    end = source.find("\n}", start)
-    return source[start:] if end < 0 else source[start:end]
+    opening = source.find("{", start + len(signature) - 1)
+    if opening < 0:
+        return ""
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    return ""
 
 
 def flat(text: str) -> str:
@@ -61,6 +71,7 @@ start_body = function_body(player_source, "bool player::start(")
 stop_body = function_body(player_source, "bool player::stop(")
 run_body = function_body(player_source, "    void run() {")
 close_player_body = function_body(ui_source, "void music_command_close_player(")
+music_status_body = function_body(ui_source, "void process_music_status(lv_timer_t *) {")
 
 created = re.search(
     r"xTaskCreateWithCaps\([^;]*?k_worker_stack[^;]*?MALLOC_CAP_SPIRAM\s*\|\s*MALLOC_CAP_8BIT\s*\)",
@@ -98,6 +109,12 @@ checks = {
     "close failure publishes the retry hint only after the success branch":
         'set_feedback("music: close failed; press ESC to retry\\n")' in close_player_body
         and ordered(close_player_body, "s_music_ui_active = false;", "set_feedback("),
+    "header status delegates visibility to the production-shared decision seam":
+        ordered(music_status_body, 'active_foreground() == "cyberdeck.music"',
+                "music.player_snapshot(playback)",
+                "s_header_view.update_music(",
+                "cyberdeck_music_header_visibility::should_show(")
+        and "playback.state" in music_status_body,
     "reopening the view clears the previous feedback":
         "s_music_command_input.set_feedback(std::string_view{})" in ui_source,
 }

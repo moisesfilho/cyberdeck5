@@ -24,7 +24,19 @@ def check() -> None:
     clean = model.rule("clean")
     aggregate = model.rule("test")
     assert clean and aggregate
-    assert len(bins) == len(set(bins)) == 85
+    music_header_visibility = "test_music_header_visibility"
+    music_header_visibility_bin = music_header_visibility + "_bin"
+    assert len(bins) == len(set(bins)) == 86
+    assert music_header_visibility_bin in bins
+    assert music_header_visibility in model.phony()
+    visibility_wrapper = model.rule_resolved(music_header_visibility)
+    assert visibility_wrapper and music_header_visibility_bin in expand_vars(
+        visibility_wrapper["prereqs_raw"], model
+    ).split()
+    assert sum(line.strip().lstrip("@").startswith("$(MAKE)")
+               and line.split()[-1] == music_header_visibility
+               for line in aggregate["recipe"]) == 1
+    assert any("$(BINS)" in line for line in clean["recipe"])
     screen_off_active = "test_screen_off_active"
     screen_off_active_bin = screen_off_active + "_bin"
     assert screen_off_active_bin in bins

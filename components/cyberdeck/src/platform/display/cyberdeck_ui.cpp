@@ -28,6 +28,7 @@
 #include "platform/display/cyberdeck_clock.h"
 #include "platform/display/cyberdeck_editor_view.h"
 #include "platform/display/cyberdeck_music_view.h"
+#include "platform/display/cyberdeck_music_header_visibility.h"
 #include "platform/display/cyberdeck_music_command_input.h"
 #include "platform/display/cyberdeck_header_view.h"
 #include "platform/display/cyberdeck_screen_protection.h"
@@ -955,8 +956,12 @@ void process_battery_protection(lv_timer_t *) {
 
 void process_music_status(lv_timer_t *) {
     auto &music = cyberdeck_music::global_application();
-    s_header_view.update_music(music.has_playback());
     const bool music_is_foreground = cyberdeck_apps::global_runtime().active_foreground() == "cyberdeck.music";
+    cyberdeck_music::snapshot playback{};
+    const bool has_playback_snapshot = music.player_snapshot(playback);
+    s_header_view.update_music(cyberdeck_music_header_visibility::should_show(
+        music_is_foreground,
+        has_playback_snapshot ? playback.state : cyberdeck_music::playback_state::stopped));
     if (s_music_ui_active && !music_is_foreground) {
         (void)s_keyboard_dispatch.invalidate_pending();
         s_music_ui_active = false;

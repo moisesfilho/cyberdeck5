@@ -32,6 +32,7 @@ idf_component_register(
         "src/platform/display/cyberdeck_screen_protection.cpp"
         # Pure header-view mapping: keeps the battery rendering rule out of LVGL.
         "src/platform/display/cyberdeck_battery_view.cpp"
+        "src/platform/display/cyberdeck_music_header_visibility.cpp"
         "src/apps/shell/cyberdeck_history.cpp"
         "src/apps/shell/cyberdeck_shell_utils.cpp"
         "src/apps/shell/cyberdeck_local_shell.cpp"

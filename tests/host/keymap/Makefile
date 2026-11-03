@@ -227,7 +227,7 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN)
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN) test_music_header_visibility_bin
 
 MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
 MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
@@ -2784,8 +2784,15 @@ test_music_scan_stack_contract: test_music_scan_stack_contract.py $(MUSIC_METADA
 	@$(PYTHON) test_music_scan_stack_contract.py
 
 .PHONY: test_music_player_teardown_contract
-test_music_player_teardown_contract: test_music_player_teardown_contract.py ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_player.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp Makefile
+test_music_player_teardown_contract: test_music_player_teardown_contract.py ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_player.h ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_music_header_visibility.cpp Makefile
 	@$(PYTHON) test_music_player_teardown_contract.py
+
+.PHONY: test_music_header_visibility
+test_music_header_visibility: test_music_header_visibility_bin
+	@./test_music_header_visibility_bin
+
+test_music_header_visibility_bin: test_music_header_visibility.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_music_header_visibility.cpp ../../../components/cyberdeck/include/platform/display/cyberdeck_music_header_visibility.h ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h Makefile
+	$(CXX) $(CXXFLAGS) --coverage -I../../../components/cyberdeck/include $< ../../../components/cyberdeck/src/platform/display/cyberdeck_music_header_visibility.cpp -o $@
 
 .PHONY: test_music_player_duration_contract
 test_music_player_duration_contract: test_music_player_duration_contract.py ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp ../../../components/cyberdeck/src/apps/music/cyberdeck_music_duration.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_duration.h Makefile
@@ -2815,6 +2822,7 @@ test: test-build
 	@$(MAKE) --no-print-directory test_music_decoder_stack_contract
 	@$(MAKE) --no-print-directory test_music_scan_stack_contract
 	@$(MAKE) --no-print-directory test_music_player_teardown_contract
+	@$(MAKE) --no-print-directory test_music_header_visibility
 	@$(MAKE) --no-print-directory test_music_player_duration_contract
 	@$(MAKE) --no-print-directory test_music_audio_buffer_contract
 	@$(MAKE) --no-print-directory test_music_decoder_scratch

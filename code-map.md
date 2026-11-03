@@ -258,6 +258,17 @@ Physical trace capture is recorded in the 2026-11-02 observation in the audio
 plan/traceability/manual ledger: targeted swaps had no user-reported stutter,
 but the bounded ring had lost 10176 events and cannot prove DMA underrun or
 causality. Full player acceptance remains separate.
+The 2026-11-02 physical Esc controller follow-ups are also recorded in the plan
+and `player_traceability.md`: both stopped on local harness instrumentation
+failures before any UI/player/playback/Esc command. Neither establishes firmware
+failure or stability; the manual gate remains pending.
+Subsequent user report records all Esc criteria (active playback, Esc, shell
+returned, playback icon hidden, no reboot); exact record is in the audio plan and
+`player_traceability.md`. This test manual is user-reported and firmware identity
+unconfirmed: one `sys.info` query returned exit 2/no device response. The manual
+behavior gate is resolved by reported user acceptance, but not independently
+observed. Final review remains `review_incomplete` because gcovr thresholds and
+scope guard were not run; do not mark the task complete.
 The user separately confirmed physical `P` and the on-screen `Play Selected`
 button on firmware SHA-256 `67a2358a14fd3130df0564d272cf68e441ab4bc2ceaf32f43583bb26e8013daa`;
 only test/documentation follow-up `09bdd39` changed since that build, with no
@@ -407,6 +418,19 @@ callback duplicado, fila vazia e limpeza dos tickets. O alvo
 separadas, com objetos/depfiles incrementais conforme o baseline imutável.
 `player_traceability.md` mapeia
 TEST-KEY-PLAYER-01..14.
+`cyberdeck_music_header_visibility.{h,cpp}` implementa a decisão pura
+`should_show(foreground, playback_state)`, usada por `process_music_status` na
+UI e por `test_music_header_visibility.cpp`: playing/paused mostram somente em
+foreground music; stopped/error ocultam. Um close bem-sucedido muda foreground
+antes do próximo tick, ocultando mesmo com snapshot stale; falha conserva
+foreground e playback visível. `test_music_player_teardown_contract.py` protege
+o wiring UI→seam e `test_music_manager` cobre ownership de close success/failure.
+`player_traceability.md` mapeia REQ-MUSIC-HEADER-STATE e os cenários de close;
+`TEST-MUSIC-HEADER-PHYSICAL-ESC` segue manual.
+O alvo `test_music_header_visibility` agora grava e executa
+`test_music_header_visibility_bin` compilado com `--coverage`, incluído em
+`BINS`; assim o TU de produção `cyberdeck_music_header_visibility.cpp` aparece
+no gcovr JSON sem ampliar a allowlist do scope guard.
 Ao ficar visível, a surface é movida à frente da textarea criada posteriormente;
 `test_display_views` cria um irmão terminal posterior, confirma que ele começa
 no topo e que a surface passa ao último filho após ficar visível. O shim host de

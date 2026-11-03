@@ -25,6 +25,7 @@ negativos existentes.
 | REQ-PLAYER-01 / AC-PLAYER-05 stop/cancel/join | TEST-PLAYER-STOP-CANCEL | Reter scan em secure-open; stop solicita cancelamento e não retorna antes de worker/join. Não publica resultado parcial nem libera lease/handle cedo; playback recebe stop. Cobrir também stop sem scan. | `test_music_app`; worker/adapter real com gate determinístico. |
 | REQ-PLAYER-01 / AC-PLAYER-06 view e input | TEST-PLAYER-VIEW-INPUT | View tem ciclo create/render/input/destroy próprio; eventos de teclado/touch traduzem para ações do player. Input não reconhecido é consumido e não altera/executa linha do shell. Teardown destrói view após quiescência. | `test_display_views` compila o TU real `cyberdeck_music_view.cpp` no shim LVGL e valida ciclo/render/visibilidade; `test_music_manager` verifica política de input/close; contrato scanner verifica wiring. Touch/teclado LVGL real segue manual. |
 | REQ-PLAYER-01 / AC-PLAYER-07 Esc | TEST-PLAYER-ESC-STOP | Esc ativo aciona close uma vez; cancel/join e stop precedem liberação da view/foreground. Falha mantém ownership; Esc inativo não repete ações. | `test_music_manager` + `test_app_runtime`; contrato estrutural complementar; hardware manual. |
+| REQ-MUSIC-HEADER-STATE / AC-MUSIC-HEADER-ESC-HIDDEN, AC-MUSIC-HEADER-ESC-FAIL-PRESERVE | TEST-MUSIC-HEADER-CLOSE-STATE, TEST-MUSIC-HEADER-CLOSE-FAIL, TEST-MUSIC-HEADER-PHYSICAL-ESC | O indicador `>` segue playing/paused somente enquanto music é foreground; após close bem-sucedido, foreground shell oculta no próximo tick mesmo com snapshot stale de playback. Falha de close preserva foreground e indicador para retry. | `test_music_header_visibility` cobre as oito combinações de foreground × playing/paused/stopped/error e os casos de snapshot stale após saída e playback visível após falha de close; `test_music_manager` cobre ownership em close success/failure; `test_music_player_teardown_contract.py` protege a integração UI→seam. Esc físico permanece manual. |
 | REQ-PLAYER-01 / AC-PLAYER-08 switch e ordem | TEST-PLAYER-SWITCH-ORDER | Troca para outro app observa stop+join concluídos antes do start destino; console owner e dependentes são preservados e destino recebe ownership/input. | `test_app_runtime` + novo teste adapter/runtime com eventos ordenados. |
 | REQ-PLAYER-01 / AC-PLAYER-09 stop failure | TEST-PLAYER-STOP-FAIL-BLOCK | Falha/timeout de stop/join bloqueia switch; player segue foreground, running e com worker/lease/view válidos; destino não inicia. Retry após sanar falha completa a troca. | `test_app_runtime` (falha lifecycle) + novo teste adapter/runtime com injeção de falha. |
 | REQ-PLAYER-01 / AC-PLAYER-10 reopen | TEST-PLAYER-REOPEN-RESCAN | Depois de stop completo, reabrir inicia exatamente um scan; fixture alterada aparece e callback/dado do ciclo anterior não contamina a sessão nova. | `test_music_app`; app/adapter real. |
@@ -88,3 +89,167 @@ protege essa conversão contra seek incorreto por fator 1000.
 - Executar somente alvos criados/alterados; comandos exatos devem ser registrados
   depois que os novos alvos/seams forem implementados. Não executar suíte global
   nem cobertura nesta etapa de especificação.
+
+## Registro de validação física — 2026-11-02
+
+Para `REQ-MUSIC-HEADER-STATE` / `AC-MUSIC-HEADER-ESC-HIDDEN` /
+`TEST-MUSIC-HEADER-PHYSICAL-ESC`, a primeira tentativa gravou e verificou a
+imagem v3 SHA-256 `6427e1c7df8ee3e0724a12d67683fa5a4443e3718be6c1c1c3cff34c2aa48b48`,
+mas o controller abortou em `wait_boot`, antes de qualquer comando de UI/player,
+playback ou Esc. Captura analisada localmente:
+`/tmp/opencode/music-header-esc-20261102-190216-idfenv.raw`, SHA-256
+`36abb1c0dcfad48d50d4b704761a3547d3ad7a4e4f8834f8570ae7c001b9998b`. O motivo
+foi falso positivo do harness: regex case-insensitive `FAULT` encontrou
+`Backtrace` na linha de comando do `idf_monitor.py` (`--decode-panic backtrace`).
+Não há evidência de panic/WDT/reset. Embora a captura contenha
+`HOSTED_DIAG wifi stage=set_config result=ESP_OK`, faltam o conjunto completo de
+marcadores/checkpoint e `sys.info`; o gate de boot não foi comprovado. Nenhum
+resultado físico de player/Esc pode ser inferido. `manual_validation: pending`;
+intenção de retomar após corrigir uma cópia temporária do helper fora do repo.
+
+### Retentativas do controller e estado atual — 2026-11-02
+
+O firmware ativo permaneceu v3, SHA-256
+`6427e1c7df8ee3e0724a12d67683fa5a4443e3718be6c1c1c3cff34c2aa48b48`; não houve
+reflash nem envio de comandos de UI/player/playback/Esc. Ambas as tentativas
+falharam na instrumentação local e não constituem defeito ou validação do firmware.
+
+1. Cópia temporária do helper removeu `Backtrace` de `FAULT`, mas abortou no
+   warning `W (10563) NimBLE: Failed to persist local IRK (rc=8)`, porque a regex
+   genérica `ERROR` também reconhecia warning W. Exploração local: `rc=8` é
+   `BLE_HS_ENOTSUP`; em `ble_hs_pvcy.c` o caminho registra WARN e retorna, sendo
+   provável que a IRK não persista entre boots. Não é panic nem prova de
+   estabilidade. Raw `/tmp/opencode/music-header-esc-20261102-retry.raw`, SHA-256
+   `688a2234b63bc8297fc782bd8794bbf7b15bd603ae43644e3adf6747b8d3a255`; sem
+   checkpoint completo ou `sys.info`.
+2. Cópia temporária gates-only ignorou `Backtrace` e restringiu `ERROR` a
+   severidade `E (`. Após aguardar `BOOT_MARKERS` por 35 s, fallback `events.read`
+   falhou localmente antes de qualquer escrita/envio de frame:
+   `TypeError: 'int' object is not a mapping` (o helper passou inteiro em `fields`).
+   Raw `/tmp/opencode/music-header-esc-20261102-final.raw`, SHA-256
+   `5793e02addb02b860d25ec6c3a31c1f9d8d7656d456b6a8da1e1aa05aa62cf7b`, 10 linhas
+   somente com eventos de tela por inatividade/wake. Nenhum `events.read`,
+   `sys.info` ou interação foi enviado. Sem reset/panic comprovado e sem conclusão
+   de estabilidade.
+
+Discovery local posterior: `cyberdeck_serial_bridge.cpp::exec_events_read` não
+aceita parâmetros extras e usa chunk fixo 1024; envelope correto apenas
+`{rid,type}`, coberto por `test_event_projection_contract.py`. Próxima rota
+planejada: corrigir somente a cópia privada para `controller.request("events.read",
+{})` e tentar uma vez se o gate de boot passar. A tentativa subsequente e final
+está registrada abaixo; não classificar falhas do harness como bugs firmware.
+
+### Terceira tentativa do controller — 2026-11-02
+
+A terceira cópia privada corrigida foi
+`/tmp/opencode/music-monitor-controller-esc-final.py`, SHA-256
+`ee92d34742f73877ee6118d265cef5e1c0654dea8d264647306a1f54e4422f9f`; alterou
+somente regex de Backtrace, severidade de erro e fallback `events.read` com
+`fields={}` conforme contrato. Imagem anteriormente gravada/verificada: v3,
+SHA-256 `6427e1c7df8ee3e0724a12d67683fa5a4443e3718be6c1c1c3cff34c2aa48b48`,
+`version.txt=3`; versão ativa não confirmada por `sys.info` nesta execução.
+
+`wait_boot` expirou sem `BOOT_MARKERS`; fallback enviou `events.read`, sem resposta
+no deadline. Raw `/tmp/opencode/music-header-esc-20261102-final-once.raw`, SHA-256
+`2dfeff5b58bc7f7bda2fe62ca12b2ad354f39f5a9d94179ab9f7e2951159f563` (3 linhas,
+419 B), não contém resposta/checkpoint. Nenhum `sys.info`, UI, player, playback ou
+Esc; não há evidência suficiente de crash/reset nem de boot estável. Warning
+NimBLE `rc=8` foi identificado localmente como `BLE_HS_ENOTSUP`, não fatal, mas
+não satisfaz o boot gate. O erro anterior de `fields` inteiro foi corrigido com
+`{}`, porém o terceiro retorno continuou sem resposta. Tentativa encerrada conforme
+instruções; não repetir.
+
+Bloqueio atual: gate boot/serial inconclusivo, não bug confirmado no firmware.
+`TEST-MUSIC-HEADER-PHYSICAL-ESC` não foi executado; `manual_validation: pending`.
+Autorização era para uma tentativa controlada playback+Esc, não para revisão final
+ampla.
+
+### Evidência física adicional reportada pelo usuário — 2026-11-02
+
+O usuário confirmou explicitamente todos os critérios do cenário: playback ativo,
+pressionou Esc, shell retornou, ícone de playback sumiu e não houve reinício.
+Este teste manual is user-reported and firmware identity unconfirmed. A consulta
+única do tester a `python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 sys.info`
+retornou exit 2, `nenhuma resposta do dispositivo`; não foi repetida. Assim, o
+relato satisfaz o gate comportamental por aceite manual, mas a imagem em execução
+permanece desconhecida. Última imagem registrada como gravada/verificada: v3,
+SHA-256 `6427e1c7df8ee3e0724a12d67683fa5a4443e3718be6c1c1c3cff34c2aa48b48`;
+não afirmar que corresponde ao teste. Build local posterior à correção
+format-only: SHA-256 `4f329e4b371d0f406c1aa390f0ee189e19913da30b58b9953a02de894fee19e9`,
+não gravado depois da correção. Portanto o resultado é relato humano, não
+validação independente do firmware pelo agente. Reviewer final continua
+`review_incomplete`: thresholds gcovr 8.7 e scope guard não executados; CI remota
+não cobre o diff dirty; nenhum commit/push autorizado. Isto não fecha code review
+nem autoriza marcar a tarefa concluída.
+
+### Estado do review final local — 2026-11-02
+
+Review final `review_incomplete`: gcovr 8.7 e o scope guard não foram executados;
+coverage/scope não têm resultado PASS. Instalação pip normal no venv isolado
+`/tmp/opencode/gcovr-8.7-venv` expirou após 600 s coletando `lxml` (exit 124;
+`/tmp/opencode/gcovr-install-retry.log`). Tentativa wheel-only bounded usando
+PyPI oficial também expirou em `Collecting lxml`, sem wheels encontrados (exit
+124; `/tmp/opencode/gcovr-wheel-download.log`). Não há processos pip/gcovr ativos;
+gcovr ausente. Pesquisa externa confirma `lxml` obrigatório no gcovr 8.7, mas a
+compatibilidade de wheel CPython 3.14/x86_64 local permanece inconclusiva. Sem
+novas tentativas de instalação nesta tarefa sem autorização/estratégia humana.
+CI remota não cobre o diff dirty.
+
+Snapshot de referência: HEAD `e8b064b1f88f59c02d81a855282e516573297bd4` + diff
+tracked `cb24ed2063c771c83bf93337ab482664dbc9942dbee0b7443d3ae35fe2ea3e20`;
+este follow-up é documental-only. Usuário autorizou revisão local, não
+commit/push. `TEST-MUSIC-HEADER-PHYSICAL-ESC` não foi executado: nenhum
+player/playback/Esc foi enviado e os device helpers não passaram boot/sysinfo;
+`manual_validation: pending`. Não declarar aprovação/conclusão.
+
+### Verificação independente do tester — ciclo 3
+
+Snapshot base: HEAD `e8b064b1f88f59c02d81a855282e516573297bd4` + diff imediatamente
+anterior a esta atualização documental `8f7328f5789896b63667925196dd0684c327aa71fcb4c8cd856fadb707bf34c4`.
+O tester encontrou uma lacuna de coverage: o alvo `test_music_header_visibility`
+já estava no agregado, mas compilava o teste e o TU real
+`cyberdeck_music_header_visibility.cpp` diretamente, sem `--coverage` e fora de
+`BINS`; portanto gcovr não produzia dados do TU de produção. O tester corrigiu a
+receita do alvo no `tests/host/keymap/Makefile` para instrumentar e incluir o TU
+de produção, e atualizou o `code-map.md`. Nenhum código de produção ou assertion
+do teste foi alterado.
+
+Evidência focada reportada: `test_music_header_visibility` PASS (8 assertions),
+`.gcno` e `.gcda` de teste e produção gerados, `git diff --check` PASS. Isso não
+fecha coverage global: o gcovr temporário é
+`8.8.post1.dev0+g6e49f2f4d.d20261031` (não CI 8.7), e thresholds/scope guard
+seguem pendentes. Reviewer deve executar clean coverage e scope guard no snapshot
+atual; revisão continua `review_incomplete`.
+
+O aceite manual permanece `completed` por relato do usuário: playback ativo,
+Esc, retorno à shell, ícone oculto e nenhum reboot. Identidade do firmware não
+foi confirmada; não converter esse relato em validação independente. O usuário
+autorizou revisão local, não commit/push.
+
+### Correção de formatação após revisão — 2026-11-02
+
+Reviewer `needs_correction` (cycle 1) apontou clang-format nas linhas 7 e 11 de
+`cyberdeck_music_header_visibility.cpp`; sem falha de comportamento/teste. O
+arquivo foi formatado sem alteração semântica. Gates desta correção completos:
+dry-run clang-format, alvo `test_music_header_visibility` e `git diff --check`
+passaram. Thresholds globais de coverage/gcovr e CI remota permanecem
+inconclusivos para o snapshot dirty. `TEST-MUSIC-HEADER-PHYSICAL-ESC` segue
+pendente: gate boot/serial inconclusivo, sem UI/player/play/Esc; manual pending.
+
+### Verificação independente do tester — ciclo 2
+
+Handoff `test_ready`, snapshot verificado: HEAD
+`e8b064b1f88f59c02d81a855282e516573297bd4` + diff
+`c07d0c054d0a3d37a449d762e1356b92509b5d98d9fc4d5037ff9d8505affb1a`.
+Hashes: fonte `cyberdeck_music_header_visibility.cpp` =
+`852f619a5d2eb5ea5af145a7193fa82d54d17cded997f8d86d12b71f034a81a`;
+teste `test_music_header_visibility.cpp` =
+`2ee0ad52395b6e5ff6aa03682a85523d04cf80383646c1923aff7137c3027aed`.
+Validação independente: `clang-format --dry-run --Werror`,
+`test_music_header_visibility` e `git diff --check` PASS. Critérios de close
+success/failure documentados; `TEST-MUSIC-HEADER-PHYSICAL-ESC` permanece manual
+pendente. A falta de formato reportada pelo reviewer no ciclo 1 foi corrigida e
+validada. Coverage thresholds/gcovr e remote CI seguem pendentes/inconclusivos;
+host regression focada/tester PASS não equivale a esses gates. Próxima ação:
+reviewer final sobre snapshot atualizado. `manual_validation: pending`; nenhum
+aceite físico alegado.
