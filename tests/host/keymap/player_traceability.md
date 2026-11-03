@@ -253,3 +253,19 @@ validada. Coverage thresholds/gcovr e remote CI seguem pendentes/inconclusivos;
 host regression focada/tester PASS não equivale a esses gates. Próxima ação:
 reviewer final sobre snapshot atualizado. `manual_validation: pending`; nenhum
 aceite físico alegado.
+
+## Fechamento de rastreabilidade — revisão final, ciclo 4 (2026-11-03)
+
+| REQ / AC | TEST | Resultado e evidência |
+| --- | --- | --- |
+| REQ-MUSIC-HEADER-STATE / AC-MUSIC-HEADER-ESC-HIDDEN | TEST-MUSIC-HEADER-CLOSE-STATE | Host coberto e aprovado no Quality Gate do commit funcional `0d26af2175b410a557a5d76383a4e29c27994142`; reviewer confirmou HEAD igual ao SHA do run. |
+| REQ-MUSIC-HEADER-STATE / AC-MUSIC-HEADER-ESC-FAIL-PRESERVE | TEST-MUSIC-HEADER-CLOSE-FAIL | Caso de falha permanece validado por host (preservação do foreground/indicador); não foi cenário físico reportado. |
+| REQ-MUSIC-HEADER-STATE / AC-MUSIC-HEADER-ESC-HIDDEN | TEST-MUSIC-HEADER-PHYSICAL-ESC | Aceite manual reportado pelo usuário: playback ativo → Esc → shell retornou, indicador sumiu, sem reboot. O usuário esclareceu que usou o último firmware gravado; vinculação à última gravação registrada é baseada nesse relato, sem leitura independente da identidade. `sys.info` falhou sem resposta (exit 2). |
+
+Quality Gate run `41553034162` terminou `success` em 2026-11-03 00:40:59Z;
+job quality, format/lint/security, host + coverage, TSan e build ESP-IDF passaram.
+Reviewer confirmou HEAD local igual ao SHA do run e `git diff --check` limpo.
+Essa evidência CI/revisão pertence ao commit funcional acima, não à atualização
+documental posterior; não alegar CI para o novo commit. O aceite Esc é
+`completed` por relato do usuário, não validação independente. Não inferir
+aceitação de outros gates físicos do player.

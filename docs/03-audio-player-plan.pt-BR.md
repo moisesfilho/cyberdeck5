@@ -1,7 +1,9 @@
 # Plano 03 — Player de áudio local
 
-**Estado:** implementação integrada; aceite físico integral do player/layout/
-teclado ainda pendente. O atalho físico P e o botão de tela Play Selected foram
+**Estado:** implementação integrada; o cenário físico Esc/retorno à shell foi
+aceito pelo usuário no último firmware gravado registrado, sem identificação
+independente da imagem. O aceite físico integral do player/layout/teclado ainda
+permanece pendente. O atalho físico P e o botão de tela Play Selected foram
 confirmados pelo usuário como funcionais na imagem registrada abaixo; isso não
 implica aceite integral do player. O fluxo de trabalho é testes focados -> validação no Tab5 do
 comportamento-alvo -> revisão final ampla. A revisão ampla não substitui o teste
@@ -46,8 +48,9 @@ próximo tick oculta o indicador mesmo que ainda leia um snapshot stale de
 playback. Se o close falhar, o foreground music é preservado e playback ativo
 continua visível, permitindo retry sem ocultação prematura. `test_music_manager`
 cobre ownership de sucesso/falha; `test_music_player_teardown_contract.py` protege
-a integração da UI com o seam. `TEST-MUSIC-HEADER-PHYSICAL-ESC` permanece pendente
-de validação no Tab5.
+a integração da UI com o seam. `TEST-MUSIC-HEADER-PHYSICAL-ESC` foi aceito por
+relato manual do usuário; proveniência da imagem não foi confirmada
+independentemente (ver registro final abaixo).
 
 ## Ordem de validação e revisão
 
@@ -754,10 +757,9 @@ não satisfaz o boot gate. O erro anterior de `fields` inteiro foi corrigido com
 `{}`, porém esta terceira execução ainda não obteve resposta. A tentativa foi
 encerrada conforme instruções; não repetir.
 
-Bloqueio atual: gate boot/serial inconclusivo, não bug confirmado no firmware.
-`TEST-MUSIC-HEADER-PHYSICAL-ESC` não foi executado; `manual_validation: pending`.
-Autorização era para uma tentativa controlada playback+Esc, não para revisão final
-ampla.
+Registro histórico: o gate boot/serial do controller ficou inconclusivo; isso não
+era bug confirmado no firmware nem constituía resultado do cenário físico. O
+aceite posterior reportado pelo usuário está registrado abaixo.
 
 ### Aceite manual reportado pelo usuário — 2026-11-02
 
@@ -848,3 +850,31 @@ disponível foi extraído temporariamente e é `8.8.post1.dev0+g6e49f2f4d.d20261
 não a versão CI 8.7; os gates permanecem pendentes até o reviewer executar clean
 coverage e scope guard no snapshot atualizado. A revisão final segue
 `review_incomplete`; não inferir aprovação global.
+
+### Revisão final aprovada e aceite manual — 2026-11-03
+
+O commit funcional `0d26af2175b410a557a5d76383a4e29c27994142` foi aprovado
+na revisão final. Quality Gate run `41553034162` terminou `success` em
+2026-11-03 00:40:59Z: job quality e gates de format/lint/security, host +
+coverage, TSan e build ESP-IDF verdes. O reviewer confirmou que HEAD local
+correspondia ao SHA do run e que `git diff --check` estava limpo. Este resultado
+é do commit funcional; a atualização documental posterior não foi coberta por
+esse CI e não altera código nem os gates já aprovados.
+
+O usuário esclareceu que o teste físico foi feito no último firmware gravado,
+correspondente à última gravação registrada neste histórico (v3, SHA-256
+`6427e1c7df8ee3e0724a12d67683fa5a4443e3718be6c1c1c3cff34c2aa48b48`). A
+associação é baseada no relato do usuário, não em leitura independente da imagem.
+Critérios reportados: playback ativo, Esc pressionado, retorno à shell, indicador
+oculto e nenhum reboot. A consulta `sys.info` do tester falhou com exit 2/sem
+resposta; portanto versão/hash ativos não foram lidos independentemente.
+`TEST-MUSIC-HEADER-PHYSICAL-ESC` fica registrado como aceite manual reportado,
+sem elevar os demais critérios físicos do player/layout/teclado a aprovados.
+
+Rastreabilidade: `REQ-MUSIC-HEADER-STATE` e
+`AC-MUSIC-HEADER-ESC-HIDDEN` passaram por relato; `AC-MUSIC-HEADER-ESC-FAIL-PRESERVE`
+permanece coberto por host, não por este cenário físico.
+`TEST-MUSIC-HEADER-CLOSE-STATE` e `TEST-MUSIC-HEADER-CLOSE-FAIL` permanecem
+evidência host conforme matriz; `TEST-MUSIC-HEADER-PHYSICAL-ESC` tem resultado
+manual reportado acima. A revisão final funcional está aprovada; gates físicos
+independentes não verificados seguem pendentes.
