@@ -878,3 +878,25 @@ permanece coberto por host, não por este cenário físico.
 evidência host conforme matriz; `TEST-MUSIC-HEADER-PHYSICAL-ESC` tem resultado
 manual reportado acima. A revisão final funcional está aprovada; gates físicos
 independentes não verificados seguem pendentes.
+
+### Rebuild, flash e boot verificados após o aceite — 2026-11-03
+
+Após handoff válido do tester e autorização de flash do usuário, o firmware foi
+recompilado e gravado sem alterações de código. HEAD documental:
+`b5e86c779d90e28c8f18a26190abb4976bd3c639`; fontes de firmware idênticas ao
+commit funcional aprovado `0d26af2175b410a557a5d76383a4e29c27994142`.
+Com ESP-IDF v6.1 (a versão do Quality Gate aprovado), `idf.py build` passou. O
+`build/cyberdeck5.bin` tem 2,578,352 bytes e SHA-256
+`4f329e4b371d0f406c1aa390f0ee189e19913da30b58b9953a02de894fee19e9`. O comando
+`idf.py -p /dev/ttyACM0 flash` passou, sem erase-total; hash gravado verificado e
+hard reset executado. A única consulta posterior, `sys.info`, passou e reportou
+chip `esp32p4`, `fw_version=3`, `idf_version=v6.1`, uptime `00:00:06`,
+`safe_mode=false` e `interrupted_boots=0`.
+
+Playback/Esc não foi repetido nesta ação. O usuário esclareceu que seu relato
+anterior (playback ativo, Esc, retorno à shell, ícone oculto e sem reboot) foi
+com o último firmware então gravado. A identidade relatada anteriormente não
+foi verificada diretamente; agora a última imagem efetivamente gravada foi
+confirmada como `fw_version=3` e pelo hash acima. Isto valida build, flash e boot
+da imagem; não é nova observação independente do cenário playback/Esc nem fecha
+os demais gates físicos do player.

@@ -262,6 +262,27 @@ aceite físico alegado.
 | REQ-MUSIC-HEADER-STATE / AC-MUSIC-HEADER-ESC-FAIL-PRESERVE | TEST-MUSIC-HEADER-CLOSE-FAIL | Caso de falha permanece validado por host (preservação do foreground/indicador); não foi cenário físico reportado. |
 | REQ-MUSIC-HEADER-STATE / AC-MUSIC-HEADER-ESC-HIDDEN | TEST-MUSIC-HEADER-PHYSICAL-ESC | Aceite manual reportado pelo usuário: playback ativo → Esc → shell retornou, indicador sumiu, sem reboot. O usuário esclareceu que usou o último firmware gravado; vinculação à última gravação registrada é baseada nesse relato, sem leitura independente da identidade. `sys.info` falhou sem resposta (exit 2). |
 
+### Build/flash posterior e identificação da imagem — ciclo 4
+
+Após o handoff válido do tester e autorização do usuário, a imagem foi
+recompilada e gravada, sem alterações de código. HEAD documental
+`b5e86c779d90e28c8f18a26190abb4976bd3c639`; fontes de firmware iguais ao commit
+funcional aprovado `0d26af2175b410a557a5d76383a4e29c27994142`. Com ESP-IDF v6.1
+(igual ao Quality Gate): `idf.py build` PASS; `build/cyberdeck5.bin` = 2,578,352
+bytes, SHA-256 `4f329e4b371d0f406c1aa390f0ee189e19913da30b58b9953a02de894fee19e9`.
+`idf.py -p /dev/ttyACM0 flash` PASS, sem erase-total; hash gravado verificado e
+hard reset realizado. Única consulta posterior `sys.info` PASS: chip `esp32p4`,
+`fw_version=3`, `idf_version=v6.1`, uptime `00:00:06`, `safe_mode=false`,
+`interrupted_boots=0`.
+
+Playback/Esc não foi repetido. O relato do usuário (playback ativo, Esc, shell
+retornou, ícone sumiu, sem reboot) permanece user-reported; ele esclareceu que
+usou o último firmware então gravado. A identidade naquele relato não foi lida
+diretamente. A imagem efetivamente gravada mais recentemente está agora
+identificada como `fw_version=3`, hash acima; build/flash/boot foram verificados
+independentemente, mas isso não constitui nova execução física de Esc. Demais
+critérios físicos do player permanecem fora deste aceite.
+
 Quality Gate run `41553034162` terminou `success` em 2026-11-03 00:40:59Z;
 job quality, format/lint/security, host + coverage, TSan e build ESP-IDF passaram.
 Reviewer confirmou HEAD local igual ao SHA do run e `git diff --check` limpo.
