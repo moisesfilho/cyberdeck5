@@ -87,8 +87,8 @@ locais, mas registra o gate físico pendente e não aprova comportamento de hard
 `music` sem argumentos ativa o único app foreground `cyberdeck.music` e apresenta
 sua view dedicada. A troca encerra o foreground anterior antes de ativar o player;
 Esc retorna ao shell somente após stop/join bem-sucedido. `music status` continua
-sendo a consulta explícita; `music help` lista os comandos. O alias legado
-`player` ativa a mesma instância e não cria outro app. Subcomandos só são
+sendo a consulta explícita; `music help` lista os comandos. `player` não é alias:
+não ativa a instância nem abre o app. Subcomandos só são
 despachados enquanto o player está foreground. Abrir inicia scan recursivo seguro
 em `/musica`, ordenado lexicograficamente por caminho (root=0,
 profundidade máxima 8), bounded a 64 faixas com indicação de truncamento. A fila
@@ -519,6 +519,61 @@ playback continuam fora desta revalidação e pendentes; demais critérios físi
 do player não são declarados aprovados.
 
 ## Aceite
+
+## Browser musical — implementação faseada
+
+### Fase 1: modelo puro e scan direto
+
+Implementados `REQ-MUSIC-BROWSE-01,02,04` e `AC-MUSIC-BROWSE-01,02,04` no
+módulo isolado `cyberdeck_music_browser`: entries directory/MP3 e snapshot de
+até 64 itens, diretório virtual restrito a `/musica`, parent inerte na raiz e
+seleção independente da fila/player. O seam enumera somente filhos diretos em
+ordem lexicográfica por nome; MP3 aceita extensão `.mp3` sem distinção de caixa.
+Mantém os 64 primeiros nomes elegíveis de forma determinística. Resolve a raiz
+virtual a partir de `/sdcard` e abre cada componente/entrada com `openat`,
+`O_NOFOLLOW`, `fstatat` e `fstat`; links, arquivos não elegíveis e não regulares
+são ignorados. Falha de open/read/close retorna erro sem publicar snapshot parcial.
+Os wrappers de sistema são injetáveis para testes comportamentais focados.
+
+Tester confirmou no snapshot HEAD `a6f797bdca5bd8f4b3a9d43804dd86ee5d7927be` e
+snapshot composto `0042e5655c3c1c4c3757b67039be74d6ea298f7d14e193daa323b7ef197fa4c9`:
+`test_music_browser` 49 checks + ASan/UBSan, `test_music_app` 223 checks e
+`test_music_scan_opendir_contract.py` 20/20. Esta fase inicial não conectou o
+browser à fila/playback, não alterou UI/input nem substituiu o scan recursivo.
+A leitura abre `/sdcard` como raiz confiável do volume e confina
+subsequentes componentes por descritor; comportamento em FATFS/FreeRTOS e no
+dispositivo ainda requer validação posterior.
+
+### Fase 2: integração aditiva no application
+
+O `application` expõe scan de pasta, snapshot de browser, seleção própria e
+estado de scan ativo. Reutiliza o worker de scan existente (modo legacy ou
+browser), sem worker concorrente adicional. O scan monta snapshot local e só o
+publica completo sob o mutex de lifecycle após validar lease, grant e
+cancelamento. Falha/cancelamento preserva snapshot anterior. `test_music_app`
+testa a API real com scanner POSIX sobre fixture e fake player. `TEST-MUSIC-BROWSE-CANCEL-JOIN-10`
+usa worker/scanner real, barreiras CV, join, lease e reopen sem stale; stop
+failure/timeout injetável não foi testado.
+
+### Fase 3: integração view/input/actions
+
+A view renderiza o snapshot do browser na lista existente, mantendo seleção
+visual por linha separada da browsing selection e da queue/player. `/musica` é a
+raiz; `..` é uma linha sintética somente fora dela, não é entrada do filesystem
+nem consome um dos 64 slots. Setas/cliques apenas selecionam; ao despachar,
+remove-se o offset visual de `..` antes de chamar `browser_select`. Enter/P navegam
+para parent/pasta; em MP3, Enter usa o toggle existente e P/Play Selected usa
+play-selected existente. Playback recebe o path do item browser e procura a faixa
+correspondente na queue recursiva; nunca interpreta índice visual como queue
+index. Diretórios não entram na fila. Paths ou índices stale/invalid, scan ativo,
+lista vazia e arquivos sem correspondência na fila não iniciam playback. A ação
+exige que a view renderizada ainda corresponda ao diretório publicado. Previous,
+Next, seek, volume, Command, Esc e comandos textuais permanecem inalterados.
+
+Testes focados cobrem `TEST-MUSIC-BROWSE-ENTER-05`, `PLAY-SELECTED-06`,
+`SELECTION-07` e `REGRESSION-12`: view LVGL real verifica parent/labels e seleção
+separada; app real verifica path→queue e ações; contratos protegem wiring.
+Validação independente e física permanecem pendentes.
 
 ## Correção local do transaction I2S/codec — cycle 1
 

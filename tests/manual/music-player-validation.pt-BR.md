@@ -67,11 +67,13 @@ foco/estado tornar uma ação ambígua, não a execute.
 Pré-condição: boot normal comprovado e sem reboot/WDT durante a captura.
 
 `music` sem argumentos é o único ponto de entrada do player: ativa o app
-foreground `cyberdeck.music`, abre a surface dedicada e inicia um scan recursivo
-de `/musica` (profundidade máxima 8, ordem lexicográfica, limite de 64 faixas).
+foreground `cyberdeck.music`, abre a surface dedicada e inicia o scan recursivo
+da queue e o scan direto do browser em `/musica` (pastas e arquivos MP3 em ordem
+lexicográfica, até 64 entradas reais). A raiz do browser é `/musica`; `..` é uma
+linha sintética apenas dentro de subpastas e nunca aparece na raiz nem consome um
+dos 64 itens. O browser mostra somente pastas e MP3; navegar não altera a queue.
 Não é necessário — e não basta — `app start cyberdeck.music`: o start isolado
-apenas sobe o app, sem abrir a surface nem iniciar o scan. `player` é alias do
-mesmo fluxo.
+apenas sobe o app, sem abrir a surface nem iniciar o scan. `player` não é alias.
 
 Subcomandos (`music status|list|play|...`) só são aceitos enquanto o player é o
 foreground ativo; fora disso a resposta é
@@ -95,8 +97,10 @@ term.dump          # lista limitada a 64 faixas
 Aguarde `queue: scan complete` em `music status` antes de qualquer outro comando
 de fila. Com o scan em andamento, `music` e `music queue <dir>` são rejeitados com
 `scan unavailable or another scan is active`; não repetir durante a coleta. A
-surface mostra o status, lista rolável de até 64 faixas e controles; `music
-status` acrescenta `queue: truncated at 64 tracks` quando o limite é atingido.
+surface mostra status, browser rolável de pastas/MP3 e controles; `music status`
+acrescenta `queue: truncated at 64 tracks` quando a queue é truncada.
+Esse limite da queue recursiva é independente do limite de 64 entradas do browser
+por pasta.
 
 Não use `music queue /musica` no fluxo normal: esse já é o diretório padrão do
 scan. Nesta rodada, não use `queue <diretório>` nem qualquer comando além de
@@ -128,6 +132,23 @@ reprodução. Evite toda entrada interativa no player após as consultas `status
 `list` autorizadas acima.
 
 ### 3.1. Captura de tela e entrada durante a inspeção
+
+Em uma rodada interativa autorizada, verifique a navegação do browser sem
+confundir a posição visual da linha com o índice da queue recursiva:
+
+1. Na raiz `/musica`, confirme que não há `..`; selecione uma pasta e pressione
+   Enter ou P. Ambos devem abrir a pasta sem iniciar/alterar playback.
+2. Dentro da pasta, confirme `..` no topo; Enter ou P nessa linha retorna ao pai
+   (até `/musica`). Selecione um MP3 e confirme que setas/touch só movem o
+   highlight do browser, sem mudar a faixa selecionada/em reprodução.
+3. Em um MP3, Enter mantém o toggle existente: playing pausa, paused retoma e
+   stopped inicia o MP3 destacado. P físico e o botão `Play Selected` iniciam o
+   MP3 destacado mesmo quando outra faixa está tocando/pausada. A resolução deve
+   corresponder pelo path do arquivo, não pelo índice visual do browser.
+4. Confirme que Previous, Play/Pause, Next, seek, volume, Command, Esc e os
+   comandos textuais existentes continuam operando como antes. Registre
+   `music status`/`music list` antes/depois; não repita uma ação se o resultado
+   for ambíguo ou houver erro/reboot.
 
 ### 3.2. Cenário Play Selected (registro de validação manual)
 
@@ -174,6 +195,7 @@ Mapeamento de teclado (físico e virtual):
 | Enter | play/pause, alternando conforme o estado atual — **proibido nesta rodada** |
 | ← / → | faixa anterior / próxima |
 | ↑ / ↓ | move seleção/highlight na lista; não inicia playback |
+| P | navega em `..`/pasta; em MP3 inicia o item destacado (Play Selected) |
 | + / - | volume +1 / -1 (faixa 0..50) |
 | Esc | fecha o player: foreground volta ao shell com stop/join e halt do playback |
 

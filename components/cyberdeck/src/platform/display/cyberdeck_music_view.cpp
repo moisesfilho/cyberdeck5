@@ -220,6 +220,11 @@ void view::destroy() {
     callback_ = nullptr; context_ = nullptr; visible_ = false; command_open_ = false;
     selection_pending_sync_ = false;
     selected_track_ = 0;
+    browser_selection_ = 0;
+    browser_entry_count_ = 0;
+    browser_parent_visible_ = false;
+    browser_mode_ = false;
+    browser_directory_.clear();
     footer_landscape_ = -1;
 }
 
@@ -234,6 +239,7 @@ void view::set_visible(bool visible) {
 
 void view::render(std::string_view text) {
     if (!status_) return;
+    browser_mode_ = false;
     const std::string value(text);
     const std::size_t queue_start = value.find("music queue:");
     const std::size_t status_end = queue_start == std::string::npos ? value.size() : queue_start;
@@ -322,6 +328,49 @@ void view::render(std::string_view text) {
     layout();
 }
 
+void view::render_browser(const cyberdeck_music::browser_snapshot &snapshot, bool scanning) {
+    if (!status_ || snapshot.count > snapshot.entries.size())
+        return;
+    browser_mode_ = true;
+    const std::string_view directory(snapshot.directory.data());
+    if (browser_directory_ != directory) {
+        browser_directory_.assign(directory);
+        browser_selection_ = 0;
+    }
+    browser_parent_visible_ = directory != "/musica";
+    browser_entry_count_ = snapshot.count;
+    const std::size_t row_count = browser_entry_count_ + (browser_parent_visible_ ? 1U : 0U);
+    if (browser_selection_ >= row_count)
+        browser_selection_ = row_count == 0 ? 0 : row_count - 1;
+
+    const std::string location = std::string("LIBRARY  ") + snapshot.directory.data() +
+                                 (scanning             ? "  SCANNING"
+                                  : snapshot.truncated ? "  64+"
+                                                       : "");
+    lv_label_set_text(browser_title_, location.c_str());
+    lv_label_set_text(status_, snapshot.count == 0 && !scanning ? "No folders or MP3 files" : "Folders and MP3 files");
+
+    std::size_t row = 0;
+    if (browser_parent_visible_) {
+        lv_label_set_text(lv_obj_get_child(tracks_[row], 0), "../");
+        lv_obj_set_hidden(tracks_[row], false);
+        ++row;
+    }
+    for (std::size_t index = 0; index < browser_entry_count_; ++index, ++row) {
+        const auto &entry = snapshot.entries[index];
+        std::string label(entry.name.data());
+        if (entry.type == cyberdeck_music::browser_entry_type::directory)
+            label.push_back('/');
+        lv_label_set_text(lv_obj_get_child(tracks_[row], 0), label.c_str());
+        lv_obj_set_hidden(tracks_[row], false);
+    }
+    for (; row < tracks_.size(); ++row)
+        lv_obj_set_hidden(tracks_[row], true);
+    for (std::size_t index = 0; index < row_count; ++index)
+        lv_obj_set_style_bg_color(tracks_[index], index == browser_selection_ ? kSelected : kSurface, 0);
+    layout();
+}
+
 void view::set_command_open(bool open) {
     command_open_ = open;
     if (command_) lv_obj_set_hidden(command_, !open);
@@ -343,7 +392,10 @@ std::string_view view::command_text() const {
 int view::progress_value() const { return progress_ ? lv_slider_get_value(progress_) : 0; }
 
 bool view::move_selection(int direction) {
-    if (command_open_ || (direction != -1 && direction != 1)) return false;
+    if (browser_mode_)
+        return move_browser_selection(direction);
+    if (command_open_ || (direction != -1 && direction != 1))
+        return false;
     std::size_t track_count = 0;
     while (track_count < tracks_.size() && !lv_obj_is_hidden(tracks_[track_count])) ++track_count;
     if (track_count == 0) return false;
@@ -357,6 +409,26 @@ bool view::move_selection(int direction) {
         lv_obj_set_style_bg_color(tracks_[i], i == selected_track_ ? kSelected : kSurface, 0);
     lv_obj_scroll_to_view(tracks_[selected_track_], LV_ANIM_OFF);
     if (callback_) callback_("select", context_);
+    return true;
+}
+
+bool view::move_browser_selection(int direction) {
+    if (command_open_ || (direction != -1 && direction != 1))
+        return false;
+    const std::size_t row_count = browser_entry_count_ + (browser_parent_visible_ ? 1U : 0U);
+    if (row_count == 0)
+        return false;
+    const std::size_t next = direction > 0             ? std::min(browser_selection_ + 1, row_count - 1)
+                             : browser_selection_ == 0 ? 0
+                                                       : browser_selection_ - 1;
+    if (next == browser_selection_)
+        return false;
+    browser_selection_ = next;
+    for (std::size_t index = 0; index < row_count; ++index)
+        lv_obj_set_style_bg_color(tracks_[index], index == browser_selection_ ? kSelected : kSurface, 0);
+    lv_obj_scroll_to_view(tracks_[browser_selection_], LV_ANIM_OFF);
+    if (callback_)
+        callback_("browser_select", context_);
     return true;
 }
 
@@ -490,9 +562,14 @@ void view::selected(lv_event_t *event) {
     if (self->command_open_) return;
     for (std::size_t i = 0; i < self->tracks_.size(); ++i)
         if (self->tracks_[i] == target && !lv_obj_is_hidden(static_cast<lv_obj_t *>(target))) {
-            self->selected_track_ = i;
-            self->selection_pending_sync_ = true;
-            self->callback_("select", self->context_);
+            if (self->browser_mode_) {
+                self->browser_selection_ = i;
+                self->callback_("browser_select", self->context_);
+            } else {
+                self->selected_track_ = i;
+                self->selection_pending_sync_ = true;
+                self->callback_("select", self->context_);
+            }
             return;
         }
 }

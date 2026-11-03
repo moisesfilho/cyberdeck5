@@ -105,6 +105,9 @@ bool s_music_ui_active = false;
 cyberdeck_music_command_input::controller s_music_command_input;
 cyberdeck_music_view::view s_music_view;
 cyberdeck_music_manager::manager s_music_manager;
+/* All browser snapshots are copied atomically into this BSS buffer and consumed
+ * synchronously on the LVGL context. Never keep references across callbacks. */
+cyberdeck_music::browser_snapshot s_music_browser_snapshot;
 bool s_terminal_output_dirty = false;
 bool s_virtual_enter_handled = false;
 std::string s_last_clock_text;
@@ -294,6 +297,7 @@ bool music_manager_action(cyberdeck_music_manager::action action, void *context)
 bool music_manager_close(void *context);
 bool music_command_key(uint32_t key);
 void process_music_status(lv_timer_t *timer);
+bool music_view_browser_action(bool play_selected);
 bool music_view_opening();
 void editor_view_action(std::string_view action, void *context);
 void zero_string(std::string &s);
@@ -936,6 +940,10 @@ bool music_view_opening() {
     return true;
 }
 
+bool refresh_music_browser_snapshot(cyberdeck_music::application &music) {
+    return music.get_browser_snapshot(s_music_browser_snapshot);
+}
+
 void refresh_battery_status() {
     cyberdeck_battery_protection::snapshot value{};
     if (!battery_protection_started() || !battery_protection_get_policy_snapshot(&value)) {
@@ -979,6 +987,11 @@ void process_music_status(lv_timer_t *) {
             return;
         }
     }
+    if (s_music_manager.active() && music.get_browser_scan_state() == cyberdeck_music::browser_scan_state::idle) {
+        if (refresh_music_browser_snapshot(music) && s_music_browser_snapshot.count == 0 &&
+            std::string_view(s_music_browser_snapshot.directory.data()) == "/musica")
+            (void)music.browser_scan("/musica");
+    }
     if (s_music_ui_active) {
         const auto status = cyberdeck_music::global_application().player_command("status");
         const auto tracks = cyberdeck_music::global_application().player_command("list");
@@ -986,6 +999,8 @@ void process_music_status(lv_timer_t *) {
         text += tracks.output;
         text += s_music_command_input.feedback();
         s_music_view.render(text);
+        if (refresh_music_browser_snapshot(music))
+            s_music_view.render_browser(s_music_browser_snapshot, music.browser_scan_active());
     } else if (s_music_manager.active() && s_music_view.exists()) {
         const auto status = music.player_command("status");
         const auto tracks = music.player_command("list");
@@ -993,6 +1008,8 @@ void process_music_status(lv_timer_t *) {
         text += tracks.output;
         text += s_music_command_input.feedback();
         s_music_view.render(text);
+        if (refresh_music_browser_snapshot(music))
+            s_music_view.render_browser(s_music_browser_snapshot, music.browser_scan_active());
         s_music_view.set_visible(true);
         if (!s_keyboard_dispatch.invalidate_pending()) {
             s_music_view.set_visible(false);
@@ -1609,31 +1626,64 @@ std::string get_rendered_output(const cyberdeck_shell_console::line_view &view, 
 bool music_manager_action(cyberdeck_music_manager::action action, void *) {
     auto &app = cyberdeck_music::global_application();
     cyberdeck_music::snapshot state{};
-    if (!app.player_snapshot(state))
-        return false;
     switch (action) {
     case cyberdeck_music_manager::action::toggle:
-        return app.toggle_selected(s_music_view.selected_track());
+        return music_view_browser_action(false);
     case cyberdeck_music_manager::action::play_selected:
-        return app.play_selected(s_music_view.selected_track());
+        return music_view_browser_action(true);
     case cyberdeck_music_manager::action::seek_back:
     case cyberdeck_music_manager::action::seek_forward: {
+        if (!app.player_snapshot(state))
+            return false;
         const bool forward = action == cyberdeck_music_manager::action::seek_forward;
         const std::uint32_t position = forward ? std::min(state.current.duration_ms, state.position_ms + 10000)
                                                : (state.position_ms > 10000 ? state.position_ms - 10000 : 0);
-        return app.player_command("seek " + std::to_string(position / 1000)).status == cyberdeck_apps::result_status::handled;
+        return app.player_command("seek " + std::to_string(position / 1000)).status ==
+               cyberdeck_apps::result_status::handled;
     }
     case cyberdeck_music_manager::action::volume_up:
     case cyberdeck_music_manager::action::volume_down: {
-        const int volume = std::clamp<int>(state.volume + (action == cyberdeck_music_manager::action::volume_up ? 1 : -1), 0, 50);
+        if (!app.player_snapshot(state))
+            return false;
+        const int volume =
+            std::clamp<int>(state.volume + (action == cyberdeck_music_manager::action::volume_up ? 1 : -1), 0, 50);
         return app.player_command("volume " + std::to_string(volume)).status == cyberdeck_apps::result_status::handled;
     }
     case cyberdeck_music_manager::action::next: return app.player_command("next").status == cyberdeck_apps::result_status::handled;
     case cyberdeck_music_manager::action::previous: return app.player_command("prev").status == cyberdeck_apps::result_status::handled;
-    case cyberdeck_music_manager::action::select_next: return s_music_view.move_selection(1);
-    case cyberdeck_music_manager::action::select_previous: return s_music_view.move_selection(-1);
+    case cyberdeck_music_manager::action::select_next:
+        return s_music_view.move_browser_selection(1);
+    case cyberdeck_music_manager::action::select_previous:
+        return s_music_view.move_browser_selection(-1);
     }
     return false;
+}
+
+bool music_view_browser_action(bool play_selected) {
+    auto &app = cyberdeck_music::global_application();
+    if (!refresh_music_browser_snapshot(app) || app.browser_scan_active() ||
+        s_music_view.browser_directory() != s_music_browser_snapshot.directory.data())
+        return false;
+    const std::size_t row = s_music_view.browser_selection();
+    const bool parent_visible = std::string_view(s_music_browser_snapshot.directory.data()) != "/musica";
+    if (parent_visible && row == 0) {
+        const std::string_view directory(s_music_browser_snapshot.directory.data());
+        const std::size_t slash = directory.rfind('/');
+        const std::string parent =
+            slash <= std::string_view("/musica").size() ? "/musica" : std::string(directory.substr(0, slash));
+        return app.browser_scan(parent);
+    }
+    const std::size_t index = row - (parent_visible ? 1U : 0U);
+    if (index >= s_music_browser_snapshot.count)
+        return false;
+    const auto &entry = s_music_browser_snapshot.entries[index];
+    if (entry.type == cyberdeck_music::browser_entry_type::directory) {
+        std::string child(s_music_browser_snapshot.directory.data());
+        child.push_back('/');
+        child += entry.name.data();
+        return app.browser_scan(child);
+    }
+    return play_selected ? app.browser_play_selected(index) : app.browser_toggle_selected(index);
 }
 
 bool music_manager_close(void *) {
@@ -1689,6 +1739,17 @@ void music_view_action(std::string_view name, void *) {
     if (name == "select") {
         const std::string command = "select " + std::to_string(s_music_view.selected_track() + 1);
         (void)cyberdeck_music::global_application().player_command(command);
+        return;
+    }
+    if (name == "browser_select") {
+        auto &app = cyberdeck_music::global_application();
+        const std::size_t row = s_music_view.browser_selection();
+        if (refresh_music_browser_snapshot(app) &&
+            s_music_view.browser_directory() == s_music_browser_snapshot.directory.data()) {
+            const bool has_parent = std::string_view(s_music_browser_snapshot.directory.data()) != "/musica";
+            if (!has_parent || row != 0)
+                (void)app.browser_select(row - (has_parent ? 1U : 0U));
+        }
         return;
     }
     if (name == "seek_ratio") {

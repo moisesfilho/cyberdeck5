@@ -21,30 +21,30 @@
 namespace cyberdeck_music {
 namespace {
 constexpr char k_tag[] = "music";
-constexpr cyberdeck_apps::manifest k_manifest{
-    "cyberdeck.music",
-    "Music",
-    "1.0.0",
-    "Foreground local MP3 player",
-    "",
-    {"cyberdeck.event_log"},
-    1,
-    {"storage"},
-    1,
-    5000,
-    "1",
-    cyberdeck_apps::app_type::foreground,
-    {"storage"},
-    1,
-    8192,
-    8,
-     {"music"},
-     1,
-     false,
-     {{{"music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume "
-        "<0-50> | shuffle | repeat | status",
-         "MP3 playback from SD; volume is capped at 50\n"}}},
-    true};
+constexpr cyberdeck_apps::manifest k_manifest{"cyberdeck.music",
+                                              "Music",
+                                              "1.0.0",
+                                              "Foreground local MP3 player",
+                                              "",
+                                              {"cyberdeck.event_log"},
+                                              1,
+                                              {"storage"},
+                                              1,
+                                              5000,
+                                              "1",
+                                              cyberdeck_apps::app_type::foreground,
+                                              {"storage"},
+                                              1,
+                                              8192,
+                                              8,
+                                              {"music"},
+                                              1,
+                                              false,
+                                              {{{"music queue <directory> | list | select <index> | play [index] | "
+                                                 "pause | resume | stop | next | prev | seek <seconds> | volume "
+                                                 "<0-50> | shuffle | repeat | status",
+                                                 "MP3 playback from SD; volume is capped at 50\n"}}},
+                                              true};
 
 std::string_view trim(std::string_view value) {
     while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
@@ -99,14 +99,22 @@ const char *state_name(playback_state state) {
 }
 const char *error_stage_name(error_stage stage) {
     switch (stage) {
-    case error_stage::none: return "none";
-    case error_stage::open: return "open";
-    case error_stage::id3: return "id3";
-    case error_stage::decode: return "decode";
-    case error_stage::codec_start: return "codec_start";
-    case error_stage::codec_write: return "codec_write";
-    case error_stage::read: return "read";
-    case error_stage::io: return "io";
+    case error_stage::none:
+        return "none";
+    case error_stage::open:
+        return "open";
+    case error_stage::id3:
+        return "id3";
+    case error_stage::decode:
+        return "decode";
+    case error_stage::codec_start:
+        return "codec_start";
+    case error_stage::codec_write:
+        return "codec_write";
+    case error_stage::read:
+        return "read";
+    case error_stage::io:
+        return "io";
     }
     return "unknown";
 }
@@ -117,6 +125,8 @@ const cyberdeck_apps::manifest &application::get_manifest() const {
 }
 application::application() : player_(global_player()) {}
 application::application(player_interface &player) : player_(player) {}
+application::application(player_interface &player, const browser_scan_ops &browser_ops)
+    : player_(player), browser_ops_(browser_ops) {}
 bool application::start() {
     if (running_)
         return true;
@@ -196,17 +206,20 @@ bool application::scan_directory(std::string_view path) {
     bool expected = false;
     if (!scan_running_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
         return false;
+    legacy_scan_running_.store(true, std::memory_order_release);
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex_);
         queue_.clear();
         if (!player_.set_queue(nullptr, 0, 0)) {
             scan_running_.store(false, std::memory_order_release);
+            legacy_scan_running_.store(false, std::memory_order_release);
             return false;
         }
     }
     std::memcpy(scan_path_.data(), path.data(), path.size());
     scan_path_[path.size()] = '\0';
     scan_cancel_.store(false, std::memory_order_release);
+    scan_is_browser_.store(false, std::memory_order_release);
     scan_succeeded_.store(false, std::memory_order_release);
     scan_truncated_.store(false, std::memory_order_release);
     scan_attempted_.store(true, std::memory_order_release);
@@ -214,6 +227,7 @@ bool application::scan_directory(std::string_view path) {
     if (xTaskCreate(scan_entry, "music_scan", 6144, this, 4, &scan_task_) != pdPASS) {
         scan_task_ = nullptr;
         scan_running_.store(false, std::memory_order_release);
+        legacy_scan_running_.store(false, std::memory_order_release);
         scan_join_pending_.store(false, std::memory_order_release);
         return false;
     }
@@ -222,7 +236,16 @@ bool application::scan_directory(std::string_view path) {
 
 void application::scan_entry(void *context) {
     auto *self = static_cast<application *>(context);
-    self->scan_succeeded_.store(self->scan_directory_sync(self->scan_path_.data()), std::memory_order_release);
+    const bool browser_scan = self->scan_is_browser_.load(std::memory_order_acquire);
+    const bool succeeded = browser_scan ? self->scan_browser_sync(self->scan_path_.data())
+                                        : self->scan_directory_sync(self->scan_path_.data());
+    if (browser_scan) {
+        self->browser_scan_state_.store(succeeded ? browser_scan_state::ready : browser_scan_state::error,
+                                        std::memory_order_release);
+    } else {
+        self->scan_succeeded_.store(succeeded, std::memory_order_release);
+        self->legacy_scan_running_.store(false, std::memory_order_release);
+    }
     self->scan_task_ = nullptr;
     self->scan_running_.store(false, std::memory_order_release);
     const SemaphoreHandle_t completed = self->scan_done_;
@@ -230,6 +253,136 @@ void application::scan_entry(void *context) {
     ESP_LOGI(k_tag, "scan stack_high_water_mark_bytes=%u stack_bytes=6144",
              static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     vTaskDelete(nullptr);
+}
+
+bool application::browser_scan(std::string_view directory) {
+    if (directory.empty() || directory.size() > k_browser_path_bytes || scan_done_ == nullptr || !running_ ||
+        !app_grant().allows(cyberdeck_apps::resource::storage))
+        return false;
+    cyberdeck_sd_io::coordinator *storage = app_sd_io();
+    if (storage == nullptr || storage->state() != cyberdeck_sd_io::gate_state::open)
+        return false;
+    if (scan_join_pending_.load(std::memory_order_acquire)) {
+        if (scan_running_.load(std::memory_order_acquire) || xSemaphoreTake(scan_done_, 0) != pdTRUE)
+            return false;
+        scan_join_pending_.store(false, std::memory_order_release);
+    }
+    std::lock_guard<std::mutex> publication_lock(scan_publication_mutex_);
+    if (scan_quiescing_.load(std::memory_order_acquire) || scan_running_.load(std::memory_order_acquire))
+        return false;
+    if (!valid_browser_directory(directory))
+        return false;
+    bool expected = false;
+    if (!scan_running_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+        return false;
+    std::memcpy(scan_path_.data(), directory.data(), directory.size());
+    scan_path_[directory.size()] = '\0';
+    scan_is_browser_.store(true, std::memory_order_release);
+    browser_scan_state_.store(browser_scan_state::scanning, std::memory_order_release);
+    scan_cancel_.store(false, std::memory_order_release);
+    scan_join_pending_.store(true, std::memory_order_release);
+    if (xTaskCreate(scan_entry, "music_scan", 6144, this, 4, &scan_task_) != pdPASS) {
+        scan_task_ = nullptr;
+        scan_running_.store(false, std::memory_order_release);
+        scan_join_pending_.store(false, std::memory_order_release);
+        browser_scan_state_.store(browser_scan_state::error, std::memory_order_release);
+        return false;
+    }
+    return true;
+}
+
+bool application::scan_browser_sync(std::string_view path) {
+    auto lease =
+        app_sd_io() == nullptr ? cyberdeck_sd_io::lease{} : app_sd_io()->acquire(cyberdeck_sd_io::access::read);
+    if (!lease || !app_grant().allows(cyberdeck_apps::resource::storage) ||
+        scan_cancel_.load(std::memory_order_acquire))
+        return false;
+    if (scan_cancel_.load(std::memory_order_acquire) || browser_ops_.allocate == nullptr ||
+        browser_ops_.deallocate == nullptr)
+        return false;
+    std::size_t allocation_size = 0;
+    if (!browser_snapshot_allocation_size(k_browser_entry_limit, allocation_size))
+        return false;
+    void *memory = browser_ops_.allocate(browser_ops_.context, allocation_size);
+    if (memory == nullptr)
+        return false;
+    auto release = [this](browser_snapshot *snapshot) {
+        snapshot->~browser_snapshot();
+        browser_ops_.deallocate(browser_ops_.context, snapshot);
+    };
+    std::unique_ptr<browser_snapshot, decltype(release)> staging(new (memory) browser_snapshot{}, release);
+    if (scan_cancel_.load(std::memory_order_acquire) || !scan_browser_directory_into(path, *staging, browser_ops_))
+        return false;
+    std::lock_guard<std::mutex> publication_lock(scan_publication_mutex_);
+    if (scan_cancel_.load(std::memory_order_acquire) || scan_quiescing_.load(std::memory_order_acquire) ||
+        !app_grant().valid())
+        return false;
+    return browser_.replace_listing(path, *staging);
+}
+
+bool application::get_browser_snapshot(browser_snapshot &out) const {
+    std::lock_guard<std::mutex> lock(scan_publication_mutex_);
+    out = browser_.snapshot();
+    return true;
+}
+
+bool application::browser_select(std::size_t index) {
+    std::lock_guard<std::mutex> lock(scan_publication_mutex_);
+    return browser_scan_state_.load(std::memory_order_acquire) != browser_scan_state::scanning &&
+           browser_.select(index);
+}
+
+bool application::browser_toggle_selected(std::size_t index) {
+    return browser_playback(index, true);
+}
+
+bool application::browser_play_selected(std::size_t index) {
+    return browser_playback(index, false);
+}
+
+bool application::browser_playback(std::size_t index, bool toggle) {
+    std::lock_guard<std::mutex> publication_lock(scan_publication_mutex_);
+    if (browser_scan_state_.load(std::memory_order_acquire) == browser_scan_state::scanning ||
+        index >= browser_.snapshot().count || browser_.snapshot().entries[index].type != browser_entry_type::mp3)
+        return false;
+    const std::string_view directory(browser_.snapshot().directory.data());
+    const std::string_view name(browser_.snapshot().entries[index].name.data());
+    std::string path(directory);
+    if (path != "/")
+        path.push_back('/');
+    path.append(name);
+
+    snapshot playback{};
+    if (!player_.status(playback))
+        return false;
+    std::lock_guard<std::mutex> queue_lock(queue_mutex_);
+    const auto queue_state = queue_.status();
+    if (queue_state.track_count == 0 || queue_state.track_count != playback.track_count ||
+        playback.selected >= playback.track_count)
+        return false;
+    std::size_t queue_index = queue_state.track_count;
+    for (std::size_t candidate = 0; candidate < queue_state.track_count; ++candidate) {
+        const track *item = queue_.at(candidate);
+        if (item != nullptr && std::string_view(item->path.data()) == path) {
+            queue_index = candidate;
+            break;
+        }
+    }
+    if (queue_index == queue_state.track_count)
+        return false;
+    if (toggle && playback.state == playback_state::playing)
+        return player_.pause();
+    if (toggle && playback.state == playback_state::paused)
+        return player_.resume();
+    const bool can_start_selected =
+        playback.state == playback_state::stopped ||
+        (!toggle && (playback.state == playback_state::playing || playback.state == playback_state::paused));
+    if (!can_start_selected)
+        return false;
+    if (!queue_.select(queue_index))
+        return false;
+    player_.select(queue_index);
+    return player_.play(path.c_str());
 }
 
 bool application::scan_directory_sync(std::string_view path) {
@@ -290,8 +443,8 @@ bool application::scan_directory_sync(std::string_view path) {
                 continue;
             if (is_mp3_path(child)) {
                 std::size_t verified_size = 0;
-                const int descriptor = cyberdeck_local_shell_open_readonly("/sdcard", "/", child,
-                                                                            k_max_track_bytes, verified_size);
+                const int descriptor =
+                    cyberdeck_local_shell_open_readonly("/sdcard", "/", child, k_max_track_bytes, verified_size);
                 if (descriptor < 0)
                     continue;
                 *candidate = track{};
@@ -311,8 +464,9 @@ bool application::scan_directory_sync(std::string_view path) {
                     (*tracks)[count++] = *candidate;
                 } else {
                     truncated = true;
-                    auto largest = std::max_element(tracks->begin(), tracks->end(),
-                        [](const track &left, const track &right) { return left.path < right.path; });
+                    auto largest =
+                        std::max_element(tracks->begin(), tracks->end(),
+                                         [](const track &left, const track &right) { return left.path < right.path; });
                     if (candidate->path < largest->path)
                         *largest = *candidate;
                 }
@@ -344,7 +498,6 @@ bool application::scan_directory_sync(std::string_view path) {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     if (!queue_.replace_queue(tracks->data(), count) || !player_.set_queue(tracks->data(), count, 0))
         return false;
-    scan_succeeded_.store(true, std::memory_order_release);
     scan_truncated_.store(truncated, std::memory_order_release);
     return true;
 }
@@ -368,7 +521,7 @@ cyberdeck_apps::result application::status() const {
     text += "\nvolume: " + std::to_string(info.volume) + "  shuffle: ";
     text += info.shuffle ? "on  repeat: " : "off  repeat: ";
     text += info.repeat == repeat_mode::one ? "one\n" : info.repeat == repeat_mode::all ? "all\n" : "off\n";
-    if (scan_running_.load(std::memory_order_acquire))
+    if (legacy_scan_running_.load(std::memory_order_acquire))
         text += "queue: scanning...\n";
     else if (scan_attempted_.load(std::memory_order_acquire))
         text += scan_succeeded_.load(std::memory_order_acquire) ? "queue: scan complete\n" : "queue: scan failed\n";
@@ -396,7 +549,8 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
         return status();
     if (args == "help")
         return {cyberdeck_apps::result_status::handled,
-                "music [status|help|queue <directory>|list|select <index>|play [index]|pause|resume|stop|next|prev|seek <seconds>|volume <0-50>|shuffle|repeat]\n"};
+                "music [status|help|queue <directory>|list|select <index>|play "
+                "[index]|pause|resume|stop|next|prev|seek <seconds>|volume <0-50>|shuffle|repeat]\n"};
     if (args.rfind("queue ", 0) == 0) {
         if (!app_grant().allows(cyberdeck_apps::resource::storage))
             return {cyberdeck_apps::result_status::rejected, "music: storage unavailable\n"};
@@ -520,8 +674,8 @@ bool application::play_selected(std::size_t selected) {
         return false;
     std::lock_guard<std::mutex> lock(queue_mutex_);
     const auto queue = queue_.status();
-    if (queue.track_count == 0 || queue.track_count != playback.track_count || playback.selected >= playback.track_count ||
-        selected >= queue.track_count)
+    if (queue.track_count == 0 || queue.track_count != playback.track_count ||
+        playback.selected >= playback.track_count || selected >= queue.track_count)
         return false;
     const track *item = queue_.at(selected);
     if (item == nullptr || item->path[0] == '\0' || !queue_.select(selected))

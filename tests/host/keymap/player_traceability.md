@@ -4,7 +4,7 @@
 
 `music` sem argumentos ativa o app foreground `cyberdeck.music`, abre a view
 própria e inicia um scan recursivo de `/musica`. Subcomandos são despachados
-somente enquanto o player está foreground; `player` é alias da mesma instância.
+somente enquanto o player está foreground; `player` não é alias e não abre o app.
 Manager, adapter e input fazem a mediação entre app/runtime, view e serviços. O
 console e a ponte serial permanecem vivos enquanto a view do player está ativa.
 Esc e troca de app cancelam/juntam o scan e param playback antes de liberar a
@@ -62,6 +62,97 @@ envia segundos inteiros ao parser do app. `test_music_scan_opendir_contract.py`
 protege essa conversão contra seek incorreto por fator 1000.
 
 ## Mapeamento concreto e limites
+
+## REQ-MUSIC-BROWSE-01..05 / AC-MUSIC-BROWSE-01..06 — matriz por fases
+
+Fase 1 implementa somente o modelo puro e o seam de scan direto, sem ligação à
+fila/player nem alteração da UI/input. Tester confirmou no snapshot HEAD
+`a6f797bdca5bd8f4b3a9d43804dd86ee5d7927be` + snapshot composto
+`0042e5655c3c1c4c3757b67039be74d6ea298f7d14e193daa323b7ef197fa4c9`:
+`test_music_browser` 49 checks + ASan/UBSan, `test_music_app` 223 checks e
+`test_music_scan_opendir_contract.py` 20/20. Fase 2 integra somente modelo/API
+ao app; view/input/actions seguem fase 3. Nenhum teste existente de fila/track,
+scan, controls ou segurança é removido ou enfraquecido.
+
+| REQ / AC | TEST-* | Cenário determinístico e asserts obrigatórios | Alvos/seam e evidência posterior |
+| --- | --- | --- | --- |
+| REQ-MUSIC-BROWSE-01 / AC-MUSIC-BROWSE-01 (modelo separado) | TEST-MUSIC-BROWSE-STATE-01 | Diretório inicial `/musica`; browsing selection separado de queue/player; scan/seleção não alteram queue, seleção do player, playback atual. | `test_music_app` chama API do app real, scanner real e fake player; compara snapshots antes/depois. Fase 3 adiciona view. |
+| REQ-MUSIC-BROWSE-01 / AC-MUSIC-BROWSE-01 | TEST-MUSIC-BROWSE-TYPES-02 | Só diretórios e MP3 (extensão sem distinção de caixa, conforme contrato); esconder demais arquivos; ordenação lexicográfica determinística por nome dentro de cada pasta; diretórios e faixas continuam tipos distintos. | App/view reais; fixture com nomes ordenáveis, extensão maiúscula/minúscula e tipos descartados. Registrar regra de comparação exatamente conforme plano/coder. |
+| REQ-MUSIC-BROWSE-02 / AC-MUSIC-BROWSE-02 | TEST-MUSIC-BROWSE-BOUNDS-03 | Pasta com 0, 1, exatamente 64 e >64 entradas elegíveis: nunca exceder 64 slots/entradas, truncamento determinístico, sem overflow; entradas inelegíveis não consomem limite. Confirmar fila preexistente/track ativa preservadas. | App real e fixture determinística; assert quantidade, ordem, truncation e snapshots. Contrato estrutural não substitui estes asserts. |
+| REQ-MUSIC-BROWSE-02 / AC-MUSIC-BROWSE-02 | TEST-MUSIC-BROWSE-ROOT-PARENT-04 | Root `/musica`: parent ausente/inértil e cwd não escapa; subpasta parent volta exatamente ao pai; paths relativos/normalizados permanecem sob `/musica`. Navegação não inicia playback nem rescan da fila. | App real; fixtures root/nested e asserts de cwd/entries/queue. |
+| REQ-MUSIC-BROWSE-03 / AC-MUSIC-BROWSE-03 | TEST-MUSIC-BROWSE-ENTER-05 | Enter em `..`/diretório inicia scan da pasta correspondente sem playback; Enter em MP3 delega à semântica toggle: playing→pause, paused→resume, stopped toca o MP3 selecionado por path, não por índice visual. | `test_music_app` executa métodos app reais e prova path→queue; `test_music_scan_opendir_contract.py` protege dispatch UI. FATFS/input físico seguem manual. |
+| REQ-MUSIC-BROWSE-03 / AC-MUSIC-BROWSE-03 | TEST-MUSIC-BROWSE-PLAY-SELECTED-06 | P/Play Selected em `..`/diretório navega sem playback; em MP3 resolve path ao índice da fila e usa play-selected existente. Path fora da fila, índice inválido ou scan ativo é no-op. Fase 3 agora executa também o caso após navegar a subpasta: `after.mp3` resolve `/musica/cancel-case/after.mp3` no queue recursivo e a faixa correspondente fica selecionada, sem confundir índice visual. | `test_music_app` prova path real/invalid e seleção queue após navegação; `test_music_scan_opendir_contract.py` protege offset `..`, diretório/snapshot corrente e wiring P/Enter. Callbacks reais LVGL/teclado ficam manuais. |
+| REQ-MUSIC-BROWSE-01,03 / AC-MUSIC-BROWSE-01,03 | TEST-MUSIC-BROWSE-SELECTION-07 | Setas/touch mudam só browsing selection, independente da seleção de playback; `..` só aparece fora da raiz e não ocupa entrada FS nem slot dos 64 reais. Seleção vazia/stale é no-op. | `test_display_views` executa TU LVGL real (raiz/subpasta, parent, labels, setas, separação de índices); `test_music_app` prova browser_select sem efeitos de player; contrato verifica stale directory guard. |
+| REQ-MUSIC-BROWSE-04 / AC-MUSIC-BROWSE-04 | TEST-MUSIC-BROWSE-SECURE-PATHS-08 | Rejeitar traversal, symlink de pasta/faixa, links quebrados, não-regular e caminhos fora da raiz; erro não publica entradas parciais nem muda cwd/queue/track. Include race/changed target conforme seam seguro disponível. | App real com filesystem temporário e secure-open; manter/cross-check negativos existentes em `test_music_app` e `test_music_scan_opendir_contract.py`. |
+| REQ-MUSIC-BROWSE-02,04 / AC-MUSIC-BROWSE-02,04 | TEST-MUSIC-BROWSE-DIR-OPS-09 | Para cada scan esperado, `opendir`/`readdir` até EOF e `closedir` têm ownership/contagens exatas; injetar falha de open, readdir distinto de EOF e closedir; fechar uma vez, sem publicação parcial/duplicada. | Seam comportamental com wrappers opendir/readdir/closedir; contrato Python verifica branch ESP/FATFS e cleanup, mas não conta como prova única. |
+| REQ-MUSIC-BROWSE-05 / AC-MUSIC-BROWSE-05 | TEST-MUSIC-BROWSE-CANCEL-JOIN-10 | Barreira CV retém a enumeração real do browser; `runtime.stop_application()` não retorna enquanto o I/O está retido, após liberar ocorre join e lease é liberado; snapshot completo anterior permanece (sem parcial), e reabrir + novo scan da fixture alterada publica apenas os arquivos da geração nova. | `test_music_app` executa app/worker e `scan_browser_directory` reais com browser read seam bloqueado por mutex/CV; ausência de retorno verificada via CV com deadline, sem sleeps. Falha/timeout de stop não é injetada neste cenário. |
+| REQ-MUSIC-BROWSE-02,05 / AC-MUSIC-BROWSE-02,05 | TEST-MUSIC-BROWSE-ATOMIC-PUBLISH-11 | Leitores veem snapshot completo anterior durante scan, nunca prefixo; sucesso publica snapshot completo; falha/cancel não publica parcial nem altera flags de resultado/attempted/running/truncation ou status da fila legacy. | `test_music_app` segura scanner real em barreira e lê snapshot anterior, confirma publicação integral e, após falha em `/musica/not-present`, exige `queue: scan complete` sem `scanning`/`failed`/truncation legacy, além de preservar fila, seleção, faixa tocando e progresso. |
+| REQ-MUSIC-BROWSE-01..05 / AC-MUSIC-BROWSE-01..06 | TEST-MUSIC-BROWSE-REGRESSION-12 | Preservar fila/seleção ativa e todos os casos legados: `music queue/list/select/play`, Enter toggle, P Play Selected, N/seek/volume, scan recursivo, 64 bounds, cancel/join, ajuda/lifecycle; browser não representa diretórios na fila nem contamina status legacy. | `test_music_app`, `test_music_manager`, `test_display_views` e contratos focados; suite global fica para reviewer. |
+
+### Fase 1 — modelo e scan direto (implementação focada)
+
+`cyberdeck_music_browser.{h,cpp}` define entradas tipadas directory/MP3, snapshot
+bounded de 64 entradas, diretório confinado `/musica`, parent inerte na raiz e
+seleção própria. `scan_browser_directory` enumera somente filhos diretos, ordena
+por nome, retém deterministicamente os 64 primeiros elegíveis e informa
+truncation. Resolve desde `/sdcard` com `openat` + `O_NOFOLLOW`, valida cada
+componente e abre/valida diretórios e MP3s como descritores regulares; symlinks,
+arquivos não MP3 e não regulares são ignorados. `readdir`/`closedir` e falhas de
+open abortam sem alterar o destino. O seam aceita tabela de operações para falhas
+determinísticas. `test_music_browser` executa implementação real e cobre
+`TEST-MUSIC-BROWSE-TYPES-02`, `BOUNDS-03`, `ROOT-PARENT-04`, `SECURE-PATHS-08` e
+`DIR-OPS-09`. Não prova atomic app publication, cancel/join ou integração física.
+
+### Fase 2 — integração aditiva no application
+
+API exposta: `browser_scan(directory)`, `get_browser_snapshot(out)`,
+`browser_select(index)` e `browser_scan_active()`. O worker de scan legado é
+reutilizado com modo browser/legacy; não há segundo worker. O estado de execução
+do worker é compartilhado somente para serializar scans; running/attempted/result/
+truncation da fila legacy são escritos e lidos exclusivamente pelo caminho legacy,
+enquanto o browser usa seu próprio `browser_scan_state` e truncation no snapshot.
+Browser state publica sob mutex após scan, lease, grant e cancelamento serem
+revalidados; falha mantém snapshot anterior e não muda o status legacy. Fila,
+player e scan recursivo legado permanecem inalterados.
+`test_music_app` executa API real com scanner real, fixture POSIX e fake player.
+TEST-MUSIC-BROWSE-CANCEL-JOIN-10 é coberto com worker real e barreiras CV; a
+falha/timeout injetável de stop não é exercitada.
+
+### Fase 3 — integração view/input/actions
+
+`cyberdeck_music_view` renderiza o snapshot direto do app; a raiz virtual é
+`/musica`, e a seleção visual é índice de linha separado, com `..` sintético
+somente em subpastas e acima das 64 entradas reais. Ao despachar uma ação, a UI
+remove esse offset antes de chamar `browser_select`; playback recebe a entrada do
+browser e resolve seu path completo à faixa na queue recursiva, nunca reutiliza
+índice visual como índice da queue. Clique/setas não chamam player nem mudam a
+seleção de playback. Enter em MP3 mantém toggle (playing→pause, paused→resume,
+stopped→play); P/Play Selected usa a ação existente de play-selected. Enter/P em
+`..` ou pasta solicitam scan confinado a `/musica`, sem playback. Mudança de
+diretório invalida interação com view obsoleta até o próximo render; scan ativo,
+path não mapeado e índice inválido falham sem playback. A fila/player não modela
+diretórios; Previous/Next, seek, volume, Command, Esc e comandos textuais
+permanecem intactos. Focados: TEST-MUSIC-BROWSE-ENTER-05, PLAY-SELECTED-06,
+SELECTION-07 e REGRESSION-12. Testes focados locais passaram neste ciclo; aceite
+independente e validação física ainda pendentes.
+
+### Evidência manual exigida após implementação
+
+Host não prova eventos LVGL/teclado/touch reais, usabilidade/scroll visual,
+latência de scan em SD/FATFS, nem lifecycle FreeRTOS/concorrência em firmware.
+Após build/flash autorizado e boot normal verificado pelo roteiro manual: com
+MP3s e subpastas reais em `/musica`, abrir o player; conferir cwd `/musica`,
+somente pastas/MP3 ordenados e limites; Enter em pasta deve navegar sem alterar
+`music status`; parent deve chegar a `/musica` e ficar ausente/inértil na raiz.
+Selecionar MP3 e comparar Enter (playing pausa, paused retoma, stopped inicia)
+com P/Play Selected (inicia seleção); confirmar queue/track ativa e playback
+intactos ao navegar. Inspecionar portrait/landscape, scroll, input físico e
+virtual. Com scan ativo, fechar/reabrir apenas no cenário autorizado e confirmar
+que join precede novo scan, nenhum resultado antigo/parcial aparece, e uptime,
+heap, logs e ponte serial permanecem saudáveis. Registrar hash/versão, `sys.info`
+antes/depois, `term.dump`/`ui.dump`, logs e observação; qualquer reset, timeout,
+erro ou versão não identificada encerra o cenário. Não provocar remoção de mídia
+ou falhas destrutivas no hardware sem cenário seguro explícito.
 
 - Já existentes no Makefile: `test_music_app` (app/scan comportamental),
   `test_music_player` (worker/player e falhas de inicialização),
@@ -290,3 +381,41 @@ Essa evidência CI/revisão pertence ao commit funcional acima, não à atualiza
 documental posterior; não alegar CI para o novo commit. O aceite Esc é
 `completed` por relato do usuário, não validação independente. Não inferir
 aceitação de outros gates físicos do player.
+
+## Regressão crítica: stack fault ao abrir browser — especificação pré-correção (2026-11-03)
+
+Snapshot de referência: HEAD `a6f797bdca5bd8f4b3a9d43804dd86ee5d7927be`, snapshot
+composto informado pelo developer `2092e54ccd5b9ad3f5196aa726f94f768399753bcf553d8919a5c2c3b1faa5d6`.
+Reprodução física capturada em `/tmp/opencode/music-browser-repro-20261103.log`:
+task `music_scan`, stack protection fault em `scan_browser_sync` (linha 295), SP
+fora dos bounds; não repetir no hardware. Frame/layout ELF/map/objdump ainda deve
+ser inspecionado pelo coder antes de decidir causalidade. Não aumentar a stack
+como correção presumida. IDs abaixo vinculam-se a REQ-PLAYER-01 / AC-01 (abrir
+player e iniciar scan), REQ-MUSIC-BROWSE-05 / AC-MUSIC-BROWSE-05 (cancel/join e
+publicação íntegra), e REQ-MUSIC-BROWSE-02 / AC-MUSIC-BROWSE-02 (snapshot bounded).
+
+| TEST-* | Cenário determinístico e asserts obrigatórios | Alvo/evidência |
+| --- | --- | --- |
+| TEST-MUSIC-SCAN-STACK-FRAME-01 | Confirmar frame/layout de `scan_browser_sync` e callees no build ESP32-P4 com `-fstack-usage`/ELF/map/objdump; calcular uso aninhado relevante e demonstrar que staging/snapshot grande não fica em stack da task. High-water mark isolado não prova segurança; registrar limites, ferramenta e símbolos medidos. | PASS coder: ELF pós-fix SHA `c90978d6b48b2a9d7fc7da8f2da18f6c569bc29ca63f6042c42032531d977ec2`; candidato exato pré-fix bin SHA `221ed24b4446bf67ab7983855680cb4ef23ffb6cfd076de0dd7568ee2d4734d4`, ELF `70e52305e635fe008c7e48120d322265d216a6e83798bf43043bc7cebe6228c1`: disassembly de `scan_browser_sync` subtrai 896 e depois 16384 bytes (17,280 B frame); target `sizeof(browser_snapshot)==sizeof(browser_model)==8,592 B`, juntos 17,184 B. Task stack é 6,144 B. ELF atual + `-fstack-usage`: `scan_entry` 16 B, `scan_browser_sync` 112 B, `scan_browser_directory_into` 176 B, `append_entry` 176 B; introsort tem profundidade limitada pela lista de 64. Soma conservadora dos frames C++ conhecidos no caminho até sort ≈1 KiB; libc/callbacks indiretos não incluídos. O HWM 2736 B pré-panic não é evidência de segurança. Tester deve validar ferramenta/cálculo e risco residual. |
+| TEST-MUSIC-SCAN-STAGING-ALLOC-02 | Com scanner real e seam determinístico da alocação usada pela implementação, sucesso aloca staging bounded, enumera e publica snapshot completo; falha de cada alocação necessária retorna erro, não publica prefixo, não corrompe memória/limites e mantém snapshot completo anterior e estado legado inalterados. Cobrir limite/tamanho máximo e overflow do cálculo falhando fechado. | `test_music_app` falha a alocação real via ops; `test_music_browser` cobre max-size/overflow. Coder: PASS focados. |
+| TEST-MUSIC-SCAN-ATOMIC-PUBLISH-03 | Barreira durante enumeração: leitor concorrente observa snapshot anterior completo; sucesso publica o novo completo; falha/cancelamento não expõe estágio parcial. Preservar mutex e disciplina de publicação. | `test_music_app` com app/scanner reais e barreira CV; mantém snapshot completo durante scan, publica completo no sucesso e preserva em OOM/erro/cancel. Coder: PASS focados. |
+| TEST-MUSIC-SCAN-CANCEL-JOIN-04 | Reter scanner após aquisição do lease; stop/cancel não retorna nem libera staging/lease/handles antes da conclusão/join. Após liberar, não publica parcial; reabrir publica somente geração nova. Cobrir cancelamento antes/depois da alocação. | `test_music_app`: gate durante allocator após lease e durante enumeração; stop aguarda, lease/staging encerram, snapshot não muda e reopen escaneia geração atual. Coder: PASS focados. |
+| TEST-MUSIC-SCAN-OPEN-REGRESSION-05 | Abrir player/diretório válido inicia exatamente um scan e gera snapshot navegável sem playback; queue/player e scan recursivo legado permanecem independentes, com fila/track/estado/seleção preservados; erro de open/cleanup mantém semântica existente. | `test_music_app`/`test_music_browser`; sucesso preserva asserts de queue/playback e snapshot navegável. Coder: PASS focados. |
+| TEST-MUSIC-SCAN-UI-SNAPSHOT-07 | Verificar que todos os consumers LVGL (timer inicial/render, ações de navegação/playback e seleção da view) atualizam e consomem um único snapshot BSS persistente, sem declaração local `browser_snapshot`; preservar atomic copy pelo app e validar diretório/índice antes da ação. | `test_music_scan_stack_contract.py`: teste estrutural focado; independente pendente. |
+| TEST-MUSIC-SCAN-STACK-HARDWARE-06 | Após build/review, uma abertura dirigida no firmware identificado; confirmar scan concluído, snapshot navegável, uptime/heap/log sem fault. Sem retry/reabertura após anomalia. | PENDENTE: usuário explicitamente não autorizou repetir abertura perigosa. Exige nova autorização humana após review/build. Host/build não provam FreeRTOS stack/heap, FATFS/SD nem estabilidade física. |
+
+Conclusão do coder: hipótese confirmada. O ELF exato reproduz frame local de
+17,280 B em tarefa de 6,144 B; os dois objetos snapshot/model ocupavam 17,184 B
+combinados. Implementação move staging ao heap bounded via seam/RAII, remove o
+modelo temporário na admissão e substitui snapshot no lock somente após scan
+completo. Coder executou os alvos focados; validação independente do tester ainda
+pendente. TEST-MUSIC-SCAN-STACK-HARDWARE-06 permanece pendente e bloqueado: o
+usuário não autorizou repetir a abertura que reiniciou o dispositivo.
+
+Revisão posterior identificou outro risco de stack: cinco cópias locais de
+`browser_snapshot` (~8592 B cada) nos callbacks/timer LVGL, sem budget/peak da
+task LVGL demonstrado. Correção aditiva: `cyberdeck_ui.cpp` usa um único snapshot
+estático BSS, atualizado pela cópia atômica existente e consumido sincronicamente
+somente no contexto LVGL pelos caminhos de timer, render e ações. TEST-MUSIC-SCAN-UI-SNAPSHOT-07
+protege ausência de cópias locais e os consumidores; não amplia a análise do
+budget global da task LVGL nem valida hardware.

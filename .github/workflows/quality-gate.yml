@@ -101,6 +101,12 @@ jobs:
           clang-format --dry-run --Werror \
             components/cyberdeck/include/apps/music/cyberdeck_music_duration.h \
             components/cyberdeck/src/apps/music/cyberdeck_music_duration.cpp
+          # The browser is new code; keep legacy music player/view TUs outside
+          # this gate while checking its production API, implementation, and test.
+          clang-format --dry-run --Werror \
+            components/cyberdeck/include/apps/music/cyberdeck_music_browser.h \
+            components/cyberdeck/src/apps/music/cyberdeck_music_browser.cpp \
+            tests/host/keymap/test_music_browser.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -796,8 +797,30 @@ int main()
     music_view.set_command_text("help");
     music_view.set_command_cursor(99);
     music_view.set_command_open(false);
+    cyberdeck_music::browser_snapshot browser_snapshot{};
+    std::strcpy(browser_snapshot.directory.data(), "/musica/albums");
+    browser_snapshot.count = 2;
+    browser_snapshot.entries[0].type = cyberdeck_music::browser_entry_type::directory;
+    std::strcpy(browser_snapshot.entries[0].name.data(), "live");
+    browser_snapshot.entries[1].type = cyberdeck_music::browser_entry_type::mp3;
+    std::strcpy(browser_snapshot.entries[1].name.data(), "track.mp3");
+    const std::size_t queue_selection_before_browser = music_view.selected_track();
+    music_view.render_browser(browser_snapshot, false);
+    assert(music_view.browser_directory() == "/musica/albums");
+    assert(music_view.browser_parent_selected());
+    assert(browser->children[1]->children[0]->text == "../");
+    assert(browser->children[2]->children[0]->text == "live/");
+    assert(browser->children[3]->children[0]->text == "track.mp3");
+    assert(music_view.move_browser_selection(1));
+    assert(music_view.browser_selection() == 1 && music_view.selected_track() == queue_selection_before_browser);
+    assert(music_log.actions.back() == "browser_select");
+    std::strcpy(browser_snapshot.directory.data(), "/musica");
+    music_view.render_browser(browser_snapshot, true);
+    assert(!music_view.browser_parent_selected() && music_view.browser_selection() == 0);
+    assert(browser->children[1]->children[0]->text == "live/");
+    music_view.render("state: paused\ntrack: 1/2\nmusic queue:\n1. first.mp3\n2. second.mp3\n");
     lv_shim_emit_event(browser->children[1], LV_EVENT_CLICKED);
-    assert(music_log.actions.size() == 11 && music_log.actions.back() == "select");
+    assert(music_log.actions.back() == "select");
     assert(music_view.selected_track() == 0);
     music_view.render("Now playing: track.mp3");
     assert(music_status_label->text == "Now playing: track.mp3");

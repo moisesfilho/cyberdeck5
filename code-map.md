@@ -332,7 +332,62 @@ Enter por callback exclusivo do app e prioridade de Escape. O alvo focal cobre
 dispatch único/erro/escape/limites; `test_music_app` integra o mesmo seam com
 `application::player_command("status")` real. `player_traceability.md` rastreia
 TEST-MUSIC-COMMAND-CONTROLLER; roteiro manual cobre teclado real e preservação
-da shell. A view de música usa somente cores grayscale e o teste LVGL real
+da shell. O browser fase 1 vive em
+`include/apps/music/cyberdeck_music_browser.h` e
+`src/apps/music/cyberdeck_music_browser.cpp`: modelo independente da fila com
+path/snapshot bounded, entries directory/MP3 e seleção própria; o scanner
+enumera apenas filhos diretos em `/musica`, resolve componentes com `openat`/
+`O_NOFOLLOW`, valida tipo por `fstatat`/`fstat`, ordena nomes e retorna até 64
+entradas com truncation determinística. A tabela `browser_scan_ops` injeta
+operações para falhas host; `test_music_browser.cpp` executa a implementação
+real. O alvo focal `test_music_browser` não integra o agregado. O workflow
+Quality Gate aplica clang-format somente a esse header, source e teste novos;
+TUs legados do player/view permanecem fora do gate. CMake registra a TU no
+firmware. Fase 2 integra aditivamente no `application` API de scan,
+snapshot, seleção e estado ativo; o worker compartilhado alterna entre modo
+legacy/browser, mas seus flags de coordenação não alimentam o status legado:
+running/attempted/result/truncation da fila são exclusivos ao scan legacy, e o
+browser usa `browser_scan_state`/snapshot próprios. A publicação browser continua
+atômica sob o mutex existente, sem alterar fila/player nem comandos/view/input.
+`test_music_app` liga app e scanner reais a fake player e operações POSIX de
+fixture. O worker browser aloca um único `browser_snapshot` de capacidade máxima
+por callbacks em `browser_scan_ops`, mantém o staging privado via RAII e publica
+sob `scan_publication_mutex_` somente após enumeração bem-sucedida. A aritmética
+de tamanho falha fechado em overflow e o limite é 64 entradas; falha de alocação,
+scan ou cancelamento preserva o snapshot publicado. `browser_model::replace_listing`
+valida antes de copiar sem criar outro modelo/snapshot temporário na stack; a
+admissão valida o path sem copiar `browser_model`. O scanner público preserva
+out em falha usando o mesmo allocator seam. `test_music_app` injeta falha de
+alocação e barreiras determinísticas em alocação/enumeration para testar
+preservação, cancel/join, lease e reopen; `test_music_browser` cobre capacidade
+máxima e overflow. No ESP32-P4 `browser_snapshot` é 8592 B; coder mediu no ELF
+pós-fix `scan_entry` 16 B, `scan_browser_sync` 112 B e
+`scan_browser_directory_into` 176 B com `-fstack-usage`; sort/callback library
+frames não estão incluídos nesses individuais. O ELF/stack evidence e o frame
+pré-fix estão em `tests/host/keymap/player_traceability.md`; validação física
+continua bloqueada.
+Fase 3 integra a view LVGL e input/actions: raiz `/musica`, `..`
+sintético somente em subpastas, seleção por índice visual com offset removido
+antes de `browser_select`, navegação sem playback, Enter-toggle e P/Play Selected
+resolvidos pelo path completo para o índice correto da queue recursiva. Ações não
+usam índice visual como queue index; controles/comandos anteriores permanecem.
+`test_display_views`, `test_music_app` e `test_music_scan_opendir_contract.py`
+cobrem respectivamente view/seleção, resolução app path→queue e wiring estrutural.
+`test_music_app` navega também até `/musica/cancel-case` e verifica que
+`after.mp3` é resolvida pelo path completo no queue recursivo e selecionada
+corretamente, independentemente do índice visual do browser. O contrato
+`test_music_scan_opendir_contract.py` também fixa o wiring do offset sintético
+`..`, rejeição de snapshot/diretório obsoleto e a distinção entre navegação de
+pasta, toggle Enter e ação Play Selected.
+`cyberdeck_ui.cpp` mantém um único `browser_snapshot` estático BSS para os
+consumidores LVGL. `refresh_music_browser_snapshot()` copia via API atômica do
+app; timer/render/navegação/seleção consomem o mesmo buffer sincronicamente no
+contexto LVGL, sem retenção entre callbacks ou cópias de 8592 B na stack.
+`test_music_scan_stack_contract.py` também protege todos esses callers e rejeita
+qualquer snapshot local na UI (TEST-MUSIC-SCAN-UI-SNAPSHOT-07).
+Fase 3 está implementada no snapshot atual; os alvos focados passaram no ciclo
+de implementação, mas validação independente permanece pendente.
+A view de música usa somente cores grayscale e o teste LVGL real
 confirma seus estilos. Como o tema default está em modo light
 (`CONFIG_LV_THEME_DEFAULT_DARK` não é setado), todo `lv_btn` herda `radius` 8–16
 e um shadow cinza; as linhas da biblioteca e o botão de música do header zeram
@@ -466,6 +521,15 @@ e quota quando teardown falha, para que stop/join possa ser repetido sem liberar
 recursos vivos; somente teardown bem-sucedido revoga o grant e registra o app
 como parado. A rastreabilidade da
 surface, adapter e lifecycle fica em `tests/host/keymap/player_traceability.md`.
+Essa matriz também contém `REQ-MUSIC-BROWSE-01..05` /
+`AC-MUSIC-BROWSE-01..06` com fases explícitas. Tester confirmou Fase 1 no
+snapshot HEAD `a6f797bdca5bd8f4b3a9d43804dd86ee5d7927be`, snapshot composto
+`0042e5655c3c1c4c3757b67039be74d6ea298f7d14e193daa323b7ef197fa4c9`:
+49 browser checks + ASan/UBSan, 223 app checks e contrato 20/20. Fase 2 cobre
+API/app state e publicação atômica; Fase 3 actions/view/input.
+`player_traceability.md` também registra TEST-MUSIC-SCAN-STACK-FRAME-01..06
+como especificação pré-correção do stack fault observado em `music_scan`; nova
+abertura física está bloqueada sem autorização humana após review/build.
 `test_term_dump_cli.py` cobre o uso de diretório temporário portátil e privado
 na gravação dos logs recuperados por `events.read`.
 
@@ -481,7 +545,7 @@ o alvo `test_incremental_final_contract` roda no agregado após o build.
 `music select <index>`, com manifests de produção e fixtures comportamentais.
 O manifesto de música declara somente `music` como comando de abertura; o alias
 `player` não abre a aplicação nem é anunciado no help. `test_music_app.cpp`
-cobre dispatch comportamental de `music`/`player`, enquanto os testes de help
+cobre que `music` abre e `player` não é alias/não abre, enquanto os testes de help
 validam os goldens e a reconciliação estrutural; os demais comandos musicais
 continuam declarados em `cyberdeck_music_app.cpp`.
 Os contratos `test_window_manager_contract.py` e `test_coverage_scope_guard.py`

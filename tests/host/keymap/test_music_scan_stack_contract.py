@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Keep the ID3 decode off the scan task stack and expose its real peak.
+"""Keep large music scan objects off task stacks and expose its real peak.
 
 The scan runs on a 6144-byte FreeRTOS task. `read_metadata` must therefore fill
 the bounded `metadata` struct instead of copying a whole `track` onto that
-stack, and `scan_entry` must log the stack high-water mark before it deletes
-itself so the real peak is observable on the device.
+stack. Browser staging is a bounded heap allocation; `scan_entry` logs the
+high-water mark before it deletes itself so device peak remains observable.
 """
 
 import re
@@ -16,7 +16,9 @@ MUSIC = COMPONENT / "src/apps/music"
 metadata_source = (MUSIC / "cyberdeck_music_metadata.cpp").read_text(encoding="utf-8")
 metadata_header = (COMPONENT / "include/apps/music/cyberdeck_music_metadata.h").read_text(encoding="utf-8")
 app_source = (MUSIC / "cyberdeck_music_app.cpp").read_text(encoding="utf-8")
+browser_source = (MUSIC / "cyberdeck_music_browser.cpp").read_text(encoding="utf-8")
 model_header = (COMPONENT / "include/apps/music/cyberdeck_music_model.h").read_text(encoding="utf-8")
+ui_source = (COMPONENT / "src/platform/display/cyberdeck_ui.cpp").read_text(encoding="utf-8")
 
 
 def function_body(source: str, signature: str) -> str:
@@ -28,6 +30,9 @@ read_metadata = function_body(metadata_source, "void read_metadata(")
 read_metadata_signature = read_metadata[:read_metadata.index("{")]
 scan_entry = function_body(app_source, "void application::scan_entry(")
 scan_sync = function_body(app_source, "bool application::scan_directory_sync(")
+scan_browser_sync = function_body(app_source, "bool application::scan_browser_sync(")
+browser_scan_start = function_body(app_source, "bool application::browser_scan(")
+browser_scan_into = function_body(browser_source, "bool scan_browser_directory_into(")
 walk_start = scan_sync.index("walk = [&](std::string_view directory")
 walk_end = scan_sync.index("\n    };", walk_start)
 walk_body = scan_sync[walk_start:walk_end]
@@ -35,6 +40,11 @@ metadata_struct = re.search(r"struct metadata \{\n(.*?)\n\};", model_header, re.
 
 high_water_mark = scan_entry.find("uxTaskGetStackHighWaterMark(nullptr)")
 telemetry = re.search(r"ESP_LOGI\([^;]*uxTaskGetStackHighWaterMark\(nullptr\)", scan_entry)
+ui_browser_callers = {
+    "status timer": function_body(ui_source, "void process_music_status(lv_timer_t *)"),
+    "browser action": function_body(ui_source, "bool music_view_browser_action(bool play_selected) {"),
+    "view selection callback": function_body(ui_source, "void music_view_action(std::string_view name, void *) {"),
+}
 
 checks = {
     "read_metadata takes the bounded metadata struct, not a track":
@@ -66,12 +76,45 @@ checks = {
         and "*largest = *candidate;" in walk_body,
     "scan task stack budget stays at the approved 6144 bytes":
         '"music_scan", 6144' in app_source,
+    "browser staging uses bounded heap allocation with RAII":
+        "browser_snapshot_allocation_size(k_browser_entry_limit, allocation_size)" in scan_browser_sync
+        and re.search(r"std::unique_ptr\s*<\s*browser_snapshot", scan_browser_sync) is not None
+        and "scan_browser_directory_into(path, *staging, browser_ops_)" in scan_browser_sync,
+    "browser worker avoids stack-local snapshot/model candidates":
+        re.search(r"\bbrowser_snapshot\s+\w+\s*[{;]", scan_browser_sync) is None
+        and re.search(r"\bbrowser_model\s+\w+\s*[{;]", scan_browser_sync) is None,
+    "scan admission validates path without copying full browser model":
+        "valid_browser_directory(directory)" in browser_scan_start
+        and re.search(r"\bbrowser_model\s+candidate\b", browser_scan_start) is None,
+    "private staging scanner and public transactional wrapper stay distinct":
+        "staging" in browser_scan_into and "out = *" not in browser_scan_into
+        and "out = *staging" in browser_source,
     "scan_entry logs the stack high-water mark":
         telemetry is not None and "stack_high_water_mark_bytes=%u" in telemetry.group(0)
         and "stack_bytes=6144" in telemetry.group(0),
     "high-water-mark log follows completion and precedes self-deletion":
         high_water_mark > scan_entry.index("xSemaphoreGive(completed)")
         and high_water_mark < scan_entry.index("vTaskDelete(nullptr)"),
+    "LVGL owns one static BSS browser snapshot and copies it atomically through one helper":
+        re.search(r"cyberdeck_music::browser_snapshot\s+s_music_browser_snapshot\s*;", ui_source) is not None
+        and "return music.get_browser_snapshot(s_music_browser_snapshot);" in ui_source
+        and ui_source.count("get_browser_snapshot(") == 1,
+    "no LVGL callback or timer allocates a browser snapshot on its stack":
+        re.search(r"\bcyberdeck_music::browser_snapshot\s+(?!s_music_browser_snapshot\b)\w+\s*[{;]", ui_source)
+        is None,
+    "timer uses the shared snapshot for initial scan and both render states":
+        "refresh_music_browser_snapshot(music)" in ui_browser_callers["status timer"]
+        and "s_music_browser_snapshot.count == 0" in ui_browser_callers["status timer"]
+        and ui_browser_callers["status timer"].count("render_browser(s_music_browser_snapshot,") == 2,
+    "browser action uses the same atomic snapshot for stale guard, navigation and playback selection":
+        "refresh_music_browser_snapshot(app)" in ui_browser_callers["browser action"]
+        and "browser_directory() != s_music_browser_snapshot.directory.data()" in ui_browser_callers["browser action"]
+        and "s_music_browser_snapshot.entries[index]" in ui_browser_callers["browser action"]
+        and "app.browser_play_selected(index) : app.browser_toggle_selected(index)" in ui_browser_callers["browser action"],
+    "view selection callback refreshes the shared snapshot before selecting":
+        "refresh_music_browser_snapshot(app)" in ui_browser_callers["view selection callback"]
+        and "browser_directory() == s_music_browser_snapshot.directory.data()" in ui_browser_callers["view selection callback"]
+        and "app.browser_select(row - (has_parent ? 1U : 0U))" in ui_browser_callers["view selection callback"],
 }
 
 for description, passed in checks.items():

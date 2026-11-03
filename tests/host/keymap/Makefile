@@ -254,6 +254,7 @@ MUSIC_DURATION_BIN := test_music_duration_bin
 MUSIC_DURATION_OBJS := test_music_duration/test.o test_music_duration/duration.o
 MUSIC_APP_SOURCES := \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
+	../../../components/cyberdeck/src/apps/music/cyberdeck_music_browser.cpp \
 	$(MUSIC_METADATA_SRC) \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp \
@@ -265,6 +266,7 @@ MUSIC_APP_SOURCES := \
 	music_runtime_shim/music_freertos_shim.cpp
 
 MUSIC_APP_HDRS := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_app.h \
+	../../../components/cyberdeck/include/apps/music/cyberdeck_music_browser.h \
 	../../../components/cyberdeck/include/platform/display/cyberdeck_music_command_input.h \
 	../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h \
 	$(MUSIC_METADATA_HDR) \
@@ -2688,6 +2690,13 @@ test-build: $(BINS)
 test_music_model: $(MUSIC_MODEL_BIN)
 	@./$(MUSIC_MODEL_BIN)
 
+.PHONY: test_music_browser
+test_music_browser: test_music_browser_bin
+	@./test_music_browser_bin
+
+test_music_browser_bin: test_music_browser.cpp ../../../components/cyberdeck/src/apps/music/cyberdeck_music_browser.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_browser.h Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $< ../../../components/cyberdeck/src/apps/music/cyberdeck_music_browser.cpp -o $@
+
 $(MUSIC_MODEL_BIN): $(MUSIC_MODEL_TEST) $(MUSIC_MODEL_SRC) $(MUSIC_MODEL_HDR) music_traceability.md Makefile
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(MUSIC_MODEL_TEST) $(MUSIC_MODEL_SRC) -o $@
 
@@ -2780,7 +2789,7 @@ test_music_decoder_stack_contract:
 	@$(PYTHON) test_music_decoder_stack_contract.py
 
 .PHONY: test_music_scan_stack_contract
-test_music_scan_stack_contract: test_music_scan_stack_contract.py $(MUSIC_METADATA_SRC) $(MUSIC_METADATA_HDR) $(MUSIC_APP_MAIN_SRC) $(MUSIC_MODEL_HDR)
+test_music_scan_stack_contract: test_music_scan_stack_contract.py $(MUSIC_METADATA_SRC) $(MUSIC_METADATA_HDR) $(MUSIC_APP_MAIN_SRC) $(MUSIC_MODEL_HDR) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	@$(PYTHON) test_music_scan_stack_contract.py
 
 .PHONY: test_music_player_teardown_contract
@@ -3100,6 +3109,7 @@ test_display_memory_contract: test_display_memory_contract.py ../../../component
 
 clean:
 	rm -rf test_music_app test_music_duration
+	rm -f test_music_browser_bin
 	rm -rf test_music_codec_i2s_vendor
 	rm -f $(MUSIC_CODEC_I2S_BIN)
 	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff

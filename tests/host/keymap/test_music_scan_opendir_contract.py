@@ -31,6 +31,9 @@ music_create_failure = music_status[music_create_failure_start:music_create_fail
 action_start = ui_source.index("bool music_manager_action(", ui_source.index("bool music_manager_action(") + 1)
 action_end = ui_source.index("\nbool music_manager_close", action_start)
 action_adapter = ui_source[action_start:action_end]
+browser_action_start = ui_source.index("bool music_view_browser_action(bool play_selected) {")
+browser_action_end = ui_source.index("\nbool music_manager_close", browser_action_start)
+browser_action = ui_source[browser_action_start:browser_action_end]
 view_action_start = ui_source.index("void music_view_action(", ui_source.index("void music_view_action(") + 1)
 view_action_end = ui_source.index("\nvoid render_terminal", view_action_start)
 view_action = ui_source[view_action_start:view_action_end]
@@ -60,8 +63,11 @@ checks = {
     "music without arguments opens the existing music app UI while status stays explicit":
         'if (args.empty())' in music_source and 'scan_directory("/musica")' in music_source and
         'if (args == "status")' in music_source,
-    "player alias opens the same surface with an empty command":
-        '"player",' in music_source and '"music", "player"' in music_source,
+    "music command without arguments opens the player surface; other commands fail closed":
+        'if (command != "music")' in music_source and
+        'if (args.empty())' in music_source and
+        'scan_directory("/musica")' in music_source and
+        'player_requested_.store(true, std::memory_order_release)' in music_source,
     "player scan enforces depth and reports bounded queue truncation":
         "depth > 8" in music_source and "k_max_tracks" in music_source and
         'queue: truncated at 64 tracks' in music_source,
@@ -125,7 +131,11 @@ checks = {
         'lv_obj_set_clickable(track, true)' in view_source and 'LV_EVENT_CLICKED' in view_source and
         '"prev", "toggle", "next", "seek_back", "seek_forward", "volume_down", "volume_up", "command_open", "play_selected"' in view_source and
         's_music_manager.handle(cyberdeck_music_manager::key::right)' in view_action and
-        's_music_view.move_selection(1)' in action_adapter and 'lv_obj_scroll_to_view' in view_source and
+        's_music_view.move_browser_selection(1)' in action_adapter and 'lv_obj_scroll_to_view' in view_source and
+        'refresh_music_browser_snapshot(music)' in music_status and
+        'render_browser(s_music_browser_snapshot, music.browser_scan_active())' in music_status and
+        'browser_toggle_selected(index)' in ui_source and 'browser_play_selected(index)' in ui_source and
+        'browser_directory() != s_music_browser_snapshot.directory.data()' in ui_source and
         "length == 1 && (text[0] == '+' || text[0] == '-')" in physical_handler and
         "text[0] == '+' ? cyberdeck_music_manager::key::volume_up" in physical_handler and
         "inserted[0] == '+' ? cyberdeck_music_manager::key::volume_up" in virtual_insert_handler and
@@ -143,6 +153,15 @@ checks = {
     "seek slider ratio is converted from permille to milliseconds then command seconds":
         'progress_value()) / 1000U' in view_action and
         'std::to_string(position_ms / 1000U)' in view_action,
+    "browser action rejects stale snapshots, offsets synthetic parent, navigates folders, and dispatches MP3 paths":
+        'refresh_music_browser_snapshot(app)' in browser_action and
+        's_music_view.browser_directory() != s_music_browser_snapshot.directory.data()' in browser_action and
+        'row - (parent_visible ? 1U : 0U)' in browser_action and
+        'if (parent_visible && row == 0)' in browser_action and
+        'return app.browser_scan(parent);' in browser_action and
+        'entry.type == cyberdeck_music::browser_entry_type::directory' in browser_action and
+        'return app.browser_scan(child);' in browser_action and
+        'app.browser_play_selected(index) : app.browser_toggle_selected(index)' in browser_action,
     "manager input and its bounded controls have an executable host target":
         "enum class key" in manager_header and "test_music_manager" in (ROOT / "tests/host/keymap/Makefile").read_text(encoding="utf-8"),
 }
