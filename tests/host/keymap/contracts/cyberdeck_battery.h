@@ -6,8 +6,10 @@
  * header and link without ESP-IDF, FreeRTOS, I2C, LVGL, or hardware.
  *
  * REQ-BAT-001: the percentage input is the measured bus voltage in mV, not a
- * fabricated capacity in mAh.  The approved validation window is 6000..8230
- * mV (0..100%), with saturation on both sides.
+ * fabricated capacity in mAh.  The approved validation window is 6000..8100
+ * mV (0..100%), with saturation on both sides.  The ceiling is the resting
+ * voltage measured after the charger cut, not a fully charged pack, so 100 %
+ * means "maximum charge of this policy".
  * REQ-BAT-002: presence and read validity are separate.  A missing battery is
  * absent, a present battery with a failed/invalid read is unavailable, and a
  * valid present sample is charging, discharging, or neutral.  A zero or
@@ -25,7 +27,10 @@
 namespace cyberdeck_battery {
 
 inline constexpr std::int32_t empty_bus_voltage_mv = 6000;
-inline constexpr std::int32_t full_bus_voltage_mv = 8230;
+/* Resting voltage measured after the charger cut, not a fully charged pack:
+ * 100 % is the maximum charge of this policy.  The 2100 mV window gives 21 mV
+ * per point and the calculation truncates. */
+inline constexpr std::int32_t full_bus_voltage_mv = 8100;
 
 /* Equivalent series resistance used to convert a terminal measurement into the
  * open-circuit voltage that anchors the state-of-charge estimate. */
@@ -69,7 +74,7 @@ charge_class classify_current_ma(std::int32_t current_ma);
 std::int32_t current_ma_from_raw(std::int32_t raw);
 
 /* Terminal bus voltage compensated to open-circuit voltage with the approved
- * equivalent series resistance, saturated to 6000..8230 mV.  The compensation
+ * equivalent series resistance, saturated to 6000..8100 mV.  The compensation
  * is only applied with |current| <= 500 mA. */
 std::int32_t ocv_from_terminal_mv(std::int32_t bus_voltage_mv, std::int32_t current_ma);
 

@@ -35,6 +35,10 @@ TRACEABILITY = (
     "TEST-SOC-01..18/26 -> test_battery_soc.cpp",
     "TEST-SOC-19..26 -> test_battery_protection.cpp",
     "TEST-SOC-36 -> test_battery_protection.cpp (classify before estimate)",
+    "TEST-SOC-37 -> test_battery_soc.cpp (recorded anchors reach and hold the plateau)",
+    "TEST-SOC-38 -> test_battery_soc.cpp (stimulus straddles the 94/95 bin edge)",
+    "TEST-SOC-39 -> test_battery_soc.cpp (ten plateau minutes move at most one point)",
+    "TEST-SOC-40 -> test_battery_soc.cpp (top-bin headroom is half a point, not frozen)",
     "TEST-SOC-29/30 -> test_battery_contract.cpp + test_battery_reader_contract.py",
     "TEST-SOC-31 -> test_battery_reader_contract.py",
     "TEST-SOC-32/34 -> test_battery_protection_contract.py",
@@ -144,8 +148,8 @@ def check_module_is_pure(source: str, header: str) -> None:
             "update_anchor must write the centre of the target bin")
     require("percentage_from_bus_voltage_mv" in source,
             "the estimator must reuse percentage_from_bus_voltage_mv")
-    require(re.search(r"\b6000\b|\b8230\b", source) is None,
-            "the estimator must not duplicate the 6000..8230 mV window")
+    require(re.search(r"\b6000\b|\b8100\b", source) is None,
+            "the estimator must not duplicate the 6000..8100 mV window")
 
     require(re.search(r"equivalent_series_mohm\s*=\s*330\b", header_of_status()) is not None,
             "the pure battery module must declare the 330 mOhm series resistance")

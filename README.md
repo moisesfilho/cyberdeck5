@@ -57,9 +57,12 @@ I2C in the UI. Its percentage is an estimated state of charge: coulomb counting
 anchored on the open-circuit voltage (I×R compensation with the measured
 330 mOhm series resistance at the seed and at the re-anchor), integrated with
 the sample interval, clamped to 0..100 and corrected by at most one point per
-sample. The approved 6000..8230 mV window maps that open-circuit voltage to
+sample. The approved 6000..8100 mV window maps that open-circuit voltage to
 0..100 % and, together with the five votes, detects an absent pack; it is not a
-direct reading of the terminal voltage. Positive current is
+direct reading of the terminal voltage. Its ceiling is the resting voltage
+measured after the charger cut at 8200 mV, not a fully charged pack, so 100 %
+means the maximum charge of this policy (about five points optimistic in the
+middle of the curve). Positive current is
 discharging, negative current is charging, and zero or indeterminate current
 is neutral. The neutral state keeps the numeric percentage visible without a
 state glyph or state text. One semantic icon marks charging or discharging,

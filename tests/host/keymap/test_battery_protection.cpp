@@ -66,13 +66,13 @@ void feed(state &value, const observation &input, int count)
 }
 
 /* Puts the policy into the latched state through the approved charging sample:
- * charging at exactly 8200 mV seeds 94 % from the 8118 mV open-circuit
- * voltage and cuts the charger. */
+ * charging at exactly 8200 mV seeds the policy plateau (100 %) from the
+ * 8118 mV open-circuit voltage and cuts the charger. */
 void engage_latch(state &value)
 {
     const auto cut = value.observe(sample(true, true, true, 8200, -251, 0));
     CHECK_EQ(cut.state, battery_state::charging);
-    CHECK_EQ(cut.percentage, 94);
+    CHECK_EQ(cut.percentage, 100);
     CHECK(value.protection_active());
     CHECK(!value.charger_enabled());
 }
@@ -86,7 +86,7 @@ void test_constants_and_active_low_chg_stat()
     CHECK_EQ(state_vote_count, 5);
     CHECK_EQ(no_source_vote_count, 5);
     CHECK_EQ(protection_enter_voltage_mv, 8200);
-    CHECK_EQ(protection_exit_percentage, 85);
+    CHECK_EQ(protection_exit_percentage, 90);
     CHECK(default_protection_enabled);
 
     CHECK(decode_chg_stat(true, true) == charge_signal::charging);
@@ -313,7 +313,9 @@ void test_protection_entry_by_terminal_voltage()
 }
 
 /* TEST-SOC-21: the latch holds through 300 samples of a resting pack (external
- * after five votes) with no new charger transition. */
+ * after five votes) with no new charger transition.  The single rest anchor
+ * writes the centre of the top bin, so the plateau holds 100 even with the
+ * +3 mA integration; the latch must not move. */
 void test_latch_holds_without_new_transitions()
 {
     state value;
@@ -333,7 +335,7 @@ void test_latch_holds_without_new_transitions()
     CHECK(stayed_active);
     CHECK_EQ(transitions, 0);
     CHECK(!value.charger_enabled());
-    CHECK_EQ(value.snapshot().percentage, 94);
+    CHECK_EQ(value.snapshot().percentage, 100);
     CHECK(value.snapshot().state == battery_state::external);
 }
 
@@ -359,30 +361,32 @@ void test_latch_ignores_non_charging_states()
 }
 
 /* TEST-SOC-23: the estimated state of charge releases the latch on the first
- * sample at <= 85 %, without votes, as soon as the pack is no longer charging. */
+ * sample at <= 90 %, without votes, as soon as the pack is no longer charging. */
 void test_latch_releases_by_state_of_charge()
 {
     state value;
     engage_latch(value);
 
-    /* Four discharging samples followed by one charging sample keep the
-     * no-source counter below its five consecutive votes. */
-    for (int i = 0; i < 9; ++i) {
+    /* Two rounds of four discharging samples followed by one charging sample
+     * keep the no-source counter below its five consecutive votes.  The last
+     * sample still classifies as charging, so the estimate stops one point above
+     * the release threshold. */
+    for (int i = 0; i < 10; ++i) {
         const bool charging = (i % 5) == 4;
         const auto held = value.observe(sample(true, true, charging, 7800, 1000, 60000));
         CHECK(value.protection_active());
         CHECK(!value.charger_enabled());
-        if (i == 8) CHECK_EQ(held.percentage, 86);
+        if (i == 9) CHECK_EQ(held.percentage, 91);
     }
     CHECK(value.snapshot().percentage >
           cyberdeck_battery_protection::protection_exit_percentage);
-    CHECK_EQ(value.snapshot().state, battery_state::battery);
+    CHECK_EQ(value.snapshot().state, battery_state::charging);
 
-    /* The release sample discharges to 85 %; because it also completes the
-     * no-source count, the state-of-charge path itself is isolated by
-     * test_state_of_charge_release_requires_non_charging below. */
+    /* The release sample discharges to exactly 90 %; because it also completes
+     * only the first no-source vote, the state-of-charge path itself is isolated
+     * by test_state_of_charge_release_requires_non_charging below. */
     const auto released = value.observe(sample(true, true, false, 7900, 1000, 60000));
-    CHECK_EQ(released.percentage, 85);
+    CHECK_EQ(released.percentage, 90);
     CHECK_EQ(released.state, battery_state::battery);
     CHECK(!value.protection_active());
     CHECK(value.charger_enabled());
@@ -390,17 +394,17 @@ void test_latch_releases_by_state_of_charge()
 
 /* R-reentry: a state-of-charge release must never fire while the pack still
  * classifies as charging, otherwise the next 8200 mV sample would cut again and
- * recreate the cycle this policy removes. */
+ * recreate the cycle this policy removes.  The estimate reaches the release
+ * threshold exactly (90 %) while the pack still reports charging. */
 void test_state_of_charge_release_requires_non_charging()
 {
     state value;
     engage_latch(value);
 
-    for (int i = 0; i < 10; ++i) {
-        const bool charging = (i % 5) == 4;
-        const auto held = value.observe(sample(true, true, charging, 7800, 1000, 60000));
-        if (i == 9) {
-            CHECK_EQ(held.percentage, 85);
+    for (int i = 0; i < 12; ++i) {
+        const auto held = value.observe(sample(true, true, true, 7800, 1000, 60000));
+        if (i == 11) {
+            CHECK_EQ(held.percentage, 90);
             CHECK_EQ(held.state, battery_state::charging);
         }
         CHECK(value.protection_active());
@@ -516,7 +520,10 @@ void test_disable_releases_immediately()
 }
 
 /* TEST-SOC-26 (protection half): the measured replay cuts zero times at
- * 8191 mV and exactly once at 8201 mV, keeping the latch stable afterwards. */
+ * 8191 mV and exactly once at 8201 mV, keeping the latch stable afterwards.
+ * Both phases stay on the policy plateau: charging leaves the accumulator at the
+ * top-bin centre (100.5 %), so the 3 mA rest drains only 16 units and the display
+ * holds 100. */
 void test_measured_replay_cuts_once()
 {
     state resting;
@@ -537,7 +544,7 @@ void test_measured_replay_cuts_once()
         }
     }
     CHECK_EQ(transitions, 0);
-    CHECK_EQ(resting.snapshot().percentage, 94);
+    CHECK_EQ(resting.snapshot().percentage, 100);
 
     state cutting;
     transitions = 0;
@@ -559,7 +566,7 @@ void test_measured_replay_cuts_once()
     CHECK_EQ(transitions, 1);
     CHECK(cutting.protection_active());
     CHECK(!cutting.charger_enabled());
-    CHECK_EQ(cutting.snapshot().percentage, 95);
+    CHECK_EQ(cutting.snapshot().percentage, 100);
 }
 
 /* TEST-SOC-17 (extension): the reset of an absent pack publishes no percentage
@@ -571,7 +578,7 @@ void test_absence_reset_cannot_release_through_an_unseeded_estimate()
     engage_latch(value);
     CHECK(value.protection_active());
     CHECK(!value.charger_enabled());
-    CHECK_EQ(value.snapshot().percentage, 94);
+    CHECK_EQ(value.snapshot().percentage, 100);
 
     /* A removed pack floats near 1.9 V and needs five votes before the state
      * becomes absent; meanwhile the previous `charging` state is retained. */
@@ -607,27 +614,27 @@ void test_absence_reset_cannot_release_through_an_unseeded_estimate()
 void test_classification_precedes_the_state_of_charge()
 {
     state value;
-    CHECK_EQ(value.observe(sample(true, true, false, 7115, 0, 0)).percentage, 50);
+    CHECK_EQ(value.observe(sample(true, true, false, 7050, 0, 0)).percentage, 50);
     feed(value, sample(true, true, false, 7900, 250, 1000), 2880);
     CHECK_EQ(value.snapshot().percentage, 40);
 
     /* 59000 ms of at-rest samples: one sample short of the re-anchor window. */
-    feed(value, sample(true, true, false, 7115, 0, 1000), 59);
+    feed(value, sample(true, true, false, 7050, 0, 1000), 59);
     CHECK_EQ(value.snapshot().percentage, 40);
 
     /* This sample both completes the window and reports charging. */
-    const auto charging = value.observe(sample(true, true, true, 7115, 0, 1000));
+    const auto charging = value.observe(sample(true, true, true, 7050, 0, 1000));
     CHECK_EQ(charging.state, battery_state::charging);
     CHECK_EQ(charging.percentage, 40);
 
     /* The quiet window restarted here: 59 further at-rest samples still cannot
      * re-anchor, the 60th only starts the confirmation, and the third confirmed
      * sample moves exactly one point. */
-    feed(value, sample(true, true, false, 7115, 0, 1000), 59);
+    feed(value, sample(true, true, false, 7050, 0, 1000), 59);
     CHECK_EQ(value.snapshot().percentage, 40);
-    CHECK_EQ(value.observe(sample(true, true, false, 7115, 0, 1000)).percentage, 40);
-    CHECK_EQ(value.observe(sample(true, true, false, 7115, 0, 1000)).percentage, 40);
-    const auto reanchored = value.observe(sample(true, true, false, 7115, 0, 1000));
+    CHECK_EQ(value.observe(sample(true, true, false, 7050, 0, 1000)).percentage, 40);
+    CHECK_EQ(value.observe(sample(true, true, false, 7050, 0, 1000)).percentage, 40);
+    const auto reanchored = value.observe(sample(true, true, false, 7050, 0, 1000));
     CHECK_EQ(reanchored.percentage, 41);
 }
 
@@ -703,7 +710,7 @@ void test_valid_ina_with_invalid_chg_stat_does_not_freeze_snapshot()
     CHECK(baseline.available);
     CHECK(baseline.state == battery_state::charging);
     CHECK(baseline.charge == charge_signal::charging);
-    CHECK_EQ(baseline.percentage, 89);
+    CHECK_EQ(baseline.percentage, 94);
 
     /* CHG_STAT unreadable, INA226 valid: voltage, current, percentage,
      * availability and the derived state all advance. */
@@ -744,7 +751,7 @@ void test_valid_ina_with_invalid_chg_stat_does_not_freeze_snapshot()
     const auto recovered = value.observe(sample(true, true, true, 8000, -30, 0));
     CHECK(recovered.charge == charge_signal::charging);
     CHECK(recovered.state == battery_state::charging);
-    CHECK_EQ(recovered.percentage, 89);
+    CHECK_EQ(recovered.percentage, 94);
 }
 
 void test_absent_precedence_over_stuck_low_chg_stat()

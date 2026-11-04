@@ -32,7 +32,7 @@ inline constexpr std::int32_t absent_voltage_mv = 8330;
 inline constexpr std::uint8_t state_vote_count = 5;
 inline constexpr std::uint8_t no_source_vote_count = 5;
 inline constexpr std::int32_t protection_enter_voltage_mv = 8200;
-inline constexpr std::int32_t protection_exit_percentage = 85;
+inline constexpr std::int32_t protection_exit_percentage = 90;
 inline constexpr bool default_protection_enabled = true;
 
 enum class battery_state {

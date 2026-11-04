@@ -1,7 +1,7 @@
 /*
  * RED host contract for the pure battery voltage/state seam.
  *
- * REQ-BAT-001 -> percentage_from_bus_voltage_mv, explicit 6000..8230 mV
+ * REQ-BAT-001 -> percentage_from_bus_voltage_mv, explicit 6000..8100 mV
  *                  window, and saturation.
  * REQ-BAT-002 -> absent/unavailable/discharging/charging/neutral states;
  *                  zero or indeterminate current is neutral, never absent.
@@ -43,12 +43,20 @@ int checks = 0;
 void test_approved_bus_voltage_window()
 {
     CHECK_EQ(cyberdeck_battery::empty_bus_voltage_mv, 6000);
-    CHECK_EQ(cyberdeck_battery::full_bus_voltage_mv, 8230);
+    CHECK_EQ(cyberdeck_battery::full_bus_voltage_mv, 8100);
     CHECK_EQ(cyberdeck_battery::equivalent_series_mohm, 330);
     CHECK_EQ(cyberdeck_battery::current_lsb_microamp, 300);
 
     CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(6000), 0);
-    CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(7115), 50);
+    /* The 2100 mV window splits at exactly 7050 mV. */
+    CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(7050), 50);
+    CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(8099), 99);
+    CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(8100), 100);
+    /* The recorded post-cut resting anchors (8106 / 8116 mV) publish the
+     * plateau: 100 % is reachable and means the maximum of this policy. */
+    CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(8106), 100);
+    CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(8116), 100);
+    /* The former ceiling is still saturated: the policy plateau reads 100. */
     CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(8230), 100);
 }
 
@@ -85,13 +93,15 @@ void test_current_scale_from_raw()
  * window and only inside the +/-500 mA trust band. */
 void test_open_circuit_voltage_compensation()
 {
-    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -251), 8109);
-    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8108, 3), 8108);
-    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -500), 8026);
-    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -501), 8191);
-    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, 500), 8230);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8000, -251), 7918);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8000, 3), 8000);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8000, -500), 7835);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8000, -501), 8000);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8000, 500), 8100);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -251), 8100);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, 500), 8100);
     CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(5000, 0), 6000);
-    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(9000, 0), 8230);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(9000, 0), 8100);
 }
 
 void test_current_sign_classification()
@@ -120,7 +130,7 @@ void test_current_sign_classification()
 void test_absence_and_read_failure_are_distinct_unavailable_states()
 {
     const auto absent = cyberdeck_battery::classify_sample(
-        {false, true, 7115, 1});
+        {false, true, 7050, 1});
     CHECK(!absent.available);
     CHECK(absent.charge == cyberdeck_battery::charge_class::absent);
 
@@ -138,13 +148,13 @@ void test_absence_and_read_failure_are_distinct_unavailable_states()
 void test_available_snapshot_combines_voltage_percentage_and_direction()
 {
     const auto discharging = cyberdeck_battery::classify_sample(
-        {true, true, 7115, 1});
+        {true, true, 7050, 1});
     CHECK(discharging.available);
     CHECK_EQ(discharging.percentage, 50);
     CHECK(discharging.charge == cyberdeck_battery::charge_class::discharging);
 
     const auto charging = cyberdeck_battery::classify_sample(
-        {true, true, 8230, -1});
+        {true, true, 8100, -1});
     CHECK(charging.available);
     CHECK_EQ(charging.percentage, 100);
     CHECK(charging.charge == cyberdeck_battery::charge_class::charging);

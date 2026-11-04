@@ -15,7 +15,13 @@ constexpr std::int64_t percentage_unit_scale = 10000;
  * (3.6 * capacity), kept as integer math derived from the approved capacity. */
 constexpr std::int64_t integration_divisor = 36LL * pack_capacity_mah / 10;
 
-constexpr std::int64_t max_accumulator = 100 * percentage_unit_scale;
+/* Display ceiling of the accumulator.  Every bin is written at its centre
+ * (target + 0.5 %), so the top bin needs the same half-point headroom: with a
+ * hard 100.0 % clamp the first integration unit would drop the top bin to
+ * 99.9996 % and truncate the display to 99 right after the anchor.  The
+ * published value is still limited to 100 by clamp_percentage(). */
+constexpr std::int64_t max_accumulator =
+    100 * percentage_unit_scale + percentage_unit_scale / 2;
 
 std::int32_t clamp_percentage(const std::int64_t accumulator)
 {

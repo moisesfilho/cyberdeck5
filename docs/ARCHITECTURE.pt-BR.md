@@ -109,7 +109,7 @@ existente sem migrar cada responsabilidade e preservar seus contratos.
 ## Bateria
 
 `battery_status.cpp` concentra a lógica pura: recebe a tensão medida do
-barramento em `bus_voltage_mv` e satura a faixa aprovada `6000..8230` mV em
+barramento em `bus_voltage_mv` e satura a faixa aprovada `6000..8100` mV em
 `0..100`. Corrente positiva é descarregando, negativa é carregando e corrente
 zero ou indeterminada é neutral. No estado neutral, a UI conserva somente o
 percentual numérico, sem glyph ou texto de estado. Ausência é produzida apenas
@@ -133,7 +133,11 @@ FreeRTOS, I2C, NVS, LVGL ou BSP). Ele mantém um contador de coulomb em unidades
 de 1e-4 % com o resto da divisão transportado entre observações, ancorado na
 tensão de circuito aberto (`ocv_from_terminal_mv`: tensão terminal compensada
 pela resistência série medida de 330 mOhm, confiável até +/-500 mA e saturada em
-`6000..8230` mV). A capacidade aprovada é `pack_capacity_mah = 2000`.
+`6000..8100` mV). O teto da janela é a tensão de repouso medida depois do corte
+em 8200 mV (âncoras registradas em 8106 e 8116 mV), não um pack pleno: `100 %`
+significa a carga máxima desta política, cerca de 5 pontos otimista no meio da
+curva; a janela de 2100 mV dá 21 mV por ponto e o cálculo trunca. A capacidade
+aprovada é `pack_capacity_mah = 2000`.
 `elapsed_ms == 0` é uma reobservação neutra (por exemplo o segundo timer de
 1 Hz ou uma consulta de status sob demanda): nada é integrado, a janela de
 quietude não é estendida nem zerada e não há reancoragem. Intervalos acima de
@@ -166,12 +170,15 @@ com threshold de corrente ±15 mA, `external` >= 7900 mV e `absent` >= 8330 mV
 exigindo 5 votos consecutivos. O corte atua quando o estado é `charging` e a
 **tensão terminal** atinge >= 8200 mV; o percentual estimado não participa mais
 da entrada. Uma vez ativo, o latch permanece engajado até (a) o SoC estimado
-ficar <= 85 na primeira amostra, sem votos e fora de `charging`, (b) cinco
+ficar <= 90 na primeira amostra, sem votos e fora de `charging`, (b) cinco
 amostras consecutivas com o estado confirmado `battery`/`absent` (sem fonte
 externa), ou (c) a opção ser desligada. A única opção persistida no NVS é
 `protection_enabled` (default `true`); desabilitá-la religa o carregador
-imediatamente e exige reativação explícita. Falhas de leitura não desligam
-`CHG_EN` nem perdem o último estado seguro.
+imediatamente e exige reativação explícita. O release por SoC acompanha a
+escala de percentual: 90 % da janela de 2100 mV cai em ~7890 mV, preservando a
+banda física de ~210 mV do release anterior de 85 % em `6000..8230` mV
+(7895 mV). O que importa é a banda física; o número exibido muda com a escala.
+Falhas de leitura não desligam `CHG_EN` nem perdem o último estado seguro.
 
 Duas regras de precedência tornam essa política segura para uma bateria
 removível. Primeiro, somente uma leitura INA226 **inválida** preserva o snapshot

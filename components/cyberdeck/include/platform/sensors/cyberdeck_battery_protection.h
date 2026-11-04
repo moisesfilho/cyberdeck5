@@ -18,7 +18,12 @@ inline constexpr std::uint8_t state_vote_count = 5;
  * the charger latch. */
 inline constexpr std::uint8_t no_source_vote_count = 5;
 inline constexpr std::int32_t protection_enter_voltage_mv = 8200;
-inline constexpr std::int32_t protection_exit_percentage = 85;
+/* Latch release threshold on the estimated state of charge.  It follows the
+ * approved percentage scale: 90 % of the 2100 mV window is ~7890 mV, which
+ * preserves the ~210 mV release band of the previous policy (85 % of
+ * 6000..8230 mV = 7895 mV).  The physical band is what matters; this value
+ * tracks the scale whenever the scale changes. */
+inline constexpr std::int32_t protection_exit_percentage = 90;
 inline constexpr bool default_protection_enabled = true;
 
 enum class battery_state {

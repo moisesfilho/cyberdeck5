@@ -6,7 +6,7 @@ on the host.  This test inspects the real source/header seam and fixes the
 approved integration invariants without faking I2C, a simulator, or hardware.
 
 Traceability:
-  REQ-BAT-001 -> measured bus voltage, explicit 6000..8230 mV API, and no
+  REQ-BAT-001 -> measured bus voltage, explicit 6000..8100 mV API, and no
                   capacity_mah input.
   REQ-BAT-002 -> presence/read failure/state handoff without fabricated data.
   REQ-BAT-004 -> startup remains non-fatal and no charger-control seam exists.
@@ -127,8 +127,8 @@ def main() -> int:
             "percentage_from_bus_voltage_mv" in battery_source,
             "battery API must expose percentage_from_bus_voltage_mv")
     require(re.search(r"\b6000\b", battery_status) is not None and
-            re.search(r"\b8230\b", battery_status) is not None,
-            "battery API must use the approved 6000..8230 mV validation window")
+            re.search(r"\b8100\b", battery_status) is not None,
+            "battery API must use the approved 6000..8100 mV validation window")
     require(re.search(r"\b8400\b", battery_api) is None,
             "battery production seam must not retain the old 8400 mV limit")
     require(re.search(r"struct\s+sample\b[\s\S]*?bus_voltage_mv", battery_status) is not None,

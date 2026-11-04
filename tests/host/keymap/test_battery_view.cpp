@@ -491,9 +491,9 @@ void test_valid_ina_with_invalid_chg_stat_keeps_indicator_visible()
                     "published as not_charging\n", __FILE__, __LINE__);
     }
     /* The percentage is the coulomb-counted estimate seeded from 8000 mV
-     * (89 %, one unit integrated in 62 ms -> 88 %), never the terminal
+     * (94 %, one unit integrated in 62 ms -> 93 %), never the terminal
      * voltage of this sample. */
-    CHECK_EQ(after.percentage, 88);
+    CHECK_EQ(after.percentage, 93);
     CHECK_EQ(after.bus_voltage_mv, 7400);
     CHECK_EQ(after.current_ma, 120);
     CHECK(after.state == battery_state::battery);
@@ -508,7 +508,7 @@ void test_valid_ina_with_invalid_chg_stat_keeps_indicator_visible()
     const view::presentation shown = view::resolve(view::from_snapshot(after));
     CHECK(shown.visible);
     CHECK(shown.show_percentage);
-    CHECK_EQ(shown.percentage, 88);
+    CHECK_EQ(shown.percentage, 93);
     CHECK_GLYPH(shown.glyph, power_glyph::battery);
 
     /* An invalid INA read preserves the policy values for protection, but marks
@@ -516,9 +516,9 @@ void test_valid_ina_with_invalid_chg_stat_keeps_indicator_visible()
     const snapshot after_ina_failure =
         value.observe(sample(false, false, false, 0, 0, 0));
     CHECK(after_ina_failure.state == after.state);
-    CHECK_EQ(after_ina_failure.percentage, 88);
+    CHECK_EQ(after_ina_failure.percentage, 93);
     CHECK(!after_ina_failure.available);
-    CHECK_EQ(value.last_safe_snapshot().percentage, 88);
+    CHECK_EQ(value.last_safe_snapshot().percentage, 93);
     CHECK_EQ(value.last_safe_snapshot().bus_voltage_mv, 7400);
     const view::presentation hidden_after_failure =
         view::resolve(view::from_snapshot(after_ina_failure));
@@ -615,11 +615,11 @@ void test_icon_tracks_current_and_preserves_other_projections()
         CHECK(value.charge == charge_signal::charging);
         CHECK_EQ(value.current_ma, current);
         CHECK_EQ(value.bus_voltage_mv, 7500);
-        CHECK_EQ(value.percentage, 67);
+        CHECK_EQ(value.percentage, 71);
         const auto shown = view::resolve(view::from_snapshot(value));
         CHECK(shown.visible);
         CHECK(shown.show_percentage);
-        CHECK_EQ(shown.percentage, 67);
+        CHECK_EQ(shown.percentage, 71);
         CHECK_GLYPH(shown.glyph, power_glyph::battery);
         CHECK(value.protection_enabled);
         CHECK(!value.protection_active);
@@ -640,7 +640,7 @@ void test_icon_tracks_current_and_preserves_other_projections()
     const auto discharged_view = view::resolve(view::from_snapshot(discharged));
     CHECK(discharged_view.visible);
     CHECK(discharged_view.show_percentage);
-    CHECK_EQ(discharged_view.percentage, 66);
+    CHECK_EQ(discharged_view.percentage, 71);
     CHECK_GLYPH(discharged_view.glyph, power_glyph::battery);
     CHECK(discharged.charger_enabled == prior_charge.charger_enabled);
     CHECK(discharged.protection_active == prior_charge.protection_active);
@@ -673,11 +673,11 @@ void test_icon_tracks_current_and_preserves_other_projections()
         CHECK(value.charge == (chg_valid ? charge_signal::not_charging
                                          : charge_signal::unknown));
         CHECK_EQ(value.current_ma, -16);
-        CHECK_EQ(value.percentage, 67);
+        CHECK_EQ(value.percentage, 71);
         const auto shown = view::resolve(view::from_snapshot(value));
         CHECK(shown.visible);
         CHECK(shown.show_percentage);
-        CHECK_EQ(shown.percentage, 67);
+        CHECK_EQ(shown.percentage, 71);
         CHECK_GLYPH(shown.glyph, power_glyph::charging);
     }
 
@@ -709,7 +709,7 @@ void test_icon_tracks_current_and_preserves_other_projections()
     const auto external_view = view::resolve(view::from_snapshot(external));
     CHECK(external_view.visible);
     CHECK(external_view.show_percentage);
-    CHECK_EQ(external_view.percentage, 85);
+    CHECK_EQ(external_view.percentage, 90);
     CHECK_GLYPH(external_view.glyph, power_glyph::battery);
 
     /* TEST-05: INA failure hides presentation without changing safe policy
@@ -741,11 +741,11 @@ void test_icon_tracks_current_and_preserves_other_projections()
     CHECK(invalid_pin.charge == charge_signal::unknown);
     CHECK_EQ(invalid_pin.current_ma, 25);
     CHECK_EQ(invalid_pin.bus_voltage_mv, 7500);
-    CHECK_EQ(invalid_pin.percentage, 67);
+    CHECK_EQ(invalid_pin.percentage, 71);
     const auto invalid_pin_view = view::resolve(view::from_snapshot(invalid_pin));
     CHECK(invalid_pin_view.visible);
     CHECK(invalid_pin_view.show_percentage);
-    CHECK_EQ(invalid_pin_view.percentage, 67);
+    CHECK_EQ(invalid_pin_view.percentage, 71);
     CHECK_GLYPH(invalid_pin_view.glyph, power_glyph::battery);
 
     /* TEST-06: policy state/signal/current cross-product. Policy classification
@@ -765,9 +765,9 @@ void test_icon_tracks_current_and_preserves_other_projections()
             CHECK(value.charge == signal);
             CHECK(value.available);
             CHECK_EQ(value.current_ma, current);
-            /* Seeded from 7500 mV: 66 % with -25 mA of charging current
-             * (compensated open-circuit voltage), 67 % otherwise. */
-            const std::int32_t expected_percentage = current < -15 ? 66 : 67;
+            /* Seeded from 7500 mV: 71 % with either polarity, because the
+             * +/-8 mV compensation stays inside the same 21 mV bin. */
+            const std::int32_t expected_percentage = 71;
             CHECK_EQ(value.percentage, expected_percentage);
             const auto shown = view::resolve(view::from_snapshot(value));
             CHECK(shown.visible);

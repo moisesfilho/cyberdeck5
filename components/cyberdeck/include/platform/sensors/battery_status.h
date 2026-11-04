@@ -4,8 +4,13 @@
 
 namespace cyberdeck_battery {
 
+/* Approved validation window, 6000..8100 mV.  The ceiling is the resting
+ * terminal voltage measured after the charger cut at 8200 mV (recorded anchors:
+ * 8106 and 8116 mV), not a fully charged pack, so 100 % means "maximum charge of
+ * this policy".  The window is 2100 mV wide: one point is 21 mV and
+ * percentage_from_bus_voltage_mv truncates. */
 inline constexpr std::int32_t empty_bus_voltage_mv = 6000;
-inline constexpr std::int32_t full_bus_voltage_mv = 8230;
+inline constexpr std::int32_t full_bus_voltage_mv = 8100;
 
 /* Equivalent series resistance of the pack plus wiring, measured on the
  * device (~330 mOhm).  It converts a terminal measurement into the open-circuit

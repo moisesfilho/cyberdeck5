@@ -19,8 +19,8 @@ Pre-condicoes:
 python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 sys.info
 ```
 
-Esperado: `fw_version` desta entrega (1.3.0), heap estavel, sem panic/reboot.
-Registrar uptime inicial.
+Esperado: `fw_version` igual a versao gravada (hoje `1.5.0`), heap estavel, sem
+panic/reboot. Registrar uptime inicial.
 
 ## 2. Escala de corrente (300 uA/LSB)
 
@@ -37,7 +37,7 @@ Esperado:
 - formato da linha inalterado (`state=`, `charge=`, `available=`, `voltage_mv=`,
   `current_ma=`, `percentage=`, `protection=`, `charger=`).
 
-## 3. SoC sem oscilacao 94 <-> 98
+## 3. SoC estavel no plato (variacao de no maximo 1 ponto)
 
 Com o cabo conectado e a bateria proxima do corte:
 
@@ -46,10 +46,13 @@ Com o cabo conectado e a bateria proxima do corte:
 
 Esperado:
 
-- o percentual nao salta entre 94 e 98; a variacao e de no maximo 1 ponto por
-  amostra e compativel com a corrente integrada;
-- carregando em ~8190 mV / ~-250 mA o percentual fica no mesmo patamar do repouso
-  (seed por OCV), nao em 98.
+- o percentual nao oscila entre bins distantes; a variacao e de no maximo 1 ponto
+  por amostra e compativel com a corrente integrada;
+- carregando em ~8190 mV / ~-250 mA o percentual fica no plato da politica
+  (100 %, seed por OCV saturado), nao no valor antigo de 98 % da tensao terminal;
+- em repouso no plato o header fica em {99, 100} e varia no maximo 1 ponto em
+  10 min; pode alternar 100 <-> 99 com o truncamento (100 % = carga maxima desta
+  politica, nao pack pleno), mas nunca volta a bins distantes como 94 <-> 98.
 
 ## 4. Corte e latch
 
@@ -59,7 +62,7 @@ Esperado:
 Esperado:
 
 - exatamente **uma** transicao de `charger` (on -> off) no corte;
-- nenhuma religacao enquanto o SoC estimado estiver acima de 85 e houver fonte
+- nenhuma religacao enquanto o SoC estimado estiver acima de 90 e houver fonte
   externa; estados `external`, `unknown` ou leitura INA invalida nao liberam o
   latch;
 - nenhuma oscilacao de CHG_EN (monitor serial nao deve mostrar novos
@@ -67,7 +70,8 @@ Esperado:
 
 ## 5. Liberacao do latch
 
-- Com o cabo desconectado, aguardar descarga ate o SoC estimado chegar a <= 85:
+- Com o cabo desconectado, aguardar descarga ate o SoC estimado chegar a <= 90
+  (90 % da janela de 2100 mV fica em ~7890 mV, a mesma banda fisica de antes):
   esperado `charger=on` imediatamente na primeira amostra (sem votos).
 - Alternativa (sem esperar descarga): manter sem fonte externa por 5 amostras
   consecutivas (`battery`/`absent`) e confirmar a liberacao na quinta.
@@ -80,7 +84,8 @@ Remover a bateria (com o dispositivo em bancada e seguro):
 
 - `state=absent`, `available=true`, glyph externo **sem** percentual no header;
 - `percentage=0` no status (estimador reiniciado, sem valor fabricado);
-- recolocar a bateria: novo seed por OCV (nao slew de 93/94).
+- recolocar a bateria: novo seed por OCV (salto direto ao valor semeado,
+  sem convergencia ponto a ponto a partir do valor anterior).
 
 ## 7. Estabilidade final
 
@@ -94,9 +99,11 @@ Esperado: uptime continuo (sem reboot), heap sem degradacao evidente e nenhum
 ## Criterios de aceite
 
 - escala de corrente consistente (300 uA/LSB) no status e no diagnostico;
-- percentual do header = SoC estimado, sem oscilacao no corte;
+- percentual do header = SoC estimado, sem oscilacao entre bins distantes no
+  corte; no plato a variacao fica em no maximo 1 ponto (100 <-> 99 por
+  truncamento);
 - exatamente uma transicao de CHG_EN no corte e latch estavel;
-- liberacao apenas por SoC <= 85, 5 amostras sem fonte ou disable;
+- liberacao apenas por SoC <= 90, 5 amostras sem fonte ou disable;
 - ausencia reinicia o estimador sem percentual fabricado;
 - sem panic, reboot ou perda de heap durante o roteiro.
 

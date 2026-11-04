@@ -56,11 +56,14 @@ UI. O percentual é um estado de carga estimado: contagem de carga ancorada na
 tensão de circuito aberto (compensação I×R com a resistência série medida de
 330 mOhm no seed e na reancoragem), integrada com o intervalo entre amostras,
 com clamp em 0..100 e correção máxima de 1 ponto por amostra. A janela aprovada
-de 6000..8230 mV mapeia essa tensão de circuito aberto em 0..100 % e, junto com
+de 6000..8100 mV mapeia essa tensão de circuito aberto em 0..100 % e, junto com
 os cinco votos, detecta a ausência do pack; ela não é uma leitura direta da
-tensão terminal. Corrente positiva representa descarga, negativa
-representa carga e corrente zero ou indeterminada representa neutral. No estado
-neutral o percentual numérico permanece visível, sem glyph ou texto de estado.
+tensão terminal. O teto é a tensão de repouso medida depois do corte em
+8200 mV, não um pack pleno: 100 % significa a carga máxima desta política
+(cerca de cinco pontos otimista no meio da curva). Corrente positiva representa
+descarga, negativa representa carga e corrente zero ou indeterminada representa
+neutral. No estado neutral o percentual numérico permanece visível, sem glyph ou
+texto de estado.
 Um único ícone semântico indica carga ou descarga, sem glyph de nível de bateria.
 Com o pack ausente o grupo permanece visível com o glyph externo e sem
 percentual; o grupo fica oculto quando a leitura INA é inválida ou o estado é

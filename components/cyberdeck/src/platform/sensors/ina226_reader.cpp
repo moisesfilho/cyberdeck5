@@ -109,7 +109,7 @@ bool read_sample(cyberdeck_battery::sample *out,
         cyberdeck_battery::current_ma_from_raw(signed_current_raw);
 
     /* The INA226 bus-voltage register is the source of the percentage input;
-     * the pure battery seam owns the approved 6000..8230 mV window. */
+     * the pure battery seam owns the approved 6000..8100 mV window. */
     *out = {true, true, bus_voltage_mv, current_ma};
     if (out_diagnostics != nullptr) {
         *out_diagnostics = {true, bus_voltage_raw, current_raw_unsigned, *out};
