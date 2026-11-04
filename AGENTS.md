@@ -36,6 +36,33 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 - Prefira a menor alteracao correta e valide referencias e testes relacionados
   quando o trabalho estiver concluido.
 
+## Consistencia de documentacao e limiares
+
+- Ao mudar um limiar, uma constante de dominio ou uma janela (tensao de corte,
+  faixa de percentual, capacidade, versao), varra o valor antigo antes de
+  fechar o trabalho:
+
+  ```bash
+  grep -rn "<valor antigo>" README.md README.pt-BR.md code-map.md \
+      docs/ tests/manual/ components/cyberdeck/include/
+  ```
+
+- Os arquivos que precisam ficar coerentes com a constante sao: `README.md`,
+  `README.pt-BR.md`, `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE.pt-BR.md`,
+  `code-map.md` (inclusive a matriz de rastreabilidade `REQ/AC -> TEST`),
+  `tests/manual/*.pt-BR.md` e os espelhos em `tests/host/keymap/contracts/`.
+- A documentacao descreve a constante, nao uma copia independente dela: quando
+  o valor aparecer em texto, o teste deve derivá-lo da fonte (header,
+  `version.txt`, Makefile) em vez de pinar o literal.
+- Preserve mencoes historicas explicitas (por exemplo, "o release anterior era
+  85 %"), desde que a frase deixe claro que o valor e antigo.
+
+## Memoria de projeto
+
+- `.opencode/memory/` e memoria derivada, nao fonte de verdade. Ao mudar
+  limiar, janela, versao ou fluxo, atualize o bloco correspondente no mesmo
+  trabalho e considere o codigo como referencia final.
+
 ## Versionamento do firmware e aplicativos
 
 - A versão do firmware tem exatamente três segmentos decimais sem zero-padding,
@@ -53,6 +80,14 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
   nem altere outro segmento como substituição.
 - Versões dos manifests de apps seguem o semver próprio do app e não derivam da
   versão do firmware.
+- "Liberado" significa que existe a tag `vMAJOR.MINOR.PATCH` no commit que
+  introduziu a versão. Enquanto a versão corrente não tiver tag, mudanças
+  funcionais podem compartilhar o mesmo `MINOR` (o binário validado no
+  dispositivo segue como referência); depois da tag, a próxima mudança
+  funcional incrementa `MINOR`. Não crie tag sem pedido explícito.
+- Testes e contratos não pinam a versão exata: validam o formato
+  `MAJOR.MINOR.PATCH` (sem zero-padding) e um piso mínimo por entrega, para que
+  o próximo incremento não quebre o agregado nem a CI.
 
 ## Execucao dos testes host
 
@@ -86,6 +121,18 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
   rastreio fino por TU via depfiles vale para os alvos já convertidos. A CI
   executa `clean` antes, portanto os gates de cobertura não dependem desse
   rastreio incremental.
+- Contratos do harness nao fixam valores instantaneos. Verifique a propriedade
+  (unicidade, presenca do alvo por nome, `<alvo>_bin` do alvo novo) em vez da
+  contagem literal de `BINS`, do total de TUs ou da matriz do baseline: quando
+  a contagem muda de forma intencional, o ajuste e derivado do proprio
+  Makefile, nunca um literal reescrito a mao.
+- `test_incremental_final_contract` compara o wiring real com
+  `incremental_final_baseline.json` e depende de objetos atualizados. Em
+  arvore com objetos antigos ele pode acusar divergencia que nao existe; rode
+  `make -C tests/host/keymap test-build` antes de usa-lo de forma focada, ou
+  valide pelo agregado com `make -C tests/host/keymap clean test`. Falha nesse
+  contrato sem build atualizado nao e, por si so, evidencia de defeito de
+  wiring.
 
 ## Validacao de firmware no dispositivo
 
@@ -106,6 +153,16 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 - Não faça flash automaticamente apenas para investigar um problema; o flash
   como etapa de validação da implementação é esperado quando o dispositivo
   estiver disponível.
+- Números visíveis ao usuário (percentual, temperatura, RSSI, uptime) exigem
+  série temporal, não amostra isolada: colete em resolução de 1 s por tempo
+  suficiente para atravessar o transiente (partida, corte, reancoragem) e anexe
+  o arquivo da série à evidência, indicando resolução, duração e falhas de
+  leitura. Amostragem de 3 s ou mais esconde oscilação de 1 ponto.
+- Prefira o endpoint HTTP que expõe a mesma grandeza (por exemplo
+  `GET /battery`) quando ele existir: mede sem o cabo Serial-JTAG e sem
+  competir pela porta serial.
+- Registre no relatório qual coletor foi usado; se ele for reutilizável, mova-o
+  para `tools/` em vez de manter script ad-hoc fora do repositório.
 
 ## Validacao no dispositivo via Serial-JTAG
 

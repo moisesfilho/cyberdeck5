@@ -2935,7 +2935,9 @@ O roteiro da ponte serial esta em
 ## Documentacao relacionada
 
 - `AGENTS.md`: instrucoes obrigatorias para agentes consultarem e manterem este
-  mapa, incluindo a politica de busca progressiva.
+  mapa, incluindo a politica de busca progressiva, a consistencia de
+  documentacao e limiares, a memoria de projeto como fonte derivada, a regra de
+  versao liberada por tag e a exigencia de serie temporal na validacao fisica.
 - `README.md` e `README.pt-BR.md`: recursos, uso do shell, Wi-Fi, SSH, comandos locais `netdiag` (status, DNS, TCP, HTTPS HEAD, resultado e cancelamento), screenshot e ponte serial.
 - `docs/ARCHITECTURE.md` e `docs/ARCHITECTURE.pt-BR.md`: principios, boot, concorrencia Wi-Fi, screenshot,
   ponte serial, bateria e UI.
