@@ -22,11 +22,11 @@ that only source inspection can prove:
     fail-closed, and every touched file is registered/documented.
 
 Traceability:
-  REQ-BAT-HTTP-01 -> route table, max_uri_handlers, rollback
-  REQ-BAT-HTTP-02 -> guards 405/403/503 (same allowlist as the other routes)
+  REQ-BAT-HTTP-01 -> route table, max_uri_handlers, rollback (LAN-only/read-only)
+  REQ-BAT-HTTP-02 -> JSON schema 1, fixed order, integers only, <=384 B, null, state unavailable
   REQ-BAT-HTTP-03 -> cached snapshot, no I2C/reader/display lock/write
-  REQ-BAT-HTTP-04 -> single JSON body, no-store, 500 on formatter failure
-  REQ-BAT-HTTP-05 -> /screenshot and /events.txt unchanged
+  REQ-BAT-HTTP-04 -> /screenshot and /events.txt unchanged (serial bridge untouched)
+  REQ-BAT-HTTP-05 -> guards 405/403/503/500, single body, Cache-Control no-store
   AC-BAT-HTTP-01 -> test_battery_json.cpp (document shape and limits)
   AC-BAT-HTTP-02 -> this contract (lan-only, read-only, bounded)
 """
@@ -56,6 +56,22 @@ VERSION = ROOT / "version.txt"
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
+
+
+def version_components(text):
+    """Firmware version as a numeric tuple, or None when the format is wrong.
+
+    Zero-padded segments are rejected (the file is stored without padding) and
+    the tuple comparison keeps 1.10.0 newer than 1.9.0.
+    """
+    match = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", text)
+    if match is None:
+        return None
+    raw = match.groups()
+    if any(part != str(int(part)) for part in raw):
+        return None
+    major, minor, patch = (int(part) for part in raw)
+    return (major, minor, patch)
 
 
 def strip_comments(source: str) -> str:
@@ -310,8 +326,15 @@ def check_docs_and_version() -> None:
             "the manual route must validate the endpoint from another LAN host")
     require("USB" in manual,
             "the manual route must state that no USB cable is required")
-    require(VERSION.read_text(encoding="utf-8").strip() == "1.4.0",
-            "the feature must bump the firmware minor version to 1.4.0")
+    # Feature floor, not an exact pin: a later MINOR/PATCH release must keep the
+    # endpoint contract green while the file stays MAJOR.MINOR.PATCH.
+    version_text = VERSION.read_text(encoding="utf-8").strip()
+    version = version_components(version_text)
+    require(version is not None,
+            "firmware version must use MAJOR.MINOR.PATCH without zero padding, "
+            f"got {version_text!r}")
+    require(version >= (1, 4, 0),
+            f"firmware version must be at least 1.4.0 for GET /battery, got {version_text!r}")
     policy = POLICY_HDR.read_text(encoding="utf-8")
     require("struct snapshot" in policy,
             "the endpoint must not introduce a second battery snapshot type")

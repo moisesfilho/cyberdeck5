@@ -99,6 +99,22 @@ def require_all(failures: list[str], condition: bool, message: str) -> None:
         failures.append(message)
 
 
+def version_components(text: str) -> tuple[int, int, int] | None:
+    """Firmware version as a numeric tuple, or None when it is not MAJOR.MINOR.PATCH.
+
+    Zero-padded segments ("01") are rejected because the firmware version is
+    stored without padding; numeric comparison keeps 1.10.0 newer than 1.9.0.
+    """
+    match = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", text)
+    if match is None:
+        return None
+    raw = match.groups()
+    if any(part != str(int(part)) for part in raw):
+        return None
+    major, minor, patch = (int(part) for part in raw)
+    return (major, minor, patch)
+
+
 def read(path: Path, failures: list[str]) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -532,9 +548,14 @@ def check_traceability(failures: list[str]) -> None:
             require_all(failures, token in documentation,
                         f"{path.name} must document {token}")
 
+    # The version must keep the MAJOR.MINOR.PATCH shape without zero padding and
+    # never fall below the release that introduced this feature; a later
+    # MINOR/PATCH bump must keep the contract green (numeric, not string order).
     version = read(ROOT / "version.txt", failures).strip()
-    require_all(failures, version == "1.3.0",
-                "the battery state-of-charge change must increment MINOR to 1.3.0")
+    version_numbers = version_components(version)
+    require_all(failures, version_numbers is not None and version_numbers >= (1, 3, 0),
+                "firmware version must be at least 1.3.0 with MAJOR.MINOR.PATCH format, "
+                f"got {version!r}")
     adapter = strip_comments(read(ADAPTER_SOURCE, failures))
     cached = function_body(adapter, "battery_protection_get_cached_policy_snapshot(")
     require_all(failures, cached is not None and
