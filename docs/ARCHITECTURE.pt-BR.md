@@ -139,9 +139,15 @@ pela resistência série medida de 330 mOhm, confiável até +/-500 mA e saturad
 quietude não é estendida nem zerada e não há reancoragem. Intervalos acima de
 `60000` ms são lacunas reais de leitura: não integram nem reancoram e zeram a
 janela acumulada, de modo que uma lacuna não "costura" os 60000 ms de repouso.
-Amostra inválida mantém a estimativa e bateria ausente a reinicia. A estimativa só é reancorada na tensão de circuito aberto após
-60000 ms contínuos em repouso (|I| <= 15 mA, sem carregar, bateria presente), e
-o valor publicado nunca varia mais de um ponto por observação. O percentual do
+Amostra inválida mantém a estimativa e bateria ausente a reinicia. A estimativa é reancorada na tensão de circuito aberto uma vez por episódio de
+repouso: exige 60000 ms contínuos em repouso (|I| <= 15 mA, sem carregar,
+bateria presente) e depois três amostras consecutivas com o mesmo alvo de
+circuito aberto (`anchor_confirmations`); qualquer interrupção ou alvo diferente
+reinicia a confirmação. A ancoragem é gravada no centro do bin do alvo
+(alvo + 0,5 %), então uma única unidade de carga não troca o valor do header, e
+o valor publicado nunca varia mais de um ponto por observação. Uma segunda
+ancoragem no mesmo episódio nunca ocorre, então a integração continua normal
+enquanto o pack permanece em repouso. O percentual do
 header é essa estimativa, nunca uma leitura direta da tensão terminal, o que
 elimina a oscilação 94 % <-> 98 % no corte do carregador.
 

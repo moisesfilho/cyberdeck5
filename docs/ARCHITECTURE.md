@@ -174,9 +174,15 @@ neither extended nor cleared and no re-anchor happens. Intervals above
 clear the accumulated quiet window, so a gap cannot stitch the 60000 ms at-rest
 period together. An invalid sample holds the estimate and an absent pack resets
 it.
-The estimate is re-anchored to the open-circuit voltage only after 60000 ms of
-continuous at-rest samples (|I| <= 15 mA, not charging, pack present), and the
-published value never moves more than one point per observation. The header
+The estimate is re-anchored to the open-circuit voltage once per at-rest
+episode: it requires 60000 ms of continuous at-rest samples (|I| <= 15 mA, not
+charging, pack present) and then three consecutive samples that report the same
+open-circuit target (`anchor_confirmations`); any interruption or a different
+target restarts the confirmation. The anchor is written at the centre of the
+target bin (target + 0.5 %), so a single unit of charge cannot flip the header,
+and the published value never moves more than one point per observation. A
+second anchor per episode is never taken, so the estimate integrates normally
+while the pack keeps resting. The header
 percentage is this estimate, never a direct read of the terminal voltage, which
 removes the previous 94 % <-> 98 % flapping at the charger cut.
 

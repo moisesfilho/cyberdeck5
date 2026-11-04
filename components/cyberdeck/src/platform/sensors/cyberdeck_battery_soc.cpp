@@ -42,6 +42,11 @@ void state::reset()
     remainder_ = 0;
     percentage_ = 0;
     quiet_ms_ = 0;
+    anchored_ = false;
+    anchor_settled_ = false;
+    anchor_votes_ = 0;
+    anchor_percentage_ = 0;
+    anchor_accumulator_ = 0;
 }
 
 void state::seed_from_ocv(const std::int32_t ocv_mv)
@@ -52,6 +57,11 @@ void state::seed_from_ocv(const std::int32_t ocv_mv)
     remainder_ = 0;
     percentage_ = seeded;
     quiet_ms_ = 0;
+    anchored_ = false;
+    anchor_settled_ = false;
+    anchor_votes_ = 0;
+    anchor_percentage_ = 0;
+    anchor_accumulator_ = 0;
 }
 
 void state::integrate(const std::int32_t current_ma, const std::uint32_t elapsed_ms)
@@ -70,7 +80,12 @@ void state::update_quiet(const input &value)
     const std::int32_t abs_current =
         value.current_ma >= 0 ? value.current_ma : -value.current_ma;
     if (value.charging || abs_current > reanchor_current_tolerance_ma) {
+        /* The at-rest episode is over: a new anchor requires a fresh quiet
+         * window and a fresh confirmation count. */
         quiet_ms_ = 0;
+        anchored_ = false;
+        anchor_settled_ = false;
+        anchor_votes_ = 0;
         return;
     }
     const std::uint32_t remaining =
@@ -79,6 +94,51 @@ void state::update_quiet(const input &value)
         return;
     }
     quiet_ms_ += value.elapsed_ms < remaining ? value.elapsed_ms : remaining;
+}
+
+/* Confirms the open-circuit target only after the approved number of
+ * consecutive at-rest samples report the same point, and arms a single anchor
+ * per at-rest episode.  An oscillating pack therefore never re-anchors. */
+void state::update_anchor(const std::int32_t ocv_mv)
+{
+    if (quiet_ms_ < reanchor_quiet_ms || anchored_) {
+        return;
+    }
+    const std::int32_t target = cyberdeck_battery::percentage_from_bus_voltage_mv(ocv_mv);
+    if (anchor_votes_ > 0 && target == anchor_percentage_) {
+        if (anchor_votes_ < anchor_confirmations) {
+            ++anchor_votes_;
+        }
+    } else {
+        anchor_percentage_ = target;
+        anchor_votes_ = 1;
+    }
+    if (anchor_votes_ < anchor_confirmations) {
+        return;
+    }
+    /* The centre of the bin keeps integration half a point away from the
+     * display edge, so a single unit of charge cannot flip the header. */
+    anchor_accumulator_ =
+        static_cast<std::int64_t>(target) * percentage_unit_scale +
+        percentage_unit_scale / 2;
+    accumulator_ = anchor_accumulator_;
+    anchored_ = true;
+    anchor_settled_ = false;
+}
+
+/* Moves the counter one point per observation towards the confirmed anchor
+ * until the published value reaches the target, then stops for the rest of the
+ * episode (integration from the centre is preserved). */
+void state::settle_anchor()
+{
+    if (!anchored_ || anchor_settled_) {
+        return;
+    }
+    if (percentage_ == anchor_percentage_) {
+        anchor_settled_ = true;
+        return;
+    }
+    accumulator_ = anchor_accumulator_;
 }
 
 void state::publish()
@@ -136,20 +196,19 @@ reading state::observe(const input &value)
     if (value.elapsed_ms > max_elapsed_ms) {
         /* A gap longer than the approved window is a real reading gap: it is
          * neither integrated nor re-anchored, and it must not be stitched into
-         * the 60000 ms quiet window. */
+         * the 60000 ms quiet window.  The at-rest episode restarts as well. */
         quiet_ms_ = 0;
+        anchored_ = false;
+        anchor_settled_ = false;
+        anchor_votes_ = 0;
         publish();
         return current();
     }
 
     integrate(value.current_ma, value.elapsed_ms);
     update_quiet(value);
-    if (quiet_ms_ >= reanchor_quiet_ms) {
-        accumulator_ =
-            static_cast<std::int64_t>(
-                cyberdeck_battery::percentage_from_bus_voltage_mv(ocv)) *
-            percentage_unit_scale;
-    }
+    update_anchor(ocv);
+    settle_anchor();
 
     publish();
     return current();

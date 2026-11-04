@@ -37,13 +37,18 @@ inline constexpr std::int32_t pack_capacity_mah = 2000;
 /* An interval longer than this is a reading gap: it is neither integrated nor
  * re-anchored, and it clears the accumulated quiet time so a gap cannot stitch
  * the 60000 ms at-rest window together.  A zero interval is a neutral
- * re-observation of the same instant. */
+ * re-observation of the same instant: nothing is integrated, the quiet time is
+ * neither extended nor cleared, and no re-anchor happens. */
 inline constexpr std::uint32_t max_elapsed_ms = 60000;
 
 /* Continuous at-rest time required before the estimate is re-anchored to the
- * open-circuit voltage. */
+ * open-circuit voltage.  The anchor happens once per at-rest episode, only
+ * after this many consecutive samples report the same open-circuit target
+ * (`anchor_confirmations`), and it is written at the centre of the target bin
+ * so integration starts half a point away from the bin edge. */
 inline constexpr std::uint32_t reanchor_quiet_ms = 60000;
 inline constexpr std::int32_t reanchor_current_tolerance_ma = 15;
+inline constexpr std::uint8_t anchor_confirmations = 3;
 
 /* The published state of charge moves at most this many points per
  * observation, so a re-anchor cannot jump the header value. */
@@ -58,7 +63,9 @@ struct input {
     bool charging{false};
     std::int32_t bus_voltage_mv{0};
     std::int32_t current_ma{0};
-    /* Time since the last valid sample. */
+    /* Time since the last valid sample.  Zero is a neutral re-observation;
+     * an interval above max_elapsed_ms is a reading gap that restarts the quiet
+     * window. */
     std::uint32_t elapsed_ms{0};
 };
 
@@ -77,6 +84,8 @@ private:
     void seed_from_ocv(std::int32_t ocv_mv);
     void integrate(std::int32_t current_ma, std::uint32_t elapsed_ms);
     void update_quiet(const input &value);
+    void update_anchor(std::int32_t ocv_mv);
+    void settle_anchor();
     void publish();
 
     bool seeded_{false};
@@ -87,6 +96,14 @@ private:
     std::int64_t remainder_{0};
     std::int32_t percentage_{0};
     std::uint32_t quiet_ms_{0};
+    /* One anchor per at-rest episode: `anchored_` is cleared when the rest is
+     * interrupted, `anchor_settled_` stops the one-point convergence once the
+     * published value reaches the confirmed target. */
+    bool anchored_{false};
+    bool anchor_settled_{false};
+    std::uint8_t anchor_votes_{0};
+    std::int32_t anchor_percentage_{0};
+    std::int64_t anchor_accumulator_{0};
 };
 
 } // namespace cyberdeck_battery_soc

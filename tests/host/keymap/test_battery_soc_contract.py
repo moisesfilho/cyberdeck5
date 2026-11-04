@@ -63,6 +63,22 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def function_body(source: str, name: str) -> str | None:
+    match = re.search(rf"\b{re.escape(name)}\s*\([^;{{]*\)\s*\{{", source)
+    if match is None:
+        return None
+    opening = source.find("{", match.start())
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening:index + 1]
+    return None
+
+
 def check_module_is_pure(source: str, header: str) -> None:
     combined = header + "\n" + source
     for token in FORBIDDEN_IN_MODULE:
@@ -85,6 +101,7 @@ def check_module_is_pure(source: str, header: str) -> None:
 
     for token in ("pack_capacity_mah", "max_elapsed_ms", "reanchor_quiet_ms",
                   "reanchor_current_tolerance_ma", "max_slew_percentage_points",
+                  "anchor_confirmations",
                   "struct input", "struct reading", "class state",
                   "elapsed_ms", "bool seeded", "percentage"):
         require(token in combined,
@@ -95,6 +112,7 @@ def check_module_is_pure(source: str, header: str) -> None:
         (r"max_elapsed_ms\s*=\s*60000\b", "the integration window must be 60000 ms"),
         (r"reanchor_quiet_ms\s*=\s*60000\b", "the re-anchor quiet time must be 60000 ms"),
         (r"reanchor_current_tolerance_ma\s*=\s*15\b", "the quiet current band must be 15 mA"),
+        (r"anchor_confirmations\s*=\s*3\b", "the anchor must need three confirmations"),
         (r"max_slew_percentage_points\s*=\s*1\b", "the published slew must be one point"),
     ):
         require(re.search(pattern, combined, re.IGNORECASE) is not None, description)
@@ -105,8 +123,25 @@ def check_module_is_pure(source: str, header: str) -> None:
             "the estimator must anchor on ocv_from_terminal_mv")
     require("seed_from_ocv(ocv)" in source,
             "the seed must use the open-circuit voltage")
-    require(re.search(r"percentage_from_bus_voltage_mv\s*\(\s*ocv\s*\)", source) is not None,
+    require(re.search(r"percentage_from_bus_voltage_mv\s*\(\s*ocv(?:_mv)?\s*\)",
+                      source) is not None,
             "the re-anchor must use the open-circuit voltage")
+    # Scoped to the anchor function: the whole-source match above also matches
+    # the seed, so on its own it could stay green after the anchor stopped using
+    # the open-circuit value.
+    anchor = function_body(source, "update_anchor")
+    require(anchor is not None,
+            "the estimator must implement the single-shot anchor in update_anchor")
+    anchor = anchor or ""
+    require(re.search(r"percentage_from_bus_voltage_mv\s*\(\s*ocv(?:_mv)?\s*\)",
+                      anchor) is not None,
+            "update_anchor must derive its target from the open-circuit voltage")
+    require("anchored_" in anchor,
+            "update_anchor must stay single-shot through the anchored_ flag")
+    require("anchor_confirmations" in anchor,
+            "update_anchor must wait for the approved confirmation count")
+    require(re.search(r"percentage_unit_scale\s*/\s*2", anchor) is not None,
+            "update_anchor must write the centre of the target bin")
     require("percentage_from_bus_voltage_mv" in source,
             "the estimator must reuse percentage_from_bus_voltage_mv")
     require(re.search(r"\b6000\b|\b8230\b", source) is None,

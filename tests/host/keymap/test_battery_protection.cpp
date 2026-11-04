@@ -621,9 +621,12 @@ void test_classification_precedes_the_state_of_charge()
     CHECK_EQ(charging.percentage, 40);
 
     /* The quiet window restarted here: 59 further at-rest samples still cannot
-     * re-anchor, and the 60th moves exactly one point. */
+     * re-anchor, the 60th only starts the confirmation, and the third confirmed
+     * sample moves exactly one point. */
     feed(value, sample(true, true, false, 7115, 0, 1000), 59);
     CHECK_EQ(value.snapshot().percentage, 40);
+    CHECK_EQ(value.observe(sample(true, true, false, 7115, 0, 1000)).percentage, 40);
+    CHECK_EQ(value.observe(sample(true, true, false, 7115, 0, 1000)).percentage, 40);
     const auto reanchored = value.observe(sample(true, true, false, 7115, 0, 1000));
     CHECK_EQ(reanchored.percentage, 41);
 }

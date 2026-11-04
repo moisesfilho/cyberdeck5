@@ -182,8 +182,15 @@ void test_elapsed_window()
     (void)quiet_gap.observe(sample(7115, 0, 60001));
     feed(quiet_gap, sample(7115, 0, 1000), 59);
     CHECK_EQ(quiet_gap.current().percentage, 40);
-    (void)quiet_gap.observe(sample(7115, 0, 1000));
-    CHECK_EQ(quiet_gap.current().percentage, 41);
+    /* Quiet window plus three confirmations before the anchor fires. */
+    for (int i = 0; i < 3; ++i) {
+        const reading held = quiet_gap.observe(sample(7115, 0, 1000));
+        if (i < 2) {
+            CHECK_EQ(held.percentage, 40);
+        } else {
+            CHECK_EQ(held.percentage, 41);
+        }
+    }
 }
 
 /* TEST-SOC-12: a re-anchor moves at most one point per observation. */
@@ -205,6 +212,14 @@ void test_reanchor_slew()
     CHECK_EQ(value.current().percentage, 40);
     CHECK_EQ(largest_step, 0);
 
+    /* The anchor needs the quiet window plus three consecutive confirmations of
+     * the same target, so the first two samples past 60000 ms still hold 40. */
+    for (int i = 0; i < 2; ++i) {
+        const reading held = value.observe(sample(7115, 0, 1000));
+        CHECK_EQ(held.percentage, 40);
+        previous = held.percentage;
+    }
+
     for (int expected = 41; expected <= 50; ++expected) {
         const reading move = value.observe(sample(7115, 0, 1000));
         const int step = move.percentage - previous;
@@ -214,13 +229,19 @@ void test_reanchor_slew()
     }
     CHECK_EQ(largest_step, 1);
 
-    const reading steady = value.observe(sample(7115, 0, 1000));
-    CHECK_EQ(steady.percentage, 50);
+    /* One anchor per at-rest episode: the value converges once and then stays
+     * put instead of being rewritten from the open-circuit voltage. */
+    for (int i = 0; i < 10; ++i) {
+        const reading steady = value.observe(sample(7115, 0, 1000));
+        CHECK_EQ(steady.percentage, 50);
+    }
 }
 
 /* R-gap: a real reading gap (> 60000 ms) clears the accumulated quiet time, so
  * 40 s + gap + 30 s must not re-anchor while 60 s continuous does.  A zero
- * interval is a neutral re-observation: 40 s + dt=0 + 20 s still re-anchors. */
+ * interval is a neutral re-observation: 40 s + dt=0 + 20 s still re-anchors.
+ * Either way the anchor fires on the third consecutive confirmation after the
+ * quiet window, never on the window boundary itself. */
 void test_reading_gap_breaks_quiet_window()
 {
     state gapped;
@@ -235,8 +256,14 @@ void test_reading_gap_breaks_quiet_window()
     feed(gapped, sample(7115, 0, 1000), 30);
     CHECK_EQ(gapped.current().percentage, 40);
 
-    /* Only 60000 ms of uninterrupted rest after the gap may re-anchor. */
+    /* Only 60000 ms of uninterrupted rest after the gap may start the
+     * confirmation; the anchor fires on the third one. */
     feed(gapped, sample(7115, 0, 1000), 30);
+    CHECK_EQ(gapped.current().percentage, 40);
+    /* That sample is the first confirmation; the next two complete the count. */
+    (void)gapped.observe(sample(7115, 0, 1000));
+    CHECK_EQ(gapped.current().percentage, 40);
+    (void)gapped.observe(sample(7115, 0, 1000));
     CHECK_EQ(gapped.current().percentage, 41);
 
     state continuous;
@@ -245,6 +272,10 @@ void test_reading_gap_breaks_quiet_window()
     CHECK_EQ(continuous.current().percentage, 40);
     feed(continuous, sample(7115, 0, 1000), 59);
     CHECK_EQ(continuous.current().percentage, 40);
+    for (int i = 0; i < 2; ++i) {
+        (void)continuous.observe(sample(7115, 0, 1000));
+        CHECK_EQ(continuous.current().percentage, 40);
+    }
     (void)continuous.observe(sample(7115, 0, 1000));
     CHECK_EQ(continuous.current().percentage, 41);
 
@@ -261,8 +292,127 @@ void test_reading_gap_breaks_quiet_window()
     CHECK_EQ(zero_gap.current().percentage, 40);
     feed(zero_gap, sample(7115, 0, 1000), 19);
     CHECK_EQ(zero_gap.current().percentage, 40);
-    (void)zero_gap.observe(sample(7115, 0, 1000));
-    CHECK_EQ(zero_gap.current().percentage, 41);
+    for (int i = 0; i < 3; ++i) {
+        const reading held = zero_gap.observe(sample(7115, 0, 1000));
+        if (i < 2) {
+            CHECK_EQ(held.percentage, 40);
+        } else {
+            CHECK_EQ(held.percentage, 41);
+        }
+    }
+}
+
+/* Flicker regression (device, fw 1.4.0): while at rest the open-circuit
+ * voltage oscillates one millivolt around the 94 % bin edge.  Rewriting the
+ * anchor from every sample made the header blink 93 <-> 94 once per second;
+ * an alternating target never confirms, so the estimate stays untouched. */
+void test_rest_anchor_ignores_oscillating_open_circuit()
+{
+    state value;
+    (void)value.observe(sample(8097, 0, 0));
+    CHECK_EQ(value.current().percentage, 94);
+
+    bool constant = true;
+    int changes = 0;
+    int previous = value.current().percentage;
+    for (int i = 1; i <= 80; ++i) {
+        const std::int32_t voltage = (i % 2) == 0 ? 8096 : 8097;
+        const reading held = value.observe(sample(voltage, 0, 1000));
+        if (held.percentage != 94) constant = false;
+        if (held.percentage != previous) ++changes;
+        previous = held.percentage;
+    }
+    CHECK(constant);
+    CHECK_EQ(changes, 0);
+    CHECK_EQ(value.current().percentage, 94);
+}
+
+/* The confirmed anchor is written at the centre of the target bin: one unit of
+ * charge no longer flips the header, and resting integration is preserved
+ * instead of being reset by a repeated anchor. */
+void test_rest_anchor_centers_the_bin_and_keeps_integration()
+{
+    state value;
+    (void)value.observe(sample(7115, 0, 0));
+    /* Quiet window plus three confirmations: the target is the current 50 %. */
+    feed(value, sample(7115, 0, 1000), 62);
+    CHECK_EQ(value.current().percentage, 50);
+
+    /* 10 s at 14 mA stay inside the rest band and remove 19 units of charge.
+     * A value written at the bin edge (50.0000 %) would already show 49. */
+    feed(value, sample(7115, 14, 1000), 10);
+    CHECK_EQ(value.current().percentage, 50);
+
+    /* The same integration survives 2600 more seconds at 14 mA; a repeated
+     * anchor would have pulled the counter back to the centre every second. */
+    feed(value, sample(7115, 14, 1000), 2600);
+    CHECK_EQ(value.current().percentage, 49);
+}
+
+/* The confirmation count restarts when the at-rest episode is interrupted, and
+ * the anchor remains single-shot for the rest of the episode. */
+void test_rest_anchor_requires_confirmation_and_restarts()
+{
+    state value;
+    (void)value.observe(sample(8097, 0, 0));
+    /* Stable rest: one anchor, centred at 94.5 %, display unchanged. */
+    feed(value, sample(8097, 0, 1000), 62);
+    CHECK_EQ(value.current().percentage, 94);
+
+    /* 100 mA ends the episode without moving the centred value. */
+    (void)value.observe(sample(8097, 100, 1000));
+    CHECK_EQ(value.current().percentage, 94);
+
+    /* A new episode needs the quiet window and three confirmations again; the
+     * target is now 50 %, so only the third confirmation starts the descent. */
+    feed(value, sample(7115, 0, 1000), 59);
+    CHECK_EQ(value.current().percentage, 94);
+    for (int i = 0; i < 2; ++i) {
+        (void)value.observe(sample(7115, 0, 1000));
+        CHECK_EQ(value.current().percentage, 94);
+    }
+    (void)value.observe(sample(7115, 0, 1000));
+    CHECK_EQ(value.current().percentage, 93);
+}
+
+/* The single-anchor episode is restarted by a real reading gap and by a pack
+ * reset.  Without clearing the flag the pack could never re-anchor again for
+ * the rest of the boot, so a new at-rest episode must anchor a new target. */
+void test_anchor_episode_restarts_after_gap_and_reset()
+{
+    state gapped;
+    (void)gapped.observe(sample(8097, 0, 0));
+    CHECK_EQ(gapped.current().percentage, 94);
+    feed(gapped, sample(8097, 0, 1000), 62);
+    CHECK_EQ(gapped.current().percentage, 94);
+
+    /* 60001 ms is a reading gap: the episode ends and the anchor flag clears. */
+    (void)gapped.observe(sample(8097, 0, 60001));
+    CHECK_EQ(gapped.current().percentage, 94);
+    /* 60 s of rest only starts the confirmation (first vote) ... */
+    feed(gapped, sample(7115, 0, 1000), 60);
+    CHECK_EQ(gapped.current().percentage, 94);
+    (void)gapped.observe(sample(7115, 0, 1000));
+    CHECK_EQ(gapped.current().percentage, 94);
+    /* ... and the third confirmation anchors the new 50 % target: the value
+     * starts its one-point convergence instead of staying at 94 forever. */
+    (void)gapped.observe(sample(7115, 0, 1000));
+    CHECK_EQ(gapped.current().percentage, 93);
+
+    state removed;
+    (void)removed.observe(sample(8097, 0, 0));
+    feed(removed, sample(8097, 0, 1000), 62);
+    CHECK_EQ(removed.current().percentage, 94);
+    const reading reset = removed.observe(sample(0, 0, 0, false, true, false));
+    CHECK(!reset.seeded);
+    (void)removed.observe(sample(8097, 0, 0));
+    CHECK_EQ(removed.current().percentage, 94);
+    feed(removed, sample(7115, 0, 1000), 60);
+    CHECK_EQ(removed.current().percentage, 94);
+    (void)removed.observe(sample(7115, 0, 1000));
+    CHECK_EQ(removed.current().percentage, 94);
+    (void)removed.observe(sample(7115, 0, 1000));
+    CHECK_EQ(removed.current().percentage, 93);
 }
 
 /* TEST-SOC-13 / TEST-SOC-14: charging and a current above the tolerance block
@@ -362,6 +512,10 @@ int main()
     test_reanchor_slew();
     test_reanchor_is_blocked();
     test_reading_gap_breaks_quiet_window();
+    test_rest_anchor_ignores_oscillating_open_circuit();
+    test_rest_anchor_centers_the_bin_and_keeps_integration();
+    test_rest_anchor_requires_confirmation_and_restarts();
+    test_anchor_episode_restarts_after_gap_and_reset();
     test_hold_and_reset();
     test_saturation();
     test_measured_replay_is_stable();
