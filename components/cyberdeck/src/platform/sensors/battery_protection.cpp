@@ -35,6 +35,10 @@ std::int64_t s_policy_sampled_at_us = 0;
 bool s_cached_chg_stat_valid = false;
 bool s_cached_chg_stat_raw_low = false;
 std::int64_t s_chg_stat_sampled_at_us = 0;
+// Timestamp of the last valid INA sample, owned by s_policy_mutex.  The elapsed
+// interval is measured from it (never from a failed read), so a long gap cannot
+// be attributed to the newest sample as charge.
+std::int64_t s_last_valid_sample_us = 0;
 // Last level confirmed by a successful CHG_EN write, never an intention. Init
 // preloads P7=0 (charger inhibited), so the confirmed level starts low and a
 // failed write keeps this value so the next sample retries.
@@ -305,8 +309,6 @@ bool sample_and_publish(cyberdeck_battery_protection::observation *out_observati
         obs.ina_valid = true;
         obs.bus_voltage_mv = ina_sample.bus_voltage_mv;
         obs.current_ma = ina_sample.current_ma;
-        obs.percentage =
-            cyberdeck_battery::percentage_from_bus_voltage_mv(ina_sample.bus_voltage_mv);
     }
     if (chg_valid) {
         obs.chg_valid = true;
@@ -316,6 +318,19 @@ bool sample_and_publish(cyberdeck_battery_protection::observation *out_observati
     cyberdeck_battery_protection::snapshot policy_snap;
     {
         std::lock_guard<std::mutex> lock(s_policy_mutex);
+        if (ina_valid) {
+            const std::int64_t now_us = esp_timer_get_time();
+            if (s_last_valid_sample_us > 0 && now_us > s_last_valid_sample_us) {
+                const std::int64_t elapsed_ms =
+                    (now_us - s_last_valid_sample_us) / 1000;
+                /* The pure estimator ignores anything above its 60000 ms
+                 * window; saturating here keeps the seam bounded. */
+                obs.elapsed_ms = elapsed_ms > 60000
+                                     ? 60001U
+                                     : static_cast<std::uint32_t>(elapsed_ms);
+            }
+            s_last_valid_sample_us = now_us;
+        }
         policy_snap = s_policy.observe(obs);
     }
     update_snapshot_from_policy(policy_snap);

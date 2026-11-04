@@ -1,0 +1,372 @@
+/*
+ * Host contract for the pure state-of-charge estimator.
+ *
+ * TEST-SOC-01..18 and the state-of-charge half of TEST-SOC-26 from the approved
+ * test matrix are exercised here; the policy that feeds this module is covered
+ * by test_battery_protection.cpp.  The estimator is linked against the real
+ * production sources, without ESP-IDF, FreeRTOS, I2C, NVS, LVGL or hardware.
+ */
+#include "cyberdeck_battery.h"
+#include "cyberdeck_battery_soc.h"
+
+#include <cstdio>
+
+namespace {
+
+int failures = 0;
+int checks = 0;
+
+#define CHECK(condition) do { \
+    ++checks; \
+    if (!(condition)) { \
+        ++failures; \
+        std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition); \
+    } \
+} while (false)
+
+#define CHECK_EQ(actual, expected) do { \
+    ++checks; \
+    if ((actual) != (expected)) { \
+        ++failures; \
+        std::printf("FAIL %s:%d: %s (actual=%ld, expected=%ld)\n", \
+                    __FILE__, __LINE__, #actual, \
+                    static_cast<long>(actual), static_cast<long>(expected)); \
+    } \
+} while (false)
+
+static_assert(cyberdeck_battery_soc::pack_capacity_mah == 2000,
+              "TEST-SOC-08/12 vectors assume the approved 2000 mAh pack");
+
+using cyberdeck_battery_soc::input;
+using cyberdeck_battery_soc::reading;
+using cyberdeck_battery_soc::state;
+
+input sample(std::int32_t bus_voltage_mv,
+             std::int32_t current_ma,
+             std::uint32_t elapsed_ms,
+             bool charging = false,
+             bool valid = true,
+             bool present = true)
+{
+    input value{};
+    value.valid = valid;
+    value.present = present;
+    value.charging = charging;
+    value.bus_voltage_mv = bus_voltage_mv;
+    value.current_ma = current_ma;
+    value.elapsed_ms = elapsed_ms;
+    return value;
+}
+
+void feed(state &value, const input &item, int count)
+{
+    for (int i = 0; i < count; ++i) {
+        (void)value.observe(item);
+    }
+}
+
+/* TEST-SOC-01 / TEST-SOC-02: the first sample seeds from the open-circuit
+ * voltage, so a charging sample at 8191 mV reports the same 94 % as the resting
+ * 8108 mV sample after the cut.  The terminal voltage alone would report 98. */
+void test_seed_uses_open_circuit_voltage()
+{
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -251), 8109);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8108, 3), 8108);
+    CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(8109), 94);
+    CHECK_EQ(cyberdeck_battery::equivalent_series_mohm, 330);
+
+    state value;
+    const reading seeded = value.observe(sample(8191, -251, 0, true));
+    CHECK(seeded.seeded);
+    CHECK_EQ(seeded.percentage, 94);
+
+    const reading after_cut = value.observe(sample(8108, 3, 1000));
+    CHECK(after_cut.seeded);
+    CHECK_EQ(after_cut.percentage, 94);
+}
+
+/* TEST-SOC-03 / TEST-SOC-04: an unseeded hold reports nothing, and the seeding
+ * open-circuit voltage saturates in the approved window. */
+void test_seed_requires_a_valid_sample_and_saturates()
+{
+    state value;
+    const reading unseeded = value.observe(sample(0, 0, 0, false, false));
+    CHECK(!unseeded.seeded);
+    CHECK_EQ(unseeded.percentage, 0);
+
+    const reading seeded = value.observe(sample(7115, 0, 0));
+    CHECK(seeded.seeded);
+    CHECK_EQ(seeded.percentage, 50);
+
+    state low;
+    CHECK_EQ(low.observe(sample(6000, 0, 0)).percentage, 0);
+    state high;
+    CHECK_EQ(high.observe(sample(9000, 0, 0)).percentage, 100);
+    state below;
+    CHECK_EQ(below.observe(sample(5000, 0, 0)).percentage, 0);
+}
+
+/* TEST-SOC-05: the series-resistance compensation only applies up to
+ * |current| <= 500 mA. */
+void test_compensation_window()
+{
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -500), 8026);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -501), 8191);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, 500), 8230);
+
+    state charging_window;
+    CHECK_EQ(charging_window.observe(sample(8191, -500, 0, true)).percentage, 90);
+    state outside_window;
+    CHECK_EQ(outside_window.observe(sample(8191, -501, 0, true)).percentage, 98);
+    state discharge_window;
+    CHECK_EQ(discharge_window.observe(sample(8191, 500, 0)).percentage, 100);
+}
+
+/* TEST-SOC-06 / TEST-SOC-07: coulomb counting follows the sign of the current,
+ * positive discharging and negative charging. */
+void test_integration_follows_current_sign()
+{
+    state discharging;
+    (void)discharging.observe(sample(7115, 0, 0));
+    feed(discharging, sample(7900, 250, 1000), 600);
+    CHECK_EQ(discharging.current().percentage, 47);
+
+    state charging;
+    (void)charging.observe(sample(7115, 0, 0));
+    feed(charging, sample(7900, -250, 1000, true), 600);
+    CHECK_EQ(charging.current().percentage, 52);
+}
+
+/* TEST-SOC-08 / TEST-SOC-09: the division remainder is transported between
+ * observations; truncating every sample would report 16 and 50. */
+void test_remainder_is_transported()
+{
+    state value;
+    (void)value.observe(sample(7115, 0, 0));
+    feed(value, sample(7900, 250, 1000), 10000);
+    CHECK_EQ(value.current().percentage, 15);
+
+    state fine;
+    (void)fine.observe(sample(7115, 0, 0));
+    feed(fine, sample(7900, 500, 1), 14400);
+    CHECK_EQ(fine.current().percentage, 49);
+}
+
+/* TEST-SOC-10 / TEST-SOC-11: no interval and an interval above the approved
+ * window integrate nothing; the window itself is inclusive. */
+void test_elapsed_window()
+{
+    state zero;
+    (void)zero.observe(sample(7115, 0, 0));
+    feed(zero, sample(7900, 250, 0), 100);
+    CHECK_EQ(zero.current().percentage, 50);
+    (void)zero.observe(sample(7900, 250, 15000));
+    CHECK_EQ(zero.current().percentage, 49);
+
+    state boundary;
+    (void)boundary.observe(sample(7115, 0, 0));
+    (void)boundary.observe(sample(7900, 250, 60000));
+    CHECK_EQ(boundary.current().percentage, 49);
+
+    state beyond;
+    (void)beyond.observe(sample(7115, 0, 0));
+    (void)beyond.observe(sample(7900, 250, 60001));
+    CHECK_EQ(beyond.current().percentage, 50);
+
+    /* A sample above the window must not count towards the quiet time either:
+     * the estimate only re-anchors after 60000 ms of short at-rest samples. */
+    state quiet_gap;
+    (void)quiet_gap.observe(sample(7115, 0, 0));
+    feed(quiet_gap, sample(7900, 250, 1000), 2880);
+    CHECK_EQ(quiet_gap.current().percentage, 40);
+    (void)quiet_gap.observe(sample(7115, 0, 60001));
+    feed(quiet_gap, sample(7115, 0, 1000), 59);
+    CHECK_EQ(quiet_gap.current().percentage, 40);
+    (void)quiet_gap.observe(sample(7115, 0, 1000));
+    CHECK_EQ(quiet_gap.current().percentage, 41);
+}
+
+/* TEST-SOC-12: a re-anchor moves at most one point per observation. */
+void test_reanchor_slew()
+{
+    state value;
+    (void)value.observe(sample(7115, 0, 0));
+    feed(value, sample(7900, 250, 1000), 2880);
+    CHECK_EQ(value.current().percentage, 40);
+
+    int previous = value.current().percentage;
+    int largest_step = 0;
+    for (int i = 0; i < 59; ++i) {
+        const reading held = value.observe(sample(7115, 0, 1000));
+        const int step = held.percentage - previous;
+        if (step > largest_step) largest_step = step;
+        previous = held.percentage;
+    }
+    CHECK_EQ(value.current().percentage, 40);
+    CHECK_EQ(largest_step, 0);
+
+    for (int expected = 41; expected <= 50; ++expected) {
+        const reading move = value.observe(sample(7115, 0, 1000));
+        const int step = move.percentage - previous;
+        if (step > largest_step) largest_step = step;
+        previous = move.percentage;
+        CHECK_EQ(move.percentage, expected);
+    }
+    CHECK_EQ(largest_step, 1);
+
+    const reading steady = value.observe(sample(7115, 0, 1000));
+    CHECK_EQ(steady.percentage, 50);
+}
+
+/* R-gap: a real reading gap (> 60000 ms) clears the accumulated quiet time, so
+ * 40 s + gap + 30 s must not re-anchor while 60 s continuous does.  A zero
+ * interval is a neutral re-observation: 40 s + dt=0 + 20 s still re-anchors. */
+void test_reading_gap_breaks_quiet_window()
+{
+    state gapped;
+    (void)gapped.observe(sample(7115, 0, 0));
+    feed(gapped, sample(7900, 250, 1000), 2880);
+    CHECK_EQ(gapped.current().percentage, 40);
+
+    feed(gapped, sample(7115, 0, 1000), 40);
+    CHECK_EQ(gapped.current().percentage, 40);
+    (void)gapped.observe(sample(7115, 0, 60001));
+    CHECK_EQ(gapped.current().percentage, 40);
+    feed(gapped, sample(7115, 0, 1000), 30);
+    CHECK_EQ(gapped.current().percentage, 40);
+
+    /* Only 60000 ms of uninterrupted rest after the gap may re-anchor. */
+    feed(gapped, sample(7115, 0, 1000), 30);
+    CHECK_EQ(gapped.current().percentage, 41);
+
+    state continuous;
+    (void)continuous.observe(sample(7115, 0, 0));
+    feed(continuous, sample(7900, 250, 1000), 2880);
+    CHECK_EQ(continuous.current().percentage, 40);
+    feed(continuous, sample(7115, 0, 1000), 59);
+    CHECK_EQ(continuous.current().percentage, 40);
+    (void)continuous.observe(sample(7115, 0, 1000));
+    CHECK_EQ(continuous.current().percentage, 41);
+
+    /* A zero interval is the neutral re-observation declared by the contract
+     * (two 1 Hz timer samples in the same tick or an on-demand status query):
+     * it keeps the accumulated quiet window, so the re-anchor still happens. */
+    state zero_gap;
+    (void)zero_gap.observe(sample(7115, 0, 0));
+    feed(zero_gap, sample(7900, 250, 1000), 2880);
+    CHECK_EQ(zero_gap.current().percentage, 40);
+    feed(zero_gap, sample(7115, 0, 1000), 40);
+    CHECK_EQ(zero_gap.current().percentage, 40);
+    (void)zero_gap.observe(sample(7115, 0, 0));
+    CHECK_EQ(zero_gap.current().percentage, 40);
+    feed(zero_gap, sample(7115, 0, 1000), 19);
+    CHECK_EQ(zero_gap.current().percentage, 40);
+    (void)zero_gap.observe(sample(7115, 0, 1000));
+    CHECK_EQ(zero_gap.current().percentage, 41);
+}
+
+/* TEST-SOC-13 / TEST-SOC-14: charging and a current above the tolerance block
+ * the re-anchor, so the estimate keeps only the integrated drift. */
+void test_reanchor_is_blocked()
+{
+    state charging;
+    (void)charging.observe(sample(7115, 0, 0));
+    feed(charging, sample(7115, 3, 1000, true), 120);
+    CHECK_EQ(charging.current().percentage, 49);
+
+    state current;
+    (void)current.observe(sample(7115, 0, 0));
+    feed(current, sample(7115, 16, 1000), 120);
+    CHECK_EQ(current.current().percentage, 49);
+}
+
+/* TEST-SOC-15 / TEST-SOC-16: an invalid sample holds the estimate without
+ * re-seeding, and an absent pack resets it. */
+void test_hold_and_reset()
+{
+    state value;
+    (void)value.observe(sample(7115, 0, 0));
+    feed(value, sample(7900, 2000, 60000), 3);
+    CHECK_EQ(value.current().percentage, 47);
+
+    feed(value, sample(0, 0, 1000, false, false), 10);
+    const reading held = value.current();
+    CHECK(held.seeded);
+    CHECK_EQ(held.percentage, 47);
+
+    const reading resumed = value.observe(sample(7115, 0, 1000));
+    CHECK(resumed.seeded);
+    CHECK_EQ(resumed.percentage, 47);
+
+    state removed;
+    (void)removed.observe(sample(8191, -251, 0, true));
+    CHECK_EQ(removed.current().percentage, 94);
+    const reading reset = removed.observe(sample(0, 0, 0, false, true, false));
+    CHECK(!reset.seeded);
+    CHECK_EQ(reset.percentage, 0);
+    const reading reseeded = removed.observe(sample(7115, 0, 0));
+    CHECK(reseeded.seeded);
+    CHECK_EQ(reseeded.percentage, 50);
+}
+
+/* TEST-SOC-18: the counter saturates at both ends. */
+void test_saturation()
+{
+    state empty;
+    (void)empty.observe(sample(6000, 0, 0));
+    feed(empty, sample(7900, 250, 1000), 10000);
+    CHECK_EQ(empty.current().percentage, 0);
+
+    state full;
+    (void)full.observe(sample(9000, 0, 0));
+    feed(full, sample(7900, -250, 1000, true), 10000);
+    CHECK_EQ(full.current().percentage, 100);
+}
+
+/* TEST-SOC-26 (state-of-charge half): the measured replay keeps 94 % across
+ * both phases; the 8201 mV variant reports 95 % because its open-circuit seed
+ * is 8119 mV. */
+void test_measured_replay_is_stable()
+{
+    state value;
+    (void)value.observe(sample(8191, -251, 0, true));
+    bool constant = true;
+    for (int i = 0; i < 40; ++i) {
+        if (value.observe(sample(8191, -251, 1000, true)).percentage != 94) {
+            constant = false;
+        }
+    }
+    for (int i = 0; i < 40; ++i) {
+        if (value.observe(sample(8108, 3, 1000)).percentage != 94) {
+            constant = false;
+        }
+    }
+    CHECK(constant);
+    CHECK_EQ(value.current().percentage, 94);
+
+    state raised;
+    (void)raised.observe(sample(8201, -251, 0, true));
+    CHECK_EQ(raised.current().percentage, 95);
+}
+
+} // namespace
+
+int main()
+{
+    test_seed_uses_open_circuit_voltage();
+    test_seed_requires_a_valid_sample_and_saturates();
+    test_compensation_window();
+    test_integration_follows_current_sign();
+    test_remainder_is_transported();
+    test_elapsed_window();
+    test_reanchor_slew();
+    test_reanchor_is_blocked();
+    test_reading_gap_breaks_quiet_window();
+    test_hold_and_reset();
+    test_saturation();
+    test_measured_replay_is_stable();
+
+    std::printf("battery state-of-charge contract (TEST-SOC-01..18/26): "
+                "%d checks, %d failures\n", checks, failures);
+    return failures == 0 ? 0 : 1;
+}

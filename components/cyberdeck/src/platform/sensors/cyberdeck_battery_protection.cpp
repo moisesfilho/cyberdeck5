@@ -1,5 +1,6 @@
 #include "platform/sensors/cyberdeck_battery_protection.h"
 #include "platform/sensors/battery_status.h"
+#include "platform/sensors/cyberdeck_battery_soc.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -65,6 +66,9 @@ struct state::impl {
     bool protection_active_{false};
     bool charger_enabled_{true};
 
+    cyberdeck_battery_soc::state soc_{};
+    bool soc_seeded_{false};
+
     battery_state last_safe_state_{battery_state::unknown};
     charge_signal last_safe_charge_{charge_signal::unknown};
     bool last_safe_available_{false};
@@ -74,6 +78,7 @@ struct state::impl {
 
     std::uint8_t consecutive_votes_{0};
     battery_state voted_state_{battery_state::unknown};
+    std::uint8_t no_source_votes_{0};
 
     state::snapshot_t view() const
     {
@@ -105,7 +110,7 @@ struct state::impl {
         };
     }
 
-    bool evaluate_protection_conditions()
+    bool evaluate_protection_conditions() const
     {
         if (!protection_enabled_) {
             return false;
@@ -113,27 +118,63 @@ struct state::impl {
         if (current_state_ != battery_state::charging) {
             return false;
         }
-        if (percentage_ < protection_enter_percentage) {
-            return false;
+        /* Entry uses the terminal bus voltage: it is the measurement the
+         * charger actually reacts to, and the hardware reached 8200 mV there. */
+        return bus_voltage_mv_ >= protection_enter_voltage_mv;
+    }
+
+    /* Consecutive samples whose confirmed classification has no external
+     * source (`battery` or `absent`), used by the latch.  Only the confirmed
+     * state counts: a 2S pack at ~92 % rests near 8.0 V, so a voltage-only
+     * "external" test would never see a pack that is genuinely running on the
+     * battery, and the counter would never reach five.  `battery` is immediate
+     * (current above the uncertainty band) and `absent` keeps its five votes. */
+    void update_no_source_votes()
+    {
+        const bool no_source = current_state_ == battery_state::battery ||
+                               current_state_ == battery_state::absent;
+        if (!no_source) {
+            no_source_votes_ = 0;
+            return;
         }
-        if (bus_voltage_mv_ < protection_enter_voltage_mv) {
-            return false;
+        if (no_source_votes_ < no_source_vote_count) {
+            ++no_source_votes_;
         }
-        return true;
+    }
+
+    /* Latch release conditions, in the approved order: the estimated state of
+     * charge alone releases on the first sample, and five consecutive samples
+     * without an external source release a pack that is no longer charging.
+     * The state-of-charge release is skipped while the pack still classifies as
+     * charging: releasing there would re-arm the charger and cut again on the
+     * next 8200 mV sample, recreating the cycle this policy removes. */
+    bool latch_release_requested() const
+    {
+        if (soc_seeded_ &&
+            percentage_ <= protection_exit_percentage &&
+            current_state_ != battery_state::charging) {
+            return true;
+        }
+        return no_source_votes_ >= no_source_vote_count;
     }
 
     void update_protection()
     {
-        const bool should_protect = evaluate_protection_conditions();
-        if (should_protect && !protection_active_) {
-            protection_active_ = true;
-            charger_enabled_ = false;
-        } else if (!should_protect && protection_active_) {
-            if (percentage_ <= protection_exit_percentage ||
-                current_state_ != battery_state::charging) {
-                protection_active_ = false;
-                charger_enabled_ = true;
+        if (!protection_enabled_) {
+            protection_active_ = false;
+            charger_enabled_ = true;
+            return;
+        }
+        if (!protection_active_) {
+            if (evaluate_protection_conditions()) {
+                protection_active_ = true;
+                charger_enabled_ = false;
             }
+            return;
+        }
+        if (latch_release_requested()) {
+            protection_active_ = false;
+            charger_enabled_ = true;
         }
     }
 
@@ -235,14 +276,28 @@ state::snapshot_t state::observe(const observation &value)
      * The missing pin is an unknown signal, never a not-charging answer, so a
      * transient expander error can no longer freeze the snapshot and hide the
      * indicator. */
-    impl.percentage_ = value.percentage;
     impl.bus_voltage_mv_ = value.bus_voltage_mv;
     impl.current_ma_ = value.current_ma;
     impl.current_charge_ = decode_chg_stat(value.chg_valid, value.raw_chg_stat_low);
 
+    /* Classification comes first: the state-of-charge estimate is only
+     * re-anchored for a pack that is present and not charging, so the pure
+     * policy has to decide the state before feeding the estimator. */
     impl.current_state_ = impl.classify_state(value, impl.current_charge_);
+
+    const cyberdeck_battery_soc::reading soc = impl.soc_.observe({
+        true,
+        impl.current_state_ != battery_state::absent,
+        impl.current_state_ == battery_state::charging,
+        value.bus_voltage_mv,
+        value.current_ma,
+        value.elapsed_ms,
+    });
+    impl.soc_seeded_ = soc.seeded;
+    impl.percentage_ = soc.seeded ? soc.percentage : 0;
     impl.available_ = true;
 
+    impl.update_no_source_votes();
     impl.update_protection();
 
     impl.update_last_safe();
@@ -264,12 +319,10 @@ bool state::set_protection_enabled(bool enabled)
 {
     auto &impl = *pimpl_;
     impl.protection_enabled_ = enabled;
-    if (!enabled) {
-        impl.protection_active_ = false;
-        impl.charger_enabled_ = true;
-    } else {
-        impl.update_protection();
-    }
+    /* Disabling releases the latch and re-enables the charger immediately;
+     * re-enabling only re-engages from a fresh charging sample at or above the
+     * entry voltage. */
+    impl.update_protection();
     return true;
 }
 

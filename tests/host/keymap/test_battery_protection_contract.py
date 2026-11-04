@@ -41,7 +41,7 @@ ARCHITECTURE_PT_BR = ROOT / "docs/ARCHITECTURE.pt-BR.md"
 TRACEABILITY = (
     "REQ-BAT-007 -> expander-B pin6 CHG_STAT active-low and pin7 CHG_EN",
     "REQ-BAT-008 -> battery/external/charging/absent/unknown thresholds and votes",
-    "REQ-BAT-009 -> 90/85 protection hysteresis and fail-safe state",
+    "REQ-BAT-009 -> terminal-voltage cut and latched 85 % release",
     "REQ-BAT-010 -> NVS default/option, UI timer/snapshot, shell and ui.type",
 )
 
@@ -121,7 +121,7 @@ def check_pure_contract(failures: list[str], component: str, makefile: str) -> N
 
     for token in (
         "current_uncertainty_ma", "external_voltage_mv", "absent_voltage_mv",
-        "state_vote_count", "protection_enter_percentage",
+        "state_vote_count", "no_source_vote_count",
         "protection_enter_voltage_mv", "protection_exit_percentage",
         "default_protection_enabled", "battery_state", "charge_signal",
         "decode_chg_stat", "class state", "observe", "last_safe_snapshot",
@@ -135,7 +135,7 @@ def check_pure_contract(failures: list[str], component: str, makefile: str) -> N
         (r"external_voltage_mv\s*=\s*7900\b", "external threshold must be exactly 7900 mV"),
         (r"absent_voltage_mv\s*=\s*8330\b", "absent threshold must be exactly 8330 mV"),
         (r"state_vote_count\s*=\s*5\b", "state stabilization must require exactly five votes"),
-        (r"protection_enter_percentage\s*=\s*90\b", "protection enter percentage must be exactly 90"),
+        (r"no_source_vote_count\s*=\s*5\b", "the latch release must require exactly five votes"),
         (r"protection_enter_voltage_mv\s*=\s*8200\b", "protection enter voltage must be exactly 8200 mV"),
         (r"protection_exit_percentage\s*=\s*85\b", "protection resume percentage must be exactly 85"),
         (r"default_protection_enabled\s*=\s*true\b", "the only NVS option default must be true"),
@@ -152,6 +152,41 @@ def check_pure_contract(failures: list[str], component: str, makefile: str) -> N
         require_all(failures, value in combined,
                     f"battery state vocabulary must include {value}")
 
+    # TEST-SOC-32: the percentage is an estimate and no longer gates the cut,
+    # and the estimate never releases the latch while the pack still classifies
+    # as charging (releasing there would cut again on the next 8200 mV sample).
+    for path, label in ((PURE_SOURCE, "policy source"),
+                        (PURE_HEADER, "policy header"),
+                        (PURE_CONTRACT, "host contract")):
+        content = read(path, failures)
+        require_all(failures, "protection_enter_percentage" not in content,
+                    f"{label} must not keep protection_enter_percentage")
+    release = function_body(source, "bool latch_release_requested()")
+    require_all(failures, release is not None and
+                "protection_exit_percentage" in release and
+                "no_source_vote_count" in release,
+                "the latch release must use the 85 % estimate and the five-vote rule")
+    require_all(failures, release is not None and
+                "current_state_ != battery_state::charging" in release,
+                "the estimate must not release the latch while still charging")
+
+    # TEST-SOC-34: the observation carries the elapsed interval, never a
+    # percentage, and the adapter feeds the pure SoC estimator.
+    observation = re.search(r"struct observation\s*\{(.*?)\n\};", header, re.S)
+    require_all(failures, observation is not None and
+                "elapsed_ms" in observation.group(1) and
+                "percentage" not in observation.group(1),
+                "the policy observation must carry elapsed_ms and no percentage")
+    adapter_source = strip_comments(read(ADAPTER_SOURCE, failures))
+    require_all(failures, "cyberdeck_battery_soc" not in adapter_source and
+                "percentage_from_bus_voltage_mv" not in adapter_source,
+                "the adapter must not derive a percentage from the terminal voltage")
+    require_all(failures, "elapsed_ms" in adapter_source and
+                "s_policy.observe" in adapter_source,
+                "the adapter must feed the policy with the elapsed interval")
+    require_all(failures, "s_last_valid_sample_us" in adapter_source and
+                "esp_timer_get_time" in adapter_source,
+                "elapsed time must be measured from the last valid sample")
     require_all(failures, "cyberdeck_battery_protection.cpp" in component,
                 "component CMake must register the pure battery protection source")
     require_all(failures, "cyberdeck_battery_protection.h" in contract,
@@ -461,9 +496,9 @@ def check_traceability(failures: list[str]) -> None:
     for token in (
         "test_battery_protection.cpp", "test_battery_protection_contract.py",
         "cyberdeck_battery_protection.cpp", "CHG_STAT", "CHG_EN",
-        "7900", "8330", "90", "85", "5 votos", "battery protection",
+        "7900", "8330", "8200", "85", "5 votos", "battery protection",
         "CHG_QC_EN", "REQ-CHG-QC-01", "AC-CHG-QC-01..04",
-        "TEST-CHG-QC-01..07",
+        "TEST-CHG-QC-01..07", "cyberdeck_battery_soc", "TEST-SOC-",
     ):
         require_all(failures, token in codemap,
                     f"code-map.md must trace battery protection item {token}")
@@ -492,13 +527,14 @@ def check_traceability(failures: list[str]) -> None:
         documentation = read(path, failures)
         require_all(failures, "code-map.md" in documentation,
                     f"{path.name} must point to the battery traceability map")
-        for token in ("CHG_STAT", "CHG_EN", "battery protection", "7900", "8330", "90", "85"):
+        for token in ("CHG_STAT", "CHG_EN", "battery protection", "7900", "8330",
+                      "8200", "85", "SoC"):
             require_all(failures, token in documentation,
                         f"{path.name} must document {token}")
 
     version = read(ROOT / "version.txt", failures).strip()
-    require_all(failures, version == "1.2.0",
-                "firmware base diagnostic change must increment MINOR to 1.2.0")
+    require_all(failures, version == "1.3.0",
+                "the battery state-of-charge change must increment MINOR to 1.3.0")
     adapter = strip_comments(read(ADAPTER_SOURCE, failures))
     cached = function_body(adapter, "battery_protection_get_cached_policy_snapshot(")
     require_all(failures, cached is not None and

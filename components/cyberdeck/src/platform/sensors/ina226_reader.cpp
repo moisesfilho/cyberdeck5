@@ -27,8 +27,6 @@ constexpr uint8_t INA226_MANUFACTURER_ID_REGISTER = 0xFF;
 constexpr uint16_t INA226_CONFIGURATION_VALUE = 0x4527;
 constexpr uint16_t INA226_CALIBRATION_VALUE = 0x0D55;
 constexpr uint16_t INA226_MANUFACTURER_ID = 0x2260;
-constexpr std::int32_t INA226_CURRENT_MA_NUMERATOR = 1525;
-constexpr std::int32_t INA226_CURRENT_MA_DENOMINATOR = INA226_CALIBRATION_VALUE;
 
 constexpr char INA226_TASK_NAME[] = "ina226";
 
@@ -105,13 +103,10 @@ bool read_sample(cyberdeck_battery::sample *out,
         current_raw_unsigned >= 0x8000U
             ? static_cast<std::int32_t>(current_raw_unsigned) - 0x10000
             : static_cast<std::int32_t>(current_raw_unsigned);
-    const std::int64_t scaled_current =
-        static_cast<std::int64_t>(signed_current_raw) * INA226_CURRENT_MA_NUMERATOR;
-    std::int32_t current_ma = static_cast<std::int32_t>(
-        scaled_current / INA226_CURRENT_MA_DENOMINATOR);
-    if (current_ma == 0 && scaled_current != 0) {
-        current_ma = scaled_current < 0 ? -1 : 1;
-    }
+    /* Approved 300 uA/LSB shunt scale; the calibration register value only
+     * programs the device and is no longer a host-side divisor. */
+    const std::int32_t current_ma =
+        cyberdeck_battery::current_ma_from_raw(signed_current_raw);
 
     /* The INA226 bus-voltage register is the source of the percentage input;
      * the pure battery seam owns the approved 6000..8230 mV window. */

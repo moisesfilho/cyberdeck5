@@ -53,13 +53,19 @@ never rendered in the header. SSH state and errors are shown in the terminal
 and recorded in the event log. Use the `wifi` shell command for diagnostics.
 
 The battery group consumes synchronized INA226 snapshots without performing
-I2C in the UI. Its percentage is derived from the measured bus voltage and
-saturates across the approved 6000..8230 mV window; positive current is
+I2C in the UI. Its percentage is an estimated state of charge: coulomb counting
+anchored on the open-circuit voltage (I×R compensation with the measured
+330 mOhm series resistance at the seed and at the re-anchor), integrated with
+the sample interval, clamped to 0..100 and corrected by at most one point per
+sample. The approved 6000..8230 mV window maps that open-circuit voltage to
+0..100 % and, together with the five votes, detects an absent pack; it is not a
+direct reading of the terminal voltage. Positive current is
 discharging, negative current is charging, and zero or indeterminate current
 is neutral. The neutral state keeps the numeric percentage visible without a
 state glyph or state text. One semantic icon marks charging or discharging,
-with no battery-level glyph. The entire group stays hidden while the sensor is
-absent or its latest read is unavailable. This is a read-only monitor: it does
+with no battery-level glyph. An absent pack keeps the group visible with the
+external glyph and no percentage; the group is hidden when the INA226 read is
+invalid or the state is unknown. This is a read-only monitor: it does
 not expose charger control. Wi-Fi remains dynamically aligned within its
 allocated part of the right cell and recalculates on `LV_EVENT_SIZE_CHANGED`.
 The complete requirement-to-test mapping is maintained in `code-map.md` under
@@ -198,13 +204,15 @@ It reads `CHG_STAT` (active-low, Expander B pin 6) and controls `CHG_EN`
 (Expander B pin 7). The protection policy is pure and host-testable,
 separate from the INA226 sensor reader.
 
-Protection activates only when all three conditions are met:
+Protection activates only when both conditions are met:
 - State is `charging` (via `CHG_STAT` low or current < -15 mA)
-- Battery percentage >= 90%
-- Bus voltage >= 8200 mV
+- Terminal bus voltage >= 8200 mV
 
-Once active, protection latches through hysteresis and releases only
-when percentage drops to <= 85% (or charging stops). The only NVS-persisted
+The estimated state of charge no longer gates the cut. Once active, the
+protection latches; the estimated state of charge only releases it at <= 85%
+(accepted on the first sample, and never while still `charging`), together with
+five consecutive samples without an external source, or when the option is
+disabled. The only NVS-persisted
 option is `protection_enabled` (default `true`). Disabling it re-enables
 the charger immediately; re-enabling requires explicit action. Read
 failures never turn off `CHG_EN` or lose the last safe state.

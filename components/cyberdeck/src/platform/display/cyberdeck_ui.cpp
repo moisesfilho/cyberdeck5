@@ -1022,8 +1022,11 @@ void process_music_status(lv_timer_t *) {
     }
 }
 
+/* The clock timer owns only the header clock; the battery snapshot has its own
+ * 1000 ms timer (process_battery_protection).  Sampling the policy from both
+ * timers in the same tick made every second observation measure 0 ms of
+ * elapsed time and reset the state-of-charge quiet window. */
 void update_clock(lv_timer_t *) {
-    refresh_battery_status();
     std::string text;
     const time_t now = time(nullptr);
     /* An unset RTC commonly reports an early Unix epoch.  Do not expose that
@@ -2689,6 +2692,9 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     cyberdeck_apps::service_ports::wifi_set_state_callback(on_wifi_state, nullptr);
     s_last_clock_text.clear();
     update_clock(nullptr);
+    /* Prime the header once; afterwards only the dedicated battery timer
+     * samples the policy, so each observation carries a real interval. */
+    refresh_battery_status();
     s_clock_timer = lv_timer_create(update_clock, 1000, nullptr);
     s_wifi_state_timer = lv_timer_create(process_wifi_state, 100, nullptr);
     s_wifi_scan_timer = lv_timer_create(process_wifi_scan, 100, nullptr);

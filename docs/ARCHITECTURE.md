@@ -161,17 +161,45 @@ inicialização é apenas registrada. O fluxo não persiste estado de carga e
 não implementa controle ou proteção de bateria. Nenhuma transação I2C ocorre na
 UI, e o reader não registra timer LVGL.
 
+`cyberdeck_battery_soc.cpp` is the pure state-of-charge estimator (no ESP-IDF,
+FreeRTOS, I2C, NVS, LVGL or BSP). It keeps a coulomb counter in 1e-4 % units
+with the division remainder transported between observations, seeded from the
+open-circuit voltage (`ocv_from_terminal_mv`: terminal voltage compensated with
+the measured 330 mOhm series resistance, trusted up to +/-500 mA and saturated
+to `6000..8230` mV). The approved capacity is `pack_capacity_mah = 2000`.
+`elapsed_ms == 0` is a neutral re-observation (for example a second 1 Hz
+timer or an on-demand status query): nothing is integrated, the quiet window is
+neither extended nor cleared and no re-anchor happens. Intervals above
+`60000` ms are real reading gaps: they neither integrate nor re-anchor and they
+clear the accumulated quiet window, so a gap cannot stitch the 60000 ms at-rest
+period together. An invalid sample holds the estimate and an absent pack resets
+it.
+The estimate is re-anchored to the open-circuit voltage only after 60000 ms of
+continuous at-rest samples (|I| <= 15 mA, not charging, pack present), and the
+published value never moves more than one point per observation. The header
+percentage is this estimate, never a direct read of the terminal voltage, which
+removes the previous 94 % <-> 98 % flapping at the charger cut.
+
+`battery_status.cpp` also owns two shared helpers: `current_ma_from_raw()`
+converts the signed INA226 shunt register with the approved **300 uA/LSB**
+scale (3/10 mA per count, truncated towards zero and floored to +/-1 mA) and
+`ocv_from_terminal_mv()` provides the open-circuit anchor. `ina226_reader.cpp`
+uses the first instead of the old calibration-derived divisor; configuration
+`0x4527`, calibration `0x0D55` and the 1.25 mV/LSB bus conversion are unchanged.
+
 `cyberdeck_battery_protection.cpp` é a política pura de proteção de carga,
 host-testável e sem dependências de ESP-IDF, FreeRTOS, I2C, NVS, LVGL ou BSP.
 Ela define os estados `battery`, `external`, `charging`, `absent` e `unknown`,
 com threshold de corrente ±15 mA, `external` >= 7900 mV e `absent` >= 8330 mV
-exigindo 5 votos consecutivos. A proteção só atua quando as três condições
-estão satisfeitas: estado `charging`, percentual >= 90 e tensão >= 8200 mV.
-Uma vez ativa, permanece travada pela histerese e libera apenas quando o
-percentual cai para <= 85 (ou quando o estado deixa de ser `charging`). A única
-opção persistida no NVS é `protection_enabled` (default `true`); desabilitá-la
-religa o carregador imediatamente e exige reativação explícita. Falhas de
-leitura não desligam `CHG_EN` nem perdem o último estado seguro.
+exigindo 5 votos consecutivos. O corte atua quando o estado é `charging` e a
+**tensão terminal** atinge >= 8200 mV; o percentual estimado não participa mais
+da entrada. Uma vez ativo, o latch permanece engajado até (a) o SoC estimado
+ficar <= 85 na primeira amostra, sem votos e fora de `charging`, (b) cinco
+amostras consecutivas com o estado confirmado `battery`/`absent` (sem fonte
+externa), ou (c) a opção ser desligada. A única opção persistida no NVS é
+`protection_enabled` (default `true`); desabilitá-la religa o carregador
+imediatamente e exige reativação explícita. Falhas de leitura não desligam
+`CHG_EN` nem perdem o último estado seguro.
 
 Duas regras de precedência tornam essa política segura para uma bateria
 removível. Primeiro, somente uma leitura INA226 **inválida** preserva o snapshot
@@ -217,7 +245,7 @@ e não consulta getters live adicionais.
 
 ## Battery Protection
 
-O firmware implementa **battery protection** (proteção de carga) para prolongar a vida útil da bateria. A política pura (`cyberdeck_battery_protection`) define os estados `battery`, `external`, `charging`, `absent` e `unknown`, com threshold de corrente ±15 mA, `external` ≥ 7900 mV e `absent` ≥ 8330 mV exigindo 5 votos consecutivos. A proteção ativa somente quando as três condições são satisfeitas: estado `charging`, percentual ≥ 90 e tensão ≥ 8200 mV. Uma vez ativa, permanece travada pela histerese e libera apenas quando o percentual cai para ≤ 85 (ou quando a carga para). A única opção persistida no NVS é `protection_enabled` (default `true`); desabilitá-la religa o carregador imediatamente e exige reativação explícita. Falhas de leitura não desligam `CHG_EN` nem perdem o último estado seguro.
+O firmware implementa **battery protection** (proteção de carga) para prolongar a vida útil da bateria. A política pura (`cyberdeck_battery_protection`) define os estados `battery`, `external`, `charging`, `absent` e `unknown`, com threshold de corrente ±15 mA, `external` ≥ 7900 mV e `absent` ≥ 8330 mV exigindo 5 votos consecutivos. O corte ativa somente com estado `charging` e tensão terminal ≥ 8200 mV, sem depender do percentual estimado. Uma vez ativo, o latch só libera com SoC estimado ≤ 85 (na primeira amostra e nunca enquanto o pack ainda classificar como `charging`), com 5 amostras consecutivas sem fonte externa, ou ao desligar a opção. A única opção persistida no NVS é `protection_enabled` (default `true`); desabilitá-la religa o carregador imediatamente e exige reativação explícita. Falhas de leitura não desligam `CHG_EN` nem perdem o último estado seguro.
 
 A rastreabilidade desse fluxo é mantida em `code-map.md`: REQ-BAT-001 e
 REQ-BAT-002 fixam a matemática e os estados, REQ-BAT-003 fixa a apresentação
@@ -225,16 +253,18 @@ neutral, REQ-BAT-004 fixa boot não fatal e ausência de controle de carregador,
 REQ-BAT-005 fixa a integração INA226, REQ-BAT-006 exige que esta documentação
 e o mapa permaneçam alinhados aos contratos host, REQ-BAT-007 fixa o Expander B
 e pinos CHG_STAT/CHG_EN, REQ-BAT-008 fixa os estados e thresholds, REQ-BAT-009
-fixa a histerese 90/85 e fail-safe, e REQ-BAT-010 fixa NVS, timer UI, shell e
-`ui.type`.
+fixa o corte por tensão terminal e o latch 85/fail-safe, REQ-BAT-010 fixa NVS,
+timer UI, shell e `ui.type`, REQ-BAT-011 fixa o SoC estimado por contagem de
+carga ancorada em OCV e REQ-BAT-012 fixa a escala de corrente de 300 uA/LSB e os
+helpers de OCV.
 
 ### Indicador de energia removível (REQ-BAT-UI-001..005 / AC-BAT-UI-001..006)
 
 - **REQ-BAT-UI-001 / AC-BAT-UI-001..002** — falha de `CHG_STAT` não congela o
-  snapshot: leitura INA válida atualiza tensão/corrente/percentual/
-  disponibilidade; leitura INA inválida preserva o estado seguro da proteção,
-  mas publica `available=false` para ocultar a UI e não renderizar um snapshot
-  antigo.
+  snapshot: leitura INA válida atualiza tensão/corrente/disponibilidade e
+  alimenta o estimador de SoC; leitura INA inválida preserva o estado seguro da
+  proteção (e a estimativa) mas publica `available=false` para ocultar a UI e
+  não renderizar um snapshot antigo.
 - **REQ-BAT-UI-002 / AC-BAT-UI-003** — precedência de ausência/presença antes
   do sinal do carregador, preservando estados, thresholds e votos aprovados.
 - **REQ-BAT-UI-003 / AC-BAT-UI-004** — camada pura

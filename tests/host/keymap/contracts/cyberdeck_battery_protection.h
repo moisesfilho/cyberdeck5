@@ -30,7 +30,7 @@ inline constexpr std::int32_t current_uncertainty_ma = 15;
 inline constexpr std::int32_t external_voltage_mv = 7900;
 inline constexpr std::int32_t absent_voltage_mv = 8330;
 inline constexpr std::uint8_t state_vote_count = 5;
-inline constexpr std::int32_t protection_enter_percentage = 90;
+inline constexpr std::uint8_t no_source_vote_count = 5;
 inline constexpr std::int32_t protection_enter_voltage_mv = 8200;
 inline constexpr std::int32_t protection_exit_percentage = 85;
 inline constexpr bool default_protection_enabled = true;
@@ -52,14 +52,15 @@ enum class charge_signal {
 /* raw_chg_stat_low is the electrical level read from expander-B pin 6.  The
  * CHG_STAT signal is active-low: a valid low means charging, a valid high means
  * not charging.  chg_valid/ina_valid are independent so a failed read can be
- * tested without fabricating a safe state. */
+ * tested without fabricating a safe state.  elapsed_ms is the interval since
+ * the previous valid sample and feeds the state-of-charge estimate. */
 struct observation {
     bool ina_valid{false};
     bool chg_valid{false};
     bool raw_chg_stat_low{false};
     std::int32_t bus_voltage_mv{0};
     std::int32_t current_ma{0};
-    std::int32_t percentage{0};
+    std::uint32_t elapsed_ms{0};
 };
 
 struct snapshot {
@@ -91,11 +92,15 @@ charge_signal decode_chg_stat(bool valid, bool raw_low);
  *     votes, and >= 8330 mV is absent only after five consecutive votes;
  *   - a valid lower-voltage sample is battery.
  *
- * Protection is disabled only by the complete charging && pct >= 90 &&
- * voltage >= 8200 conjunction.  Once active it remains latched through the
- * hysteresis band and releases at pct <= 85 (or when charging stops).  Setting
- * the option off releases immediately and makes the desired charger level high
- * again; a later valid sample is required before the option can disable it.
+ * Protection is disabled only by the complete charging && terminal voltage
+ * >= 8200 mV conjunction: the percentage is an estimate and no longer gates the
+ * cut.  Once active it remains latched until the estimated state of charge is
+ * <= 85 (honoured on the first sample, no votes, and never while the pack still
+ * classifies as charging), five consecutive samples without an external source
+ * (battery/absent), or the option is set off.
+ * Setting the option off releases immediately and makes the desired charger
+ * level high again; a later valid sample is required before the option can
+ * disable it.
  */
 class state {
 public:

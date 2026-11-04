@@ -18,6 +18,10 @@ Traceability:
 Required production seam:
   * INA226 address 0x41 on the I2C bus;
   * bus-voltage register 0x02 is read and converted to mV (1.25 mV/LSB);
+  * the signed current register is converted with the approved 300 uA/LSB
+    scale through current_ma_from_raw(), not a calibration-derived divisor;
+  * the raw diagnostics publish the same converted sample, so the status line
+    and the hardware diagnostics never disagree about the current scale;
   * configuration and calibration are written during initialization;
   * the sample field is explicitly bus_voltage_mv, never capacity_mah;
   * sampling runs in a dedicated task with a one-second cadence;
@@ -146,6 +150,27 @@ def main() -> int:
             "reader must preserve the signed current sign used by state classification")
     require(re.search(r"read_sample\s*\([^)]*\).*?return\s+false", reader, re.S) is not None,
             "failed INA226 reads must be reported as unavailable samples")
+
+    # TEST-SOC-29/30/31: the shunt current uses the approved 300 uA/LSB scale
+    # through the shared pure helper.  The calibration register still programs
+    # the device but is no longer a host-side divisor, and the diagnostics
+    # publish the same converted sample (same scale in both status fields).
+    require("current_ma_from_raw" in battery_status and
+            "current_ma_from_raw" in battery_source,
+            "battery API must expose current_ma_from_raw for the 300 uA/LSB scale")
+    require(re.search(r"current_lsb_microamp\s*=\s*300\b", battery_status) is not None,
+            "battery API must declare the approved 300 uA/LSB current LSB")
+    require("current_ma_from_raw" in reader,
+            "INA226 reader must convert current through current_ma_from_raw")
+    require("1525" not in reader,
+            "reader must not keep the old 1525 mA numerator")
+    require("INA226_CURRENT_MA_NUMERATOR" not in reader and
+            "INA226_CURRENT_MA_DENOMINATOR" not in reader,
+            "reader must not scale current with the calibration register divisor")
+    require("scaled_current" not in reader,
+            "reader must not keep the calibration-derived current scaling")
+    require(re.search(r"out_diagnostics\s*=\s*\{[^}]*\*out", reader) is not None,
+            "diagnostics must publish the same converted sample used by the snapshot")
 
     # REQ-BAT-002: the state vocabulary must be explicit, including the
     # absence/read-failure distinction and a real neutral state.  Zero (or

@@ -7,6 +7,14 @@ namespace cyberdeck_battery {
 inline constexpr std::int32_t empty_bus_voltage_mv = 6000;
 inline constexpr std::int32_t full_bus_voltage_mv = 8230;
 
+/* Equivalent series resistance of the pack plus wiring, measured on the
+ * device (~330 mOhm).  It converts a terminal measurement into the open-circuit
+ * voltage the state-of-charge estimate is anchored to. */
+inline constexpr std::int32_t equivalent_series_mohm = 330;
+
+/* Approved INA226 shunt-current LSB: 300 uA per raw count. */
+inline constexpr std::int32_t current_lsb_microamp = 300;
+
 enum class charge_class {
     absent,
     unavailable,
@@ -31,5 +39,16 @@ struct snapshot {
 std::int32_t percentage_from_bus_voltage_mv(std::int32_t bus_voltage_mv);
 charge_class classify_current_ma(std::int32_t current_ma);
 snapshot classify_sample(const sample &value);
+
+/* Signed INA226 shunt-current register converted with the approved 300 uA/LSB
+ * scale: 3/10 mA per raw count, truncated toward zero and raised to +/-1 mA
+ * when a non-zero reading would otherwise truncate to zero. */
+std::int32_t current_ma_from_raw(std::int32_t raw);
+
+/* Terminal bus voltage compensated back to the open-circuit voltage with the
+ * measured equivalent series resistance, saturated to the approved battery
+ * window.  The compensation is only trusted up to +/-500 mA; above that the
+ * terminal measurement is used unchanged. */
+std::int32_t ocv_from_terminal_mv(std::int32_t bus_voltage_mv, std::int32_t current_ma);
 
 } // namespace cyberdeck_battery

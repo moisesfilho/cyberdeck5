@@ -80,6 +80,7 @@ idf_component_register(
         "src/platform/sensors/battery_status.cpp"
         "src/platform/sensors/ina226_reader.cpp"
         "src/platform/sensors/cyberdeck_battery_protection.cpp"
+        "src/platform/sensors/cyberdeck_battery_soc.cpp"
          "src/platform/sensors/battery_protection.cpp"
          "src/platform/sensors/cyberdeck_expander_device.cpp"
         "src/platform/display/screen_off.cpp"

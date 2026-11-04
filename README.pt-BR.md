@@ -52,13 +52,19 @@ SSID nunca é renderizado no header. Estados e erros de SSH são exibidos no
 terminal e registrados no log de eventos. Use o comando `wifi` para diagnóstico.
 
 O grupo de bateria consome snapshots INA226 sincronizados sem executar I2C na
-UI. O percentual deriva da tensão medida no barramento e satura na faixa
-aprovada de 6000..8230 mV; corrente positiva representa descarga, negativa
+UI. O percentual é um estado de carga estimado: contagem de carga ancorada na
+tensão de circuito aberto (compensação I×R com a resistência série medida de
+330 mOhm no seed e na reancoragem), integrada com o intervalo entre amostras,
+com clamp em 0..100 e correção máxima de 1 ponto por amostra. A janela aprovada
+de 6000..8230 mV mapeia essa tensão de circuito aberto em 0..100 % e, junto com
+os cinco votos, detecta a ausência do pack; ela não é uma leitura direta da
+tensão terminal. Corrente positiva representa descarga, negativa
 representa carga e corrente zero ou indeterminada representa neutral. No estado
 neutral o percentual numérico permanece visível, sem glyph ou texto de estado.
 Um único ícone semântico indica carga ou descarga, sem glyph de nível de bateria.
-O grupo inteiro fica oculto enquanto o sensor está ausente ou a leitura mais
-recente está indisponível. O fluxo é somente leitura e não expõe controle do
+Com o pack ausente o grupo permanece visível com o glyph externo e sem
+percentual; o grupo fica oculto quando a leitura INA é inválida ou o estado é
+desconhecido. O fluxo é somente leitura e não expõe controle do
 carregador. O Wi-Fi permanece alinhado dinamicamente dentro de sua parte alocada
 na célula direita e recalcula em `LV_EVENT_SIZE_CHANGED`. O mapeamento completo
 de requisitos para testes é mantido em `code-map.md`, de REQ-BAT-001 a
@@ -176,13 +182,14 @@ bateria. Ele lê `CHG_STAT` (active-low, Expander B pin 6) e controla
 `CHG_EN` (Expander B pin 7). A política de proteção é pura e testável no
 host, separada do reader INA226 do sensor.
 
-A proteção ativa somente quando as três condições são atendidas:
+A proteção ativa somente quando as duas condições são atendidas:
 - Estado é `charging` (via `CHG_STAT` em nível baixo ou corrente < -15 mA)
-- Percentual da bateria >= 90%
-- Tensão do barramento >= 8200 mV
+- Tensão terminal do barramento >= 8200 mV
 
-Uma vez ativa, a proteção permanece travada pela histerese e libera
-apenas quando o percentual cai para <= 85% (ou quando a carga para).
+O estado de carga estimado não participa mais do corte. Uma vez ativa, a
+proteção permanece travada: o SoC estimado só a libera em <= 85% (aceito na
+primeira amostra e nunca enquanto ainda estiver `charging`), junto com cinco
+amostras consecutivas sem fonte externa, ou ao desabilitar a opção.
 A única opção persistida no NVS é `protection_enabled` (default `true`).
 Desabilitá-la religa o carregador imediatamente; reativar exige ação
 explícita. Falhas de leitura nunca desligam `CHG_EN` nem perdem o último

@@ -44,6 +44,8 @@ void test_approved_bus_voltage_window()
 {
     CHECK_EQ(cyberdeck_battery::empty_bus_voltage_mv, 6000);
     CHECK_EQ(cyberdeck_battery::full_bus_voltage_mv, 8230);
+    CHECK_EQ(cyberdeck_battery::equivalent_series_mohm, 330);
+    CHECK_EQ(cyberdeck_battery::current_lsb_microamp, 300);
 
     CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(6000), 0);
     CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(7115), 50);
@@ -59,6 +61,37 @@ void test_percentage_is_saturated_at_both_limits()
     CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(8400), 100);
     CHECK_EQ(cyberdeck_battery::percentage_from_bus_voltage_mv(
                  std::numeric_limits<std::int32_t>::max()), 100);
+}
+
+/* TEST-SOC-29: the signed INA226 shunt register is converted with the approved
+ * 300 uA/LSB scale, not the old calibration-derived divisor. */
+void test_current_scale_from_raw()
+{
+    CHECK_EQ(cyberdeck_battery::current_ma_from_raw(-578), -173);
+    CHECK_EQ(cyberdeck_battery::current_ma_from_raw(-839), -251);
+    CHECK_EQ(cyberdeck_battery::current_ma_from_raw(13), 3);
+    CHECK_EQ(cyberdeck_battery::current_ma_from_raw(1), 1);
+    CHECK_EQ(cyberdeck_battery::current_ma_from_raw(-1), -1);
+    CHECK_EQ(cyberdeck_battery::current_ma_from_raw(1667), 500);
+    CHECK_EQ(cyberdeck_battery::current_ma_from_raw(0), 0);
+    /* The register boundaries keep the signed 16-bit domain: INT16_MIN must
+     * stay a large negative current instead of arriving as +32768. */
+    CHECK_EQ(cyberdeck_battery::current_ma_from_raw(-32768), -9830);
+    CHECK_EQ(cyberdeck_battery::current_ma_from_raw(32767), 9830);
+}
+
+/* TEST-SOC-01/05: terminal voltage compensated to the open-circuit voltage
+ * with the measured equivalent series resistance, saturated to the approved
+ * window and only inside the +/-500 mA trust band. */
+void test_open_circuit_voltage_compensation()
+{
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -251), 8109);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8108, 3), 8108);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -500), 8026);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, -501), 8191);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(8191, 500), 8230);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(5000, 0), 6000);
+    CHECK_EQ(cyberdeck_battery::ocv_from_terminal_mv(9000, 0), 8230);
 }
 
 void test_current_sign_classification()
@@ -132,6 +165,8 @@ int main()
 {
     test_approved_bus_voltage_window();
     test_percentage_is_saturated_at_both_limits();
+    test_current_scale_from_raw();
+    test_open_circuit_voltage_compensation();
     test_current_sign_classification();
     test_absence_and_read_failure_are_distinct_unavailable_states();
     test_available_snapshot_combines_voltage_percentage_and_direction();

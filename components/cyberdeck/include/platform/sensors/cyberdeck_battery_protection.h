@@ -14,7 +14,9 @@ inline constexpr std::int32_t current_uncertainty_ma = 15;
 inline constexpr std::int32_t external_voltage_mv = 7900;
 inline constexpr std::int32_t absent_voltage_mv = 8330;
 inline constexpr std::uint8_t state_vote_count = 5;
-inline constexpr std::int32_t protection_enter_percentage = 90;
+/* Consecutive samples without an external source (battery/absent) that release
+ * the charger latch. */
+inline constexpr std::uint8_t no_source_vote_count = 5;
 inline constexpr std::int32_t protection_enter_voltage_mv = 8200;
 inline constexpr std::int32_t protection_exit_percentage = 85;
 inline constexpr bool default_protection_enabled = true;
@@ -39,7 +41,9 @@ struct observation {
     bool raw_chg_stat_low{false};
     std::int32_t bus_voltage_mv{0};
     std::int32_t current_ma{0};
-    std::int32_t percentage{0};
+    /* Time since the previous valid INA226 sample; 0 means no measurable
+     * interval and the state-of-charge estimate is not integrated. */
+    std::uint32_t elapsed_ms{0};
 };
 
 struct snapshot {
@@ -49,6 +53,8 @@ struct snapshot {
      * negative charger answer. */
     charge_signal charge{charge_signal::unknown};
     bool available{false};
+    /* Estimated state of charge: coulomb counting anchored to the
+     * open-circuit voltage, never a direct reading of the terminal voltage. */
     std::int32_t percentage{0};
     std::int32_t bus_voltage_mv{0};
     std::int32_t current_ma{0};

@@ -483,6 +483,29 @@ def main() -> int:
         r"lv_timer_create\s*\([^;]{0,500}1000", ui, re.S) is not None,
         "UI must refresh the battery snapshot from a one-second LVGL timer")
 
+    # F1 (cycle 2): the policy has exactly one periodic sampler.  The clock timer
+    # used to sample it as well, so the second call in the same tick measured
+    # 0 ms of elapsed time and restarted the state-of-charge quiet window on
+    # every clock tick.
+    plain_ui = strip_comments(ui)
+    initializer = function_body(plain_ui, "cyberdeck_ui_init")
+    clock = function_body(plain_ui, "update_clock")
+    sampler = function_body(plain_ui, "process_battery_protection")
+    require("refresh_battery_status" not in clock,
+            "the clock timer must not sample the battery policy")
+    require(re.search(r"refresh_battery_status\s*\(\s*\)\s*;", sampler) is not None,
+            "process_battery_protection must call the battery refresh")
+    require(re.search(r"lv_timer_create\s*\(\s*process_battery_protection\s*,\s*1000\b",
+                      plain_ui) is not None,
+            "the battery sampler must be the timer created with a 1000 ms period")
+    require(re.search(r"lv_timer_create\s*\(\s*update_clock\s*,\s*1000\b",
+                      plain_ui) is not None,
+            "the clock timer must keep its own 1000 ms period")
+    require(initializer.count("refresh_battery_status()") == 1,
+            "the battery header must be primed exactly once during init")
+    require(len(re.findall(r"refresh_battery_status\s*\(\s*\)\s*;", plain_ui)) == 2,
+            "only the init priming and the battery timer may sample the policy")
+
     require("test_battery_ui_contract" in makefile,
             "Makefile must register the battery UI structural target")
     require("battery" in codemap.lower() and "ina226" in codemap.lower(),

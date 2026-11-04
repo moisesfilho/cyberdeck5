@@ -27,6 +27,13 @@ namespace cyberdeck_battery {
 inline constexpr std::int32_t empty_bus_voltage_mv = 6000;
 inline constexpr std::int32_t full_bus_voltage_mv = 8230;
 
+/* Equivalent series resistance used to convert a terminal measurement into the
+ * open-circuit voltage that anchors the state-of-charge estimate. */
+inline constexpr std::int32_t equivalent_series_mohm = 330;
+
+/* Approved INA226 shunt-current LSB: 300 uA per raw count. */
+inline constexpr std::int32_t current_lsb_microamp = 300;
+
 enum class charge_class {
     absent,
     unavailable,
@@ -55,6 +62,16 @@ std::int32_t percentage_from_bus_voltage_mv(std::int32_t bus_voltage_mv);
  * otherwise indeterminate current is neutral.  This classifier never invents
  * an absent state. */
 charge_class classify_current_ma(std::int32_t current_ma);
+
+/* Signed INA226 shunt-current register converted with the approved 300 uA/LSB
+ * scale (3/10 mA per count, truncated toward zero, floored to +/-1 mA when a
+ * non-zero reading would truncate to zero). */
+std::int32_t current_ma_from_raw(std::int32_t raw);
+
+/* Terminal bus voltage compensated to open-circuit voltage with the approved
+ * equivalent series resistance, saturated to 6000..8230 mV.  The compensation
+ * is only applied with |current| <= 500 mA. */
+std::int32_t ocv_from_terminal_mv(std::int32_t bus_voltage_mv, std::int32_t current_ma);
 
 /* Pure composition of presence, read validity, voltage, and current state. */
 snapshot classify_sample(const sample &value);
