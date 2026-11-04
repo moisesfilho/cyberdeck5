@@ -2511,8 +2511,10 @@ ponto por amostra.
 O corte de carga usa a tensao **terminal** (`charging && >=8200 mV`) e o latch
 libera apenas por SoC <= 85 (primeira amostra, fora de `charging`), 5 amostras
 consecutivas com estado confirmado `battery`/`absent` (sem fonte externa) ou
-`set_protection_enabled(false)`. A clausula antiga
-`state != charging` foi removida, assim como `protection_enter_percentage`.
+`set_protection_enabled(false)`. A clausula autonoma de release por
+`state != charging` foi removida (o estado so aparece como guarda
+`current_state_ != charging` do release por SoC), assim como
+`protection_enter_percentage`.
 
 Escala de corrente: `current_ma_from_raw` (300 uA/LSB) e a unica conversao usada
 pelo reader e, portanto, pelos dois campos de corrente do `battery protection

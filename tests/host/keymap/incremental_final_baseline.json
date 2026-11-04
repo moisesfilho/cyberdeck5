@@ -164,6 +164,7 @@
       "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
       "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp",
       "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_soc.cpp",
       "../../../components/cyberdeck/src/platform/sensors/battery_status.cpp",
       "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp",
       "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp",
@@ -196,6 +197,7 @@
       "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
       "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp",
       "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_soc.cpp",
       "../../../components/cyberdeck/src/platform/sensors/battery_status.cpp",
       "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp",
       "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp",
@@ -333,6 +335,7 @@
       "../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp",
       "../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp",
       "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_soc.cpp",
       "../../../components/cyberdeck/src/platform/sensors/battery_status.cpp",
       "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_menu.cpp",
       "../../../components/cyberdeck/src/apps/wifi/cyberdeck_wifi_state_machine.cpp",
@@ -418,7 +421,9 @@
   "test_battery_protection": {
     "sources": [
       "test_battery_protection.cpp",
-      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp"
+      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_soc.cpp",
+      "../../../components/cyberdeck/src/platform/sensors/battery_status.cpp"
     ],
     "flags": [
       "$(CXXFLAGS)",

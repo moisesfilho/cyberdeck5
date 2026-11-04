@@ -2692,8 +2692,11 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     cyberdeck_apps::service_ports::wifi_set_state_callback(on_wifi_state, nullptr);
     s_last_clock_text.clear();
     update_clock(nullptr);
-    /* Prime the header once; afterwards only the dedicated battery timer
-     * samples the policy, so each observation carries a real interval. */
+    /* Prime the header once.  cyberdeck_ui_init runs before
+     * battery_protection_start(), so this call returns early today and the
+     * header is populated by the first 1 s tick; it is kept for the case where
+     * the startup order changes.  Only the dedicated battery timer samples the
+     * policy, so each observation carries a real interval. */
     refresh_battery_status();
     s_clock_timer = lv_timer_create(update_clock, 1000, nullptr);
     s_wifi_state_timer = lv_timer_create(process_wifi_state, 100, nullptr);
