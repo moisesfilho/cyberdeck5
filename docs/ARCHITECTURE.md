@@ -258,7 +258,7 @@ e não consulta getters live adicionais.
 
 ## Battery Protection
 
-O firmware implementa **battery protection** (proteção de carga) para prolongar a vida útil da bateria. A política pura (`cyberdeck_battery_protection`) define os estados `battery`, `external`, `charging`, `absent` e `unknown`, com threshold de corrente ±15 mA, `external` ≥ 7900 mV e `absent` ≥ 8330 mV exigindo 5 votos consecutivos. O corte ativa somente com estado `charging` e tensão terminal ≥ 8200 mV, sem depender do percentual estimado. Uma vez ativo, o latch só libera com SoC estimado ≤ 85 (na primeira amostra e nunca enquanto o pack ainda classificar como `charging`), com 5 amostras consecutivas sem fonte externa, ou ao desligar a opção. A única opção persistida no NVS é `protection_enabled` (default `true`); desabilitá-la religa o carregador imediatamente e exige reativação explícita. Falhas de leitura não desligam `CHG_EN` nem perdem o último estado seguro.
+O firmware implementa **battery protection** (proteção de carga) para prolongar a vida útil da bateria. A política pura (`cyberdeck_battery_protection`) define os estados `battery`, `external`, `charging`, `absent` e `unknown`, com threshold de corrente ±15 mA, `external` ≥ 7900 mV e `absent` ≥ 8330 mV exigindo 5 votos consecutivos. O corte ativa somente com estado `charging` e tensão terminal ≥ 8200 mV, sem depender do percentual estimado. Uma vez ativo, o latch só libera com SoC estimado ≤ 90 (na primeira amostra e nunca enquanto o pack ainda classificar como `charging`), com 5 amostras consecutivas sem fonte externa, ou ao desligar a opção. A única opção persistida no NVS é `protection_enabled` (default `true`); desabilitá-la religa o carregador imediatamente e exige reativação explícita. Falhas de leitura não desligam `CHG_EN` nem perdem o último estado seguro.
 
 A rastreabilidade desse fluxo é mantida em `code-map.md`: REQ-BAT-001 e
 REQ-BAT-002 fixam a matemática e os estados, REQ-BAT-003 fixa a apresentação
@@ -266,7 +266,7 @@ neutral, REQ-BAT-004 fixa boot não fatal e ausência de controle de carregador,
 REQ-BAT-005 fixa a integração INA226, REQ-BAT-006 exige que esta documentação
 e o mapa permaneçam alinhados aos contratos host, REQ-BAT-007 fixa o Expander B
 e pinos CHG_STAT/CHG_EN, REQ-BAT-008 fixa os estados e thresholds, REQ-BAT-009
-fixa o corte por tensão terminal e o latch 85/fail-safe, REQ-BAT-010 fixa NVS,
+fixa o corte por tensão terminal e o latch 90/fail-safe, REQ-BAT-010 fixa NVS,
 timer UI, shell e `ui.type`, REQ-BAT-011 fixa o SoC estimado por contagem de
 carga ancorada em OCV e REQ-BAT-012 fixa a escala de corrente de 300 uA/LSB e os
 helpers de OCV.

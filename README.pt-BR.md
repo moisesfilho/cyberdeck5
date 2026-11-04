@@ -190,7 +190,7 @@ A proteção ativa somente quando as duas condições são atendidas:
 - Tensão terminal do barramento >= 8200 mV
 
 O estado de carga estimado não participa mais do corte. Uma vez ativa, a
-proteção permanece travada: o SoC estimado só a libera em <= 85% (aceito na
+proteção permanece travada: o SoC estimado só a libera em <= 90% (aceito na
 primeira amostra e nunca enquanto ainda estiver `charging`), junto com cinco
 amostras consecutivas sem fonte externa, ou ao desabilitar a opção.
 A única opção persistida no NVS é `protection_enabled` (default `true`).

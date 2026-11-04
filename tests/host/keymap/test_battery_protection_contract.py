@@ -35,6 +35,8 @@ BSP_FEATURE_EN = BSP_SRC_DIR / "bsp_feature_en.cpp"
 BSP_CMAKE = ROOT / "components/m5stack_tab5/CMakeLists.txt"
 RULES_PATH = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
+README = ROOT / "README.md"
+README_PT = ROOT / "README.pt-BR.md"
 ARCHITECTURE = ROOT / "docs/ARCHITECTURE.md"
 ARCHITECTURE_PT_BR = ROOT / "docs/ARCHITECTURE.pt-BR.md"
 
@@ -547,6 +549,21 @@ def check_traceability(failures: list[str]) -> None:
                       "8200", "90", "SoC"):
             require_all(failures, token in documentation,
                         f"{path.name} must document {token}")
+
+    # The documentation gate: every current-behaviour file must state the 90 %
+    # latch release, not only carry the string "90" somewhere.  "85" stays
+    # allowed as an explicit historical reference (85 % of the previous
+    # 6000..8230 mV window = 7895,5 mV); this check fails when a file only
+    # asserts the old release.
+    release_line = re.compile(r"(?i)(latch|libera\w*|release|resume)")
+    for path in (README, README_PT, CODEMAP, ARCHITECTURE, ARCHITECTURE_PT_BR):
+        documentation = read(path, failures)
+        states_90 = any(release_line.search(line) and "90" in line
+                        for line in documentation.splitlines())
+        require_all(failures, states_90,
+                    f"{path.name} must state the current 90 % latch release "
+                    "(a line matching latch/libera/release/resume that contains "
+                    "\"90\"); only the historical 85 % may remain otherwise")
 
     # The version must keep the MAJOR.MINOR.PATCH shape without zero padding and
     # never fall below the release that introduced this feature; a later

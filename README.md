@@ -212,7 +212,7 @@ Protection activates only when both conditions are met:
 - Terminal bus voltage >= 8200 mV
 
 The estimated state of charge no longer gates the cut. Once active, the
-protection latches; the estimated state of charge only releases it at <= 85%
+protection latches; the estimated state of charge only releases it at <= 90%
 (accepted on the first sample, and never while still `charging`), together with
 five consecutive samples without an external source, or when the option is
 disabled. The only NVS-persisted

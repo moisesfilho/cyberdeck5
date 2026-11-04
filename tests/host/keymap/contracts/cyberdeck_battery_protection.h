@@ -95,7 +95,7 @@ charge_signal decode_chg_stat(bool valid, bool raw_low);
  * Protection is disabled only by the complete charging && terminal voltage
  * >= 8200 mV conjunction: the percentage is an estimate and no longer gates the
  * cut.  Once active it remains latched until the estimated state of charge is
- * <= 85 (honoured on the first sample, no votes, and never while the pack still
+ * <= 90 (honoured on the first sample, no votes, and never while the pack still
  * classifies as charging), five consecutive samples without an external source
  * (battery/absent), or the option is set off.
  * Setting the option off releases immediately and makes the desired charger
