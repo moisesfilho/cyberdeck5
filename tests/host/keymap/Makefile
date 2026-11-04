@@ -124,6 +124,14 @@ BATTERY_VIEW_CONTRACT_HDR := contracts/cyberdeck_battery_view.h
 BATTERY_VIEW_TEST := test_battery_view.cpp
 BATTERY_VIEW_BIN := test_battery_view_bin
 BATTERY_VIEW_CONTRACT := test_battery_view_contract.py
+# GET /battery JSON formatter (pure): fixed field order, null for unknown,
+# int64 timestamps, fail-closed at kMaxJsonBytes.  The HTTP route/guards stay in
+# test_battery_http_contract.py because screenshot_server.cpp needs ESP-IDF.
+BATTERY_JSON_SRC := ../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_json.cpp
+BATTERY_JSON_HDR := ../../../components/cyberdeck/include/platform/sensors/cyberdeck_battery_json.h
+BATTERY_JSON_TEST := test_battery_json.cpp
+BATTERY_JSON_BIN := test_battery_json_bin
+BATTERY_JSON_CONTRACT := test_battery_http_contract.py
 SD_IO_COORDINATOR_SRC := ../../../components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp
 SD_IO_COORDINATOR_HDR := ../../../components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h
 SD_IO_COORDINATOR_TEST := test_sd_io_coordinator.cpp
@@ -232,7 +240,7 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_SOC_BIN) $(BATTERY_VIEW_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN) test_music_header_visibility_bin
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_SOC_BIN) $(BATTERY_VIEW_BIN) $(BATTERY_JSON_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN) test_music_header_visibility_bin
 
 MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
 MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
@@ -324,6 +332,7 @@ SD_IO_COORDINATOR_OBJS := test_sd_io_coordinator/test.o test_sd_io_coordinator/c
 BATTERY_CONTRACT_OBJS := test_battery_contract/test.o test_battery_contract/status.o
 BATTERY_SOC_OBJS := test_battery_soc/test.o test_battery_soc/soc.o test_battery_soc/status.o
 BATTERY_VIEW_OBJS := test_battery_view/test.o test_battery_view/view.o test_battery_view/protection.o test_battery_view/soc.o test_battery_view/status.o
+BATTERY_JSON_OBJS := test_battery_json/test.o test_battery_json/json.o test_battery_json/protection.o test_battery_json/soc.o test_battery_json/status.o
 BLE_TYPES_OBJS := test_ble_types/test.o test_ble_types/types.o
 BLE_STATE_OBJS := test_ble_state_machine/test.o test_ble_state_machine/state.o test_ble_state_machine/types.o
 BLE_EVENTS_OBJS := test_ble_event_dispatch/test.o test_ble_event_dispatch/events.o test_ble_event_dispatch/types.o
@@ -387,7 +396,7 @@ KNOWN_HOSTS_FILE_MIG_OBJS := test_known_hosts_file/test.o test_known_hosts_file/
 POWEROFF_MIG_OBJS := test_poweroff/test.o test_poweroff/poweroff.o
 MIGRATION_FINAL_OBJS := $(EDITOR_MODEL_MIG_OBJS) $(TIME_SYNC_MIG_OBJS) $(SHELL_UTILS_MIG_OBJS) $(SD_PACKAGE_MIG_OBJS) $(RESOURCE_CATALOG_MIG_OBJS) $(NETDIAG_DNS_ADAPTER_MIG_OBJS) $(NETDIAG_HTTPS_ADAPTER_MIG_OBJS) $(NETDIAG_APP_MIG_OBJS) $(SHELL_SESSION_MIG_OBJS) $(SHELL_HELP_MIG_OBJS) $(APP_RUNTIME_MIG_OBJS) $(RUNTIME_SDK_MIG_OBJS) $(STORAGE_FACADE_MIG_OBJS) $(PHASE9_CAPABILITIES_MIG_OBJS) $(DEMO_APP_MIG_OBJS) $(SHELL_APP_MIG_OBJS) $(WINDOW_MANAGER_MIG_OBJS) $(LOCAL_SHELL_MIG_OBJS) $(CAT_MULTILINE_MIG_OBJS) $(HELP_UNIFICATION_MIG_OBJS) $(BATTERY_PROTECTION_MIG_OBJS) $(CAT_WORKER_MIG_OBJS) $(BLE_BACKGROUND_MIG_OBJS) $(KEYBOARD_DISPATCH_MIG_OBJS) $(DISPLAY_VIEWS_MIG_OBJS) $(KNOWN_HOSTS_FILE_MIG_OBJS) $(POWEROFF_MIG_OBJS)
 
-MAKE_DEPFILES := $(addsuffix .d,$(MIGRATION_FINAL_OBJS) $(SCREEN_PROTECTION_OBJS) $(SAVE_SIDECAR_OBJS) $(WIFI_SURVEY_EXPORT_OBJS) $(NETDIAG_CONTROLLER_OBJS) $(NETDIAG_TCP_OBJS) $(EVENT_LOG_RUNTIME_OBJS) $(SD_IO_COORDINATOR_OBJS) $(BATTERY_CONTRACT_OBJS) $(BATTERY_SOC_OBJS) $(BATTERY_VIEW_OBJS) $(BLE_TYPES_OBJS) $(BLE_STATE_OBJS) $(BLE_EVENTS_OBJS) $(BLE_STORE_OBJS) $(BLE_COMMAND_OBJS) $(WIFI_AUDIT_OBJS) $(TERMINAL_SCROLLBACK_OBJS) $(WIFI_SURVEY_OBJS) $(RECOVERY_POLICY_OBJS) $(WIFI_AUDIT_PERSISTENCE_OBJS) $(WIFI_AUDIT_SAVE_OBJS) $(SERIAL_NDJSON_OBJS) $(SERIAL_SCREEN_DUMP_OBJS) $(SERIAL_CLI_TOLERANCE_OBJS) $(SERIAL_SYSINFO_WIFI_OBJS) $(SERIAL_TERM_DUMP_OBJS) $(SERIAL_SCREEN_GUARD_OBJS) $(FS_WRITE_DISPATCH_OBJS) $(WIFI_EVENT_DISPATCH_OBJS) $(WIFI_PERSISTENCE_QUEUE_OBJS) $(WIFI_PERSISTENCE_COORDINATION_OBJS) $(CLOCK_FORMATTER_OBJS) $(TERMINAL_FILTER_OBJS) $(EDIT_LINE_OBJS) $(WIFI_INDICATOR_OBJS) $(WIFI_ICON_OBJS) $(WIFI_MENU_OBJS) $(HISTORY_OBJS) $(KEYBOARD_EVENT_OBJS) $(EVENT_LOG_RECENT_OBJS) $(WIFI_STATE_MACHINE_OBJS) $(NET_COORDINATOR_OBJS) $(SSH_LINE_COMPOSER_OBJS) $(KEYMAP_OBJS) $(SCREENSHOT_BMP_OBJS) $(ORIENTATION_OBJS) $(MUSIC_APP_OBJ) $(MUSIC_DURATION_OBJS))
+MAKE_DEPFILES := $(addsuffix .d,$(MIGRATION_FINAL_OBJS) $(SCREEN_PROTECTION_OBJS) $(SAVE_SIDECAR_OBJS) $(WIFI_SURVEY_EXPORT_OBJS) $(NETDIAG_CONTROLLER_OBJS) $(NETDIAG_TCP_OBJS) $(EVENT_LOG_RUNTIME_OBJS) $(SD_IO_COORDINATOR_OBJS) $(BATTERY_CONTRACT_OBJS) $(BATTERY_SOC_OBJS) $(BATTERY_VIEW_OBJS) $(BATTERY_JSON_OBJS) $(BLE_TYPES_OBJS) $(BLE_STATE_OBJS) $(BLE_EVENTS_OBJS) $(BLE_STORE_OBJS) $(BLE_COMMAND_OBJS) $(WIFI_AUDIT_OBJS) $(TERMINAL_SCROLLBACK_OBJS) $(WIFI_SURVEY_OBJS) $(RECOVERY_POLICY_OBJS) $(WIFI_AUDIT_PERSISTENCE_OBJS) $(WIFI_AUDIT_SAVE_OBJS) $(SERIAL_NDJSON_OBJS) $(SERIAL_SCREEN_DUMP_OBJS) $(SERIAL_CLI_TOLERANCE_OBJS) $(SERIAL_SYSINFO_WIFI_OBJS) $(SERIAL_TERM_DUMP_OBJS) $(SERIAL_SCREEN_GUARD_OBJS) $(FS_WRITE_DISPATCH_OBJS) $(WIFI_EVENT_DISPATCH_OBJS) $(WIFI_PERSISTENCE_QUEUE_OBJS) $(WIFI_PERSISTENCE_COORDINATION_OBJS) $(CLOCK_FORMATTER_OBJS) $(TERMINAL_FILTER_OBJS) $(EDIT_LINE_OBJS) $(WIFI_INDICATOR_OBJS) $(WIFI_ICON_OBJS) $(WIFI_MENU_OBJS) $(HISTORY_OBJS) $(KEYBOARD_EVENT_OBJS) $(EVENT_LOG_RECENT_OBJS) $(WIFI_STATE_MACHINE_OBJS) $(NET_COORDINATOR_OBJS) $(SSH_LINE_COMPOSER_OBJS) $(KEYMAP_OBJS) $(SCREENSHOT_BMP_OBJS) $(ORIENTATION_OBJS) $(MUSIC_APP_OBJ) $(MUSIC_DURATION_OBJS))
 LEGACY_TEST_ARTIFACTS := test_editor_model test_shell_utils test_shell_session test_app_runtime test_runtime_sdk test_demo_app test_local_shell test_cat_multiline test_help_unification test_known_hosts_file test_poweroff  test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_soc test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_shell_help test_shell_app test_screen_protection test_terminal_scrollback test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_wifi_survey test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_recovery_policy test_storage_facade test_phase9_capabilities test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_window_manager test_time_sync test_clock_formatter test_terminal_filter test_edit_line test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_line_composer test_keymap test_screenshot_bmp test_orientation
 
 test_save_sidecar_recovery/%.o: test_save_sidecar_recovery.cpp Makefile
@@ -2144,6 +2153,45 @@ test_battery_view/status.o: $(BATTERY_PURE_SRC) $(BATTERY_PURE_HDR) Makefile
 test_battery_view_contract: $(BATTERY_VIEW_CONTRACT) $(BATTERY_VIEW_SRC) $(BATTERY_VIEW_HDR) $(BATTERY_VIEW_CONTRACT_HDR) $(BATTERY_VIEW_TEST) ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/include/platform/sensors/cyberdeck_battery_protection.h ../../../components/cyberdeck/include/platform/sensors/battery_protection.h ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md Makefile
 	$(PYTHON) $(BATTERY_VIEW_CONTRACT)
 
+# Pure host contract for the GET /battery JSON formatter: fixed field order,
+# null for unknown values, int64 timestamps and fail-closed sizing.  It links
+# the real formatter and the real policy naming helpers; no ESP-IDF, HTTP
+# server, I2C, display lock or hardware is involved.
+.PHONY: test_battery_json
+test_battery_json: $(BATTERY_JSON_BIN)
+	@./$(BATTERY_JSON_BIN)
+
+test_battery_json/test.o: $(BATTERY_JSON_TEST) $(BATTERY_JSON_HDR) $(BATTERY_PROTECTION_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_battery_json/json.o: $(BATTERY_JSON_SRC) $(BATTERY_JSON_HDR) $(BATTERY_PROTECTION_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_battery_json/protection.o: $(BATTERY_PROTECTION_SRC) $(BATTERY_PROTECTION_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_battery_json/soc.o: $(BATTERY_SOC_SRC) $(BATTERY_SOC_HDR) $(BATTERY_PURE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+test_battery_json/status.o: $(BATTERY_PURE_SRC) $(BATTERY_PURE_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+$(BATTERY_JSON_BIN): $(BATTERY_JSON_OBJS) $(BATTERY_JSON_TEST) $(BATTERY_JSON_SRC) $(BATTERY_JSON_HDR) Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(BATTERY_JSON_OBJS) -o $@
+
+# Structural companion for GET /battery: table registration with rollback,
+# max_uri_handlers, LAN allowlist, 405/503 guards, cached snapshot usage (no
+# I2C, reader or display lock), no-store header and untouched /screenshot and
+# /events.txt wiring.  It reads production source and needs no device.
+.PHONY: test_battery_http_contract
+test_battery_http_contract: $(BATTERY_JSON_CONTRACT) ../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp ../../../components/cyberdeck/include/platform/sensors/battery_protection.h ../../../components/cyberdeck/src/platform/sensors/battery_protection.cpp $(BATTERY_JSON_HDR) $(BATTERY_JSON_SRC) ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md Makefile
+	$(PYTHON) $(BATTERY_JSON_CONTRACT)
+
 # Structural companion for expander-B, NVS, UI timer/snapshot, shell and
 # ui.type.  It reads production source and fails closed when the feature is
 # absent; it never opens hardware or a simulator.
@@ -3162,6 +3210,9 @@ test: test-build
 	@echo "==> Executando contrato da view pura do indicador de energia"
 	@$(MAKE) --no-print-directory test_battery_view
 	@$(MAKE) --no-print-directory test_battery_view_contract
+	@echo "==> Executando contrato do JSON de bateria (GET /battery)"
+	@$(MAKE) --no-print-directory test_battery_json
+	@$(MAKE) --no-print-directory test_battery_http_contract
 	@echo "==> Executando contratos BLE (tipos/list, state machine, eventos/tokens, store)"
 	@$(MAKE) --no-print-directory test_ble_types
 	@$(MAKE) --no-print-directory test_ble_state_machine
@@ -3213,5 +3264,5 @@ clean:
 	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff test_expander_broker
 	rm -f $(BINS) test_app_runtime_tsan test_screen_off_active_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
 	rm -rf test_keymap test_screenshot_bmp test_orientation
-	rm -rf test_screen_protection test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_guard test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_soc test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_terminal_scrollback test_wifi_survey test_recovery_policy test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_clock_formatter test_terminal_filter test_edit_line test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_line_composer .objects
+	rm -rf test_screen_protection test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_guard test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_soc test_battery_view test_battery_json test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_terminal_scrollback test_wifi_survey test_recovery_policy test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_clock_formatter test_terminal_filter test_edit_line test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_line_composer .objects
 	rm -f $(LEGACY_TEST_ARTIFACTS)

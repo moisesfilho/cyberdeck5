@@ -460,6 +460,20 @@ extern "C" bool battery_protection_get_cached_policy_snapshot(
     return true;
 }
 
+extern "C" bool battery_protection_get_cached_policy_sampled_at_us(
+    std::int64_t *out_sampled_at_us)
+{
+    if (out_sampled_at_us == nullptr || !battery_protection_started()) {
+        return false;
+    }
+
+    /* s_policy_sampled_at_us is owned by s_snapshot_mutex; this getter must
+     * never be nested inside s_policy_mutex (see sample_and_publish). */
+    std::lock_guard<std::mutex> lock(s_snapshot_mutex);
+    *out_sampled_at_us = s_policy_sampled_at_us;
+    return true;
+}
+
 extern "C" bool battery_protection_set_enabled(bool enabled)
 {
     if (!battery_protection_started()) {

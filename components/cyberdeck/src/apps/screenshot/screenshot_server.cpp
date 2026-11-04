@@ -1,6 +1,8 @@
 #include "apps/screenshot/screenshot_server.h"
 #include "apps/screenshot/screenshot_bmp.h"
 #include "platform/logging/event_log.h"
+#include "platform/sensors/battery_protection.h"
+#include "platform/sensors/cyberdeck_battery_json.h"
 
 #include <errno.h>
 #include <netinet/in.h>
@@ -8,9 +10,11 @@
 #include <string.h>
 #include <sys/socket.h>
 
+#include "esp_app_desc.h"
 #include "esp_http_server.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -197,32 +201,34 @@ static esp_err_t events_handler(httpd_req_t *req)
     return result;
 }
 
+/* Defined after stop_server(); declared here for the registration table. */
+static esp_err_t battery_handler(httpd_req_t *req);
+
 static esp_err_t start_server(void)
 {
     if (s_server != NULL) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 2;
+    config.max_uri_handlers = 3;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
     if (httpd_start(&s_server, &config) != ESP_OK) {
         s_server = NULL;
         return ESP_FAIL;
     }
-    httpd_uri_t uri = {.uri = "/screenshot", .method = HTTP_GET, .handler = screenshot_handler, .user_ctx = NULL};
-    const esp_err_t result = httpd_register_uri_handler(s_server, &uri);
-    if (result == ESP_OK) {
-        httpd_uri_t events_uri = {.uri = "/events.txt", .method = HTTP_GET, .handler = events_handler, .user_ctx = NULL};
-        if (httpd_register_uri_handler(s_server, &events_uri) != ESP_OK) {
-            if (httpd_stop(s_server) != ESP_OK) s_stop_failed.store(true, std::memory_order_release);
-            else s_server = NULL;
-            return ESP_FAIL;
-        }
-    } else {
+    const httpd_uri_t uris[] = {
+        {.uri = "/screenshot", .method = HTTP_GET, .handler = screenshot_handler, .user_ctx = NULL},
+        {.uri = "/events.txt", .method = HTTP_GET, .handler = events_handler, .user_ctx = NULL},
+        {.uri = "/battery", .method = HTTP_GET, .handler = battery_handler, .user_ctx = NULL},
+    };
+    for (const httpd_uri_t &uri : uris) {
+        if (httpd_register_uri_handler(s_server, &uri) == ESP_OK) continue;
+        /* Fail closed: a partially registered server never stays up. */
         if (httpd_stop(s_server) != ESP_OK) s_stop_failed.store(true, std::memory_order_release);
         else s_server = NULL;
+        return ESP_FAIL;
     }
-    return result;
+    return ESP_OK;
 }
 
 static void stop_server(void)
@@ -231,6 +237,47 @@ static void stop_server(void)
         if (httpd_stop(s_server) != ESP_OK) s_stop_failed.store(true, std::memory_order_release);
         else s_server = NULL;
     }
+}
+
+/* Read-only telemetry for LAN validation without the USB Serial-JTAG bridge.
+ * It consumes the cached policy snapshot (never samples the INA226, never takes
+ * the display lock and never writes), and it is registered after stop_server()
+ * so the event-projection contract keeps its handler block untouched. */
+static esp_err_t battery_handler(httpd_req_t *req)
+{
+    if (req->method != HTTP_GET) {
+        send_error(req, HTTPD_405_METHOD_NOT_ALLOWED, "GET required");
+        return ESP_OK;
+    }
+    if (!is_local_peer(req)) {
+        send_error(req, HTTPD_403_FORBIDDEN, "local network only");
+        return ESP_OK;
+    }
+    if (s_request_mutex == NULL || xSemaphoreTake(s_request_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        send_service_unavailable(req, "another request is in progress");
+        return ESP_OK;
+    }
+
+    cyberdeck_battery_json::view value = {};
+    value.snapshot_valid = battery_protection_get_cached_policy_snapshot(&value.policy);
+    (void)battery_protection_get_cached_policy_sampled_at_us(&value.sampled_at_us);
+    value.now_us = esp_timer_get_time();
+    value.uptime_s = value.now_us / 1000000;
+    const esp_app_desc_t *description = esp_app_get_description();
+    value.fw_version = description != NULL ? description->version : NULL;
+
+    char body[cyberdeck_battery_json::kMaxJsonBytes + 1];
+    const int length = cyberdeck_battery_json::format_json(body, sizeof(body), value);
+    esp_err_t result = ESP_OK;
+    if (length <= 0) {
+        send_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "battery telemetry unavailable");
+    } else {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        result = httpd_resp_send(req, body, length);
+    }
+    xSemaphoreGive(s_request_mutex);
+    return result;
 }
 
 static void screenshot_control_task(void *)

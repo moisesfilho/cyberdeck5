@@ -26,7 +26,7 @@ def check() -> None:
     assert clean and aggregate
     music_header_visibility = "test_music_header_visibility"
     music_header_visibility_bin = music_header_visibility + "_bin"
-    assert len(bins) == len(set(bins)) == 88
+    assert len(bins) == len(set(bins)) == 89
     assert music_header_visibility_bin in bins
     assert music_header_visibility in model.phony()
     visibility_wrapper = model.rule_resolved(music_header_visibility)
@@ -65,6 +65,27 @@ def check() -> None:
         dispatch_wrapper["prereqs_raw"], model
     ).split()
     assert any(lvgl_dispatch in line for line in model.rule("test")["recipe"])
+    battery_json = "test_battery_json"
+    battery_json_bin = battery_json + "_bin"
+    assert battery_json_bin in bins
+    assert battery_json in model.phony()
+    battery_wrapper = model.rule_resolved(battery_json)
+    assert battery_wrapper and battery_json_bin in expand_vars(
+        battery_wrapper["prereqs_raw"], model
+    ).split()
+    assert sum(line.strip().lstrip("@").startswith("$(MAKE)")
+               and line.split()[-1] == battery_json
+               for line in aggregate["recipe"]) == 1
+    battery_objects = model.expanded_var("BATTERY_JSON_OBJS").split()
+    assert battery_objects == ["test_battery_json/test.o", "test_battery_json/json.o",
+                               "test_battery_json/protection.o", "test_battery_json/soc.o",
+                               "test_battery_json/status.o"]
+    assert all(f"{obj}.d" in depfiles for obj in battery_objects)
+    battery_http_contract = "test_battery_http_contract"
+    assert battery_http_contract in model.phony()
+    assert sum(line.strip().lstrip("@").startswith("$(MAKE)")
+               and line.split()[-1] == battery_http_contract
+               for line in aggregate["recipe"]) == 1
     assert any("$(BINS)" in line for line in model.rule("clean")["recipe"])
     assert len(baseline) == 27
 

@@ -325,6 +325,26 @@ Para salvar a captura a partir de um host na mesma LAN:
 curl --fail --output screenshot.bmp http://IP_DO_DISPOSITIVO/screenshot
 ```
 
+### Endpoints HTTP
+
+| Rota | Método | Resposta | Fonte |
+| --- | --- | --- | --- |
+| `/screenshot` | GET | `image/bmp` 24-bit bottom-up | frame RGB565 da porta de display, serializado pelo mutex de requisição |
+| `/events.txt` | GET | `text/plain; charset=utf-8` | projeção textual bounded de `events.log` em chunks de 1024 bytes |
+| `/battery` | GET | `application/json` com `Cache-Control: no-store` | snapshot de política em cache (`battery_protection_get_cached_policy_snapshot`) e timestamp (`battery_protection_get_cached_policy_sampled_at_us`) |
+
+Todos os endpoints aceitam apenas clientes da rede privada/local, respondem 405
+a métodos diferentes de `GET` e 503 quando o mutex de requisição está ocupado.
+O `GET /battery` é somente leitura e barato: o handler do `httpd` não amostra o
+INA226, não abre I2C, não adquire o display lock e não escreve no SD. O corpo é
+um JSON de ordem fixa (`schema`=1, `state`, `charge`, `available`,
+`bus_voltage_mv`, `current_ma`, `percentage`, `protection_enabled`,
+`protection_active`, `charger_enabled`, `sampled_at_us`, `sampled_age_ms`,
+`fw_version`, `uptime_s`) limitado a 384 bytes; valor desconhecido é `null` e um
+snapshot indisponível publica `state`/`charge` como `unavailable`. Os handlers
+são registrados por tabela com rollback: se um registro falhar, o servidor é
+parado (`httpd_stop`) em vez de ficar parcialmente exposto.
+
 ## Ponte manual USB Serial-JTAG NDJSON
 
 A ponte roda na task `serial_brg` (prio 3, 16384 bytes de stack), fora da

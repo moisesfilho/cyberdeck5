@@ -295,6 +295,16 @@ serializadas.
 curl --fail --output screenshot.bmp http://IP_DO_DISPOSITIVO/screenshot
 ```
 
+O mesmo servidor expõe o `GET /battery`, somente leitura, que devolve a
+telemetria de bateria em cache como JSON (`application/json`,
+`Cache-Control: no-store`) para validar o dispositivo pela LAN sem o cabo USB
+Serial-JTAG. Ele usa a mesma allowlist de rede local do `GET /screenshot`, nunca
+amostra o sensor I2C e nunca adquire o lock do display.
+
+```bash
+curl --fail http://IP_DO_DISPOSITIVO/battery
+```
+
 O servidor é parado automaticamente quando o Wi-Fi perde o endereço IP.
 
 ## Ponte serial (USB Serial-JTAG NDJSON)

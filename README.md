@@ -323,6 +323,16 @@ are serialized.
 curl --fail --output screenshot.bmp http://DEVICE_IP/screenshot
 ```
 
+The same server exposes read-only `GET /battery`, which returns the cached
+battery telemetry as JSON (`application/json`, `Cache-Control: no-store`) so the
+device can be validated over the LAN without the USB Serial-JTAG cable. It uses
+the same LAN-only allowlist as `GET /screenshot`, never samples the I2C sensor
+and never takes the display lock.
+
+```bash
+curl --fail http://DEVICE_IP/battery
+```
+
 The server stops automatically when the Wi-Fi address is lost.
 
 ## Serial bridge (USB Serial-JTAG NDJSON)
