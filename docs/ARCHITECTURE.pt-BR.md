@@ -298,7 +298,7 @@ curl --fail --output screenshot.bmp http://IP_DO_DISPOSITIVO/screenshot
 
 ## Ponte manual USB Serial-JTAG NDJSON
 
-A ponte roda na task `serial_brg` (prio 3, 8192 bytes de stack), fora da
+A ponte roda na task `serial_brg` (prio 3, 16384 bytes de stack), fora da
 stack do LVGL, iniciada por `bridge_start()` ao fim de `app_main`. O driver
 USB Serial-JTAG só é instalado se ainda não estiver ativo — o console
 `ESP_LOG` compartilha a mesma porta —; frames e logs são serializados por um

@@ -48,7 +48,16 @@ def main() -> None:
     cmake = read("components/cyberdeck/CMakeLists.txt")
     assert "--wrap=ff_disk_write" in cmake and "--wrap=ff_disk_ioctl" in cmake
     assert power.index('flush_metadata("/sdcard/.poweroff-sync")') < power.index("bsp_sdcard_unmount()")
-    assert "bsp_io_expander1_init()" in power and "IO_EXPANDER_PIN_NUM_4" in power
+    assert "cyberdeck_expander_device_init()" in power and "IO_EXPANDER_PIN_NUM_4" in power
+    signal_ports = power[power.index("class factory_signal_ports"):power.index("class firmware_ports")]
+    assert "cyberdeck_expander_broker::lease" in signal_ports
+    assert "lease_ = std::make_unique" in signal_ports
+    assert "if (!lease_ || !*lease_) return false" in signal_ports
+    # The shared expander-B lease must be held before the first P4 write and the
+    # remaining deadline budget must survive the setup sequence.
+    assert signal_ports.index("cyberdeck_expander_broker::lease") < \
+        signal_ports.index("esp_io_expander_set_")
+    assert "600 <= deadline_" in signal_ports and "+ 600 > deadline_" in signal_ports
     assert "IO_EXPANDER_OUTPUT_MODE_PUSH_PULL" in power
     assert "bsp_io_expander_init()" not in power and "bsp_display_brightness_set" not in power
     assert "esp_deep_sleep" not in power

@@ -97,19 +97,25 @@ esp_err_t save_after_transition(const char *stage, Transition transition)
 {
     std::lock_guard<std::mutex> lock(s_state_mutex);
     if (!s_available) return ESP_ERR_NVS_NOT_INITIALIZED;
+    // `state` is ~2 KB (16 app-error slots). Capture only the scalars the log
+    // needs from before the transition: a second full copy here cost another
+    // ~2 KB of the caller's stack, which overflowed the 8 KB serial bridge task
+    // on sys.safe_mode.clear (stack protection fault in "serial_brg").
+    const bool prior_safe = s_state.safe_mode_latched;
+    const bool prior_pending = s_state.boot_pending;
+    const std::uint32_t prior_interrupted = s_state.interrupted_boots;
     state candidate = s_state;
     if (!transition(candidate)) return ESP_FAIL;
-    const state prior = s_state;
     const esp_err_t err = save(candidate);
     s_persisted = err == ESP_OK;
     if (err == ESP_OK) s_state = candidate;
     append_journal_locked("transition=%s result=%s persisted=%d prior_safe=%d prior_pending=%d prior_interrupted=%lu safe=%d pending=%d interrupted=%lu\n",
-                          stage, esp_err_to_name(err), s_persisted, prior.safe_mode_latched, prior.boot_pending,
-                          static_cast<unsigned long>(prior.interrupted_boots), candidate.safe_mode_latched,
+                          stage, esp_err_to_name(err), s_persisted, prior_safe, prior_pending,
+                          static_cast<unsigned long>(prior_interrupted), candidate.safe_mode_latched,
                           candidate.boot_pending, static_cast<unsigned long>(candidate.interrupted_boots));
     ESP_LOGI(k_tag, "HOSTED_DIAG recovery stage=%s result=%s persisted=%d prior_safe=%d prior_pending=%d prior_interrupted=%lu safe_mode=%d pending=%d interrupted=%lu",
-             stage, esp_err_to_name(err), s_persisted, prior.safe_mode_latched, prior.boot_pending,
-             static_cast<unsigned long>(prior.interrupted_boots), candidate.safe_mode_latched, candidate.boot_pending,
+             stage, esp_err_to_name(err), s_persisted, prior_safe, prior_pending,
+             static_cast<unsigned long>(prior_interrupted), candidate.safe_mode_latched, candidate.boot_pending,
              static_cast<unsigned long>(candidate.interrupted_boots));
     return err;
 }

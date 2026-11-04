@@ -379,7 +379,7 @@
         "src/bsp_storage.c",
         "src/bsp_usb.c",
         "src/bsp_sensors.c",
-        "src/bsp_feature_en.c"
+        "src/bsp_feature_en.cpp"
     ],
     "NOGLIB": 1
 }

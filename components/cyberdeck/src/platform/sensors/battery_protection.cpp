@@ -1,17 +1,21 @@
 #include "platform/sensors/battery_protection.h"
 #include "platform/sensors/cyberdeck_battery_protection.h"
 #include "platform/sensors/ina226_reader.h"
+#include "platform/sensors/cyberdeck_expander_device.h"
+#include "platform/sensors/cyberdeck_expander_broker.h"
 
 #include "bsp/m5stack_tab5.h"
 #include "esp_io_expander.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "driver/i2c_master.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <chrono>
 
 namespace {
 
@@ -31,10 +35,15 @@ std::int64_t s_policy_sampled_at_us = 0;
 bool s_cached_chg_stat_valid = false;
 bool s_cached_chg_stat_raw_low = false;
 std::int64_t s_chg_stat_sampled_at_us = 0;
-bool s_last_applied_charger_state = true;
+// Last level confirmed by a successful CHG_EN write, never an intention. Init
+// preloads P7=0 (charger inhibited), so the confirmed level starts low and a
+// failed write keeps this value so the next sample retries.
+bool s_last_applied_charger_state = false;
 
 bool read_chg_status(bool *out_valid, bool *out_raw_low)
 {
+    cyberdeck_expander_broker::lease lease(std::chrono::milliseconds(100));
+    if (!lease) return false;
     if (s_expander == nullptr) {
         return false;
     }
@@ -49,8 +58,13 @@ bool read_chg_status(bool *out_valid, bool *out_raw_low)
     return true;
 }
 
+// Single authority for the confirmed CHG_EN level: the cache only moves after a
+// successful write, so a failed write leaves it stale and the next sample or
+// set_enabled retries instead of assuming the request took effect.
 esp_err_t write_chg_enable(bool enable)
 {
+    cyberdeck_expander_broker::lease lease(std::chrono::milliseconds(100));
+    if (!lease) return ESP_ERR_TIMEOUT;
     if (s_expander == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -58,8 +72,10 @@ esp_err_t write_chg_enable(bool enable)
     esp_err_t err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_7, level);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Charger enable write failed: %s", esp_err_to_name(err));
+        return err;
     }
-    return err;
+    s_last_applied_charger_state = enable;
+    return ESP_OK;
 }
 
 esp_err_t init_expander()
@@ -73,7 +89,8 @@ esp_err_t init_expander()
         const int64_t expander_started_us = esp_timer_get_time();
         ESP_LOGI(TAG, "HOSTED_DIAG battery stage=expander_init begin t_us=%lld",
                  static_cast<long long>(expander_started_us));
-        s_expander = bsp_io_expander1_init();
+        if (cyberdeck_expander_device_init() != ESP_OK) return ESP_FAIL;
+        s_expander = cyberdeck_expander_device_handle();
         if (s_expander == nullptr) {
             ESP_LOGE(TAG, "HOSTED_DIAG battery stage=expander_init end result=ESP_FAIL duration_ms=%lld t_us=%lld",
                      static_cast<long long>((esp_timer_get_time() - expander_started_us) / 1000),
@@ -86,77 +103,88 @@ esp_err_t init_expander()
                  static_cast<long long>(esp_timer_get_time()));
     }
 
-    esp_err_t err = esp_io_expander_set_dir(s_expander,
-                                            IO_EXPANDER_PIN_NUM_6,  // CHG_STAT
-                                            IO_EXPANDER_INPUT);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CHG_STAT dir failed: %s", esp_err_to_name(err));
-        return err;
+    // The whole direction/latch/mode setup is one expander-B transaction. Its
+    // lease must end before write_chg_enable(): that helper takes the same
+    // non-recursive broker mutex, and a nested acquisition fails immediately
+    // (EBUSY -> ESP_ERR_TIMEOUT), which would leave CHG_EN at the 0 preload.
+    esp_err_t err = ESP_OK;
+    {
+        cyberdeck_expander_broker::lease lease(std::chrono::milliseconds(250));
+        if (!lease) return ESP_ERR_TIMEOUT;
+
+        err = esp_io_expander_set_dir(s_expander,
+                                      IO_EXPANDER_PIN_NUM_6,  // CHG_STAT
+                                      IO_EXPANDER_INPUT);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "CHG_STAT dir failed: %s", esp_err_to_name(err));
+            return err;
+        }
+
+        err = esp_io_expander_set_pullupdown(s_expander,
+                                             IO_EXPANDER_PIN_NUM_6,
+                                             IO_EXPANDER_PULL_UP);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "CHG_STAT pull-up failed: %s", esp_err_to_name(err));
+            return err;
+        }
+
+        // Establish safe inactive latches before enabling either output. The
+        // expander powers up with its pins high-impedance, so direction alone is
+        // insufficient: explicitly select push-pull drive for both controls.
+        err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_5, 1);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "CHG_QC_EN inactive-high preload failed: %s",
+                     esp_err_to_name(err));
+            return err;
+        }
+
+        err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_7, 0);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "CHG_EN inactive-low preload failed: %s",
+                     esp_err_to_name(err));
+            return err;
+        }
+
+        err = esp_io_expander_set_dir(s_expander, IO_EXPANDER_PIN_NUM_5,
+                                      IO_EXPANDER_OUTPUT);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "CHG_QC_EN dir failed; charging remains inhibited: %s",
+                     esp_err_to_name(err));
+            return err;
+        }
+
+        err = esp_io_expander_set_output_mode(
+            s_expander, IO_EXPANDER_PIN_NUM_5, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "CHG_QC_EN push-pull mode failed: %s", esp_err_to_name(err));
+            return err;
+        }
+
+        err = esp_io_expander_set_dir(s_expander,
+                                      IO_EXPANDER_PIN_NUM_7,  // CHG_EN
+                                      IO_EXPANDER_OUTPUT);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "CHG_EN dir failed: %s", esp_err_to_name(err));
+            return err;
+        }
+
+        err = esp_io_expander_set_output_mode(
+            s_expander, IO_EXPANDER_PIN_NUM_7, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "CHG_EN push-pull mode failed: %s", esp_err_to_name(err));
+            return err;
+        }
+
+        err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_5, 0);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "CHG_QC_EN low write failed; charging remains inhibited: %s",
+                     esp_err_to_name(err));
+            return err;
+        }
     }
 
-    err = esp_io_expander_set_pullupdown(s_expander,
-                                         IO_EXPANDER_PIN_NUM_6,
-                                         IO_EXPANDER_PULL_UP);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CHG_STAT pull-up failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    // Establish safe inactive latches before enabling either output. The
-    // expander powers up with its pins high-impedance, so direction alone is
-    // insufficient: explicitly select push-pull drive for both controls.
-    err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_5, 1);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CHG_QC_EN inactive-high preload failed: %s",
-                 esp_err_to_name(err));
-        return err;
-    }
-
-    err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_7, 0);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CHG_EN inactive-low preload failed: %s",
-                 esp_err_to_name(err));
-        return err;
-    }
-
-    err = esp_io_expander_set_dir(s_expander, IO_EXPANDER_PIN_NUM_5,
-                                  IO_EXPANDER_OUTPUT);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CHG_QC_EN dir failed; charging remains inhibited: %s",
-                 esp_err_to_name(err));
-        return err;
-    }
-
-    err = esp_io_expander_set_output_mode(
-        s_expander, IO_EXPANDER_PIN_NUM_5, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CHG_QC_EN push-pull mode failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    err = esp_io_expander_set_dir(s_expander,
-                                  IO_EXPANDER_PIN_NUM_7,  // CHG_EN
-                                  IO_EXPANDER_OUTPUT);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CHG_EN dir failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    err = esp_io_expander_set_output_mode(
-        s_expander, IO_EXPANDER_PIN_NUM_7, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CHG_EN push-pull mode failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    err = esp_io_expander_set_level(s_expander, IO_EXPANDER_PIN_NUM_5, 0);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CHG_QC_EN low write failed; charging remains inhibited: %s",
-                 esp_err_to_name(err));
-        return err;
-    }
-
-    // CHG_EN set_level 1 (enabled) is deliberately the final hardware stage.
+    // CHG_EN set_level 1 (enabled) is deliberately the final hardware stage,
+    // after QC is asserted above, and it owns its own broker lease.
     err = write_chg_enable(true);
     if (err != ESP_OK) {
         return err;
@@ -303,10 +331,9 @@ bool sample_and_publish(cyberdeck_battery_protection::observation *out_observati
         std::lock_guard<std::mutex> lock(s_policy_mutex);
         const bool charger_now = policy_snap.charger_enabled;
         if (charger_now != s_last_applied_charger_state) {
-            esp_err_t err = apply_charger_state(charger_now);
-            if (err == ESP_OK) {
-                s_last_applied_charger_state = charger_now;
-            } else {
+            // The confirmed-level cache moves only inside write_chg_enable() on
+            // success, so a failed write is retried by the next sample.
+            if (apply_charger_state(charger_now) != ESP_OK) {
                 ESP_LOGE(TAG, "CHG_EN write failed, preserving last confirmed level (%s)",
                          s_last_applied_charger_state ? "enabled" : "disabled");
             }
@@ -435,10 +462,8 @@ extern "C" bool battery_protection_set_enabled(bool enabled)
     }
 
     if (policy_snap.charger_enabled != s_last_applied_charger_state) {
-        esp_err_t err = apply_charger_state(policy_snap.charger_enabled);
-        if (err == ESP_OK) {
-            s_last_applied_charger_state = policy_snap.charger_enabled;
-        } else {
+        // write_chg_enable() is the only writer of the confirmed-level cache.
+        if (apply_charger_state(policy_snap.charger_enabled) != ESP_OK) {
             ESP_LOGE(TAG, "CHG_EN write failed on set_enabled, preserving last confirmed level (%s)",
                      s_last_applied_charger_state ? "enabled" : "disabled");
         }
@@ -485,15 +510,36 @@ extern "C" bool battery_protection_get_hardware_diagnostics(
     }
     out->expander_available = (s_expander != nullptr);
     if (out->expander_available) {
-        uint32_t level = 0;
-        if (esp_io_expander_get_level(s_expander, IO_EXPANDER_PIN_NUM_5, &level) == ESP_OK) {
-            out->chg_qc_read_ok = true;
-            out->chg_qc_enabled = (level == 0);
-        }
-        level = 0;
-        if (esp_io_expander_get_level(s_expander, IO_EXPANDER_PIN_NUM_7, &level) == ESP_OK) {
-            out->chg_en_read_ok = true;
-            out->chg_en_enabled = (level != 0);
+        cyberdeck_expander_broker::lease lease(std::chrono::milliseconds(250));
+        if (lease) {
+            // PI4IOE5V6408 (DS40583 Rev3-5): 0x03 = IO_DIR, 0x05 = OUT_SET
+            // output latch, 0x07 = OUT_H_IM high-Z. They are configuration and
+            // latch state, never pad voltage, so P5/P7 are reported as latch.
+            // P6/CHG_STAT is an input sampled through 0x0F (input status), where
+            // outputs read LOW by design. 0x13 is clear-on-read and is never
+            // touched here, and this path writes no register at all.
+            constexpr uint8_t regs[] = {0x03, 0x05, 0x07};
+            uint8_t values[3]{};
+            bool ok = true;
+            const auto device = cyberdeck_expander_raw_handle();
+            for (size_t i = 0; i < 3; ++i) {
+                if (device == nullptr || i2c_master_transmit_receive(
+                        device, &regs[i], 1, &values[i], 1, 100) != ESP_OK) {
+                    ok = false;
+                    break;
+                }
+            }
+            out->expander_registers_valid = ok;
+            if (ok) {
+                out->expander_register_origin = 0x44;
+                out->expander_direction = values[0];
+                out->expander_output_latch = values[1];
+                out->expander_hiz = values[2];
+                out->chg_qc_read_ok = true;
+                out->chg_qc_enabled = (values[1] & (1U << 5)) == 0;
+                out->chg_en_read_ok = true;
+                out->chg_en_enabled = (values[1] & (1U << 7)) != 0;
+            }
         }
     }
     cyberdeck_battery::raw_diagnostics ina{};

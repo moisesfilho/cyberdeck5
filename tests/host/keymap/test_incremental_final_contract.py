@@ -26,7 +26,7 @@ def check() -> None:
     assert clean and aggregate
     music_header_visibility = "test_music_header_visibility"
     music_header_visibility_bin = music_header_visibility + "_bin"
-    assert len(bins) == len(set(bins)) == 86
+    assert len(bins) == len(set(bins)) == 87
     assert music_header_visibility_bin in bins
     assert music_header_visibility in model.phony()
     visibility_wrapper = model.rule_resolved(music_header_visibility)

@@ -51,6 +51,11 @@ ALLOWLIST = {
         "BSP/I2C/FreeRTOS sensor adapter",
     "components/cyberdeck/src/platform/sensors/battery_protection.cpp":
         "BSP/expander/NVS adapter",
+    "components/cyberdeck/src/platform/sensors/cyberdeck_expander_device.cpp":
+        "BSP/esp_io_expander/I2C device owner (bsp_io_expander1_init, "
+        "i2c_master_bus_add_device); no host build, pinned structurally by "
+        "test_battery_protection_contract.py and behaviorally for the broker "
+        "lease by test_expander_broker.cpp",
 }
 
 FORBIDDEN_ALLOWLIST = {

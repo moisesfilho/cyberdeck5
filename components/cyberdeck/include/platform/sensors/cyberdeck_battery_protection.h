@@ -64,6 +64,11 @@ struct hardware_diagnostics {
     bool chg_stat_raw_low{false};
     std::int64_t chg_stat_sampled_at_us{0};
     bool expander_available{false};
+    bool expander_registers_valid{false};
+    std::uint8_t expander_register_origin{0};
+    std::uint8_t expander_direction{0};
+    std::uint8_t expander_output_latch{0};
+    std::uint8_t expander_hiz{0};
     bool chg_qc_read_ok{false};
     bool chg_qc_enabled{false};
     bool chg_en_read_ok{false};

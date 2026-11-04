@@ -115,6 +115,8 @@ const char *stage_name(stage value) {
 #include "freertos/task.h"
 #include "platform/display/cyberdeck_ui.h"
 #include "platform/display/screen_off.h"
+#include "platform/sensors/cyberdeck_expander_device.h"
+#include "platform/sensors/cyberdeck_expander_broker.h"
 #include "platform/logging/event_log.h"
 #include <algorithm>
 #include <chrono>
@@ -157,7 +159,10 @@ class factory_signal_ports final : public cyberdeck_poweroff::signal_ports {
   public:
     explicit factory_signal_ports(std::uint64_t deadline) : deadline_(deadline) {}
     bool configure() override {
-        expander_ = bsp_io_expander1_init();
+        if (cyberdeck_expander_device_init() != ESP_OK) return false;
+        lease_ = std::make_unique<cyberdeck_expander_broker::lease>(std::chrono::milliseconds(250));
+        if (!*lease_) return false;
+        expander_ = cyberdeck_expander_device_handle();
         if (expander_ == nullptr) return false;
         // set_level rejects input pins. Keep HIGH-Z while enabling output,
         // establish the low idle latch, then enable the required push-pull drive.
@@ -168,6 +173,7 @@ class factory_signal_ports final : public cyberdeck_poweroff::signal_ports {
                static_cast<std::uint64_t>(esp_timer_get_time() / 1000) + 600 <= deadline_;
     }
     bool set_level(bool high) override {
+        if (!lease_ || !*lease_) return false;
         if (high && !started_) {
             if (static_cast<std::uint64_t>(esp_timer_get_time() / 1000) + 600 > deadline_) return false;
             started_ = true;
@@ -177,6 +183,7 @@ class factory_signal_ports final : public cyberdeck_poweroff::signal_ports {
     void delay_ms(std::uint32_t ms) override { vTaskDelay(pdMS_TO_TICKS(ms)); }
   private:
     esp_io_expander_handle_t expander_ = nullptr;
+    std::unique_ptr<cyberdeck_expander_broker::lease> lease_;
     std::uint64_t deadline_;
     bool started_ = false;
     static constexpr auto pin_ = IO_EXPANDER_PIN_NUM_4; // B 0x44: PWROFF_PLUSE, never LCD_EN.

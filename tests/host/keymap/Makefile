@@ -977,6 +977,16 @@ test_recovery_runtime_bin: test_recovery_runtime.cpp $(RECOVERY_RUNTIME_SRC) $(R
 test_recovery_runtime: test_recovery_runtime_bin
 	@./test_recovery_runtime_bin
 
+# Regressão do caminho de recovery despachado pela task serial
+# (sys.safe_mode.clear): `state` tem ~2 KB e a cópia dupla mais NVS/journal/log
+# estouraram o stack de 8192 da "serial_brg" (stack protection fault no device).
+.PHONY: test_recovery_stack_contract
+test_recovery_stack_contract: test_recovery_stack_contract.py \
+		../../../components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp \
+		../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp \
+		../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp Makefile
+	$(PYTHON) test_recovery_stack_contract.py
+
 test_phase10_contract: $(PHASE10_CONTRACT) $(RECOVERY_POLICY_SRC) $(RECOVERY_POLICY_HDR) \
 		../../../components/cyberdeck/src/apps/system/cyberdeck_recovery.cpp \
 		../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp \
@@ -2076,7 +2086,7 @@ test_battery_view_contract: $(BATTERY_VIEW_CONTRACT) $(BATTERY_VIEW_SRC) $(BATTE
 # Structural companion for expander-B, NVS, UI timer/snapshot, shell and
 # ui.type.  It reads production source and fails closed when the feature is
 # absent; it never opens hardware or a simulator.
-test_battery_protection_contract: $(BATTERY_PROTECTION_CONTRACT) $(BATTERY_PROTECTION_CONTRACT_HDR) $(BATTERY_ADAPTER_SRC) $(BATTERY_ADAPTER_HDR) ../../../components/cyberdeck/CMakeLists.txt ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../tests/host/keymap/test_serial_ndjson_dispatch.cpp ../../../code-map.md ../../../.gitignore ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md Makefile
+test_battery_protection_contract: $(BATTERY_PROTECTION_CONTRACT) $(BATTERY_PROTECTION_CONTRACT_HDR) $(BATTERY_ADAPTER_SRC) $(BATTERY_ADAPTER_HDR) ../../../components/m5stack_tab5/src/bsp_feature_en.cpp ../../../components/m5stack_tab5/CMakeLists.txt ../../../components/cyberdeck/CMakeLists.txt ../../../main/app_main.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../tests/host/keymap/test_serial_ndjson_dispatch.cpp ../../../code-map.md ../../../.gitignore ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md Makefile
 	$(PYTHON) $(BATTERY_PROTECTION_CONTRACT)
 
 # Structural host-side contract for boot and initial IMU orientation. The
@@ -2623,9 +2633,19 @@ test_ble_bond_reconnect: $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN)
 	@$(MAKE) --no-print-directory test_ble_bond_name_contract
 
 
+# Expander-B broker is header-only, so this target compiles only the harness and
+# still links with -pthread: std::timed_mutex contention is the behavior under
+# test. It pins exclusion between owners and that a failed acquisition releases
+# nothing.
+EXPANDER_BROKER_TEST := test_expander_broker.cpp
+EXPANDER_BROKER_BIN := test_expander_broker_bin
+EXPANDER_BROKER_OBJS := test_expander_broker/test.o
+EXPANDER_BROKER_HDR := ../../../components/cyberdeck/include/platform/sensors/cyberdeck_expander_broker.h
+
 BINS += test_poweroff_bin
 BINS += test_cat_worker_runtime
 BINS += test_known_hosts_file_bin
+BINS += $(EXPANDER_BROKER_BIN)
 
 test_known_hosts_file/test.o: test_known_hosts_file.cpp Makefile
 	@mkdir -p $(@D)
@@ -2678,6 +2698,18 @@ test_poweroff_bin: $(POWEROFF_MIG_OBJS) Makefile
 .PHONY: test_poweroff
 test_poweroff: test_poweroff_bin
 	@./test_poweroff_bin
+
+
+test_expander_broker/test.o: $(EXPANDER_BROKER_TEST) $(EXPANDER_BROKER_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
+
+$(EXPANDER_BROKER_BIN): $(EXPANDER_BROKER_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O0 --coverage -fsanitize=address,undefined -pthread -I../../../components/cyberdeck/include $(EXPANDER_BROKER_OBJS) -o $@
+
+.PHONY: test_expander_broker
+test_expander_broker: $(EXPANDER_BROKER_BIN)
+	@./$(EXPANDER_BROKER_BIN)
 
 
 test_wake_key_contract: test_wake_key_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
@@ -2853,6 +2885,7 @@ test: test-build
 	@$(MAKE) --no-print-directory test_netdiag_https_adapter
 	@$(MAKE) --no-print-directory test_netdiag_app
 	@./test_poweroff_bin
+	@./$(EXPANDER_BROKER_BIN)
 	@./test_cat_worker_runtime
 	@./test_known_hosts_file_bin
 	@$(PYTHON) test_poweroff_contract.py
@@ -2944,6 +2977,7 @@ test: test-build
 	@echo "==> Executando policy pura e contrato estrutural da Fase 10"
 	@$(MAKE) --no-print-directory test_recovery_policy
 	@$(MAKE) --no-print-directory test_recovery_runtime
+	@$(MAKE) --no-print-directory test_recovery_stack_contract
 	@$(MAKE) --no-print-directory test_phase10_contract
 	@echo "==> Executando testes de capabilities da Fase 9"
 	@./test_phase9_capabilities_bin
@@ -3112,7 +3146,7 @@ clean:
 	rm -f test_music_browser_bin
 	rm -rf test_music_codec_i2s_vendor
 	rm -f $(MUSIC_CODEC_I2S_BIN)
-	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff
+	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff test_expander_broker
 	rm -f $(BINS) test_app_runtime_tsan test_screen_off_active_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
 	rm -rf test_keymap test_screenshot_bmp test_orientation
 	rm -rf test_screen_protection test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_guard test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_view test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_terminal_scrollback test_wifi_survey test_recovery_policy test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_clock_formatter test_terminal_filter test_edit_line test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_line_composer .objects

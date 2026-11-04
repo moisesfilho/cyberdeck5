@@ -30,6 +30,9 @@ SERIAL = ROOT / "components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cp
 SERIAL_TEST = ROOT / "tests/host/keymap/test_serial_ndjson_dispatch.cpp"
 APP = ROOT / "main/app_main.cpp"
 COMPONENT = ROOT / "components/cyberdeck/CMakeLists.txt"
+BSP_SRC_DIR = ROOT / "components/m5stack_tab5/src"
+BSP_FEATURE_EN = BSP_SRC_DIR / "bsp_feature_en.cpp"
+BSP_CMAKE = ROOT / "components/m5stack_tab5/CMakeLists.txt"
 RULES_PATH = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
 ARCHITECTURE = ROOT / "docs/ARCHITECTURE.md"
@@ -46,6 +49,19 @@ TRACEABILITY = (
 def strip_comments(source: str) -> str:
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     return re.sub(r"//[^\n]*", "", source)
+
+
+def scope_end(source: str, start: int) -> int | None:
+    """Return the index of the brace that closes the scope enclosing `start`."""
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth < 0:
+                return index
+    return None
 
 
 def function_body(source: str, signature: str) -> str | None:
@@ -163,7 +179,7 @@ def check_expander_and_fail_safe(failures: list[str]) -> None:
     combined = source + "\n" + header
 
     for token in (
-        "bsp_io_expander1_init", "IO_EXPANDER_PIN_NUM_6", "IO_EXPANDER_PIN_NUM_7",
+        "cyberdeck_expander_device_init", "IO_EXPANDER_PIN_NUM_6", "IO_EXPANDER_PIN_NUM_7",
         "CHG_STAT", "CHG_EN", "esp_io_expander_get_level", "esp_io_expander_set_dir",
         "esp_io_expander_set_level", "esp_io_expander_set_output_mode",
         "IO_EXPANDER_OUTPUT_MODE_PUSH_PULL", "IO_EXPANDER_INPUT", "IO_EXPANDER_OUTPUT",
@@ -211,7 +227,7 @@ def check_expander_and_fail_safe(failures: list[str]) -> None:
             r"if\s*\(\s*s_expander_configured\s*\)\s*\{\s*return\s+ESP_OK\s*;",
             expander_init) is not None,
             "only fully configured expander setup may take the idempotent fast path")
-        require_all(failures, "s_expander = bsp_io_expander1_init()" in expander_init and
+        require_all(failures, "s_expander = cyberdeck_expander_device_handle()" in expander_init and
                     "s_expander = nullptr" not in expander_init,
                     "retry must retain an acquired handle without recreating or clearing it")
         for pattern, stage in (
@@ -271,7 +287,7 @@ def check_expander_and_fail_safe(failures: list[str]) -> None:
         # retryable and retains the already acquired expander handle.
         require_all(failures, re.search(
             r"if\s*\(\s*s_expander\s*==\s*nullptr\s*\)\s*\{\s*"
-            r"const int64_t.*?s_expander\s*=\s*bsp_io_expander1_init\(\)",
+            r"const int64_t.*?cyberdeck_expander_device_init\(\).*?s_expander\s*=\s*cyberdeck_expander_device_handle\(\)",
             expander_init, re.S) is not None,
             "retry with retained expander handle must not recreate it")
         require_all(failures, "s_last_applied_charger_state" in source and
@@ -279,6 +295,42 @@ def check_expander_and_fail_safe(failures: list[str]) -> None:
                     "failed setup must not overwrite the last applied charger/policy state")
     require_all(failures, "k_chg_en_init" not in source,
                 "dead k_chg_en_init literal must not remain in the adapter")
+
+    # TEST-EXP-REENTRANCY: the broker mutex is not recursive. Keeping the setup
+    # lease alive across write_chg_enable() makes the nested acquisition fail
+    # (EBUSY -> ESP_ERR_TIMEOUT), so init would return an error with CHG_EN still
+    # at the 0 preload and the protection task would never start.
+    lease = expander_init.find("cyberdeck_expander_broker::lease lease(")
+    lease_scope_end = None if lease < 0 else scope_end(expander_init, lease)
+    chg_enable_call = expander_init.find("write_chg_enable(true)")
+    require_all(failures, lease >= 0 and chg_enable_call >= 0 and lease_scope_end is not None and
+                chg_enable_call > lease_scope_end,
+                "write_chg_enable must run after the setup lease ends (no nested lease)")
+    require_all(failures, expander_init.count("cyberdeck_expander_broker::lease lease(") == 1 and
+                chg_enable_call == expander_init.rfind("write_chg_enable(true)") and
+                expander_init.count("write_chg_enable(true)") == 1,
+                "expander setup must hold exactly one lease and drive CHG_EN exactly once")
+
+    # TEST-EXP-CACHE: the confirmed-level cache starts low (matching the P7=0
+    # preload) and only write_chg_enable() moves it, after a successful write.
+    # With a stale cache the next sample retries instead of assuming success.
+    require_all(failures, re.search(r"bool s_last_applied_charger_state = false;", source) is not None,
+                "confirmed CHG_EN cache must start at the P7=0 preload level")
+    write_body = function_body(source, "esp_err_t write_chg_enable(")
+    if write_body is None:
+        require_all(failures, False, "write_chg_enable definition must be inspectable")
+    else:
+        assigned = write_body.find("s_last_applied_charger_state = enable;")
+        failure_guard = write_body.find("return err;")
+        require_all(failures, assigned >= 0 and failure_guard >= 0 and failure_guard < assigned,
+                    "a failed CHG_EN write must return before the cache is updated")
+        require_all(failures, re.search(r"s_last_applied_charger_state = enable;\s*return ESP_OK;",
+                                        write_body) is not None,
+                    "only a successful CHG_EN write may confirm the cached level")
+    require_all(failures, "s_last_applied_charger_state = charger_now" not in source and
+                "s_last_applied_charger_state = policy_snap" not in source and
+                source.count("s_last_applied_charger_state = enable;") == 1,
+                "write_chg_enable must be the only writer of the confirmed CHG_EN level")
 
     # Reader ownership is deliberately separate: it may read INA226 registers,
     # but it must not own charger GPIOs or policy.
@@ -445,8 +497,8 @@ def check_traceability(failures: list[str]) -> None:
                         f"{path.name} must document {token}")
 
     version = read(ROOT / "version.txt", failures).strip()
-    require_all(failures, version == "1.1.0",
-                "firmware base diagnostic change must increment MINOR to 1.1.0")
+    require_all(failures, version == "1.2.0",
+                "firmware base diagnostic change must increment MINOR to 1.2.0")
     adapter = strip_comments(read(ADAPTER_SOURCE, failures))
     cached = function_body(adapter, "battery_protection_get_cached_policy_snapshot(")
     require_all(failures, cached is not None and
@@ -456,19 +508,22 @@ def check_traceability(failures: list[str]) -> None:
                 "shell status policy route must only copy the cached policy snapshot")
     diag = function_body(adapter, "battery_protection_get_hardware_diagnostics(")
     require_all(failures, diag is not None and
-                "esp_io_expander_get_level" in diag and
+                "0x03" in diag and "0x05" in diag and "0x07" in diag and
+                "0x13" not in diag and "0x0f" not in diag.lower() and
+                "i2c_master_transmit_receive" in diag and "i2c_master_transmit(" not in diag and
                 "ina226_reader_get_raw_diagnostics" in diag and
                 "esp_io_expander_set_" not in diag and "write_chg_enable" not in diag,
-                "read-only diagnostics must read GPIO levels and cached INA sample only")
+                "read-only diagnostics must read 03/05/07 (never 0x0F or 0x13) and write nothing")
     status_text = SESSION.read_text(encoding="utf-8")
     require_all(failures, "battery hardware:" in status_text and
-                "CHG_QC_EN=" in status_text and "bus_raw[" in status_text and
+                "CHG_QC_EN_latch=" in status_text and "bus_raw[" in status_text and
                 'ina_age_ms=%" PRId64' in status_text and
                 'stat_age_ms=%" PRId64' in status_text and
                 'snapshot_age_ms=%" PRId64' in status_text and
                 "CHG_STAT_raw=%s" in status_text and
-                "latch_unobserved,direction_unobserved" in status_text and
-                "enables_do_not_indicate_charging" in status_text,
+                "latch_is_not_pad_voltage" in status_text and
+                "input_status_outputs_low" in status_text and
+                "sequential_register_sample" in status_text,
                 "status must expose cached read-only evidence, ages and explicit limits")
     require_all(failures, "out_diagnostics->sampled_at_us = esp_timer_get_time()" in
                 read(READER_SOURCE, failures) and "s_cached_chg_stat_valid = chg_valid" in
@@ -480,6 +535,73 @@ def check_traceability(failures: list[str]) -> None:
                 "battery_protection_get_cached_policy_snapshot" in status_host and
                 "battery_protection_get_policy_snapshot" not in status_host,
                 "battery status adapter must route to the non-sampling cache getter")
+    broker_header = read(INCLUDE_SENSOR_DIR / "cyberdeck_expander_broker.h", failures)
+    device_source = strip_comments(read(SENSOR_DIR / "cyberdeck_expander_device.cpp", failures))
+    poweroff = strip_comments(read(ROOT / "components/cyberdeck/src/platform/power/cyberdeck_poweroff.cpp", failures))
+    require_all(failures, "std::timed_mutex" in broker_header and "try_lock_for" in broker_header,
+                "shared I2C broker lease must be exclusive and bounded")
+    # Creating a driver handle calls the vendor reset() (0xFF to
+    # PI4IO_REG_CHIP_RESET), which clears direction/latch/high-Z and returns
+    # CHG_STAT/CHG_QC_EN/CHG_EN/WIFI_EN to their power-on defaults. Expander B
+    # must therefore have exactly one driver instance for the whole boot: the
+    # BSP singleton that bsp_feature_enable(WIFI/USB) also uses.
+    require_all(failures, "bsp_io_expander1_init" in device_source and
+                "esp_io_expander_new_i2c_pi4ioe5v6408" not in device_source and
+                device_source.count("bsp_io_expander1_init()") == 1,
+                "app-level expander owner must reuse the single BSP driver singleton")
+    require_all(failures, "i2c_master_bus_add_device" in device_source and
+                "BSP_IO_EXPANDER_ADDRESS_1" in device_source and
+                "esp_io_expander_set_" not in device_source and
+                "esp_io_expander_get_" not in device_source,
+                "broker device owner must keep a raw read handle only, at the BSP address")
+    require_all(failures, "cyberdeck_expander_broker::lease" in device_source,
+                "the device owner must create the driver singleton under the broker lease")
+    # The one-instance invariant lives in the BSP singleton. Without the guard a
+    # later bsp_feature_enable(WIFI/USB), battery retry or poweroff would create a
+    # second driver and re-run the vendor chip reset (0xFF to 0x01) at runtime,
+    # wiping CHG_STAT direction and the CHG_QC_EN/CHG_EN/WIFI_EN latches.
+    bsp_expander_source = strip_comments(read(BSP_SRC_DIR / "bsp_io_expander.c", failures))
+    singleton = function_body(bsp_expander_source, "esp_io_expander_handle_t bsp_io_expander1_init(void)")
+    guard = None if singleton is None else re.search(
+        r"if\s*\(\s*io_expander1\s*\)\s*\{\s*return\s+io_expander1\s*;", singleton)
+    create = None if singleton is None else singleton.find("esp_io_expander_new_i2c_pi4ioe5v6408")
+    require_all(failures, guard is not None and create > guard.end(),
+                "expander-B driver must return the cached BSP singleton before creating one")
+    require_all(failures, "static esp_io_expander_handle_t io_expander1" in bsp_expander_source,
+                "the BSP singleton handle must stay file-static")
+    unleased = []
+    for directory in (ROOT / "components/cyberdeck/src", BSP_SRC_DIR):
+        for path in sorted(directory.rglob("*")):
+            if path.suffix not in {".c", ".cpp"} or path.name in {
+                    "bsp_io_expander.c", "bsp_feature_en.cpp", "cyberdeck_expander_device.cpp"}:
+                continue
+            if "bsp_io_expander1_init()" in strip_comments(
+                    path.read_text(encoding="utf-8", errors="ignore")):
+                unleased.append(path.name)
+    require_all(failures, not unleased,
+                f"only the guarded singleton and its known lease holders may initialize expander B: {unleased}")
+    require_all(failures, "cyberdeck_expander_broker::lease" in adapter and
+                "cyberdeck_expander_broker::lease" in poweroff,
+                "battery and poweroff transactions must use the shared I2C broker")
+    feature_en = strip_comments(read(BSP_FEATURE_EN, failures))
+    wifi_case = feature_en[feature_en.find("case BSP_FEATURE_WIFI"):]
+    usb_case = feature_en[feature_en.find("case BSP_FEATURE_USB"):feature_en.find("case BSP_FEATURE_WIFI")]
+    require_all(failures, feature_en.find("case BSP_FEATURE_WIFI") >= 0 and
+                feature_en.find("case BSP_FEATURE_USB") >= 0,
+                "BSP feature switch must keep its WIFI and USB cases")
+    require_all(failures, "cyberdeck_expander_broker::lease" in wifi_case and
+                "cyberdeck_expander_broker::lease" in usb_case,
+                "BSP expander-B feature transactions must hold the shared broker lease")
+    require_all(failures,
+                wifi_case.find("cyberdeck_expander_broker::lease") < wifi_case.find("esp_io_expander_set_") and
+                usb_case.find("cyberdeck_expander_broker::lease") < usb_case.find("esp_io_expander_set_"),
+                "the broker lease must be acquired before any expander-B register write")
+    require_all(failures, "src/bsp_feature_en.cpp" in read(BSP_CMAKE, failures) and
+                not (BSP_SRC_DIR / "bsp_feature_en.c").exists(),
+                "the lease-carrying BSP feature file must be built as C++")
+    require_all(failures, "constexpr uint8_t regs[] = {0x03, 0x05, 0x07}" in adapter and
+                "0x13" not in diag and "i2c_master_transmit_receive" in diag,
+                "diagnostics must read only 03/05/07 and never clear-on-read 13")
 
 
 def main() -> int:

@@ -37,7 +37,7 @@ constexpr uint32_t k_ssh_task_stack_bytes = 24576;
 constexpr uint32_t k_ssh_event_queue_depth = 8;
 constexpr uint32_t k_ble_host_task_stack_bytes = 8192;
 constexpr uint32_t k_ble_command_queue_depth = 8;
-constexpr uint32_t k_serial_task_stack_bytes = 8192;
+constexpr uint32_t k_serial_task_stack_bytes = 16384;
 constexpr uint32_t k_screenshot_task_stack_bytes = 6144;
 constexpr uint32_t k_screenshot_control_queue_depth = 8;
 

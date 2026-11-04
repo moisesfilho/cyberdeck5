@@ -657,13 +657,24 @@ void session::execute_line(bool line_already_sent)
             std::snprintf(bus_raw, sizeof(bus_raw), "0x%04X", diagnostic.ina_bus_raw);
             std::snprintf(current_raw, sizeof(current_raw), "0x%04X", diagnostic.ina_current_raw);
         }
-        char hardware[384] = {};
+        // CHG_QC_EN is active-low: P5 LOW asserts QC. This label reports the
+        // latch LEVEL (bit 5 of 0x05) so it cannot contradict expander_raw=05,
+        // while chg_qc_enabled keeps its active-low meaning for the policy.
+        const char *chg_qc_latch = "unavailable";
+        if (diagnostic.expander_available && diagnostic.expander_registers_valid) {
+            chg_qc_latch = (diagnostic.expander_output_latch & 0x20U) != 0 ? "high" : "low";
+        }
+        char hardware[512] = {};
         std::snprintf(hardware, sizeof(hardware),
-                      "battery hardware: CHG_QC_EN=%s CHG_EN=%s CHG_STAT_raw=%s INA226=%s bus_raw=%s current_raw=%s voltage_mv=%ld current_ma=%ld ina_age_ms=%" PRId64 " stat_age_ms=%" PRId64 " snapshot_age_ms=%" PRId64 " modes=latch_unobserved,direction_unobserved; enables_do_not_indicate_charging\n",
+                      "battery hardware: expander=%s origin=0x%02X direction=%s latch=%s hiz=%s P5_P7_input_status=not_sampled CHG_QC_EN_latch=%s CHG_EN_latch=%s CHG_STAT_raw=%s INA226=%s bus_raw=%s current_raw=%s voltage_mv=%ld current_ma=%ld ina_age_ms=%" PRId64 " stat_age_ms=%" PRId64 " snapshot_age_ms=%" PRId64 " latch_is_not_pad_voltage; input_status_outputs_low; sequential_register_sample\n",
+                      !diagnostic.expander_available ? "unavailable" : !diagnostic.expander_registers_valid ? "unavailable" : "available",
+                      diagnostic.expander_register_origin,
+                      diagnostic.expander_registers_valid ? "read" : "unavailable",
+                      diagnostic.expander_registers_valid ? "read" : "unavailable",
+                      diagnostic.expander_registers_valid ? "read" : "unavailable",
+                      chg_qc_latch,
                       !diagnostic.expander_available ? "unavailable" :
-                      !diagnostic.chg_qc_read_ok ? "error" : diagnostic.chg_qc_enabled ? "enabled" : "disabled",
-                      !diagnostic.expander_available ? "unavailable" :
-                      !diagnostic.chg_en_read_ok ? "error" : diagnostic.chg_en_enabled ? "enabled" : "disabled",
+                      !diagnostic.expander_registers_valid ? "unavailable" : diagnostic.chg_en_enabled ? "high" : "low",
                       diagnostic.chg_stat_available ? (diagnostic.chg_stat_raw_low ? "low" : "high") : "unavailable",
                       diagnostic.ina_available ? "available" : diagnostic.ina_error ? "error" : "unavailable",
                       bus_raw, current_raw,
@@ -671,6 +682,13 @@ void session::execute_line(bool line_already_sent)
                       static_cast<long>(diagnostic.ina_current_ma),
                       age_ms(diagnostic.ina_sampled_at_us), age_ms(diagnostic.chg_stat_sampled_at_us),
                       age_ms(diagnostic.policy_sampled_at_us));
+        if (diagnostic.expander_registers_valid) {
+            char registers[80]{};
+            std::snprintf(registers, sizeof(registers), "expander_raw: 03=%02X 05=%02X 07=%02X\n",
+                          diagnostic.expander_direction, diagnostic.expander_output_latch,
+                          diagnostic.expander_hiz);
+            host_.append_output_line(registers);
+        }
         host_.append_output_line(hardware);
         break;
     }

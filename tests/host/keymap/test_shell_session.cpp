@@ -1212,11 +1212,68 @@ int main()
               "maximum capture timestamp subtracts and formats without signed overflow");
     }
 
+    // TEST-I2C-DIAG-04: CHG_QC_EN_latch/CHG_EN_latch must be the literal levels
+    // of bits 5 and 7 of register 0x05 (OUT_SET), so the labels can never
+    // contradict the expander_raw dump. The table is the specification, not a
+    // copy of the production expression: 0x80 is the real post-init state (P5
+    // driven LOW so the active-low CHG_QC_EN is asserted, P7 HIGH so the charger
+    // is enabled) and 0x20 is QC inhibited. qc_asserted keeps the active-low
+    // policy meaning of chg_qc_enabled, which is the inverse of the QC latch.
+    {
+        struct latch_case {
+            int latch;
+            const char *qc_latch;
+            const char *en_latch;
+            bool qc_asserted;
+            bool charger_enabled;
+            const char *description;
+        };
+        const latch_case cases[] = {
+            {0x80, "low", "high", true, true, "post-init: QC asserted (P5 low) and charger enabled (P7 high)"},
+            {0x20, "high", "low", false, false, "QC inhibited (P5 high) and charger disabled (P7 low)"},
+            {0x00, "low", "low", true, false, "both output latches low"},
+            {0xa0, "high", "high", false, true, "QC inhibited with charger enabled"},
+            {0xff, "high", "high", false, true, "all output latches high"},
+        };
+        for (const auto &c : cases) {
+            fake_host h;
+            h.battery_diagnostics.expander_available = true;
+            h.battery_diagnostics.expander_registers_valid = true;
+            h.battery_diagnostics.expander_register_origin = 0x44;
+            h.battery_diagnostics.expander_direction = 0x60;
+            h.battery_diagnostics.expander_output_latch = static_cast<std::uint8_t>(c.latch);
+            h.battery_diagnostics.expander_hiz = 0;
+            h.battery_diagnostics.chg_qc_read_ok = true;
+            h.battery_diagnostics.chg_qc_enabled = c.qc_asserted;
+            h.battery_diagnostics.chg_en_read_ok = true;
+            h.battery_diagnostics.chg_en_enabled = c.charger_enabled;
+            session s(h);
+            submit(s, "battery protection status");
+            const std::string expected = std::string("CHG_QC_EN_latch=") + c.qc_latch +
+                                         " CHG_EN_latch=" + c.en_latch;
+            const std::string ctx = std::string("latch labels must follow register 0x05 bits 5/7: ") +
+                                    c.description;
+            check(h.output.find(expected) != std::string::npos, ctx.c_str());
+            char raw[48] = {};
+            std::snprintf(raw, sizeof(raw), "expander_raw: 03=60 05=%02X 07=00", c.latch);
+            const std::string raw_ctx =
+                std::string("raw latch dump must carry the same byte that produced the labels: ") +
+                c.description;
+            check(h.output.find(raw) != std::string::npos, raw_ctx.c_str());
+        }
+    }
+
     {
         fake_host h;
         h.battery_diagnostics.expander_available = true;
+        h.battery_diagnostics.expander_registers_valid = true;
+        h.battery_diagnostics.expander_register_origin = 0x44;
+        h.battery_diagnostics.expander_direction = 0x60;
+        h.battery_diagnostics.expander_output_latch = 0xa0;
+        h.battery_diagnostics.expander_hiz = 0;
         h.battery_diagnostics.chg_qc_read_ok = true;
-        h.battery_diagnostics.chg_qc_enabled = true;
+        // 0xA0 sets P5 high, so the active-low CHG_QC_EN is not asserted.
+        h.battery_diagnostics.chg_qc_enabled = false;
         h.battery_diagnostics.chg_en_read_ok = true;
         h.battery_diagnostics.chg_en_enabled = true;
         h.battery_diagnostics.ina_available = true;
@@ -1232,30 +1289,35 @@ int main()
         h.battery_diagnostics.policy_sampled_at_us = 8500000;
         session s(h);
         submit(s, "battery protection status");
-        check(h.output.find("CHG_QC_EN=enabled CHG_EN=enabled") != std::string::npos,
-              "status reports physical readback without interpreting it as charging");
+        check(h.output.find("origin=0x44") != std::string::npos &&
+                  h.output.find("CHG_QC_EN_latch=high CHG_EN_latch=high") != std::string::npos,
+              "status reports raw output latches with their expander origin");
+        check(h.output.find("expander_raw: 03=60 05=A0 07=00") != std::string::npos,
+              "status reports raw direction, latch and Hi-Z registers only");
         check(h.output.find("bus_raw=0x1770 current_raw=0x0003") != std::string::npos,
               "status reports raw INA226 registers");
         check(h.output.find("CHG_STAT_raw=high") != std::string::npos &&
                   h.output.find("ina_age_ms=1000 stat_age_ms=500 snapshot_age_ms=500") != std::string::npos,
               "status reports cached signal and measurement ages");
-        check(h.output.find("latch_unobserved,direction_unobserved") != std::string::npos &&
-                  h.output.find("enables_do_not_indicate_charging") != std::string::npos,
-              "status avoids claiming pin mode or charge from enable levels");
+        check(h.output.find("latch_is_not_pad_voltage") != std::string::npos &&
+                  h.output.find("input_status_outputs_low") != std::string::npos &&
+                  h.output.find("sequential_register_sample") != std::string::npos,
+              "status documents register semantics and non-atomic sampling");
         check(h.battery_diagnostics_reads == 1, "status performs one diagnostic read");
     }
 
     {
         fake_host h;
         h.battery_diagnostics.expander_available = true;
+        h.battery_diagnostics.expander_registers_valid = false;
         h.battery_diagnostics.chg_qc_read_ok = true;
         h.battery_diagnostics.chg_qc_enabled = false;
         h.battery_diagnostics.chg_en_read_ok = false;
         h.battery_diagnostics.ina_error = true;
         session s(h);
         submit(s, "battery protection status");
-        check(h.output.find("CHG_QC_EN=disabled CHG_EN=error CHG_STAT_raw=unavailable INA226=error") != std::string::npos,
-              "independent read failures are reported distinctly from disabled pins");
+        check(h.output.find("CHG_QC_EN_latch=unavailable CHG_EN_latch=unavailable") != std::string::npos,
+              "partial expander register failure invalidates the whole raw group");
         check(h.output.find("bus_raw=none current_raw=none") != std::string::npos,
               "failed INA sample does not expose stale raw registers");
         check(h.battery_diagnostics_reads == 1,
@@ -1270,7 +1332,7 @@ int main()
         h.battery_diagnostics.ina_available = false;
         session s(h);
         submit(s, "battery protection status");
-        check(h.output.find("CHG_QC_EN=unavailable CHG_EN=unavailable CHG_STAT_raw=unavailable INA226=unavailable") != std::string::npos,
+        check(h.output.find("CHG_QC_EN_latch=unavailable CHG_EN_latch=unavailable CHG_STAT_raw=unavailable INA226=unavailable") != std::string::npos,
               "missing expander and INA sample are reported unavailable, not as pin errors");
     }
 

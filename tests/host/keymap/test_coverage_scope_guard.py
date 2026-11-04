@@ -44,6 +44,7 @@ NEWLY_ALLOWLISTED = frozenset({
     "components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp",
     "components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp",
     "components/cyberdeck/src/platform/display/cyberdeck_lvgl_dispatch.cpp",
+    "components/cyberdeck/src/platform/sensors/cyberdeck_expander_device.cpp",
 })
 
 # The reviewed allowlist as a whole.  The counterfactual fixtures below build
@@ -157,10 +158,10 @@ def write_report(report: Path, files) -> None:
 # --- TEST-COV-001..005: structural contract of the reviewed allowlist ---------
 
 def test_allowlist_is_exactly_the_reviewed_set() -> None:
-    """TEST-COV-001: 11 pre-existing adapters plus exactly 5 new ones."""
+    """TEST-COV-001: 11 pre-existing adapters plus exactly 6 new ones."""
     expected = PRE_EXISTING_ALLOWLIST | NEWLY_ALLOWLISTED
-    assert len(ALLOWLIST) == 16, \
-        f"allowlist must hold exactly 16 entries, found {len(ALLOWLIST)}"
+    assert len(ALLOWLIST) == 17, \
+        f"allowlist must hold exactly 17 entries, found {len(ALLOWLIST)}"
     assert set(ALLOWLIST) == expected, (
         "allowlist drifted from the reviewed set: "
         f"missing={sorted(expected - set(ALLOWLIST))} "
@@ -172,7 +173,7 @@ def test_allowlist_is_exactly_the_reviewed_set() -> None:
 
 
 def test_new_entries_are_real_production_sources() -> None:
-    """TEST-COV-002: the 5 new entries exist under the real production root."""
+    """TEST-COV-002: the 6 new entries exist under the real production root."""
     assert SOURCE_ROOT.is_dir(), f"production source root is missing: {SOURCE_ROOT}"
     production = production_sources(ROOT, SOURCE_ROOT)
     for path in sorted(NEWLY_ALLOWLISTED):
@@ -253,7 +254,7 @@ def test_netdiag_app_is_required_covered_and_not_allowlisted() -> None:
 # --- TEST-COV-006..010: fail-closed counterfactuals over temporary fixtures ----
 
 def test_allowlisted_and_covered_is_rejected() -> None:
-    """TEST-COV-006: covering one of the 4 new adapters fails closed."""
+    """TEST-COV-006: covering every new adapter fails closed."""
     with tempfile.TemporaryDirectory() as tmp:
         root, source, report = make_fixture(Path(tmp), REVIEWED_ALLOWLIST)
         write_report(report, [ELIGIBLE, *sorted(NEWLY_ALLOWLISTED), *sorted(REQUIRED_COVERED)])
@@ -278,7 +279,7 @@ def test_allowlist_typo_outside_source_root_is_rejected() -> None:
 
 
 def test_removing_an_allowlist_entry_is_rejected() -> None:
-    """TEST-COV-008: dropping one of the 4 new entries makes the guard demand
+    """TEST-COV-008: dropping one of the 6 new entries makes the guard demand
     coverage for a TU that no host binary builds."""
     for removed in sorted(NEWLY_ALLOWLISTED):
         with tempfile.TemporaryDirectory() as tmp:

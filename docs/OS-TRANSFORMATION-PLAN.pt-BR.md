@@ -229,9 +229,11 @@ cooperativa e faz join bounded de até 2000 ms. Timeout deixa o estado em
 pedido no loop de leitura e no loop de chunks de `screen.dump`. O driver USB
 Serial-JTAG, o writer global de `esp_log_set_vprintf` e os semáforos/mutexes
 compartilhados permanecem vivos: este recorte não faz desmontagem de recursos
-de boot. O manifesto declara stack de 8192 bytes e `queue_depth=0`, pois a
-ponte não possui fila própria; a entrada é bounded pelo driver/assembler
-existente, e o campo não é usado para inventar capacidade.
+de boot. O manifesto declara stack de 16384 bytes (era 8192; a task também
+despacha transições de recovery, onde a cópia de `state` ~2 KB mais NVS commit,
+journal e `ESP_LOGI` estouravam a pilha em `sys.safe_mode.clear`) e
+`queue_depth=0`, pois a ponte não possui fila própria; a entrada é bounded pelo
+driver/assembler existente, e o campo não é usado para inventar capacidade.
 
 O Screenshot completa este recorte com a task `screenshot_ctl` (stack de 6144
 bytes e fila bounded de 8 itens). O callback de estado Wi-Fi somente copia e

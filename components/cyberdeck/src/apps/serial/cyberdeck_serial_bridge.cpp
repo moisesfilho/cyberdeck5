@@ -3292,8 +3292,14 @@ bool bridge_start(void)
     s_stop_requested.store(false, std::memory_order_release);
     s_ready_ok.store(false, std::memory_order_release);
     TaskHandle_t task = nullptr;
+    // 16384 (was 8192): this task also dispatches recovery transitions
+    // (sys.safe_mode.clear). `state` is ~2 KB and the transition path adds NVS
+    // commit, journal vsnprintf and a multi-argument ESP_LOGI, which overflowed
+    // an 8 KB stack (stack protection fault in "serial_brg"). The defensive
+    // margin stays even after removing the duplicated state copy in
+    // cyberdeck_recovery::save_after_transition.
     const BaseType_t created =
-        xTaskCreate(bridge_task_entry, "serial_brg", 8192, nullptr, 3, &task);
+        xTaskCreate(bridge_task_entry, "serial_brg", 16384, nullptr, 3, &task);
     if (created != pdPASS) {
         s_lifecycle.store(lifecycle_state::failed, std::memory_order_release);
         xSemaphoreGive(s_lifecycle_mutex);

@@ -122,8 +122,9 @@ def main() -> int:
             "remain valid until the callback completes" in DISPATCH_HEADER.read_text(encoding="utf-8"),
             "dispatcher API must document persistent callback context lifetime")
     require("portMAX_DELAY" not in capture, "serial display flow must not use unbounded waits")
-    require(re.search(r'xTaskCreate\(bridge_task_entry,\s*"serial_brg",\s*8192\b', source) is not None,
-            "serial_brg stack must remain 8192 bytes")
+    require(re.search(r'xTaskCreate\(bridge_task_entry,\s*"serial_brg",\s*(\d+)\b', source) is not None and
+            int(re.search(r'xTaskCreate\(bridge_task_entry,\s*"serial_brg",\s*(\d+)\b', source).group(1)) >= 16384,
+            "serial_brg stack must be at least 16384 bytes: the task also dispatches recovery transitions")
     require(re.search(r"k_task_stack_bytes\s*=\s*6144", (ROOT / "components/cyberdeck/src/apps/screenshot/screenshot_server.cpp").read_text(encoding="utf-8")) is not None,
             "HTTP screenshot stack must remain 6144 bytes")
     http_capture = function_body(http, 'extern "C" esp_err_t cyberdeck_display_capture')

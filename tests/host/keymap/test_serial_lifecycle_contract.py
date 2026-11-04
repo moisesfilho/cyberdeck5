@@ -22,7 +22,7 @@ def main() -> int:
         "std::atomic<TaskHandle_t> s_task_handle{nullptr};",
         "std::atomic<bool> s_ready_ok{false};",
         "xSemaphoreGive(s_ready);",
-        'xTaskCreate(bridge_task_entry, "serial_brg", 8192',
+        'xTaskCreate(bridge_task_entry, "serial_brg", 16384',
         "bool bridge_stop(std::uint32_t timeout_ms)",
         "while (s_task_handle.load(std::memory_order_acquire) != nullptr)",
     ):
@@ -34,7 +34,7 @@ def main() -> int:
         failures.append("service ports must expose serial_stop")
     if "service_ports::serial_stop(2000)" not in apps:
         failures.append("system app must stop Serial through its service port")
-    if "k_serial_task_stack_bytes = 8192" not in apps:
+    if "k_serial_task_stack_bytes = 16384" not in apps:
         failures.append("Serial manifest stack must match the task stack")
     if "k_serial_task_stack_bytes, 0)" not in apps:
         failures.append("Serial manifest must not claim a nonexistent queue")
