@@ -41,6 +41,19 @@ boot normal** antes do mount porque C6 e SD compartilham o controlador SDMMC.
 O SD é montado também no safe mode. Não prometer boot sem SD: a metadata opcional
 de pacote no SD é diferente da montagem física obrigatória.
 
+**Decisão do operador (05/11/2026, posterior ao ensaio físico):** o cartão SD
+é o armazenamento obrigatório do sistema. Sem ele, não iniciar é o resultado
+esperado; os reinícios automáticos após a falha de mount são consequência
+aceita dessa dependência no produto pessoal, não defeito ou bloqueio para apps
+simples. No firmware atual, `ESP_ERROR_CHECK` aborta e o boot seguinte volta a
+tentar montar o SD; não há uma busca contínua dentro de um mesmo boot. Uma
+melhoria **opcional futura**, sem compromisso de implementação nesta etapa,
+seria detectar a ausência e apresentar uma tela informando que o sistema não
+pode ser iniciado sem cartão de memória. Como o mount ocorre antes da UI, isso
+exigiria um caminho de display/erro anterior à UI normal, sem prometer boot
+degradado ou tornar o SD opcional. Não repetir ensaio físico sem controle de
+alimentação, pois a tentativa anterior acumulou 65 boots interrompidos.
+
 ## Recorte 1: pré-condições, resultado, falha e recuperação
 
 | ID | Pré-condição | Resultado observável e limite atual | Falha/ausência e recuperação existente | Dono | Prova host / gate Tab5 |

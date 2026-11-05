@@ -30,9 +30,12 @@ Boot/criptografia desativados. Isso é restrito ao ambiente acima, não uma
 alegação de proteção contra peers na LAN, acesso físico, extração de segredos
 ou alteração de firmware. Se mudar a rede, a custódia do dispositivo ou a
 necessidade de OTA, reavaliar controles antes de operar sob o novo cenário.
-A dependência do SD para boot é aceitável; os reinícios automáticos após falha
-de mount são um problema de disponibilidade separado, registrado na Fase 3,
-sem implicar tornar o SD opcional.
+A dependência do SD para boot é requisito do produto: sem ele, não iniciar e
+reiniciar tentando novamente o mount são consequências aceitas pelo operador,
+não problema de segurança a resolver nesta fase. O ensaio histórico e o risco
+de repetir um teste físico sem controle ficam documentados na Fase 3. Uma
+tela avisando que o sistema exige cartão seria melhoria opcional de UX, não
+uma proposta de tornar o SD opcional.
 
 | Ativo | Entrada/fronteira | Controle observado e limite | Consequência se comprometido |
 | --- | --- | --- | --- |
@@ -137,7 +140,7 @@ grants atuais não atendem esse requisito.
 2. Configuração e eFuses foram verificadas, e o boot posterior observado;
    **não** foram testados ataques, migração de controles ou recuperação após
    adulteração. Nenhum controle novo foi instalado nesta fase.
-3. Fase 3 e seus gates técnicos físicos/budgets seguem abertos; o loop sem SD
-   não está corrigido. Isso não impede considerar o sistema adequado ao uso
-   pessoal observado. Controles futuros exigem plano próprio de migração,
+3. Fase 3 e seus demais gates técnicos físicos/budgets seguem abertos;
+   não se exige boot sem SD nem correção de reinícios ao faltar o cartão
+   obrigatório. Controles futuros exigem plano próprio de migração,
    backup, recuperação e validação antes de marcar seu aceite.

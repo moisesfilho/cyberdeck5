@@ -44,9 +44,11 @@ Não criar tag sem pedido explícito.
   teste físico dos fluxos de uma app nova.
 - SD é obrigatório para o boot. Sem ele, `sd_mount` abortou e houve reinícios
   automáticos (journal chegou a 65 interrupções) antes da recuperação em safe
-  mode. Não repetir falha física SD/NVS sem limitar um único boot e evitar
-  reenergização acidental. O problema é a política de repetição, não a
-  obrigatoriedade do cartão.
+  mode. O operador aceita não iniciar e reiniciar tentando montar o cartão
+  obrigatório: **não é defeito nem bloqueio de release** nesse escopo. Não
+  repetir o ensaio físico SD/NVS sem limitar um único boot e evitar
+  reenergização acidental. Uma tela informando que falta o cartão seria
+  melhoria opcional; a UI atual só inicia após o mount.
 - Uma consulta `music.status` após pause/resume não recebeu resposta, embora a
   seguinte tenha respondido sem reboot. Primeiras consultas Serial-JTAG após
   reconexão USB também perderam resposta; causa não demonstrada. Não registrar

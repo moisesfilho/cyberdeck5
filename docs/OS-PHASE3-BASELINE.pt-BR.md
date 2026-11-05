@@ -14,11 +14,21 @@ para o uso pessoal cotidiano observado. Isso inclui o relato de que safe mode
 já atuou diante de falhas anteriores; o ensaio abaixo também registrou safe
 mode e recuperação após boot sem SD na imagem identificada. O aceite por uso
 **não** substitui medições de todas as tasks, speaker/jack ou testes específicos
-de uma app nova; tampouco corrige o loop de boot sem SD ou explica a perda
-ocasional de resposta Serial-JTAG. Essas são limitações conhecidas, não
-bloqueios gerais para criar apps simples de uso diário. A Fase 3 permanece
-aberta para correções e medições direcionadas quando necessárias; não repetir
+de uma app nova; não explica a perda ocasional de resposta Serial-JTAG.
+Essa anomalia não bloqueia criar apps simples de uso diário. A Fase 3 permanece
+aberta para medições e investigação direcionada quando necessárias; não repetir
 falhas físicas SD/NVS sem controle comprovado de um único boot.
+
+**Decisão posterior do operador (05/11/2026):** o SD funciona como disco
+obrigatório. Sem cartão, o fato de o sistema não iniciar ou reiniciar tentando
+montá-lo novamente é consequência **aceita**, não defeito e não gate pendente
+para apps/release. O termo "tentando" significa uma nova tentativa de mount
+em cada boot após o abort, não busca contínua no mesmo boot. A única melhoria
+de UX cogitada é opcional: detectar a ausência e apresentar na tela que o
+sistema não pode ser iniciado sem cartão. A UI hoje é inicializada **após** o
+mount; implementar essa mensagem exigiria um caminho mínimo de display antes
+da UI normal, sem oferecer funcionamento sem SD. O registro do ensaio e a
+restrição de não repeti-lo sem controle seguro permanecem válidos.
 
 **Decisão do operador em 05/11/2026:** apenas testes físicos seguros nesta
 etapa. Não executar poweroff controlado, retirada/falha física do SD, corrupção
@@ -538,8 +548,9 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
   `sys.info` após boot confirmou uptime 24 s, `safe_mode=false`, zero boots
   interrompidos; o canário permaneceu legível. O journal final registrou
   `load ... safe=0 pending=0 interrupted=0` e novo checkpoint persistido.
-- **Gate de segurança falhou:** o procedimento não limitou automaticamente
-  reinícios sem SD, e inserir o cartão religou o Tab5. Não repetir boot sem
+- **Controle do ensaio físico falhou (não é defeito do produto):** o
+  procedimento não limitou automaticamente reinícios sem SD, e inserir o
+  cartão religou o Tab5. Não repetir boot sem
   SD nem induzir corrupção/interrupção NVS nesta configuração antes de existir
   limitação física/instrumentada de um único boot e recuperação reproduzível.
   A recuperação após reinserção foi observada, mas não torna segura a
@@ -568,7 +579,8 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
     poweroff supervisionado foram exercitados. O boot sem SD confirmou falha
     fatal, porém **gerou múltiplos reinícios**, atingiu safe mode e expôs
     reenergização ao inserir o cartão; recuperação com SD e clear único passou.
-    Não induzir falha NVS/novo boot sem SD até haver controle de um único boot
-    e método seguro de recuperação. Sem esses gates, critérios físicos e
-    budgets aprovados, a Fase 3 não pode ser marcada `done` no aceite técnico
-    integral; o aceite operacional delimitado acima permanece válido.
+    Não induzir falha NVS/novo boot sem SD sem controle de um único boot e
+    método seguro de recuperação. Esses ensaios não são requisito para boot
+    sem cartão nem gate de correção. Outros cenários físicos pertinentes e
+    budgets aprovados ainda condicionam o aceite técnico integral da Fase 3;
+    o aceite operacional delimitado acima permanece válido.

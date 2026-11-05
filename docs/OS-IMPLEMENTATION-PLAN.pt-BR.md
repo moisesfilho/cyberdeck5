@@ -184,9 +184,11 @@ global e compatibilidade sob falha física pertencem à Fase 3.
   SD compartilham controlador; não paralelizar/reordenar para reduzir boot sem
   prova de compatibilidade elétrica, de ownership e de recuperação.
 - [x] Tratar falha de mount SD como comportamento atual **fatal**
-  (`ESP_ERROR_CHECK` antes da UI). Boot degradado sem SD exige requisito e
-  desenho aprovados; não prometer que já funciona nem testar remoção em uso
-  como procedimento padrão.
+  (`ESP_ERROR_CHECK` antes da UI). O SD é obrigatório; não iniciar ou reiniciar
+  e tentar o mount novamente quando ausente é consequência aceita pelo operador,
+  não defeito do produto. Tela de aviso para cartão ausente seria melhoria
+  opcional anterior à UI normal, não boot degradado sem SD. Não testar remoção
+  em uso como procedimento padrão.
 - [x] Não adicionar uma tabela universal de operações, quotas de heap por app
   ou quotas de CPU por app sem um consumidor e mecanismo real de enforcement.
 - [x] Revisar ordem de locks, chamadas bloqueantes e dependências de lifecycle
@@ -209,11 +211,13 @@ real, não apenas em shims host.
 repetidos no seu Tab5, considera os contratos e as funções implementadas
 adequados ao uso pessoal cotidiano observado (apps simples e confiáveis, como
 música e notas). Esse aceite por uso não é uma medição de todas as tasks nem
-certifica ausência de defeitos. Mantêm-se como limitações conhecidas o loop
-de reinícios ao iniciar sem SD e a perda ocasional de resposta Serial-JTAG;
+certifica ausência de defeitos. Sem o SD obrigatório, não iniciar e reiniciar
+para tentar novamente o mount são consequências aceitas pelo operador, não
+problema a corrigir para avançar. A perda ocasional de resposta Serial-JTAG
+permanece uma anomalia sem causa demonstrada;
 safe mode/recovery foi observado pelo operador em falhas anteriores e também
 na recuperação documentada após o ensaio sem SD. A Fase 3 fica **active** para
-tratar essas limitações e reunir métricas quando uma regressão, novo app mais
+investigar anomalias relevantes e reunir métricas quando uma regressão, novo app mais
 exigente ou otimização as tornar necessárias; não bloqueia a criação de apps
 simples dentro do escopo aprovado. Não repetir falha física SD/NVS sem controle
 seguro de um único boot.
@@ -279,6 +283,10 @@ permaneceu íntegro, um único clear de safe mode foi persistido e o reset
 controlado seguinte fez boot normal. **Não repetir falha física de boot/NVS**
 até controlar um único boot e impedir reenergização acidental; autorização
 geral não substitui essas pré-condições. Logs privados e limites no baseline.
+Essa observação não torna obrigatório boot sem SD nem transforma os reinícios
+em defeito: o operador aceita a tentativa de mount a cada boot sem cartão.
+Exibir uma mensagem de "cartão de memória necessário" antes da UI normal é
+melhoria opcional futura, não pré-requisito para apps ou release.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,
@@ -298,20 +306,22 @@ geral não substitui essas pré-condições. Logs privados e limites no baseline
   se houver regressão. Não reduzir stacks, filas, timeouts ou checkpoints por
   intuição nem introduzir buffers ilimitados.
 - [ ] Validar falha de rede e timeouts de serviços com injeção segura. Falha
-  de SD antes do boot, remoção em uso, corrupção de arquivo, poweroff e carga
-  real da bateria exigem cenário e autorização específicos, backup quando
+  de SD antes do boot não precisa ser repetida nem corrigida para atender ao
+  escopo aceito; remoção em uso, corrupção de arquivo, poweroff e carga real
+  da bateria exigem cenário e autorização específicos, backup quando
   houver risco de dados e estratégia de recuperação; primeiro usar shims
   determinísticos. Não repetir panic antes de analisar a evidência. A matriz
   host de time sync/netdiag/Wi-Fi em
   [`OS-PHASE3-BASELINE.pt-BR.md`](OS-PHASE3-BASELINE.pt-BR.md) foi exercitada;
-  a recuperação física na imagem atual continua pendente.
+  outras falhas físicas permanecem condicionadas ao cenário seguro.
 - [ ] Derivar budgets aprovados dos dados e só então fixá-los em configuração,
   código e contratos; manter documentação sincronizada com a fonte de verdade.
 
 **Aceite:** uso operacional cotidiano aprovado pelo operador no escopo acima,
 com anomalias conhecidas preservadas no registro. OS-TAB5-04/05/07 permanecem
-`active` para aceite técnico integral: recuperação sob falha SD não foi
-controlada, budgets não foram fixados e nem todos os cenários foram medidos.
+`active` para aceite técnico integral: budgets não foram fixados e nem todos
+os cenários pertinentes foram medidos. Boot sem cartão não é cenário de boot
+suportado; o comportamento esperado foi observado, não é gate de correção.
 OS-TAB5-08 só se aplica ao declarar uma otimização; exigir antes/depois sem
 regressão. Ao validar mudanças afetadas, registrar firmware/commit, comandos,
 uptime, logs e periféricos. Esses gates não impedem avançar com apps simples;
@@ -332,8 +342,9 @@ acesso físico fora do adversário adotado e atualização USB local suficiente.
 HTTP sem autenticação/TLS, credenciais Wi-Fi em texto claro no SD e Secure
 Boot/criptografia desativados são riscos aceitos **neste escopo**, não garantias
 de proteção contra peers da LAN ou acesso físico. Não se alterou firmware,
-partições, segredos ou eFuses. Fase 3 segue aberta, inclusive o loop sem SD;
-a obrigatoriedade do cartão foi aceita, não sua política de reinício.
+partições, segredos ou eFuses. Fase 3 segue aberta por medições e outros
+cenários, não pela ausência do SD: o operador aceita a obrigatoriedade do
+cartão e os reinícios ao tentar iniciar sem ele.
 
 `sdkconfig` confirma Secure Boot, flash/NVS encryption e HTTPS desativados;
 `partitions.csv` tem somente `factory`. Leitura eFuse somente leitura no
@@ -434,9 +445,9 @@ matriz abaixo à medida que os requisitos da Fase 1 forem aprovados:
 
 | Requisito | Módulo/dono | Teste host/contrato | Validação Tab5 | Estado |
 | --- | --- | --- | --- | --- |
-| OS-TAB5-01..04/07: boot, recovery, console e Serial-JTAG | `main/app_main.cpp`, system apps, runtime, shell e bridge; matriz detalhada em `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | `test_boot_sequence`, `test_recovery_policy`, `test_recovery_runtime`, `test_app_runtime`, `test_shell_app`, `test_serial_ndjson_dispatch`, `test_serial_term_dump` e contratos complementares na matriz | Boot normal e safe mode após falha SD documentados no baseline; não repetir falha física sem controle | OS-TAB5-01/02 documentais; uso cotidiano aceito pelo operador; OS-TAB5-04/07 técnicos ainda active |
+| OS-TAB5-01..04/07: boot, recovery, console e Serial-JTAG | `main/app_main.cpp`, system apps, runtime, shell e bridge; matriz detalhada em `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | `test_boot_sequence`, `test_recovery_policy`, `test_recovery_runtime`, `test_app_runtime`, `test_shell_app`, `test_serial_ndjson_dispatch`, `test_serial_term_dump` e contratos complementares na matriz | Boot normal e safe mode após ausência do SD documentados; SD obrigatório, sem exigência de boot sem cartão; não repetir ensaio físico sem controle | OS-TAB5-01/02 documentais; uso cotidiano aceito pelo operador; OS-TAB5-04/07 técnicos ainda active |
 | OS-TAB5-01/02/07: conectividade e apps | `cyberdeck_system_apps.cpp`, manifests e adapters por app no Recorte 2 de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | `test_app_runtime` (boot/demo/foreground) e testes por módulo listados na matriz | Vários fluxos observados pelo operador; playback medido com perda pontual de resposta serial posterior | Uso pessoal aceito; paridade instrumentada de todos os apps permanece parcial |
-| OS-TAB5-01/02/07: periféricos, SD e poweroff | `app_main.cpp`, adapters de display/bateria/screen-off/poweroff, shell/storage; Recorte 3 de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | Testes de bateria, display, proteção de tela, SD e poweroff listados na matriz | Poweroff bateria-only e canário pós-boot observados; boot sem SD entrou em loop e foi recuperado | Aceite operacional pessoal; recuperação técnica integral ainda pendente |
+| OS-TAB5-01/02/07: periféricos, SD e poweroff | `app_main.cpp`, adapters de display/bateria/screen-off/poweroff, shell/storage; Recorte 3 de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | Testes de bateria, display, proteção de tela, SD e poweroff listados na matriz | Poweroff bateria-only e canário pós-boot observados; reinícios sem SD obrigatório são consequência aceita, recovery documentado | Aceite operacional pessoal; demais gates técnicos continuam próprios |
 | OS-TAB5-03..08: formatos, limites, falhas físicas e desempenho | Baseline de formatos/timeout nos requisitos, inventário de recursos em `docs/OS-RESOURCE-CONTRACTS.pt-BR.md` | `test_os_resource_contract` e gates por módulo | Séries de bateria/playback e boot em imagem identificada; budgets de outras tasks não medidos | Fase 2 host concluída; OS-TAB5-06 concluído no escopo pessoal; OS-TAB5-03/04/05/07/08 mantêm seus gates próprios |
 
 ## 8. Relação com os demais documentos

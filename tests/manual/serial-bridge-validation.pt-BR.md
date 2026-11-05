@@ -239,6 +239,12 @@ boots interrompidos antes de a alimentação/SD serem restaurados. Inserir o
 cartão com o aparelho aparentemente desligado o religou inesperadamente.
 Com SD restaurado, o checkpoint concluiu, um `sys.safe_mode.clear` único foi
 persistido e o boot controlado seguinte ficou normal; canário legível.
+Decisão posterior do operador: o SD é obrigatório; não iniciar/reiniciar
+tentando novamente o mount quando ele falta é consequência aceita, **não**
+defeito nem requisito de boot sem cartão. Opcionalmente, uma versão futura
+poderia mostrar antes da UI normal uma mensagem de que o sistema não pode
+iniciar sem cartão de memória. O histórico abaixo registra o risco do ensaio
+físico, não transforma o comportamento do produto em bug.
 **Não repita o boot sem SD nem induza falha física de NVS** até existir um
 controle comprovado de um único boot, captura de logs e corte seguro sem
 reenergização acidental. Log bruto fica privado; roteiro e evidências em

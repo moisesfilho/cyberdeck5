@@ -179,7 +179,7 @@
         ] },
         { name: "Medição e compatibilidade", state: "active", items: [
           ["Definir cenários de carga e falha seguros", "done"],
-          // Operacao cotidiana aceita pelo operador; loop sem SD e resposta serial ocasional conhecidos. Budgets e gates tecnicos seguem abertos.
+          // Operacao cotidiana aceita; ausencia do SD obrigatorio impede boot e gera reinicios aceitos, nao defeito. Resposta serial e budgets seguem em aberto.
           ["Medir heap, stack, latência e perdas", "active"],
           ["Coletar baseline antes de alterar código", "active"],
           ["Otimizar somente gargalos medidos", "todo"],

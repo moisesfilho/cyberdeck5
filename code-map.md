@@ -1111,11 +1111,14 @@ a raiz do repositorio.
   com SD montado, canario legivel, um clear de safe mode persistido e reset
   controlado resultou em boot normal (`sd_mount=ESP_OK`, checkpoint OK).
   Logs brutos privados em `/tmp/opencode/phase3-{boot-no-sd,sd-restored-boot}-20261105.log`;
-  nao repetir falha fisica SD/NVS sem controle de um unico boot.
+  nao repetir falha fisica SD/NVS sem controle de um unico boot. Decisao
+  posterior do operador: SD e disco obrigatorio; nao iniciar/reiniciar ao
+  faltar cartao e consequencia aceita, nao defeito/bloqueio. Opcional no
+  futuro: tela de erro explicita antes da UI normal (atualmente apos mount).
   Aceite operacional posterior do operador cobre os contratos/recursos
   implementados no uso pessoal observado; nao transforma os testes historicos
-  em medicoes completas nem resolve loop sem SD ou perda pontual de resposta
-  serial. Fase 3 fica active para aceite tecnico integral e medidas dirigidas,
+  em medicoes completas nem explica perda pontual de resposta serial.
+  Fase 3 fica active para aceite tecnico integral e medidas dirigidas,
   sem bloquear apps simples. Ver baseline para limites das evidencias.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice

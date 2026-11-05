@@ -145,9 +145,12 @@ registro e o logging dos system apps, o
 display, IMU/UI, screenshot, `screen_off`, bateria, teclado, brilho e o
 startup normal ou safe mode dos serviços, seguido do checkpoint de recovery.
 
-1. Inicializar NVS/recovery; preparar ESP-Hosted no boot normal, montar o SD e
-   validar o handle do BSP. Falha de mount passa por `ESP_ERROR_CHECK` antes da
-   UI: boot sem SD não é um modo degradado existente.
+ 1. Inicializar NVS/recovery; preparar ESP-Hosted no boot normal, montar o SD e
+    validar o handle do BSP. Falha de mount passa por `ESP_ERROR_CHECK` antes da
+    UI: boot sem SD não é um modo degradado existente. O SD é requisito do
+    produto; ausência impede a inicialização e o reboot volta a tentar o mount,
+    comportamento aceito pelo operador. Mensagem em tela para cartão ausente
+    seria melhoria opcional e exigiria display de erro antes da UI normal.
 2. Recuperar sidecars sob coordenador SD, registrar system apps e iniciar o
    event log quando possível; falhas de NVS/recovery/logging preservam o diagnóstico.
 3. Inicializar display/LVGL pelo BSP do Tab5.
