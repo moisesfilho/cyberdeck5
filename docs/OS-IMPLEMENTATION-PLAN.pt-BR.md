@@ -157,29 +157,39 @@ lacunas de rastreabilidade necessárias. Não fazer flash nesta fase documental.
 **Objetivo:** tornar verificável a divisão de trabalho entre cyberdeck5,
 FreeRTOS, ESP-IDF e BSP, sem criar uma camada universal por antecipação.
 
-- [ ] Auditar os acessos das apps e adapters a APIs de hardware/ESP-IDF e
+**Concluída no escopo de contratos host:**
+[`OS-RESOURCE-CONTRACTS.pt-BR.md`](OS-RESOURCE-CONTRACTS.pt-BR.md) classifica
+portas públicas, implementação de plataforma e exceções concretas de apps;
+registra para os fluxos críticos donos, filas/buffers/tasks, fonte de limites,
+espera, overflow, teardown e evidências. `test_os_resource_contract` verifica
+as invariantes de boot, supervisor, lease SD, filas e quiescência contra o código
+atual; testes comportamentais específicos por módulo continuam obrigatórios.
+Não houve mudança de firmware: high-water mark, deadlocks reais, quiescência
+global e compatibilidade sob falha física pertencem à Fase 3.
+
+- [x] Auditar os acessos das apps e adapters a APIs de hardware/ESP-IDF e
   classificá-los como porta pública, implementação de plataforma ou exceção
   justificada. Uma proibição indiscriminada de includes `platform/` não é
   critério suficiente.
-- [ ] Para cada fila, buffer, task e operação bloqueante que afete um fluxo
+- [x] Para cada fila, buffer, task e operação bloqueante que afete um fluxo
   crítico, registrar capacidade, proprietário, duração/timeout e política em
   overflow/teardown.
-- [ ] Preservar `runtime::activate_foreground()` e `stop_index()` (console e
+- [x] Preservar `runtime::activate_foreground()` e `stop_index()` (console e
   dependências vivos, grants retidos até teardown/join bem-sucedido). O budget
   `lifecycle_timeout_ms` é diagnóstico **após** retorno do hook, não deadline
   preemptivo; os limites efetivos pertencem aos workers/joins cooperativos.
-- [ ] Conferir o caminho de boot real: NVS/recovery -> preparação ESP-Hosted
+- [x] Conferir o caminho de boot real: NVS/recovery -> preparação ESP-Hosted
   (normal) -> SDMMC/SD -> sidecars sob coordenador -> apps/log -> LVGL/IMU/UI
   -> bateria/teclado -> start normal/safe mode -> checkpoint. Em IDF 6, C6 e
   SD compartilham controlador; não paralelizar/reordenar para reduzir boot sem
   prova de compatibilidade elétrica, de ownership e de recuperação.
-- [ ] Tratar falha de mount SD como comportamento atual **fatal**
+- [x] Tratar falha de mount SD como comportamento atual **fatal**
   (`ESP_ERROR_CHECK` antes da UI). Boot degradado sem SD exige requisito e
   desenho aprovados; não prometer que já funciona nem testar remoção em uso
   como procedimento padrão.
-- [ ] Não adicionar uma tabela universal de operações, quotas de heap por app
+- [x] Não adicionar uma tabela universal de operações, quotas de heap por app
   ou quotas de CPU por app sem um consumidor e mecanismo real de enforcement.
-- [ ] Revisar ordem de locks, chamadas bloqueantes e dependências de lifecycle
+- [x] Revisar ordem de locks, chamadas bloqueantes e dependências de lifecycle
   nos recursos compartilhados; adicionar testes determinísticos para riscos
   observados (deadlock, starvation, callback stale, teardown incompleto).
 
@@ -304,7 +314,7 @@ matriz abaixo à medida que os requisitos da Fase 1 forem aprovados:
 | OS-TAB5-01..04/07: boot, recovery, console e Serial-JTAG | `main/app_main.cpp`, system apps, runtime, shell e bridge; matriz detalhada em `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | `test_boot_sequence`, `test_recovery_policy`, `test_recovery_runtime`, `test_app_runtime`, `test_shell_app`, `test_serial_ndjson_dispatch`, `test_serial_term_dump` e contratos complementares na matriz | Roteiro Serial-JTAG, após confirmar firmware e segurança | OS-TAB5-01/02 aceitos como documentação; validação física 04/07 pendente |
 | OS-TAB5-01/02/07: conectividade e apps | `cyberdeck_system_apps.cpp`, manifests e adapters por app no Recorte 2 de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | `test_app_runtime` (boot/demo/foreground) e testes por módulo listados na matriz | Conforme risco, periféricos e autorização; identificar imagem antes de executar | Contratos iniciais; Tab5 pendente |
 | OS-TAB5-01/02/07: periféricos, SD e poweroff | `app_main.cpp`, adapters de display/bateria/screen-off/poweroff, shell/storage; Recorte 3 de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | Testes de bateria, display, proteção de tela, SD e poweroff listados na matriz | Apenas cenários seguros aprovados; poweroff não executado nesta entrega | OS-TAB5-01/02 aceitos como documentação; aceite integrado/07 no Tab5 pendente |
-| OS-TAB5-03..08: formatos, limites, falhas físicas e desempenho | Baseline de formatos/timeout no Recorte 3 e contratos por módulo | Gates por módulo; medições ainda não coletadas | Conforme risco/escopo e segurança | Documentação inicial; validações físicas/medidas pendentes para fases 2–5 |
+| OS-TAB5-03..08: formatos, limites, falhas físicas e desempenho | Baseline de formatos/timeout nos requisitos, inventário de recursos em `docs/OS-RESOURCE-CONTRACTS.pt-BR.md` | `test_os_resource_contract` e gates por módulo; medições ainda não coletadas | Conforme risco/escopo e segurança | Contratos host da Fase 2 concluídos; OS-TAB5-03 requer verificação de fronteiras por módulo; validações físicas/medidas pendentes para fases 3–5 |
 
 ## 8. Relação com os demais documentos
 
@@ -316,6 +326,8 @@ matriz abaixo à medida que os requisitos da Fase 1 forem aprovados:
   Fase 1; registra criticidade, cenários, limites/timeout por fonte, formatos
   persistidos e observáveis, recuperação e gates físicos sem aceite físico
   implícito.
+- `docs/OS-RESOURCE-CONTRACTS.pt-BR.md`: auditoria de fronteiras, limites,
+  ownership, overflow, locks e lifecycle da Fase 2; evidencia e lacunas físicas.
 - `docs/OS-IMPLEMENTATION-DASHBOARD.html`: projeção visual dos marcos deste
   plano; deve ser sincronizada com o estado real das entregas e aceites.
 - `docs/ARCHITECTURE.pt-BR.md`: arquitetura concreta e fluxo de boot atuais.
