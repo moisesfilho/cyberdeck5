@@ -2218,6 +2218,10 @@ test_os_dashboard_contract: test_os_dashboard_contract.py ../../../docs/OS-IMPLE
 test_os_resource_contract: test_os_resource_contract.py ../../../docs/OS-RESOURCE-CONTRACTS.pt-BR.md
 	$(PYTHON) test_os_resource_contract.py
 
+.PHONY: test_phase3_battery_collector
+test_phase3_battery_collector: test_phase3_battery_collector.py ../../../tools/collect_battery_series.py
+	$(PYTHON) test_phase3_battery_collector.py
+
 test_os_transformation_backlog_contract: test_os_transformation_backlog_contract.py os_transformation_traceability.md \
 		../../../docs/OS-TRANSFORMATION-PLAN.pt-BR.md ../../../main/app_main.cpp \
 		../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h \
@@ -3151,6 +3155,7 @@ test: test-build
 	@echo "==> Conferindo progresso do dashboard contra o plano vigente"
 	@$(MAKE) --no-print-directory test_os_dashboard_contract
 	@$(MAKE) --no-print-directory test_os_resource_contract
+	@$(MAKE) --no-print-directory test_phase3_battery_collector
 	@echo "==> Executando contrato de recursos, pacote SD e quotas"
 	@$(MAKE) --no-print-directory test_resource_sd_quota_contract
 	@echo "==> Executando contrato TDD do despacho assincrono do teclado fisico"

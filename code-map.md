@@ -988,6 +988,13 @@ a raiz do repositorio.
   `tests/host/keymap/test_os_resource_contract.py` confronta boot, grants,
   leases, filas e quarentena com o codigo de producao e roda no agregado do
   Makefile. Nao prova limites de stack ou quiescencia fisica no Tab5; Fase 3.
+- `docs/OS-PHASE3-BASELINE.pt-BR.md` inicia a Fase 3: matriz de cenarios seguros
+  versus falhas condicionadas, primeira observacao fisica sem flash (fw 1.5.0,
+  sem hash atestado) e lacunas de heap minimo/stack/boot/apps. A serie HTTP
+  read-only de bateria em `tests/manual/evidence/phase3-battery-20261105.csv`
+  foi coletada pelo `tools/collect_battery_series.py` (1 Hz, 60 amostras);
+  `test_phase3_battery_collector.py` valida a ferramenta sem rede no agregado
+  host. Evidencia de estado estavel nao aceita transientes nem fase completa.
 - `docs/OS-IMPLEMENTATION-DASHBOARD.html` e a visualizacao estatica em HTML/CSS/JS
   local: os itens de `const dashboard` representam os checkboxes das Fases 0-5
   do plano, recortes da Fase 1 e criterios OS-TAB5-01..08. Barras e totais sao
