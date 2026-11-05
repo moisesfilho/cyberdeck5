@@ -230,6 +230,20 @@ firmware correspondente e uma execucao deste roteiro.
 
 ## 6. sys.info / wifi
 
+### Boot sem SD: limite físico observado (05/11/2026)
+
+Na imagem `39953bf`, um boot com cartão retirado **apenas com o aparelho
+desligado** encontrou `sd_mount=ESP_ERR_TIMEOUT`, seguido de
+`ESP_ERROR_CHECK`/`abort()` e reinícios automáticos; o journal chegou a 65
+boots interrompidos antes de a alimentação/SD serem restaurados. Inserir o
+cartão com o aparelho aparentemente desligado o religou inesperadamente.
+Com SD restaurado, o checkpoint concluiu, um `sys.safe_mode.clear` único foi
+persistido e o boot controlado seguinte ficou normal; canário legível.
+**Não repita o boot sem SD nem induza falha física de NVS** até existir um
+controle comprovado de um único boot, captura de logs e corte seguro sem
+reenergização acidental. Log bruto fica privado; roteiro e evidências em
+`docs/OS-PHASE3-BASELINE.pt-BR.md`.
+
 ### Identidade de imagem sem endpoint adicional (leitura do flash)
 
 Se `fw_version` for igual em builds distintos e for necessário comparar os

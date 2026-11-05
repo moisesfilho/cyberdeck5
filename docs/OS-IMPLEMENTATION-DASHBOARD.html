@@ -179,7 +179,7 @@
         ] },
         { name: "Medição e compatibilidade", state: "active", items: [
           ["Definir cenários de carga e falha seguros", "done"],
-          // Playback 60s sem falhas, mas uma consulta serial posterior perdeu resposta; investigar. Bateria-only/budgets pendentes.
+          // Bateria-only/poweroff passaram; boot sem SD gerou loop (65 interrupcoes) antes de recuperacao. NVS fisico/budgets pendentes.
           ["Medir heap, stack, latência e perdas", "active"],
           ["Coletar baseline antes de alterar código", "active"],
           ["Otimizar somente gargalos medidos", "todo"],

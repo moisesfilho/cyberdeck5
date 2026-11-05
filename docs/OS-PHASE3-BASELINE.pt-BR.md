@@ -448,6 +448,91 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
   esse incidente. Nenhuma inspeção humana de som audível, speaker ou jack foi
   registrada nesta rodada.
 
+### Bateria-only e poweroff supervisionado — `39953bf` (parcial)
+
+- Antes da intervenção, `sys.info` mostrou uptime `00:27:11`, boot normal;
+  `GET /battery` pela LAN mostrou `external`, 100%, 8098 mV, +2 mA,
+  proteção ativa e carregador desligado. O operador confirmou bateria
+  instalada e retirou fisicamente a USB Serial-JTAG; confirmou que o Tab5
+  permaneceu ligado. O coletor HTTP, sem leitor serial nem cabo USB, obteve
+  **60/60 respostas 200 a 1 Hz**, 59 intervalos de 1000 ms, uptime
+  1663→1722 s:
+  [`phase3-battery-only-release-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-only-release-1.6.0-20261105.csv),
+  SHA-256 `beb4944641f956b61ae09de5065ed11e877d17fca1bd2cf471f5d4fb9411fa5c`.
+  Em toda a série `state=battery`, `available=true`, descarga 99–186 mA,
+  tensão 8020–8060 mV, 100%, proteção inativa e carregador habilitado.
+  A liberação ocorreu **entre a amostra anterior com fonte e a primeira
+  amostra sem fonte**, não se observou a quinta amostra que a causou; tampouco
+  foi testado o rearme exatamente a 90% ou medido nível físico do pino.
+- O operador reconectou a USB para preparar o teste de poweroff com backup
+  previamente verificado. A **primeira** consulta `sys.info` após reconexão
+  não recebeu resposta (exit 2); `GET /battery` continuou HTTP 200 com
+  uptime 1791 s e a segunda consulta serial respondeu uptime `00:29:55`,
+  sem reboot. O mesmo padrão de primeira leitura ausente reapareceu após
+  outro ciclo USB/boot abaixo. Não atribuir causa a transporte/firmware sem
+  diagnóstico; nenhum desses timeouts foi usado como evidência de corte.
+- O canário novo `/data/phase3-poweroff-canary-20261105.txt` foi confirmado
+  ausente (`cat: file not found`), gravado via `fs.write` em
+  `/sdcard/data/phase3-poweroff-canary-20261105.txt` (31 B, CRC32
+  `837892956`) e relido por `cat` com o conteúdo exato
+  `PHASE3_POWEROFF_CANARY_20261105` (sem newline). O operador retirou a USB,
+  enviou `poweroff` e `y` uma única vez no teclado local e **confirmou o corte
+  físico**, não apenas tela preta/queda da porta. Não havia gravação pendente
+  conhecida; não se retirou SD durante o desligamento. Em seguida religou
+  pelo procedimento normal com SD instalado e reconectou USB, confirmando TUI.
+- Após o relight, a primeira consulta serial perdeu resposta, mas HTTP
+  respondeu uptime 27 s; a segunda consulta `sys.info` respondeu uptime 29 s,
+  `safe_mode=false`, `interrupted_boots=0`. `cat` releu o mesmo texto exato do
+  canário e o uptime chegou a 40 s, sem reboot adicional. A leitura textual
+  confirma o conteúdo observado, não constitui hash independente do SD nem
+  prova corte elétrico por instrumentação automatizada; o corte foi observado
+  pelo operador. O canário foi **preservado** para verificações futuras, não
+  removido. Este ensaio cobre poweroff **bateria-only** uma vez na imagem
+  identificada, não todas as fontes nem falhas físicas de SD/NVS.
+
+### SD ausente no boot e recuperação — `39953bf` (controle experimental falhou)
+
+- Após backup verificado pelo operador e teste de que o botão físico corta a
+  alimentação mesmo com USB conectada, o Tab5 foi desligado com SD instalado;
+  `/dev/ttyACM0` desapareceu. O operador retirou o cartão somente com aparelho
+  desligado e fez uma tentativa de ligar sem SD. Relatou LED acender por um
+  instante, tela preta e LED apagar. A captura Serial-JTAG privada
+  `/tmp/opencode/phase3-boot-no-sd-20261105.log` (45486 B, SHA-256
+  `925bcec535bbaf862c5f484d28953770b2945acf4cdd35c15de9dd07a1a6801e`)
+  mostrou **múltiplos** boots com `sd_mount end result=ESP_ERR_TIMEOUT`,
+  `ESP_ERROR_CHECK failed` em `sd_mount_err`, `abort()` e `Rebooting...`.
+  Embora a ação humana de ligar tenha ocorrido uma vez, o firmware reiniciou
+  automaticamente antes de ser interrompido: não descrever como um único
+  reboot controlado nem como recuperação degradada. Não houve TUI funcional
+  sem SD. O log bruto pode conter dados de rede; permanece fora do repositório.
+- Ao recolocar o SD com o Tab5 aparentemente desligado, o aparelho **ligou
+  inesperadamente**. O journal NVS capturado depois mostrou
+  `transition=boot_begin` crescendo até `interrupted=65`; em seguida houve
+  checkpoint persistido com `safe=1`, `pending=0`, `interrupted=0`.
+  `sys.info` retornou `safe_mode=true`; o SD montou e o canário de 31 B foi
+  relido integralmente. Uma primeira consulta serial após o reinício perdeu
+  resposta; a seguinte respondeu. HTTP no IP anterior estava indisponível
+  durante a transição, sem diagnóstico isolado da conectividade.
+- O journal NVS foi examinado **antes** de agir. Com checkpoint concluído e
+  canário íntegro, um único `sys.safe_mode.clear` respondeu `cleared=true`;
+  `sys.info` mostrou `safe_mode=false`, e o journal confirmou
+  `transition=clear result=ESP_OK persisted=1 safe=0 pending=0 interrupted=0`.
+  Um único reset controlado via `idf.py monitor` (timeout esperado do coletor)
+  registrou `sd_mount end result=ESP_OK duration_ms=69`,
+  `checkpoint result=ESP_OK persisted=1 ... safe_mode=0 pending=0 interrupted=0`
+  e `app_main_complete boot_ready=1`, sem marcador de panic. Log privado
+  `/tmp/opencode/phase3-sd-restored-boot-20261105.log` (15534 B, SHA-256
+  `f2b3c4cdba806f32c3d8195539cce9ae53125166993d85dca01c512c14dbd055`).
+  `sys.info` após boot confirmou uptime 24 s, `safe_mode=false`, zero boots
+  interrompidos; o canário permaneceu legível. O journal final registrou
+  `load ... safe=0 pending=0 interrupted=0` e novo checkpoint persistido.
+- **Gate de segurança falhou:** o procedimento não limitou automaticamente
+  reinícios sem SD, e inserir o cartão religou o Tab5. Não repetir boot sem
+  SD nem induzir corrupção/interrupção NVS nesta configuração antes de existir
+  limitação física/instrumentada de um único boot e recuperação reproduzível.
+  A recuperação após reinserção foi observada, mas não torna segura a
+  repetição do cenário. Não atribuir os 65 boots a interações manuais.
+
 ## Pendências para fechar a Fase 3
 
 1. A imagem `39953bf` tem build/hash, flash verificado e readback integral
@@ -467,8 +552,10 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
    idêntica antes/depois; separar tempo de render, rede, storage e codec. Só
    otimizar gargalo observado e reproduzível; sem evidência de gargalo não há
    mudança/redução de stack, fila ou timeout a justificar.
-4. Executar injeções seguras de rede/timeout primeiro via shims; preparar
-   individualmente os cenários físicos com risco de dado/energia somente após
-   nova autorização explícita. Nenhum poweroff, remoção de SD, falha de NVS
-   ou teste de carga foi executado aqui. A Fase 3 não pode ser marcada `done`
-   enquanto seus critérios físicos obrigatórios estiverem sem evidência.
+ 4. Injeções seguras de rede/timeout passaram em shims; bateria-only e um
+    poweroff supervisionado foram exercitados. O boot sem SD confirmou falha
+    fatal, porém **gerou múltiplos reinícios**, atingiu safe mode e expôs
+    reenergização ao inserir o cartão; recuperação com SD e clear único passou.
+    Não induzir falha NVS/novo boot sem SD até haver controle de um único boot
+    e método seguro de recuperação. Sem esses gates, critérios físicos e
+    budgets aprovados, a Fase 3 não pode ser marcada `done`.

@@ -251,6 +251,21 @@ resposta; o Tab5 continuou ligado e a consulta seguinte respondeu, mas a
 causa não está identificada. O player foi fechado e os ciclos adicionais
 foram interrompidos, conforme o roteiro. Ainda não há avaliação humana de
 speaker/jack nem orçamento aprovado; ver evidência no baseline.
+Com intervenção supervisionada, a série de 60 s sem USB confirmou operação
+bateria-only e liberação do latch antes da primeira amostra; não capturou a
+quinta amostra sem fonte nem o rearme por 90%. Um poweroff em bateria-only
+teve corte físico confirmado pelo operador, boot normal e canário preservado
+após relight. Primeiras consultas Serial-JTAG após reconectar USB perderam
+resposta, com HTTP e segunda consulta operacionais; falta diagnóstico antes
+de ampliar cenários físicos. Demais fontes e falhas SD/NVS seguem pendentes.
+Boot com SD ausente foi testado com aparelho previamente desligado: o mount
+falhou com `ESP_ERR_TIMEOUT`/`ESP_ERROR_CHECK` e o firmware reiniciou
+automaticamente muitas vezes (journal chegou a 65 interrupções). A inserção
+do cartão religou o Tab5 inesperadamente; com SD restaurado, o canário
+permaneceu íntegro, um único clear de safe mode foi persistido e o reset
+controlado seguinte fez boot normal. **Não repetir falha física de boot/NVS**
+até controlar um único boot e impedir reenergização acidental; autorização
+geral não substitui essas pré-condições. Logs privados e limites no baseline.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

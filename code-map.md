@@ -1095,6 +1095,20 @@ a raiz do repositorio.
   progresso monotono sem falha de decoder; apos pause/resume uma consulta
   `music.status` perdeu resposta, embora consultas subsequentes e uptime
   permanecessem normais. Player fechado; investigar antes de repetir ciclos.
+  Com USB removida pelo operador, `tests/manual/evidence/phase3-battery-only-release-1.6.0-20261105.csv`
+  mostra 60 pontos a 1 Hz com bateria-only e latch ja liberado na primeira
+  amostra. Poweroff local de uma tentativa foi fisicamente confirmado pelo
+  operador; o canario descartavel `/data/phase3-poweroff-canary-20261105.txt`
+  (31 B, CRC32 837892956) foi relido apos relight em boot normal. Primeira
+  consulta serial apos cada reconexao USB nao respondeu; HTTP e a segunda
+  consulta responderam. Ver limites no baseline antes de ampliar testes.
+  Boot sem SD na imagem `39953bf` falhou no `sd_mount` com ESP_ERR_TIMEOUT e
+  ESP_ERROR_CHECK/abort; automatic reboot loop levou o journal a 65
+  interrupcoes e safe mode. Inserir SD religou inesperadamente. Recuperacao
+  com SD montado, canario legivel, um clear de safe mode persistido e reset
+  controlado resultou em boot normal (`sd_mount=ESP_OK`, checkpoint OK).
+  Logs brutos privados em `/tmp/opencode/phase3-{boot-no-sd,sd-restored-boot}-20261105.log`;
+  nao repetir falha fisica SD/NVS sem controle de um unico boot.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.
