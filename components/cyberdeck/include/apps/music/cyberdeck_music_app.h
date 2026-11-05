@@ -36,6 +36,9 @@ class application final : public cyberdeck_apps::application {
     bool browser_scan_active() const {
         return browser_scan_state_.load(std::memory_order_acquire) == browser_scan_state::scanning;
     }
+    bool queue_scan_active() const {
+        return legacy_scan_running_.load(std::memory_order_acquire);
+    }
     browser_scan_state get_browser_scan_state() const {
         return browser_scan_state_.load(std::memory_order_acquire);
     }

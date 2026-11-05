@@ -4,7 +4,7 @@
 **Escopo:** ponte manual NDJSON na porta USB Serial-JTAG (`bridge_start`) e a
 CLI host `tools/cyberdeck_cli.py`, exercitando correlacao por `rid`, envelopes
 de sucesso/erro, tolerancia a logs intercalados, comandos de UI (`ui.*`),
-contratos `sys.info`/`wifi.*`, `term.dump` e a captura `screen.shot`/`screen.dump` (BMP em
+contratos `sys.info`/`wifi.*`/`music.status`, `term.dump` e a captura `screen.shot`/`screen.dump` (BMP em
 chunks Base64 com CRC32).
 **Estado sob validacao:** task `serial_brg` iniciada ao fim do boot; protocolo
 NDJSON com uma linha por mensagem, limite de 4096 bytes, `{"rid","ok":true,
@@ -239,6 +239,13 @@ criação; no ESP-IDF a unidade é byte). Compare com os valores instantâneos
 `internal_free`, `dma_free`, `psram_free`, e não trate campos ausentes em
 imagens antigas como zero medido. O coletor `tools/collect_sysinfo_series.py`
 registra essas colunas opcionais.
+
+Com o player em foreground, consulte `music.status` pela ponte (read-only):
+`python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 music.status`. O resultado
+contém somente `state`, `queue_scanning`, `track_count`, `position_ms` e
+`duration_ms`; não inclui título, caminho ou credenciais. Se o player não está
+rodando, retorna `player_not_running`. **Não use `ui.type "music status"` no
+player:** Enter é Play/Pause, não consulta ao shell.
 
 ### 5.1. Auditoria Wi-Fi no terminal (`wifi audit`)
 

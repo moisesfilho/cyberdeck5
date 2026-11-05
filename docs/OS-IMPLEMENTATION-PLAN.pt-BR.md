@@ -214,6 +214,11 @@ stack de outras tasks, orçamento aprovado, paridade de apps/transientes e
 recuperação sob falhas reais. Não reduzir limites nem declarar aceite físico
 agregado a partir deste recorte. Ensaios antigos do operador seguem históricos,
 sem transferência automática de aceite à nova imagem.
+Na inspeção do player foi detectado que `ui.type` em foreground injeta Enter e
+pode iniciar áudio; o roteiro foi corrigido e a consulta read-only
+`music.status` foi acrescentada à ponte Serial-JTAG. Seu ensaio físico e os
+budgets do player continuam pendentes; não classificar a tentativa como
+inspeção passiva nem aceite do fluxo de música.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

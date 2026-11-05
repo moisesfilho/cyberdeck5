@@ -1,6 +1,7 @@
 #include "apps/serial/cyberdeck_serial_bridge.h"
 #include "apps/serial/cyberdeck_ui_dump_serializer.h"
 #include "apps/music/cyberdeck_music_player.h"
+#include "apps/music/cyberdeck_music_model.h"
 
 #include "apps/screenshot/screenshot_bmp.h"
 
@@ -22,6 +23,7 @@
 #endif
 
 #ifdef ESP_PLATFORM
+#include "apps/music/cyberdeck_music_app.h"
 #include "platform/logging/event_log.h"
 #include "platform/storage/cyberdeck_sd_io_coordinator.h"
 #include "bsp/esp-bsp.h"
@@ -709,7 +711,8 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
     static const char *const k_known[] = {"ping",       "ui.echo",     "ui.clear",  "ui.click",  "ui.tap",
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
                                            "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear",
-                                            "screen.status", "screen.wake", "music.diagnostics", "music.trace"};
+                                             "screen.status", "screen.wake", "music.diagnostics", "music.trace",
+                                             "music.status"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -974,10 +977,32 @@ std::string music_trace_to_json(const cyberdeck_music::trace_page &page)
     return json;
 }
 
+std::string music_status_to_json(const cyberdeck_music::snapshot &status, bool queue_scanning)
+{
+    const char *state = "unknown";
+    switch (status.state) {
+    case cyberdeck_music::playback_state::stopped: state = "stopped"; break;
+    case cyberdeck_music::playback_state::playing: state = "playing"; break;
+    case cyberdeck_music::playback_state::paused: state = "paused"; break;
+    case cyberdeck_music::playback_state::error: state = "error"; break;
+    }
+    std::string json = "{\"version\":1,\"read_only\":true,\"state\":\"";
+    json += state;
+    json += "\",\"queue_scanning\":";
+    json += queue_scanning ? "true" : "false";
+    json += ",\"track_count\":" + std::to_string(status.track_count);
+    json += ",\"position_ms\":" + std::to_string(status.position_ms);
+    json += ",\"duration_ms\":" + std::to_string(status.current.duration_ms);
+    json += "}";
+    return json;
+}
+
 #ifndef ESP_PLATFORM
 music_diagnostics_provider s_music_diagnostics_provider = nullptr;
 music_trace_provider s_music_trace_provider = nullptr;
+music_status_provider s_music_status_provider = nullptr;
 void *s_music_diagnostics_context = nullptr;
+void *s_music_status_context = nullptr;
 #endif
 
 std::string handle_sys_info(const std::string &rid)
@@ -1091,6 +1116,12 @@ void set_music_trace_provider_for_test(music_trace_provider provider, void *cont
 {
     s_music_trace_provider = provider;
     s_music_diagnostics_context = context;
+}
+
+void set_music_status_provider_for_test(music_status_provider provider, void *context)
+{
+    s_music_status_provider = provider;
+    s_music_status_context = context;
 }
 #endif
 
@@ -3153,6 +3184,33 @@ dispatch_result dispatch_one(const char *line, std::size_t len)
         diagnostics_response.result_json = music_diagnostics_to_json(stats);
         res.ok = true;
         res.envelope_json = build_envelope(diagnostics_response);
+        return res;
+    }
+
+    if (req.type == "music.status") {
+        cyberdeck_music::snapshot status{};
+        bool queue_scanning = false;
+#ifdef ESP_PLATFORM
+        const bool available = cyberdeck_music::global_player().running() &&
+                               cyberdeck_music::global_application().player_snapshot(status);
+        if (available)
+            queue_scanning = cyberdeck_music::global_application().queue_scan_active();
+#else
+        const bool available = s_music_status_provider != nullptr &&
+                               s_music_status_provider(s_music_status_context, status, queue_scanning);
+#endif
+        if (!available) {
+            res.ok = false;
+            res.err = dispatch_error::player_not_running;
+            res.envelope_json = build_error_envelope(req.rid, res.err, "music player not running");
+            return res;
+        }
+        response status_response{};
+        status_response.rid = req.rid;
+        status_response.ok = true;
+        status_response.result_json = music_status_to_json(status, queue_scanning);
+        res.ok = true;
+        res.envelope_json = build_envelope(status_response);
         return res;
     }
 

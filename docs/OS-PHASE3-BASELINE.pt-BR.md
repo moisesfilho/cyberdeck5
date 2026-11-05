@@ -197,6 +197,27 @@ token/geração, resultado e uptime antes/depois sem atribuir silêncio a sucess
   inesperado. Isto não valida editor, round-trip de encoding ou falha física
   do SD.
 
+### Player: incidente na inspeção sem playback (nova rodada, **não aceita**)
+
+Na mesma imagem `1.6.0`, `ui.type "music"` abriu a superfície e iniciou o
+scan. Uma tentativa posterior de `ui.type "music status"` recebeu ACK, mas
+`term.dump` **não** mostrou a resposta esperada e `ui.dump` exibiu progresso
+de reprodução (`5s / 121s`). O código confirma a causa: no foreground do
+player, `ui.type` injeta Enter e `cyberdeck_music_manager::manager::handle`
+roteia Enter para `action::toggle`; o texto **não** foi executado pelo shell.
+`music.diagnostics` read-only mostrou uma geração ativa, sem falhas, e depois
+uma geração aposentada naturalmente (`read_calls=512`, `failures=0`); não houve
+novo `play` intencional nem repetição da ação insegura. Uma tentativa de clique
+em botão durante a proteção de tela retornou `screen_off`, sem efeito; após
+`screen.wake`, o clique foi aceito, mas `pause_count=0`, portanto **não** atribuir
+parada ao clique. O roteiro `tests/manual/music-player-validation.pt-BR.md`
+foi corrigido para proibir `ui.type` após abrir o player. A nova consulta
+Serial-JTAG `music.status` (somente leitura, sem títulos nem caminhos) será
+validada no Tab5 **somente após build/testes/flash da nova imagem**; não usar
+esta rodada como aceite de scan seguro, player, áudio ou latências. Nenhuma
+rota HTTP nova é necessária para esta lacuna: o protocolo Serial-JTAG já
+expõe diagnósticos do player e permite uma consulta read-only bounded.
+
 ## Pendências para fechar a Fase 3
 
 1. A imagem nova tem build/hash, flash verificado e log de boot; falta uma

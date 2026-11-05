@@ -21,6 +21,7 @@
  *     - handlers retornam envelope NDJSON com rid ecoado e ok:true
  */
 #include "apps/serial/cyberdeck_serial_bridge.h"
+#include "apps/music/cyberdeck_music_model.h"
 
 #include <cstdio>
 #include <cstring>
@@ -168,12 +169,49 @@ void test_sys_info_bounded_and_valid_json(){
     CHECK(j.front()=='{' && j.back()=='}');
 }
 
+bool music_status_fixture(void *, cyberdeck_music::snapshot &status, bool &queue_scanning) {
+    status.state = cyberdeck_music::playback_state::playing;
+    status.track_count = 64;
+    status.position_ms = 2500;
+    status.current.duration_ms = 120000;
+    std::strcpy(status.current.title.data(), "private track title");
+    std::strcpy(status.current.path.data(), "/sdcard/private.mp3");
+    queue_scanning = true;
+    return true;
+}
+
+void test_music_status_read_only() {
+    const char *request = "{\"rid\":\"status-1\",\"type\":\"music.status\"}";
+    auto unavailable = cyberdeck_serial::dispatch_one(request, std::strlen(request));
+    CHECK(!unavailable.ok);
+    CHECK(unavailable.err == cyberdeck_serial::dispatch_error::player_not_running);
+    cyberdeck_serial::set_music_status_provider_for_test(music_status_fixture, nullptr);
+    const auto result = cyberdeck_serial::dispatch_one(request, std::strlen(request));
+    CHECK(result.ok);
+    CHECK(result.envelope_json.find("\"rid\":\"status-1\"") != std::string::npos);
+    CHECK(result.envelope_json.find("\"state\":\"playing\"") != std::string::npos);
+    CHECK(result.envelope_json.find("\"queue_scanning\":true") != std::string::npos);
+    CHECK(result.envelope_json.find("\"track_count\":64") != std::string::npos);
+    CHECK(result.envelope_json.find("\"position_ms\":2500") != std::string::npos);
+    CHECK(result.envelope_json.find("\"duration_ms\":120000") != std::string::npos);
+    CHECK(result.envelope_json.find("private") == std::string::npos);
+    CHECK(result.envelope_json.size() < cyberdeck_serial::k_max_ndjson_line);
+    cyberdeck_serial::set_music_status_provider_for_test(nullptr, nullptr);
+    cyberdeck_music::snapshot stopped{};
+    CHECK(cyberdeck_serial::music_status_to_json(stopped, false).find("\"state\":\"stopped\"") != std::string::npos);
+    stopped.state = cyberdeck_music::playback_state::paused;
+    CHECK(cyberdeck_serial::music_status_to_json(stopped, false).find("\"state\":\"paused\"") != std::string::npos);
+    stopped.state = cyberdeck_music::playback_state::error;
+    CHECK(cyberdeck_serial::music_status_to_json(stopped, false).find("\"state\":\"error\"") != std::string::npos);
+}
+
 } // namespace
 int main(){
     test_sys_info_json_contract();
     test_wifi_scan_json_contract();
     test_handlers_return_envelope_with_rid();
     test_sys_info_bounded_and_valid_json();
+    test_music_status_read_only();
     if(s_failures==0){ std::printf("PASS: serial_sysinfo_wifi (%d checks)\n",s_checks); return 0; }
     std::printf("FAIL: %d de %d checks falharam\n",s_failures,s_checks); return 1;
 }

@@ -1022,6 +1022,18 @@ a raiz do repositorio.
   O screenshot reserva uma vez `s_snapshot_storage` em
   `components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp`;
   a copia temporaria do frame e liberada, nao confundir cache com leak.
+  Incidente de ensaio sem playback: `ui.type "music status"` com player em
+  foreground envia Enter e aciona `cyberdeck_music_manager::action::toggle`;
+  o ACK da ponte nao e retorno do shell. A consulta segura e o novo comando
+  NDJSON `music.status`, em `cyberdeck_serial_bridge.{h,cpp}` e
+  `tools/cyberdeck_cli.py`: usa `global_application().player_snapshot()` e
+  `queue_scan_active()` atomico, responde estado/progresso/contagem sem
+  titulo/caminho nem tecla injetada; `test_serial_sysinfo_wifi.cpp` cobre
+  parser, ausencia de app, payload bounded e privacidade. O roteiro de
+  `tests/manual/music-player-validation.pt-BR.md` foi corrigido.
+  `tools/collect_music_status_series.py` coleta `music.status` + `sys.info`
+  na mesma sessao Serial-JTAG a 1 Hz, sem copiar metadados privados; seu
+  contrato isolado e `test_phase3_music_status_collector.py`.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.

@@ -366,6 +366,9 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
 `sys.info` also reports optional heap low-water sums by memory capability and
 the serial task's minimum free stack in bytes. These do not measure other tasks
 or prove a simultaneous whole-device minimum.
+With the music app in the foreground, use `music.status` for read-only playback
+and queue-scan telemetry. Do not send `ui.type "music status"`: its Enter key
+toggles playback instead of querying the shell.
 
 ## Estrutura
 

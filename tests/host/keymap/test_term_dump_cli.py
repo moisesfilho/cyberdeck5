@@ -142,6 +142,9 @@ def test_build_request_shape():
     clear = cli.build_request(parser.parse_args(["sys.safe_mode.clear"]))
     require(clear == {"type": "sys.safe_mode.clear"},
             "safe mode clear deve mapear ao request explicito sem campos extras")
+    status = cli.build_request(parser.parse_args(["music.status"]))
+    require(status == {"type": "music.status"},
+            "music.status deve ser consulta sem texto/tecla/Enter")
 
 
 # ---------------------------------------------------------------------

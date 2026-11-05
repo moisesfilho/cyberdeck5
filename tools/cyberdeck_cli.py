@@ -267,6 +267,8 @@ def build_request(args) -> dict:
         return {"type": "ping"}
     if args.command == "sys.info":
         return {"type": "sys.info"}
+    if args.command == "music.status":
+        return {"type": "music.status"}
     if args.command == "wifi.status":
         return {"type": "wifi.status"}
     if args.command == "wifi.scan":
@@ -455,6 +457,7 @@ def make_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("ping", help="heartbeat NDJSON (REQ-002)")
     sub.add_parser("sys.info", help="versoes/heap/uptime (REQ-008)")
+    sub.add_parser("music.status", help="estado do player e scan sem injetar Enter")
     sub.add_parser("wifi.status", help="estado da conexao Wi-Fi")
     sub.add_parser("wifi.scan", help="varredura sincrona de redes (REQ-009)")
     p_click = sub.add_parser("ui.click", help="clique por coordenada absoluta")

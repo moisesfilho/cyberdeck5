@@ -338,6 +338,9 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
 `sys.info` também informa mínimos acumulados por região/capacidade de heap e
 a menor folga de stack da própria task serial, em bytes. Não são a medição de
 todas as tasks nem um mínimo simultâneo do dispositivo.
+Com o player em foreground, use `music.status` para consultar reprodução e
+scan sem injetar teclas. `ui.type "music status"` envia Enter e alterna a
+reprodução, em vez de consultar o shell.
 
 ## Estrutura
 
