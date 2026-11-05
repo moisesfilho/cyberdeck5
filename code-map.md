@@ -959,7 +959,10 @@ a raiz do repositorio.
   `0917276`, mas o ultimo codigo funcional validado é `39953bf` (mesmo hash
   de binário que os commits documentais seguintes). Não etiquetar `0917276`
   como se fosse essa imagem nem etiquetar um commit que não introduziu a
-  versão. Sem tag `v1.7.0` até aceite explícito após validação da nova imagem.
+  versão. `912e291` introduz `1.7.0`: build/readback factory SHA-256
+  `d4404708764ce6d8d49050ded73c35a86a93ad346e7dd96cbbc6f7cbeeca241a`,
+  flash/boot `sys.info`/header/pwd/HTTP bateria aprovados no Tab5; ver
+  `docs/OS-PHASE5-RELEASE-GATE.pt-BR.md`. Sem tag `v1.7.0` até aceite explícito.
 - Aplicacao: uma unica tela TUI LVGL, com header, relogio, indicador Wi-Fi, bateria e terminal.
 - Organizacao: `components/cyberdeck/src/apps/` contem fluxos de produto;
   `components/cyberdeck/src/platform/` contem integracoes de hardware e runtime.

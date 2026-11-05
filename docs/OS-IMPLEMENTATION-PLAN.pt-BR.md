@@ -388,14 +388,16 @@ teste de recuperação após adulteração nem implantação de controles novos.
 **Objetivo:** estabelecer que cada versão liberada do firmware corresponde a
 uma configuração e evidência operacional reproduzíveis.
 
-**Em andamento:** os gates locais da rodada anterior (`1.6.0`) passaram; registro em
+**Em andamento:** os gates da candidata `1.7.0` passaram; registro em
 [`OS-PHASE5-RELEASE-GATE.pt-BR.md`](OS-PHASE5-RELEASE-GATE.pt-BR.md).
 Para preparar release da imagem funcional validada `39953bf` sem etiquetar o
 commit anterior `0917276` que introduziu `1.6.0`, o operador autorizou criar
-`1.7.0` no commit candidato. É preciso build, testes, flash/readback e validação
-pertinente dessa **nova imagem** antes de solicitar autorização separada para
-tag `v1.7.0`. A evidência física de `1.6.0` é referência, não aceite automático
-da nova versão. Sem tag não há versão liberada segundo o `AGENTS.md`.
+`1.7.0` no commit candidato `912e291`. Build, testes, flash/readback e
+validação física direcionada da **nova imagem** passaram. A evidência física
+de `1.6.0` é referência, não aceite automático da nova versão; o gate
+direcionado confirmou a versão no header, console e endpoint HTTP. A tag
+`v1.7.0` ainda exige autorização separada; sem tag não há versão liberada
+segundo o `AGENTS.md`.
 Aceite operacional pessoal e Fase 4 concluída não apagam as anomalias e
 limites de evidência da Fase 3. Toda mudança funcional futura exige validação dos
 critérios afetados no Tab5 antes do gate final dessa mudança.
@@ -403,10 +405,11 @@ critérios afetados no Tab5 antes do gate final dessa mudança.
 - [x] Executar gates host, contratos e build definidos em `AGENTS.md` para a
   candidata `1.7.0`: suíte completa, `verify`, contratos focados e build
   ESP-IDF 6.1 passaram; repetir para qualquer imagem alterada.
-- [ ] Validar no Tab5 a candidata `1.7.0` após flash/readback, registrando
-  hash/versão e efeito observado. Reutilizar evidência física anterior apenas
-  para o mesmo conteúdo de firmware e cenário, nunca como nova validação.
-- [ ] Atualizar `code-map.md`, rastreabilidade e documentação de validação da
+- [x] Validar no Tab5 a candidata `1.7.0` após flash/readback: SHA-256 do
+  slot `factory` idêntico ao build; `sys.info`, header, `pwd`/`term.dump` e
+  `GET /battery` confirmados. Testes mais amplos anteriores não foram
+  reclassificados como executados nesta imagem.
+- [x] Atualizar `code-map.md`, rastreabilidade e documentação de validação da
   candidata com resultados host/build/dispositivo; arquitetura de apps não mudou.
 - [ ] Concluir a política de versão do `AGENTS.md`: `version.txt` candidata
   `1.7.0` aprovada pelo operador, mas a tag `v1.7.0` depende de validação da

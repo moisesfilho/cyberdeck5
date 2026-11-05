@@ -91,7 +91,28 @@ rodada host/build, validação física e decisão humana sobre a tag.
   `make -C tests/host/keymap verify`: PASS (paridade LVGL shim).
 - `make -C tests/host/keymap test`: PASS, suíte host completa, incluindo
   contrato IMU; sem `clean` ou execução concorrente de cobertura.
-- Ainda pendentes nesta candidata: commit de introdução da versão,
-  flash/readback, boot/observáveis no Tab5 e decisão
-  explícita sobre tag/publicação. A aprovação anterior de testes físicos
-  autoriza preparar/validar a imagem, **não** liberar uma tag automaticamente.
+- Commit que introduziu `1.7.0`: `912e291` (sem tag). Rebuild após commit
+  preservou SHA-256 `d4404708764ce6d8d49050ded73c35a86a93ad346e7dd96cbbc6f7cbeeca241a`.
+  `idf.py -p /dev/ttyACM0 flash`: PASS no Tab5 ESP32-P4 rev. v1.3;
+  bootloader/partições verificados, app regravado apenas nos setores alterados,
+  `Hash of data verified` e hard reset. Dados de identificação USB/endereços
+  de rede não são publicados aqui.
+- Readback **somente** do app `factory` a partir de `0x10000` por
+  `0x27a6e0` bytes via `esptool read-flash`: SHA-256 do arquivo lido
+  `d4404708764ce6d8d49050ded73c35a86a93ad346e7dd96cbbc6f7cbeeca241a`,
+  idêntico ao binário local. Dump privado
+  `/tmp/opencode/cyberdeck5-1.7.0-readback-20261105.bin` (não versionado).
+  A ferramenta reiniciou o chip ao finalizar; `sys.info` após flash (uptime
+  `00:00:06`) e após readback (uptime `00:00:07`) respondeu `fw_version=1.7.0`,
+  `idf_version=v6.1`, `safe_mode=false`, `interrupted_boots=0`,
+  `recovery_persisted=true`. Não houve queda de uptime entre a leitura pós-
+  readback e a leitura posterior `00:00:21`.
+- `screen.wake` respondeu normalmente; `ui.dump` confirmou texto do header
+  `CYBERDECK5 1.7.0`; `ui.type pwd` + `term.dump` confirmou `/` e o prompt
+  local; `GET /battery` pela LAN respondeu HTTP 200, schema 1,
+  `fw_version=1.7.0` (dados de rede omitidos). Esses são os cenários físicos
+  afetados pela mudança de versão; playback, speaker/jack e novas falhas
+  físicas **não** foram revalidados nem declarados aprovados por inferência.
+- Pendente: autorização humana **separada** para tag `v1.7.0` apontar para
+  `912e291` e eventual publicação de release. Os defeitos/limites da Fase 3
+  permanecem registrados; esta candidata não os corrigiu.
