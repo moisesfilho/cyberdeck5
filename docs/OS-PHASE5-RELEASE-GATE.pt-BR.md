@@ -133,5 +133,13 @@ rodada host/build, validação física e decisão humana sobre a tag.
   6.1 PASS. SHA-256 de `build/cyberdeck5.bin` permaneceu
   `d4404708764ce6d8d49050ded73c35a86a93ad346e7dd96cbbc6f7cbeeca241a`;
   correção apenas na ferramenta host, sem novo flash.
-- Gate remoto do commit de correção e decisão de release continuam pendentes;
-  nenhuma alteração de firmware foi feita após a imagem `912e291` validada.
+- Quality Gate remoto do commit `fb6214c`:
+  [run 42114544943](https://github.com/moisesfilho/cyberdeck5/actions/runs/42114544943)
+  **success**; passaram lint/segurança, suíte host com cobertura, teste
+  concorrente com ThreadSanitizer e build ESP-IDF. Nenhuma alteração de
+  firmware foi feita após a imagem `912e291` validada.
+- Decisão do operador: manter `1.7.0`, integrar a branch de trabalho em
+  `develop` e apagar a branch de origem após o push confirmado. Isso não
+  autoriza tag `v1.7.0` nem publicação de release: a tag exigiria uma decisão
+  separada sobre o commit de introdução `912e291`, cujo CI falhou antes da
+  correção host em `fb6214c`. A Fase 5 permanece `active`.

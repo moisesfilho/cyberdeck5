@@ -994,6 +994,8 @@ a raiz do repositorio.
   e preparação da candidata `1.7.0`, gates
   host/verify/build, validacao fisica por mudanca funcional, limites conhecidos
   e politica de tag de release; nao confundir commit documental com firmware.
+  Registra o Quality Gate remoto verde de `fb6214c` (run `42114544943`) e a
+  decisao de integrar em `develop` sem criar tag de release.
 - `docs/OS-RESOURCE-CONTRACTS.pt-BR.md` audita a Fase 2: fronteiras das apps,
   adapters e SDK, filas/buffers/tasks criticos, dono, limite na fonte,
   overflow/teardown, ordem de locks e exclusoes do gate SD. O contrato host
