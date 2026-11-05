@@ -998,7 +998,13 @@ a raiz do repositorio.
   para 60 amostras a 1 Hz de heap/uptime; a serie em repouso esta em
   `tests/manual/evidence/phase3-sysinfo-20261105.csv`, com contrato host
   `test_phase3_sysinfo_collector.py`. Evidencia de estado estavel nao aceita
-  transientes nem fase completa. Validacoes fisicas historicas confirmadas
+  transientes nem fase completa. A matriz host de falhas exercita
+  `test_time_sync`, `test_netdiag_controller`, `test_wifi_event_dispatch` e
+  `test_net_coordinator` sem tocar no hardware; nao substitui reconexao fisica.
+  A tabela de alcance da telemetria identifica
+  `handle_sys_info` (heap instantaneo), logs `HOSTED_DIAG` no `main/app_main.cpp`
+  (boot parcial), high-water do scan de musica e diagnosticos/trace do player,
+  distinguindo-os de minimos historicos e budgets ainda nao medidos. Validacoes fisicas historicas confirmadas
   pelo usuario sao registradas separadamente; nao equivalem a aceite no fw
   1.5.0 atual.
 - `docs/OS-PHASE4-THREAT-MODEL.pt-BR.md` inicia a Fase 4 documental: ativos,

@@ -96,6 +96,44 @@ host protegem políticas, não tempos e recursos no ESP32-P4.
   em repouso não são mínimos históricos nem high-water de tasks; ainda não
   cobrem carga, boot ou transientes de recursos.
 
+## Alcance da telemetria atual (auditoria no código, sem novo teste físico)
+
+| Grandeza | Fonte já disponível | O que o dado permite afirmar | Lacuna antes de definir orçamento |
+| --- | --- | --- | --- |
+| Heap | `handle_sys_info()` em `apps/serial/cyberdeck_serial_bridge.cpp`: `esp_get_free_heap_size()` e `heap_caps_get_free_size()` para interno, DMA e PSRAM; `heap_caps_get_largest_free_block()` para interno/DMA | Amostras instantâneas e maior bloco livre **na hora do pedido**, não em todas as tasks ou durante o boot; a série CSV só acompanhou repouso | Mínimo histórico por capability/estágio e pico durante ações; não confundir menor amostra observada com mínimo global |
+| Stack | Log `scan stack_high_water_mark_bytes` na saída de `apps/music/cyberdeck_music_app.cpp::scan_entry()` | Uma task de scan de música, apenas quando esse fluxo executa e o log é capturado | High-water das outras tasks e sob cargas representativas; não inferir sobra pelo tamanho de stack configurado |
+| Boot | `HOSTED_DIAG` em `main/app_main.cpp`: begin/end de `hosted_prepare`, `sd_mount` (inclusive `duration_ms`) e `battery_protection` | Duração dos estágios instrumentados se o log do **mesmo boot** estiver completo | Identidade da imagem, tempo da partida até checkpoint/console, display e serviços; `sys.info.uptime` após horas não mede duração do boot. Não provocar reset só para coletar log |
+| Resposta serial | `collect_sysinfo_series.py` mede monotonicamente a chamada `CyberdeckSession.exchange()` | Latência ponta-a-ponta no host nessa sessão (3–4 ms), incluindo transporte, parser e resposta | Tempo interno da task, de UI, de SD ou percentis sob carga; não usar essa latência como orçamento de firmware |
+| Player | `music.diagnostics` (contadores e tempo total/máximo de read/decode/write/backend) e `music.trace` (ring bounded, cursor, `lost`) | Evidência por geração com resultado e perdas somente quando o player é exercitado e os eventos ainda estão no ring | Não há série desta imagem/cenário; não concluir sobre stutter, carga do codec ou throughput com contadores zerados/sem execução |
+
+**Próxima decisão técnica, sem mudança automática:** especificar por cenário
+qual grandeza falta, unidade, ponto de amostragem e custo de observação;
+instrumentar só métricas ausentes que possam alterar uma decisão de orçamento
+ou hipótese de gargalo. A instrumentação é uma mudança de firmware com versão,
+build, teste host e validação segura do binário novo; não permite comparar com
+a imagem `1.5.0` sem hash atestado como se fossem o mesmo baseline. Um boot
+espontâneo pode fornecer logs sem reset induzido, desde que captura, tempo e
+identidade da imagem sejam registrados. Nenhum budget numérico novo é definido
+por esta auditoria.
+
+## Injeção de falhas no host: fronteira do que é comprovável
+
+As fixtures em `tests/host/keymap/` permitem exercitar estes casos sem mudar a
+rede do Tab5 nem apagar dados. Em 05/11/2026,
+`make -C tests/host/keymap test_time_sync test_netdiag_controller test_wifi_event_dispatch test_net_coordinator`
+terminou com status 0; netdiag controller: 122 checks/0 falhas; Wi-Fi dispatch:
+112/0; net coordinator: 151 checks; time sync: alvo executado sem falha.
+
+| Fluxo host | Cenário coberto pela fixture | O que ainda não é provado |
+| --- | --- | --- |
+| `test_time_sync.cpp` | Timeout, DNS/TLS/HTTP inválido, fallback, stop entre etapas e falha de persistência do evento | Deadline real no rádio/stack lwIP, quiescência física após perda de Wi-Fi |
+| `test_netdiag_controller.cpp` | Falhas por estágio DNS/TCP/HTTPS, timeout, grant revogado, cancelamento e token stale | Tempo em rede real, fechamento de socket em disputa e estabilidade da UI |
+| `test_wifi_event_dispatch.cpp` e `test_net_coordinator.cpp` | Eventos stale, rollback de segredo não confirmado, retry/teardown, pressão de fila e prioridade de cancelamento | Comportamento do driver Hosted/C6 e reconexão no dispositivo |
+
+São testes **host** de política e dos adapters simulados, não injeção física de
+falha nem aceite de OS-TAB5-04/07. Ao observar falha real mais tarde, registrar
+token/geração, resultado e uptime antes/depois sem atribuir silêncio a sucesso.
+
 ## Pendências para fechar a Fase 3
 
 1. Confirmar identidade do binário em execução de maneira não destrutiva ou

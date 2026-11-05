@@ -235,7 +235,10 @@ registrados como históricos, sem transferir aceite ao firmware 1.5.0.
   de SD antes do boot, remoção em uso, corrupção de arquivo, poweroff e carga
   real da bateria exigem cenário e autorização específicos, backup quando
   houver risco de dados e estratégia de recuperação; primeiro usar shims
-  determinísticos. Não repetir panic antes de analisar a evidência.
+  determinísticos. Não repetir panic antes de analisar a evidência. A matriz
+  host de time sync/netdiag/Wi-Fi em
+  [`OS-PHASE3-BASELINE.pt-BR.md`](OS-PHASE3-BASELINE.pt-BR.md) foi exercitada;
+  a recuperação física na imagem atual continua pendente.
 - [ ] Derivar budgets aprovados dos dados e só então fixá-los em configuração,
   código e contratos; manter documentação sincronizada com a fonte de verdade.
 
