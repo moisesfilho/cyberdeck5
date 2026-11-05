@@ -207,10 +207,12 @@ real, não apenas em shims host.
 
 **Em andamento:** cenários e riscos separados em
 [`OS-PHASE3-BASELINE.pt-BR.md`](OS-PHASE3-BASELINE.pt-BR.md). Série inicial de
-`GET /battery` a 1 Hz e observação do console no Tab5 registradas; faltam
+`GET /battery` e de `sys.info` a 1 Hz e observação do console no Tab5
+registradas; faltam
 identidade do binário, boot observado, stack/heap mínimo, cenários de apps e
 transientes. Não reduzir limites nem declarar aceite físico agregado a partir
-desse recorte.
+desse recorte. Ensaios físicos antigos confirmados pelo operador ficam
+registrados como históricos, sem transferir aceite ao firmware 1.5.0.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

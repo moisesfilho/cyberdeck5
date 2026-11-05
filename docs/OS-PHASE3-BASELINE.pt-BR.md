@@ -13,6 +13,21 @@ etapa. Não executar poweroff controlado, retirada/falha física do SD, corrupç
 de dados/NVS ou interrupção forçada de boot. Esses cenários ficam explicitamente
 pendentes; nenhuma simulação host equivale a aceite do hardware.
 
+**Esclarecimento do operador, na mesma data:** poweroff, falha de SD,
+NVS/recovery e outros fluxos foram validados por ele **historicamente, em
+firmware anterior, não no `1.5.0`**. Aceitar sua confirmação como registro
+histórico desses ensaios, sem imputar à imagem atualmente instalada um teste
+que não foi feito nela. Para poweroff, há evidência já registrada em
+[`poweroff-implementation-plan.md`](../poweroff-implementation-plan.md) e
+[`poweroff-validation.pt-BR.md`](../tests/manual/poweroff-validation.pt-BR.md):
+versão histórica `cef3257-dirty`/ESP-IDF 5.5.5, corte confirmado pelo operador
+nas três fontes suportadas; readback/hash do canário em bateria-only e
+bateria+USB, cabo-only declarado sem hash independente. Falha física de SD e
+NVS/recovery e os demais fluxos ficam registrados **como confirmação histórica
+do operador, sem versão/cenário/log detalhado neste trabalho**. Essa confirmação
+não equivale a métricas de heap/stack/latência, nem a aceite de OS-TAB5-04/05/07
+no firmware atual; os critérios continuam abertos no dashboard.
+
 ## Cenários e modo de evidência
 
 | Fluxo | Observação segura inicial | Teste de carga/falha condicionado | Grandezas que ainda faltam |
@@ -70,6 +85,16 @@ host protegem políticas, não tempos e recursos no ESP32-P4.
   `state=external`, `charge=not_charging`, `protection_active=true`,
   `charger_enabled=false` em toda a série. **Não atravessou transiente de
   partida, corte nem reancoragem**; não comprova estabilidade fora desse estado.
+- Coletor `tools/collect_sysinfo_series.py` com **uma única sessão**
+  Serial-JTAG (`--seconds 60`), sem concorrência de outro leitor: série
+  [`tests/manual/evidence/phase3-sysinfo-20261105.csv`](../tests/manual/evidence/phase3-sysinfo-20261105.csv),
+  SHA-256 `6ae9b389d2769e6296199b05845870f3d060fadab58742da19d774e92a85e149`.
+  60/60 respostas `sys.info`, 59 intervalos de 1000 ms, duração 59 s,
+  latência de resposta 3–4 ms, uptime `02:33:07`→`02:34:06`. Durante **este**
+  estado o `free_heap` ficou em 31462343, `internal_free` em 177371,
+  `dma_free` em 137883 e `psram_free` em 31284972 bytes. Valores constantes
+  em repouso não são mínimos históricos nem high-water de tasks; ainda não
+  cobrem carga, boot ou transientes de recursos.
 
 ## Pendências para fechar a Fase 3
 
@@ -77,8 +102,10 @@ host protegem políticas, não tempos e recursos no ESP32-P4.
    compilar/gravar uma imagem aprovada como etapa de validação de firmware
    implementado; registrar SHA-256, log de boot e cenário completo. Flash não
    substitui a identificação do baseline anterior.
-2. Obter série de 1 s para heap livre/mínimo, stack high-water e overflow sem
-   interferir na UI; o `sys.info` atual não expõe mínimos nem high-water. Só
+2. Repetir a série de heap de 1 s sob cenários representativos (a primeira
+   série é somente em repouso); obter mínimos históricos, stack high-water e
+   overflow sem interferir na UI. O `sys.info` atual não expõe mínimos nem
+   high-water. Só
    instrumentar após definir a métrica e seu custo; versionar/validar no Tab5
    qualquer firmware novo. Não fixar budgets a partir da amostra isolada.
 3. Medir os cenários seguros da matriz com tempos por estágio e configuração

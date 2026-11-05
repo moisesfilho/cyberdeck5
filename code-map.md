@@ -994,7 +994,13 @@ a raiz do repositorio.
   read-only de bateria em `tests/manual/evidence/phase3-battery-20261105.csv`
   foi coletada pelo `tools/collect_battery_series.py` (1 Hz, 60 amostras);
   `test_phase3_battery_collector.py` valida a ferramenta sem rede no agregado
-  host. Evidencia de estado estavel nao aceita transientes nem fase completa.
+  host. O `tools/collect_sysinfo_series.py` usa uma unica sessao Serial-JTAG
+  para 60 amostras a 1 Hz de heap/uptime; a serie em repouso esta em
+  `tests/manual/evidence/phase3-sysinfo-20261105.csv`, com contrato host
+  `test_phase3_sysinfo_collector.py`. Evidencia de estado estavel nao aceita
+  transientes nem fase completa. Validacoes fisicas historicas confirmadas
+  pelo usuario sao registradas separadamente; nao equivalem a aceite no fw
+  1.5.0 atual.
 - `docs/OS-IMPLEMENTATION-DASHBOARD.html` e a visualizacao estatica em HTML/CSS/JS
   local: os itens de `const dashboard` representam os checkboxes das Fases 0-5
   do plano, recortes da Fase 1 e criterios OS-TAB5-01..08. Barras e totais sao
