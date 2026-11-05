@@ -1001,6 +1001,14 @@ a raiz do repositorio.
   transientes nem fase completa. Validacoes fisicas historicas confirmadas
   pelo usuario sao registradas separadamente; nao equivalem a aceite no fw
   1.5.0 atual.
+- `docs/OS-PHASE4-THREAT-MODEL.pt-BR.md` inicia a Fase 4 documental: ativos,
+  superficie LAN (`apps/screenshot/screenshot_server.cpp`), USB Serial-JTAG
+  (`apps/serial/cyberdeck_serial_bridge.cpp`), credenciais SD
+  (`apps/wifi/wifi_storage.cpp`, `apps/ssh/ssh_client.cpp`), configuracao efetiva
+  local (`sdkconfig`) e particionamento (`partitions.csv`). Compara confinamento
+  e grants cooperativos com controles de autenticacao/isolamento ausentes;
+  opcoes de endurecimento exigem decisao do operador e recuperacao comprovada.
+  OS-TAB5-06 permanece sem aceite, sem mudanca de firmware ou eFuses.
 - `docs/OS-IMPLEMENTATION-DASHBOARD.html` e a visualizacao estatica em HTML/CSS/JS
   local: os itens de `const dashboard` representam os checkboxes das Fases 0-5
   do plano, recortes da Fase 1 e criterios OS-TAB5-01..08. Barras e totais sao

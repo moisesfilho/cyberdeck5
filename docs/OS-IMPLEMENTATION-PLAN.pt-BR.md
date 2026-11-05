@@ -254,9 +254,14 @@ em aberto, não impede registro de testes host verdes.
 **Objetivo:** decidir controles de segurança a partir de exposição e impacto
 reais do Tab5.
 
-- [ ] Documentar ativos, interfaces de entrada, acesso físico, serviços LAN,
+**Inventário preliminar:** [`OS-PHASE4-THREAT-MODEL.pt-BR.md`](OS-PHASE4-THREAT-MODEL.pt-BR.md)
+registra ativos, fronteiras, controles existentes e riscos não cobertos sem
+alterar firmware. Escolha de controles, risco aceito, recuperação e validação
+do build/dispositivo permanecem pendentes; não antecipar OS-TAB5-06.
+
+- [x] Documentar ativos, interfaces de entrada, acesso físico, serviços LAN,
   credenciais/configuração e processo de atualização.
-- [ ] Separar ameaças cobertas por confinamento/grants cooperativos das que
+- [x] Separar ameaças cobertas por confinamento/grants cooperativos das que
   exigiriam isolamento de hardware ou autenticação.
 - [ ] Avaliar Secure Boot, criptografia de flash, proteção de credenciais,
   autenticação de endpoints e estratégia de atualização; cada controle exige
