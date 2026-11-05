@@ -1112,14 +1112,22 @@ a raiz do repositorio.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.
-- `docs/OS-PHASE4-THREAT-MODEL.pt-BR.md` inicia a Fase 4 documental: ativos,
+- `docs/OS-PHASE4-THREAT-MODEL.pt-BR.md` registra a Fase 4 documental: ativos,
   superficie LAN (`apps/screenshot/screenshot_server.cpp`), USB Serial-JTAG
   (`apps/serial/cyberdeck_serial_bridge.cpp`), credenciais SD
   (`apps/wifi/wifi_storage.cpp`, `apps/ssh/ssh_client.cpp`), configuracao efetiva
   local (`sdkconfig`) e particionamento (`partitions.csv`). Compara confinamento
   e grants cooperativos com controles de autenticacao/isolamento ausentes;
-  opcoes de endurecimento exigem decisao do operador e recuperacao comprovada.
-  OS-TAB5-06 permanece sem aceite, sem mudanca de firmware ou eFuses.
+  decisao do operador em 05/11/2026: LAN controlada, acesso fisico fora do
+  adversario e USB local suficiente; riscos de HTTP sem auth/TLS, Wi-Fi em
+  claro no SD e boot/criptografia desativados aceitos nesse escopo. `sdkconfig`
+  e `partitions.csv` mostram controles desativados e `factory` unico; leitura
+  eFuse somente leitura confirma Secure Boot e flash encryption desativados,
+  separada do readback da imagem `39953bf`/`1.6.0`. Reset posterior:
+  `sd_mount=ESP_OK`, checkpoint persistido, `boot_ready=1`, sys.info normal.
+  Evidencias eFuse/log bruto privadas em `/tmp/opencode/phase4-*`; nenhum
+  firmware/eFuse alterado. OS-TAB5-06 continua active sem alegar protecao
+  contra peers LAN/acesso fisico ou fechar os gates pendentes da Fase 3.
 - `docs/OS-IMPLEMENTATION-DASHBOARD.html` e a visualizacao estatica em HTML/CSS/JS
   local: os itens de `const dashboard` representam os checkboxes das Fases 0-5
   do plano, recortes da Fase 1 e criterios OS-TAB5-01..08. Barras e totais sao

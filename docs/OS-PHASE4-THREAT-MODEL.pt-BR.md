@@ -1,20 +1,31 @@
-# Fase 4 — modelo de ameaça preliminar do Tab5
+# Fase 4 — modelo de ameaça do Tab5
 
-**Estado:** inventário e fronteiras documentados em 05/11/2026; controles
-propostos não aprovados nem habilitados por este documento. A Fase 3 e a
-validação física integrada (a imagem anterior reportou `1.5.0`) continuam abertas. Não usar o inventário
-como certificação de segurança ou autorização para gravar eFuses, apagar SD/NVS
-ou trocar o processo de atualização.
+**Estado em 05/11/2026:** o operador aprovou o escopo e aceitou explicitamente
+os riscos residuais abaixo; nenhum controle foi habilitado por este documento.
+A Fase 3 permanece aberta. Este modelo não certifica segurança nem autoriza
+gravar eFuses, apagar SD/NVS ou mudar o processo de atualização.
 
 ## Escopo, ativos e adversários
 
 O produto é um dispositivo pessoal ESP32-P4/Tab5 com firmware e apps compiladas,
-SD removível, USB Serial-JTAG e conectividade Wi-Fi/BLE/SSH. Ameaças consideradas:
-outro dispositivo na mesma LAN, pessoa com acesso físico/USB/SD e entrada não
-confiável em dados remotos/arquivos. Apps de terceiros instaláveis, isolamento
-entre processos e adversário com execução nativa já obtida **não** fazem parte
-das garantias atuais. O operador controla o ambiente e decide quais riscos
-aceitar; nada aqui pressupõe que toda LAN privada seja confiável.
+SD removível, USB Serial-JTAG e conectividade Wi-Fi/BLE/SSH. O uso aprovado
+nesta fase é **somente em LAN sob controle do operador**, com manutenção e
+atualização locais por USB. Acesso físico de terceiros ao Tab5/USB/SD fica
+fora do adversário adotado; não se afirma proteção caso ele ocorra. Peers na
+LAN, tráfego interceptável e entradas remotas/arquivos malformados continuam
+sendo fontes de risco: controle da rede não autentica cada peer nem torna o
+HTTP confidencial. Apps de terceiros instaláveis, isolamento entre processos
+e adversário com execução nativa já obtida **não** fazem parte das garantias.
+
+**Aceite explícito de risco pelo operador (05/11/2026):** manter nesta etapa
+HTTP sem autenticação/TLS, credenciais Wi-Fi em texto claro no SD e Secure
+Boot/criptografia desativados. Isso é restrito ao ambiente acima, não uma
+alegação de proteção contra peers na LAN, acesso físico, extração de segredos
+ou alteração de firmware. Se mudar a rede, a custódia do dispositivo ou a
+necessidade de OTA, reavaliar controles antes de operar sob o novo cenário.
+A dependência do SD para boot é aceitável; os reinícios automáticos após falha
+de mount são um problema de disponibilidade separado, registrado na Fase 3,
+sem implicar tornar o SD opcional.
 
 | Ativo | Entrada/fronteira | Controle observado e limite | Consequência se comprometido |
 | --- | --- | --- | --- |
@@ -59,10 +70,41 @@ aceitar; nada aqui pressupõe que toda LAN privada seja confiável.
   em `sdkconfig` declara `# CONFIG_SECURE_BOOT is not set`,
   `# CONFIG_SECURE_FLASH_ENC_ENABLED is not set` e
   `# CONFIG_NVS_ENCRYPTION is not set`. `sdkconfig.defaults` não habilita esses
-  controles. Isto caracteriza a configuração inspecionada, **não atesta eFuses
-  ou o hash da imagem em execução**; a confirmação no dispositivo é pendente.
+  controles. Isso caracteriza a configuração inspecionada; a verificação
+  independente das eFuses e a identificação da imagem estão abaixo.
 
-## Riscos não cobertos e decisões a tomar
+## Verificação não destrutiva do build e dispositivo — 05/11/2026
+
+- `sdkconfig`: Secure Boot, flash encryption, NVS encryption, HTTPS server e
+  rollback de app desativados. `sdkconfig.defaults` não habilita esses
+  controles. `partitions.csv` declara somente `factory` como partição de app,
+  sem `otadata`/slots OTA. Flash USB local com backup e readback basta para o
+  uso aprovado, mas não fornece rollback automático ou autenticidade
+  criptográfica de firmware.
+- Readback integral anterior na Fase 3 identificou imagem `39953bf`, versão
+  `1.6.0`; SHA-256 de `build/cyberdeck5.bin`
+  `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`.
+  A leitura eFuse não autentica a imagem nem prova que ela não mudou depois.
+- Leitura **somente leitura** com `python -m espefuse --chip esp32p4 -p
+  /dev/ttyACM0 summary --format json`: `SECURE_BOOT_EN=false`,
+  `SPI_BOOT_CRYPT_CNT=Disable` e `DIS_DOWNLOAD_MODE=false`, todos com valor
+  bruto `0x0`. Nenhuma eFuse foi gravada. Resumo privado
+  `/tmp/opencode/phase4-efuse-summary-20261105.json`, SHA-256
+  `2cb45a5afae626c64b090d317ba58d36f443646778c82c95d7810408db6def2e`.
+  Não publicar dumps eFuse ou logs seriais brutos no repositório.
+- Após a leitura, a primeira consulta serial não respondeu e HTTP no IP
+  anterior estava indisponível. Um reset controlado com SD instalado via
+  `idf.py monitor` registrou `sd_mount=ESP_OK`, checkpoint recovery persistido
+  com `safe_mode=0`, `pending=0`, `interrupted=0` e
+  `app_main_complete boot_ready=1`, sem marcador de panic no log capturado.
+  O exit 124 foi o timeout esperado do monitor. Log privado
+  `/tmp/opencode/phase4-efuse-post-reset-boot-20261105.log`, SHA-256
+  `c0bffe660c7fc7e0cecef362677f71679623da6b873a38fff2a876c518f971e3`.
+  `sys.info` posterior: versão `1.6.0`, uptime `00:00:25`,
+  `safe_mode=false`, `interrupted_boots=0`, `recovery_persisted=true`.
+  Não atribuir a resposta ausente à leitura eFuse sem diagnóstico.
+
+## Controles avaliados e gatilhos de revisão
 
 | Opção (não aplicada) | Requisito que justificaria | Custo/impacto e recuperação a definir antes de aprovar |
 | --- | --- | --- |
@@ -72,20 +114,22 @@ aceitar; nada aqui pressupõe que toda LAN privada seja confiável.
 | Processo de atualização autenticado e recuperável | Releases remotos ou firmware reproduzível com rollback | Layout atual é `factory` único; desenho de partições/OTA ou fluxo USB assinado, compatibilidade de dados, imagem de recuperação e teste de rollback antes de migrar |
 | Restringir operações da bridge USB | USB acessível a pessoas sem autorização de manutenção | Separar diagnóstico de escrita/recovery, provisionar credenciais ou desabilitar bridge em builds específicos; garantir recuperação de manutenção sem desbloqueio inseguro |
 
-Essas opções têm trade-offs que dependem de decisão do operador sobre acesso
-físico, rede confiável, disponibilidade, perda aceitável de dados e método de
-recuperação. **Não** converter riscos em mudanças de firmware automaticamente.
+O operador optou por **não aplicar** essas opções nesta etapa sob as premissas
+acima. Não converter riscos aceitos em mudanças de firmware automaticamente;
+se a premissa mudar, definir requisito e recuperação antes de implementar.
 Se o requisito passar a incluir apps independentes/não confiáveis, reabrir a
 arquitetura do plano para comparar isolamento suportado pela plataforma com
 Zephyr/NuttX ou outra plataforma antes de discutir PMP, loader ou syscalls;
 grants atuais não atendem esse requisito.
 
-## Evidências e gates ainda pendentes
+## Limites do aceite
 
-1. Confirmar configuração do build que será efetivamente gravado, sua
-   identidade/hash e (se relevante) estado de eFuses no Tab5 por procedimento
-   não destrutivo e autorizado. O `sys.info` atual não atesta a imagem.
-2. Aprovar modelo de adversário, riscos aceitos e controles selecionados com o
-   operador. Não considerar OS-TAB5-06 aceito só pelo inventário documental.
-3. Para cada controle aprovado, escrever plano de migração/recuperação e
-   validar no dispositivo correspondente antes de marcar Fase 4 concluída.
+1. O aceite vale só para LAN controlada, custódia física e flash USB local;
+   não prova confidencialidade nem segurança contra outros peers da LAN.
+   Filtro de IP não é autenticação.
+2. Configuração e eFuses foram verificadas, e o boot posterior observado;
+   **não** foram testados ataques, migração de controles ou recuperação após
+   adulteração. Nenhum controle novo foi instalado nesta fase.
+3. Fase 3 e seus gates físicos/budgets seguem abertos; o loop sem SD não está
+   corrigido. Controles futuros exigem plano próprio de migração, backup,
+   recuperação e validação antes de marcar aceite.

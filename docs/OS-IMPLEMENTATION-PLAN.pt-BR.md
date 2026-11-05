@@ -310,18 +310,38 @@ em aberto, não impede registro de testes host verdes.
 **Objetivo:** decidir controles de segurança a partir de exposição e impacto
 reais do Tab5.
 
-**Inventário preliminar:** [`OS-PHASE4-THREAT-MODEL.pt-BR.md`](OS-PHASE4-THREAT-MODEL.pt-BR.md)
-registra ativos, fronteiras, controles existentes e riscos não cobertos sem
-alterar firmware. Escolha de controles, risco aceito, recuperação e validação
-do build/dispositivo permanecem pendentes; não antecipar OS-TAB5-06.
+**Decisão de 05/11/2026:** [`OS-PHASE4-THREAT-MODEL.pt-BR.md`](OS-PHASE4-THREAT-MODEL.pt-BR.md)
+registra ativos, fronteiras, controles existentes, verificação e riscos
+explicitamente aceitos pelo operador. Uso restrito à LAN sob seu controle,
+acesso físico fora do adversário adotado e atualização USB local suficiente.
+HTTP sem autenticação/TLS, credenciais Wi-Fi em texto claro no SD e Secure
+Boot/criptografia desativados são riscos aceitos **neste escopo**, não garantias
+de proteção contra peers da LAN ou acesso físico. Não se alterou firmware,
+partições, segredos ou eFuses. Fase 3 segue aberta, inclusive o loop sem SD;
+a obrigatoriedade do cartão foi aceita, não sua política de reinício.
+
+`sdkconfig` confirma Secure Boot, flash/NVS encryption e HTTPS desativados;
+`partitions.csv` tem somente `factory`. Leitura eFuse somente leitura no
+ESP32-P4 mostrou `SECURE_BOOT_EN=false`, `SPI_BOOT_CRYPT_CNT=Disable` e
+`DIS_DOWNLOAD_MODE=false`. O readback integral anterior identifica a imagem
+`39953bf`/`1.6.0` (SHA-256 registrado no modelo de ameaça); após a leitura,
+um reset controlado registrou `sd_mount=ESP_OK`, checkpoint persistido e
+`boot_ready=1`, e `sys.info` confirmou modo normal. Uma primeira consulta
+serial perdeu resposta e o HTTP estava indisponível antes do reset; a causa
+permanece indeterminada. Dumps e logs brutos ficam fora do repositório.
+O inventário e o aceite não comprovam resistência a ataques ou recuperação
+de alterações futuras: manter OS-TAB5-06 e Fase 4 em acompanhamento até
+revisão final dos limites documentados; não inferir aceite físico da Fase 3.
 
 - [x] Documentar ativos, interfaces de entrada, acesso físico, serviços LAN,
   credenciais/configuração e processo de atualização.
 - [x] Separar ameaças cobertas por confinamento/grants cooperativos das que
   exigiriam isolamento de hardware ou autenticação.
 - [ ] Avaliar Secure Boot, criptografia de flash, proteção de credenciais,
-  autenticação de endpoints e estratégia de atualização; cada controle exige
-  requisito, impacto operacional e método de recuperação.
+  autenticação de endpoints e estratégia de atualização: riscos aceitos no
+  escopo aprovado e opções/impactos documentados; revisão final de recuperação
+  e limites do aceite ainda pendente antes de concluir o marco. Nenhum controle
+  futuro será implantado sem requisito e método de recuperação próprios.
 - [ ] Se código não confiável ou apps independentes forem requisito, produzir
   uma decisão arquitetural separada comparando PMP/syscall/loader com adoção de
   plataforma (por exemplo, Zephyr/NuttX). Não iniciar kernel próprio como
