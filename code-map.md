@@ -1034,6 +1034,13 @@ a raiz do repositorio.
   `tools/collect_music_status_series.py` coleta `music.status` + `sys.info`
   na mesma sessao Serial-JTAG a 1 Hz, sem copiar metadados privados; seu
   contrato isolado e `test_phase3_music_status_collector.py`.
+  Imagem `96cc6bd` flashada com SHA-256
+  `ca6aaa61595a25de9f1b80441fb04e8680f95afdf0c8ed4884f0eece4afffcd9`:
+  `music.status` antes do app -> player_not_running; depois da abertura ->
+  stopped/14 faixas/scan encerrado; serie 60/60 a 1 Hz sem playback, CSV
+  `tests/manual/evidence/phase3-music-status-1.6.0-20261105.csv`.
+  Nao mediu duracao do scan nem stack do worker; detalhes e hash do CSV em
+  `docs/OS-PHASE3-BASELINE.pt-BR.md`.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.

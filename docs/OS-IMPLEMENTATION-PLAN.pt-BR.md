@@ -216,9 +216,11 @@ agregado a partir deste recorte. Ensaios antigos do operador seguem históricos,
 sem transferência automática de aceite à nova imagem.
 Na inspeção do player foi detectado que `ui.type` em foreground injeta Enter e
 pode iniciar áudio; o roteiro foi corrigido e a consulta read-only
-`music.status` foi acrescentada à ponte Serial-JTAG. Seu ensaio físico e os
-budgets do player continuam pendentes; não classificar a tentativa como
-inspeção passiva nem aceite do fluxo de música.
+`music.status` foi acrescentada à ponte Serial-JTAG. Sua inspeção física
+sem playback foi observada na imagem `1.6.0` de hash diferente: 60/60 amostras
+de estado/heap a 1 Hz, sem acionamento do decoder. Latência de scan, stack do
+worker, playback e budgets continuam pendentes; não classificar a tentativa
+anterior (com Enter involuntário) como inspeção passiva nem aceite de música.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

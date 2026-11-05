@@ -199,7 +199,9 @@ token/geração, resultado e uptime antes/depois sem atribuir silêncio a sucess
 
 ### Player: incidente na inspeção sem playback (nova rodada, **não aceita**)
 
-Na mesma imagem `1.6.0`, `ui.type "music"` abriu a superfície e iniciou o
+Na imagem `1.6.0` anterior (SHA-256
+`4dbe949e3f0fa5a971d6c9c36c2acab0f1a9cd0910aed36c3bcc803b017f5f4e`),
+`ui.type "music"` abriu a superfície e iniciou o
 scan. Uma tentativa posterior de `ui.type "music status"` recebeu ACK, mas
 `term.dump` **não** mostrou a resposta esperada e `ui.dump` exibiu progresso
 de reprodução (`5s / 121s`). O código confirma a causa: no foreground do
@@ -211,12 +213,45 @@ novo `play` intencional nem repetição da ação insegura. Uma tentativa de cli
 em botão durante a proteção de tela retornou `screen_off`, sem efeito; após
 `screen.wake`, o clique foi aceito, mas `pause_count=0`, portanto **não** atribuir
 parada ao clique. O roteiro `tests/manual/music-player-validation.pt-BR.md`
-foi corrigido para proibir `ui.type` após abrir o player. A nova consulta
-Serial-JTAG `music.status` (somente leitura, sem títulos nem caminhos) será
-validada no Tab5 **somente após build/testes/flash da nova imagem**; não usar
+foi corrigido para proibir `ui.type` após abrir o player. Não usar
 esta rodada como aceite de scan seguro, player, áudio ou latências. Nenhuma
 rota HTTP nova é necessária para esta lacuna: o protocolo Serial-JTAG já
 expõe diagnósticos do player e permite uma consulta read-only bounded.
+
+### Consulta segura do player — imagem instrumentada subsequente (parcial)
+
+- Código `96cc6bd`, mesma versão de desenvolvimento `1.6.0` **sem tag**,
+  binário diferente do baseline anterior: SHA-256 de `build/cyberdeck5.bin`
+  `ca6aaa61595a25de9f1b80441fb04e8680f95afdf0c8ed4884f0eece4afffcd9`.
+  `idf.py build`, `make -C tests/host/keymap clean test`, `verify` e
+  `test_os_dashboard_contract` passaram; flash em `/dev/ttyACM0` confirmou
+  `Hash of data verified`. `sys.info` pós-flash reportou `fw_version=1.6.0`,
+  `safe_mode=false`, zero boots interrompidos, recovery persistido e uptime
+  `00:00:06`; hash de flash **não** é atestação independente da imagem rodando.
+- Com a app parada, `music.status` retornou `player_not_running`. Após
+  `screen.status` (`off=false`) e **uma única** chamada `ui.type music` no shell,
+  não houve mais injeção de teclas. `music.status` informou `state=stopped`,
+  `queue_scanning=false`, `track_count=14`, posição/duração 0; o scan já havia
+  terminado antes da primeira consulta, portanto sua latência e high-water
+  **não foram medidos**.
+- Coletor `tools/collect_music_status_series.py`, uma única sessão USB
+  Serial-JTAG, `--seconds 60`, resolução 1 Hz: 60/60 respostas válidas, 59
+  intervalos de 1000 ms, sem falhas, uptime `00:00:28`→`00:01:27`:
+  [`phase3-music-status-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-music-status-1.6.0-20261105.csv),
+  SHA-256 `47efd7e0d0b8d275b6630039ec596d6e3e0c56904edbecb385f423455f57106e`.
+  Em toda a série `state=stopped`, `queue_scanning=false`, contagem 14,
+  posição/duração 0. `internal_free=177003` B,
+  `internal_min_free=129820` B, `dma_free=137515` B,
+  `dma_min_free=90332` B; `psram_free` 31241064–31243580 B,
+  `psram_min_free=31146488` B; folga mínima reportada da task serial
+  10476–10608 B. Latência conjunta das duas consultas no host 5–10 ms.
+  O CSV não contém SSIDs, títulos nem caminhos de faixas.
+- `music.diagnostics` antes e depois da série confirmou
+  `generations_queued=0`, `generations_started=0`, `generations_retired=0`,
+  `failures=0` e `read_calls=0`; `sys.info` final indicou uptime
+  `00:01:45`, `safe_mode=false`, sem reboot observado. Isso valida **apenas**
+  inspeção passiva e estabilidade nessa janela; não atesta reprodução,
+  teardown, custos sob decoder ativo, BLE, editor ou budgets da Fase 3.
 
 ## Pendências para fechar a Fase 3
 
@@ -224,9 +259,9 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
    atestação independente do binário em execução. A identificação da imagem
    anterior `1.5.0` continua limitada à versão, não ao hash; não comparar
    binários anteriores como iguais com base somente em `fw_version`.
-2. As séries de 1 s na imagem nova cobrem repouso/captura HTTP e uma task
+2. As séries de 1 s cobrem repouso/captura HTTP, player parado e uma task
    serial. Faltam stack high-water das outras tasks, overflow e tempo de
-   operações de editor/BLE/player sob cenários representativos. Não fixar
+   operações de editor/BLE/player ativo sob cenários representativos. Não fixar
    budgets a partir de uma janela curta nem da soma de mínimos por região.
 3. Medir os cenários seguros da matriz com tempos por estágio e configuração
    idêntica antes/depois; separar tempo de render, rede, storage e codec. Só
