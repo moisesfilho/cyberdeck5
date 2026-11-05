@@ -1065,6 +1065,31 @@ a raiz do repositorio.
   `test_phase3_music_status_collector.py`, `test_term_dump_cli.py` e
   `test_music_scan_stack_contract.py` (high-water capturado/publicado antes do
   sinal de conclusao, depois logado com o mesmo valor antes da delecao).
+  Snapshot `39953bf` flashado (binario SHA-256
+  `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`):
+  fila 472/354/353 ms, folga 2688/2704/2704 B, browser 10 ms/3824 B na
+  primeira abertura; `browser.completed=false` nas reaberturas porque o modelo
+  estava em cache. CSV de 60 amostras a 1 Hz em
+  `tests/manual/evidence/phase3-music-scan-1.6.0-20261105.csv`; detalhes e
+  limites da evidencia em `docs/OS-PHASE3-BASELINE.pt-BR.md`.
+  Readback fisico `read-flash 0x10000 0x27a6e0` com esptool no unico slot
+  factory e SHA-256 igual a `build/cyberdeck5.bin`; sem dump no repo. Editor
+  descartavel edit/save/cat/rm confirmou round-trip simples em `/data`, sem
+  transferir aceite para falha real de FAT/SD. Evidencias e limites no baseline.
+  `tests/manual/serial-bridge-validation.pt-BR.md` documenta readback bounded
+  do slot factory, comparacao de hash e reboot normal, sem publicar dump bruto.
+  GET /battery a 1 Hz no mesmo binario registrou corte natural 8198→8201 mV,
+  CHG_EN on→off e latch ativo, com serie pos-corte; CSVs
+  `tests/manual/evidence/phase3-battery-{readback,postcut}-1.6.0-20261105.csv`.
+  USB permaneceu conectado para descoberta do IP; sem aceite bateria-only.
+  A serie adicional `tests/manual/evidence/phase3-battery-latch-1.6.0-20261105.csv`
+  traz 180/180 amostras com latch ativo; intervalo entre series nao permite
+  afirmar 5 minutos continuos sem observacao.
+  `tests/manual/evidence/phase3-battery-latch-contiguous-1.6.0-20261105.csv`
+  cobre 301 pontos/300 s continuos com latch ativo; ainda com USB ligado.
+  Netdiag TCP loopback 1 falhou/80 funcionou depois do cooldown; screenshots
+  HTTP sequenciais mantiveram PSRAM estavel apos reserva estatica inicial.
+  Dados e limites em `docs/OS-PHASE3-BASELINE.pt-BR.md`; BMPs ficam fora do repo.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.

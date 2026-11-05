@@ -227,8 +227,23 @@ comprova teardown; confirmar o retorno por `term.dump` e uptime no Tab5.
 O fechamento do player e do editor limpo, a recusa com tela apagada e o wake
 foram observados no Tab5 (detalhes no baseline). O scan de música passou a
 publicar sua duração e a menor folga de stack antes de destruir a task,
-consultáveis via `music.scan`; ainda falta medir essa instrumentação em uma
-imagem gravada, sem atribuir números à imagem anterior.
+consultáveis via `music.scan`; a medição ficou restrita à imagem gravada
+`39953bf`, sem atribuir números às imagens anteriores.
+No snapshot `39953bf`, 60/60 amostras a 1 Hz confirmaram o primeiro scan de
+fila/browser sem playback; duas reaberturas mediram novamente a fila. Os
+valores e a distinção do browser em cache estão no baseline. Essa amostra
+limitada não fixa budgets nem valida player ativo/recuperação física.
+Um readback integral da partição factory confirmou o hash do binário
+`39953bf` antes de um novo boot normal; o editor salvou e releu um arquivo
+descartável, depois removido. Isso não aceita poweroff, recovery sob falha
+de SD/NVS nem integridade após perda de energia.
+No mesmo binário, `GET /battery` a 1 Hz capturou o corte natural em 8201 mV
+e uma série pós-corte sem religação observada; o cabo USB permaneceu ligado
+fisicamente, portanto isso não substitui o cenário bateria-only nem o rearme.
+Uma janela adicional de 301 pontos cobriu 300 s contínuos com latch ativo e
+carregador desligado. Falha TCP no loopback seguida de sucesso no HTTP local
+e três screenshots estáveis deram evidência parcial de degradação/recuperação
+sem destino externo; não transferir esse resultado para perda de rádio/SD.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

@@ -277,14 +277,145 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
   `off=true`. `screen.wake` respondeu `woke=true`; uptime chegou a 4m14s sem
   reboot observado.
 
+### Duração e stack do scan de música — imagem `39953bf` (parcial)
+
+- Firmware ainda `1.6.0` sem tag, binário SHA-256
+  `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`,
+  diferente dos snapshots anteriores. `make -C tests/host/keymap clean test
+  verify`, `idf.py build` e contrato do dashboard passaram; flash em
+  `/dev/ttyACM0` verificou o hash. `sys.info` no boot indicou uptime 6 s,
+  `safe_mode=false`, `interrupted_boots=0`. Esse registro continua sem
+  atestação independente do **binário inteiro** em execução.
+- `music.scan` antes de abrir retornou `player_not_running`. Após uma única
+  abertura do player, a fila concluiu em **472 ms**, com **2688 B de folga
+  mínima** na task `music_scan` de 6144 B; o browser concluiu em **10 ms**,
+  com **3824 B livres**. A duração usa ticks FreeRTOS, portanto o resultado
+  de 10 ms tem resolução de um tick, não precisão submilissegundo.
+- `tools/collect_music_status_series.py` (`music.status`, `music.scan`,
+  `sys.info` sequenciais na mesma sessão Serial-JTAG) produziu 60/60 amostras
+  válidas a 1 Hz, 59 intervalos de 1000 ms, uptime `00:00:24`→`00:01:23`:
+  [`phase3-music-scan-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-music-scan-1.6.0-20261105.csv),
+  SHA-256 `b48f5192c65e3fd769baf1f8e5bc7049e8187acad0aea3a6ee3d2db3ffaf929b`.
+  Nas 60 amostras, `state=stopped`, `track_count=14`, `position_ms=0`, os
+  dois scans concluídos com sucesso e as métricas acima permaneceram
+  estáveis; latência conjunta das três consultas no host 6–15 ms.
+  `music.diagnostics` ao fim confirmou zero gerações de playback e zero
+  falhas; uptime chegou a `00:01:39`. O CSV não inclui SSID ou nomes/caminhos
+  de faixas.
+- Após `screen.wake` e `ui.escape`, `music.scan` voltou a responder
+  `player_not_running`. Duas aberturas/fechamentos adicionais, sem Enter no
+  foreground, deram **354 ms / 2704 B** e **353 ms / 2704 B** para a fila;
+  `music.status` manteve `stopped`, 14 faixas, posição 0. O browser manteve
+  o modelo anterior em cache entre sessões e não iniciou novo scan:
+  `browser.completed=false` com duração/stack zero significa **não medido
+  nessa sessão**, não falha. Uptime final `00:02:29`, sem reboot observado.
+  Essa pequena amostra não aprova orçamento de latência, stack nem throughput;
+  ainda faltam decoder/playback e outros workers.
+
+### Readback independente e editor descartável — `39953bf` (parcial)
+
+- Após encerrar o player e sem outro leitor na porta, o esptool fez apenas
+  `read-flash 0x10000 0x27a6e0` da partição `factory` (offset confirmado na
+  tabela de partições), com reset controlado antes/depois. SHA-256 dos
+  **2.598.624 bytes lidos** foi exatamente
+  `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`,
+  igual ao `build/cyberdeck5.bin`. O dump bruto ficou apenas em
+  `/tmp/opencode/phase3-readback-39953bf.bin`, **não versionado**; não leu
+  NVS ou SD. `sys.info` após o reset voltou com uptime 6 s,
+  `safe_mode=false`, zero boots interrompidos. Isto identifica o conteúdo
+  inteiro gravado no único slot app `factory` da imagem em execução após
+  boot normal, sem reivindicar remote attestation/secure boot.
+- No shell, `cat /data/phase3-editor-roundtrip-20261105.txt` inicialmente
+  retornou `file not found`. `edit` abriu buffer novo; `ui.type
+  PHASE3_EDITOR_ROUNDTRIP` escreveu a linha e Enter inseriu newline,
+  `ui.dump` mostrou dirty (`*`); `ui.escape` apresentou confirmação
+  `Salvar / Descartar / Cancelar`. Enter na confirmação salvou e fechou;
+  `cat` retornou `PHASE3_EDITOR_ROUNDTRIP` com newline. `rm` removeu apenas
+  esse arquivo descartável, e `cat` voltou a retornar `file not found`.
+  Uptime foi de 6 s pós-reset a 1m10s, sem reboot/panic observado.
+  Este ensaio não mede hash de bytes via reader independente, codecs legados,
+  conflito de save nem falha física/atômica de FAT/SD.
+
+### Corte de carga observado pela LAN — `39953bf` (parcial)
+
+- O coletor `tools/collect_battery_series.py` usou **somente HTTP** durante
+  as amostras, com 60 respostas 200 a 1 Hz e 59 intervalos de 1000 ms:
+  [`phase3-battery-readback-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-readback-1.6.0-20261105.csv),
+  SHA-256 `90c27bf844fdf954f5ba1c9259806abd5fac82e3f8fe8aea3f7fddf375e1eee3`.
+  Uptime 94→153 s, sem falha HTTP. Com proteção ligada e 100% na escala da
+  política, o corte ocorreu **uma vez entre t=33 s e 34 s**: 8198 mV,
+  -183 mA, `protection_active=false`, `charger_enabled=true` → 8201 mV,
+  -192 mA, `protection_active=true`, `charger_enabled=false`.
+  Entre t=38 s e 39 s, corrente chegou a +2 mA e `state` mudou de
+  `charging` para `external`; `charge=not_charging` é a leitura separada
+  de CHG_STAT, não substitui a evidência de corrente. A série não mostrou
+  segunda transição de CHG_EN.
+- Série pós-corte independente de 60 amostras a 1 Hz, uptime 190→249 s,
+  60 HTTP 200/0 falhas:
+  [`phase3-battery-postcut-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-postcut-1.6.0-20261105.csv),
+  SHA-256 `7d4e1705b31479f6cadcfc55493a1e99a3670f844d16a8823a4b1993869b20de`.
+  `state=external`, corrente +2 mA, 8115–8120 mV, percentual 100%,
+  proteção ativa e carregador desligado em todas as amostras. Há um intervalo
+   **não observado** entre as séries; dois CSVs separados não provam cinco
+   minutos contínuos sem oscilação.
+- Terceira série pós-corte de 180 amostras a 1 Hz, uptime 266→445 s,
+  180 HTTP 200/0 falhas:
+  [`phase3-battery-latch-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-latch-1.6.0-20261105.csv),
+  SHA-256 `0d52978a50da48203e6a5b3f970300acb96f281121492fd90717ed1cbb768e89`.
+  Em todas as amostras `state=external`, percentual 100%, corrente +2 mA,
+  8107–8113 mV, proteção ativa e carregador desligado. O uptime final é
+  317 s posterior ao instante do corte (128 s), mas houve intervalos
+  não observados entre estas séries: elas isoladamente não comprovam cinco
+  minutos **contínuos**. A janela independente de 301 amostras abaixo cobre
+  300 s entre extremos sem lacunas.
+- Janela **contínua** pós-corte de 301 amostras HTTP 200 a 1 Hz,
+  300 intervalos de exatamente 1000 ms, uptime 463→763 s, sem falha:
+  [`phase3-battery-latch-contiguous-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-latch-contiguous-1.6.0-20261105.csv),
+  SHA-256 `89058b821eb1d76d6209d5662ccbe4aff76871a9e9f934740f85f51ea9b0fd8e`.
+  Em todos os pontos: `state=external`, `charge=not_charging`, 100%,
+  corrente +2 mA, 8102–8107 mV, `protection_active=true` e
+  `charger_enabled=false`; latência HTTP 12–175 ms, idade da amostra 1–1000 ms.
+  `sys.info` após a coleta indicou uptime `00:13:10`, sem safe mode/reboot.
+  Isso satisfaz **somente** a observação contínua de cinco minutos do latch
+  com a fonte atual conectada, não prova leitura física do pino CHG_EN nem
+  cobre rearme/ausência de fonte.
+- **Limite material:** o cabo USB Serial-JTAG permaneceu fisicamente ligado
+  para descobrir o IP antes das coletas, embora nenhum leitor serial estivesse
+  aberto durante os requests HTTP. A fonte elétrica não foi isolada: isso
+  **não** aceita os cenários bateria-only/sem USB do roteiro manual, o rearme
+  a 90% ou o corte da energia pelo poweroff. Não desligar a proteção nem
+  desconectar alimentação para forçar uma segunda transição nesta etapa.
+
+### Degradação de rede local e carga HTTP — `39953bf` (parcial)
+
+- Com shell e Wi-Fi disponíveis, `netdiag tcp 127.0.0.1 1` concluiu em
+  `state=failed`, `error=tcp_failed`, duração 4 ms; depois do cooldown,
+  `netdiag tcp 127.0.0.1 80` concluiu em `state=complete`, duração 5 ms.
+  As duas consultas `netdiag result` devolveram o prompt; não houve acesso a
+  destino externo, mudança da rede ou perda de uptime. Isto demonstra
+  tratamento de conexão recusada e operação posterior bem-sucedida, **não**
+  injeção de perda de Wi-Fi/Hosted, timeout DNS/TLS ou recovery de todos os
+  serviços.
+- Três `GET /screenshot` sequenciais retornaram HTTP 200 e BMP 24-bit
+  1280×720 com 2.764.854 B: 3,436 / 3,135 / 3,458 s no host.
+  `sys.info` antes da primeira captura: `psram_free=31270928` B; após duas:
+  29403132 B; após a terceira: **29403132 B**, sem queda adicional.
+  A primeira diferença corresponde à reserva estática da porta de display
+  já explicada no baseline anterior; não inferir ausência universal de leak.
+  Uptime cresceu até `00:15:09`, `safe_mode=false`; os BMPs contêm tela e
+  ficaram apenas em `/tmp/opencode/`, não versionados.
+
 ## Pendências para fechar a Fase 3
 
-1. A imagem nova tem build/hash, flash verificado e log de boot; falta uma
-   atestação independente do binário em execução. A identificação da imagem
-   anterior `1.5.0` continua limitada à versão, não ao hash; não comparar
-   binários anteriores como iguais com base somente em `fw_version`.
+1. A imagem `39953bf` tem build/hash, flash verificado e readback integral
+   do único slot app `factory`, seguido por boot normal; isso identifica
+   independentemente o conteúdo gravado sem prometer secure boot/remote
+   attestation. A identificação da imagem anterior `1.5.0` continua limitada
+   à versão, não ao hash; não comparar binários anteriores como iguais com
+   base somente em `fw_version`.
 2. As séries de 1 s cobrem repouso/captura HTTP, player parado e uma task
-   serial. Faltam stack high-water das outras tasks, overflow e tempo de
+   serial; três scans da fila e um do browser já têm duração/high-water
+   físicos. Faltam stack de outros workers, overflow e tempo de
    operações de editor/BLE/player ativo sob cenários representativos. Não fixar
    budgets a partir de uma janela curta nem da soma de mínimos por região.
 3. Medir os cenários seguros da matriz com tempos por estágio e configuração

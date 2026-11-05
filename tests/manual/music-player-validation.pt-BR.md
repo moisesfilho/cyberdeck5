@@ -99,6 +99,10 @@ Serial-JTAG: `python3 tools/collect_music_status_series.py --seconds 60
 registra uma amostra por segundo, inclusive as últimas medições dos dois scans,
 e não coleta títulos/caminhos de faixas. `stack_high_water_bytes` é a menor
 folga de stack **da task de scan** durante a execução, não consumo máximo.
+Ao reabrir o player, o browser pode reutilizar o modelo em cache: nesse caso
+`browser.completed=false` após a nova abertura significa que **não houve
+scan do browser nessa sessão**, e não que ele falhou. Compare a medição da fila
+separadamente; `duration_ms` tem resolução de tick FreeRTOS.
 
 Aguarde `queue_scanning=false` em `music.status` antes de avaliar a contagem
 de fila. Com o scan em andamento, `music` e `music queue <dir>` são rejeitados com

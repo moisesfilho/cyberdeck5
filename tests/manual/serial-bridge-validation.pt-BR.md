@@ -230,6 +230,20 @@ firmware correspondente e uma execucao deste roteiro.
 
 ## 6. sys.info / wifi
 
+### Identidade de imagem sem endpoint adicional (leitura do flash)
+
+Se `fw_version` for igual em builds distintos e for necessário comparar os
+bytes gravados, confirme o offset do slot `factory` na tabela de partições
+gerada (`gen_esp32part.py build/partition_table/partition-table.bin`). Com a
+porta Serial-JTAG livre, o player/editor fechados e a imagem compilada, leia
+**somente o comprimento de `build/cyberdeck5.bin`** a partir desse offset com
+`esptool read-flash`; compare SHA-256 do arquivo lido ao binário local.
+O esptool reinicia o dispositivo para entrar/sair do bootloader; confirme
+`sys.info` e o boot normal depois. Não leia nem publique NVS, SD, partição
+inteira ou o dump bruto: guarde este apenas em `/tmp/opencode/`. A igualdade
+prova o conteúdo do slot de app naquele instante, não secure boot ou
+atestação remota de toda a cadeia de execução.
+
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
 | W1 | `sys.info` | `fw_version`, `idf_version`, `chip=="esp32p4"`, `free_heap` (numero), `uptime` `HH:MM:SS` |  |  |
