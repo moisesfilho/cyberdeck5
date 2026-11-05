@@ -1081,6 +1081,25 @@ int main() {
     check(supervisor_runtime.stop_all(), "stop_all stops every application it can");
     check(!supervisor_a.running() && !supervisor_b.running(), "stop_all leaves no application running");
 
+    // OS-TAB5-BOOT-02: boot starts the demo and service dependencies, not
+    // unrelated foreground apps; the shell is started by the serial dependency.
+    cyberdeck_apps::runtime boot_runtime;
+    tracked_foreground_app boot_shell("boot.shell", "shell");
+    tracked_foreground_app boot_editor("boot.editor", "edit");
+    configurable_app boot_serial("boot.serial");
+    boot_serial.manifest_.type = cyberdeck_apps::app_type::service;
+    boot_serial.manifest_.dependencies[0] = "boot.shell";
+    boot_serial.manifest_.dependency_count = 1;
+    non_foreground_command_app boot_demo("boot.demo", "demo", cyberdeck_apps::app_type::demo);
+    check(boot_runtime.register_application(boot_shell) && boot_runtime.register_application(boot_editor) &&
+              boot_runtime.register_application(boot_serial) && boot_runtime.register_application(boot_demo),
+          "boot fixture registers shell, foreground editor, serial service and demo");
+    check(boot_runtime.start_all(), "boot starts available services and demo");
+    check(boot_shell.running() && boot_serial.running(), "serial dependency starts the console shell");
+    check(!boot_editor.running() && boot_editor.start_calls == 0,
+          "boot does not activate an unrelated foreground app");
+    check(boot_demo.running() && boot_demo.start_calls == 1, "boot starts the non-foreground demo");
+
     if (failures == 0) {
         std::printf("PASS: app runtime (%d checks)\n", checks);
         return 0;

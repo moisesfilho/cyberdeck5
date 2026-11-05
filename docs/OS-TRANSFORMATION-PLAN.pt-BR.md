@@ -1,45 +1,67 @@
-# Plano de Transformacao em Sistema Operacional Embarcado
+# Registro Histórico da Transformação em Sistema Operacional Embarcado
 
-Este documento registra a evolucao do cyberdeck5 para um modelo de **OS
-embarcado simplificado**, inspirado em conceitos de Linux sem tentar
-reproduzi-lo. A arquitetura-alvo tem quatro camadas: `platform/hardware`,
-`kernel/runtime`, `SDK` e `apps`. O BSP `m5stack_tab5` permanece vendored e o
-alvo desta fase continua sendo exclusivamente o M5Stack Tab5.
+> **Documento histórico, não plano de execução vigente.** Este arquivo preserva
+> decisões arquiteturais, fases, regressões, critérios e evidências registradas
+> durante a transformação do cyberdeck5. Para priorização, requisitos e aceite
+> de mudanças futuras, use [`OS-IMPLEMENTATION-PLAN.pt-BR.md`](OS-IMPLEMENTATION-PLAN.pt-BR.md).
+> Para o estado atual, confirme as afirmações no código, em
+> [`ARCHITECTURE.pt-BR.md`](ARCHITECTURE.pt-BR.md) e no `code-map.md` antes de
+> aplicá-las; resultados físicos aqui descritos pertencem às versões indicadas
+> em cada registro e não validam automaticamente o firmware atual.
+
+Este documento registra a evolução do cyberdeck5 como **ambiente operacional
+embarcado específico do M5Stack Tab5**. O produto integrado combina o kernel
+FreeRTOS, a plataforma ESP-IDF/BSP e as camadas próprias `platform/hardware`,
+`system runtime`, `SDK` e `apps`. O cyberdeck5 não implementa um kernel próprio;
+o BSP `m5stack_tab5` permanece vendored e o alvo continua sendo exclusivamente
+o M5Stack Tab5.
+
+O objetivo é satisfazer os requisitos operacionais deste dispositivo, não
+reimplementar todos os subsistemas de um SO de propósito geral. Responsabilidades
+de escalonamento, memória, VFS e drivers fornecidas por FreeRTOS/ESP-IDF contam
+como parte do sistema integrado e devem ser atribuídas explicitamente ao
+componente que as fornece. Isolamento de apps e execução de código não confiável
+só passam a ser requisitos se o escopo de produto mudar.
 
 A inspiração em Linux e Tactility é conceitual; nenhum código GPL do Tactility
 é copiado. Não há loader ELF, instalação dinâmica, scripts ou execução de
-aplicações do SD nesta fase, nem portabilidade dos Drivers do Tactility.
+aplicações do SD nesta fase, nem portabilidade dos Drivers do Tactility. Essas
+ausências são limites deliberados para um firmware de alvo fixo, não bloqueios
+para chamar o produto integrado de sistema operacional embarcado.
 
 ## Decisões aprovadas e contrato de evolução
 
 - **platform/hardware:** BSP, ESP-IDF, LVGL, drivers e integrações físicas do
   Tab5; `m5stack_tab5` é a implementação vendored do único alvo.
-- **kernel/runtime:** supervisor, lifecycle, grants, filas bounded, recovery e
+- **system runtime:** supervisor, lifecycle, grants, filas bounded, recovery e
   composição de boot. O boot é declarativo pelo supervisor; enquanto a
   migração não estiver completa, `app_main` ainda pode conter a sequência de
   composição necessária. A próxima implementação deve reduzir essa sequência,
   não duplicá-la.
-- **SDK:** contrato predefinido para apps compiladas. A primeira API de
-  plataforma é `storage` com leitura bounded (`bounded-read`) e `logger` com
-  eventos/linhas bounded. O código atual já expõe grants/fachadas e a porta
-  `cyberdeck_apps::logger`; a operação de leitura bounded permanece item de
-  implementação do SDK, não uma promessa de acesso direto ao VFS.
+- **SDK:** contrato predefinido para apps compiladas. `storage` já oferece
+  leitura bounded e operações de salvamento confinadas consumidas pelo editor;
+  `logger` e fachadas de recursos usam grants revogáveis. Não há acesso livre ao
+  VFS por meio do SDK.
 - **apps:** command apps compiladas contra o SDK. O runtime deve preservar as
   respostas e o output observáveis das apps existentes, especialmente o fluxo
   interativo SSH; não se fixa um formato universal de reply/output sem provar
   compatibilidade com esses consumidores.
 
-Itens abertos continuam deliberadamente abertos: contrato final de command
-apps, operação de storage bounded-read, quotas do SDK, catálogo de recursos,
-empacotamento de assets e eventual host seguro para distribuição. Loader
-dinâmico/ELF permanece fora de escopo até existirem sandbox, permissões,
-limites de memória e validação de assinatura.
+Os contratos de command apps, storage bounded-read, quotas, catálogo de recursos
+e pacote de dados/assets foram implementados nos recortes registrados neste
+plano. Distribuição de código executável continua fora de escopo; loader
+dinâmico/ELF só deve ser reconsiderado após requisito explícito de apps
+independentes e decisão de segurança/plataforma.
+
+A revisão do código, das funcionalidades e dos gates de desempenho e
+compatibilidade fica em `docs/OS-IMPLEMENTATION-PLAN.pt-BR.md`; as fases abaixo
+são registro da evolução, não autorização para substituir apps existentes.
 
 ## Rastreabilidade da decisão aprovada
 
 | Identificador | Decisão/critério | Evidência e arquivo correspondente |
 | --- | --- | --- |
-| REQ-1 | Separar platform/hardware, kernel/runtime, SDK e apps compiladas. | Seções **Decisões aprovadas** e **Estrutura-Alvo** deste plano; `code-map.md` (visão geral e runtime de aplicações compiladas). |
+| REQ-1 | Distinguir platform/hardware, system runtime, SDK e apps compiladas; identificar FreeRTOS/ESP-IDF como kernel/plataforma do produto integrado. | Seções **Decisões aprovadas** e **Estrutura-Alvo** deste plano; `docs/OS-IMPLEMENTATION-PLAN.pt-BR.md`; `code-map.md`. |
 | REQ-2 | Usar manifestos, lifecycle, dependências e grants bounded sob um supervisor. | `components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h`; `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp`; seções 1, 2 e 9 deste plano. |
 | REQ-3 | Isolar serviços por portas/eventos e preservar limites, teardown cooperativo e ownership. | `components/cyberdeck/include/apps/system/cyberdeck_service_ports.h`; `components/cyberdeck/src/apps/ssh/ssh_client.cpp`; `components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp`; seções 3–5 deste plano. |
 | REQ-4 | Preservar a compatibilidade da saída observável, especialmente o fluxo interativo SSH. | `components/cyberdeck/src/apps/ssh/ssh_client.cpp`; `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp`; `components/cyberdeck/src/apps/shell/cyberdeck_shell_console.cpp`; seção **apps** deste plano. |
@@ -49,12 +71,12 @@ limites de memória e validação de assinatura.
 
 | Critério | Evidência de aceite e arquivo correspondente |
 | --- | --- |
-| AC-1 | As quatro camadas, limites de escopo e itens abertos estão explícitos em **Decisões aprovadas e contrato de evolução** e **Não Objetivos** deste plano. |
+| AC-1 | As quatro camadas próprias do cyberdeck5, a composição com FreeRTOS/ESP-IDF/BSP, os limites de escopo e os itens em aberto estão explícitos em **Decisões aprovadas e contrato de evolução** e **Não Objetivos** deste plano. |
 | AC-2 | O runtime declara manifestos, dependências, lifecycle, recursos e grants bounded em `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp`, com contratos host referenciados em `code-map.md`. |
 | AC-3 | Saída SSH, storage bounded-read e logger têm evidência documental e pontos de código identificados em `components/cyberdeck/src/apps/ssh/ssh_client.cpp`, `components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp` e `components/cyberdeck/include/apps/runtime/cyberdeck_app_logger.h`. |
 | AC-4 | A auditoria REQ/AC permanece navegável por este plano, `code-map.md`, `docs/ARCHITECTURE.pt-BR.md` e `tests/host/keymap/phase10_traceability.md`, sem alterar código, testes ou `API.md`. |
 
-## Status Atual
+## Status das Fases de Transformação
 
 - [x] Separar `src/apps/` de `src/platform/`.
 - [x] Organizar shell, Wi-Fi, SSH, Bluetooth, Serial-JTAG e Screenshot como apps.
@@ -90,7 +112,14 @@ foi elevado para 8 s. Regressao coberta por `test_app_runtime.cpp` (`slow_app` e
 fail-closed. A cobertura comportamental do stop permanece encaminhada ao gate
 de testes da Etapa 5.
 
-## Fases Pendentes
+## Registro das Fases de Transformação
+
+As fases descritas abaixo registram capacidades implementadas e a evidência
+disponível em cada etapa; uma marcação `[x]` não substitui validação das versões
+atuais nem significa que o cyberdeck5 contenha um kernel próprio. A evolução
+seguinte deve ser guiada pelos requisitos e critérios do
+`docs/OS-IMPLEMENTATION-PLAN.pt-BR.md`, não pela busca de equivalência com Linux
+ou com todos os tópicos do livro de Tanenbaum.
 
 ### 1. Supervisor de Sistema
 

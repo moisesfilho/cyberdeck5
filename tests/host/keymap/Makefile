@@ -2209,6 +2209,11 @@ test_boot_sequence: test_boot_sequence.py ../../../main/app_main.cpp ../../../co
 # The missing SDK/catalog modules intentionally make this target RED until the
 # coder implements the reviewed contracts; no production shim is supplied.
 .PHONY: test_os_transformation_backlog_contract
+.PHONY: test_os_dashboard_contract
+test_os_dashboard_contract: test_os_dashboard_contract.py ../../../docs/OS-IMPLEMENTATION-DASHBOARD.html \
+		../../../docs/OS-IMPLEMENTATION-PLAN.pt-BR.md ../../../docs/OS-TAB5-REQUIREMENTS.pt-BR.md
+	$(PYTHON) test_os_dashboard_contract.py
+
 test_os_transformation_backlog_contract: test_os_transformation_backlog_contract.py os_transformation_traceability.md \
 		../../../docs/OS-TRANSFORMATION-PLAN.pt-BR.md ../../../main/app_main.cpp \
 		../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h \
@@ -3139,6 +3144,8 @@ test: test-build
 	@$(MAKE) --no-print-directory test_boot_sequence
 	@echo "==> Executando contrato do backlog de transformacao do OS"
 	@$(MAKE) --no-print-directory test_os_transformation_backlog_contract
+	@echo "==> Conferindo progresso do dashboard contra o plano vigente"
+	@$(MAKE) --no-print-directory test_os_dashboard_contract
 	@echo "==> Executando contrato de recursos, pacote SD e quotas"
 	@$(MAKE) --no-print-directory test_resource_sd_quota_contract
 	@echo "==> Executando contrato TDD do despacho assincrono do teclado fisico"

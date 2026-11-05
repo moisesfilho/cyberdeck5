@@ -855,8 +855,9 @@ devem ser revisitados contra o código vigente antes de cada implementação.
        fsync enquanto o fsync binário está retido. Todos os waits de sincronização do harness runtime
        e shim expiram em cinco segundos e falham explicitamente.
 
-Mapa de navegacao do OS embarcado simplificado ESP-IDF para o unico alvo
-M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
+Mapa de navegacao do ambiente operacional embarcado do M5Stack Tab5
+(ESP32-P4), integrado sobre FreeRTOS/ESP-IDF. Os caminhos abaixo sao relativos
+a raiz do repositorio.
 
 ## Visao geral
 
@@ -963,9 +964,49 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
   snapshots a partir de task dedicada e a UI apenas os consome.
 - Artefatos de cobertura gcov comprimidos (`*.gcov.json.gz`) sao ignorados pelo
   Git para manter o repositorio livre de relatorios gerados.
-- A arquitetura e o plano de transformacao ficam em `docs/ARCHITECTURE*.md` e
-  `docs/OS-TRANSFORMATION-PLAN.pt-BR.md`, com as camadas platform/hardware,
-  kernel/runtime, SDK e apps, status das Fases 1-10 e backlog aprovado.
+- A arquitetura atual fica em `docs/ARCHITECTURE*.md`; o registro historico de
+  decisoes, fases e evidencias fica em `docs/OS-TRANSFORMATION-PLAN.pt-BR.md`.
+  O plano executavel vigente e `docs/OS-IMPLEMENTATION-PLAN.pt-BR.md`. O produto
+  integrado combina
+  FreeRTOS/ESP-IDF/BSP com as camadas cyberdeck5 `platform/hardware`,
+  `system runtime`, SDK e apps; o cyberdeck5 nao implementa kernel proprio.
+- `docs/OS-MATURITY-ASSESSMENT.pt-BR.md` analisa essas responsabilidades pela
+  lente de Tanenbaum, considerando o produto integrado e o alvo dedicado Tab5.
+  Registra as 12 apps de `cyberdeck_system_apps.cpp`, a diferença entre apps
+  registradas e ativas, os limites de grants/quotas e o boot atual IDF 6 com
+  preparo ESP-Hosted antes do mount SD obrigatório. Nao atribui percentuais
+  sem metodo nem trata loader, syscalls, POSIX ou isolamento como requisitos.
+- `docs/OS-IMPLEMENTATION-PLAN.pt-BR.md` define premissas, criterios OS-TAB5,
+  inventario de apps/funcionalidades e criterios OS-TAB5-01..08. As fases cobrem
+  baseline de compatibilidade, contratos de recursos, medicao antes/depois de
+  otimizacoes, confiabilidade fisica, modelo de ameaca e release; nao propoem
+  kernel proprio ou boot degradado SD nao implementado. Gatilhos de mudanca de
+  escopo exigem reavaliacao arquitetural.
+- `docs/OS-IMPLEMENTATION-DASHBOARD.html` e a visualizacao estatica em HTML/CSS/JS
+  local: os itens de `const dashboard` representam os checkboxes das Fases 0-5
+  do plano, recortes da Fase 1 e criterios OS-TAB5-01..08. Barras e totais sao
+  derivados dos estados `done/active/todo`; atualizar o arquivo junto com plano,
+  requisitos e evidencias. `test_os_dashboard_contract.py` reconcilia contagem e
+  estado concluido dos checkboxes de cada fase, IDs dos criterios e links locais;
+  o Makefile o inclui no agregado host e verifica também a paridade dos três
+  recortes com `OS-TAB5-REQUIREMENTS.pt-BR.md`. A fase `active` recebe destaque visual
+  e seus itens iniciam expandidos. Recortes documentados nao equivalem a aceite
+  fisico.
+- `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` registra os tres recortes da Fase 1:
+  inventario de
+  criticidade extraido de `main/app_main.cpp`, `cyberdeck_system_apps.cpp` e
+  `cyberdeck_shell_app.cpp`; requisitos OS-TAB5-BOOT-01/02,
+  OS-TAB5-CONSOLE-01 e OS-TAB5-SERIAL-01 com precondicao, observavel, falha,
+  dono e links para testes host/roteiro Serial-JTAG. O segundo recorte mapeia
+  Wi-Fi/SSH/screenshot/time sync, BLE, editor, netdiag, player e demo; o teste
+  comportamental em `test_app_runtime.cpp` protege a admissao de demo e da
+  dependencia da shell pelo serial sem ativar editor foreground. O Recorte 3
+  cobre display/IMU/teclado, bateria/GET /battery, screen-off, SD/storage e
+  poweroff, com donos, falhas e gates seguros: nao autoriza corte fisico ou
+  retirada de SD. A Fase 1 foi concluida documentalmente com matriz de
+  criticidade, cenarios/recuperacao, ledger de timeouts e tabela de formatos.
+  As arquiteturas PT/EN ganharam matriz de responsabilidades. Gates fisicos e
+  compatibilidade integrada permanecem nas fases 3/5. Nenhum firmware mudou.
 - `components/m5stack_tab5/` é o BSP vendored do único alvo; sua API é
   documentação upstream/gerada e não o SDK de aplicações.
 
@@ -2938,9 +2979,31 @@ O roteiro da ponte serial esta em
   mapa, incluindo a politica de busca progressiva, a consistencia de
   documentacao e limiares, a memoria de projeto como fonte derivada, a regra de
   versao liberada por tag e a exigencia de serie temporal na validacao fisica.
+  Ao avancar o plano OS Tab5, sincronizar dashboard/criterios com evidencias;
+  validar a paridade via `test_os_dashboard_contract`.
 - `README.md` e `README.pt-BR.md`: recursos, uso do shell, Wi-Fi, SSH, comandos locais `netdiag` (status, DNS, TCP, HTTPS HEAD, resultado e cancelamento), screenshot e ponte serial.
 - `docs/ARCHITECTURE.md` e `docs/ARCHITECTURE.pt-BR.md`: principios, boot, concorrencia Wi-Fi, screenshot,
   ponte serial, bateria e UI.
+- `docs/OS-MATURITY-ASSESSMENT.pt-BR.md`: avaliacao analitica de maturidade
+  do produto integrado pela lente de Tanenbaum, inventario real de apps,
+  dependencias de boot IDF 6/SD e gatilhos de escopo; nao prescreve kernel proprio.
+- `docs/OS-IMPLEMENTATION-PLAN.pt-BR.md`: plano de implementacao orientado aos
+  requisitos do Tab5, com premissas, inventario de compatibilidade,
+  criterios OS-TAB5-01..08, baseline/otimizacao mensurada, fases e gates.
+- `docs/OS-IMPLEMENTATION-DASHBOARD.html`: dashboard offline do plano; sem
+  dependencias externas, mostra progresso geral, por fase, por recorte de
+  requisitos e por criterios de aceite.
+- `tests/host/keymap/test_os_dashboard_contract.py`: contrato do dashboard
+  contra as fases/checkboxes/criterios do plano e links HTML relativos.
+- `docs/OS-TAB5-REQUIREMENTS.pt-BR.md`: baseline inicial da Fase 1 para
+  boot/recovery, console, Serial-JTAG, conectividade, apps compiladas, hardware,
+  SD e poweroff; rastreia
+  `test_boot_sequence`, `test_recovery_policy`, `test_app_runtime`, `test_shell_app`,
+  testes de rede/BLE/editor/netdiag/player e roteiro manual. Aceite no
+  dispositivo permanece pendente.
+- `tests/host/keymap/test_app_runtime.cpp` cobre adicionalmente
+  OS-TAB5-BOOT-02: `start_all()` tenta demo e serial, inicia shell pela
+  dependencia do serial e nao inicia editor foreground independente.
 - `tests/manual/tui-shell-validation.pt-BR.md`: validacao no dispositivo.
 - `docs/WIFI.md`: fluxos Wi-Fi, incluindo auditoria local e salvamento explícito
   da rede conectada.

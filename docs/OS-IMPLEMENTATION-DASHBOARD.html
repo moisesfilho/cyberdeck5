@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:,">
+  <title>cyberdeck5 · progresso OS Tab5</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: #080808;
+      color: #f2f2f2;
+      font-size: 14px;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; line-height: 1.55; }
+    a { color: inherit; text-underline-offset: 4px; }
+    a:hover, a:focus-visible { color: #fff; }
+    a:focus-visible, summary:focus-visible { outline: 2px solid #f2f2f2; outline-offset: 4px; }
+    .shell { max-width: 1200px; margin: 0 auto; padding: 0 28px 72px; }
+    .topbar { border-bottom: 1px solid #2a2a2a; }
+    .topbar .shell { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-top: 16px; padding-bottom: 16px; }
+    .brand { font-size: 13px; font-weight: 800; letter-spacing: .11em; text-decoration: none; white-space: nowrap; }
+    .brand span { color: #8a8a8a; }
+    .topbar nav { display: flex; flex-wrap: wrap; gap: 22px; font-size: 12px; color: #aaa; }
+    .eyebrow, .kicker { text-transform: uppercase; font-size: 11px; font-weight: 700; letter-spacing: .16em; color: #aaa; }
+    .eyebrow { margin: 0 0 15px; }
+    .intro { padding: 60px 0 38px; }
+    h1 { font-size: clamp(30px, 5vw, 55px); line-height: 1.09; letter-spacing: -.055em; margin: 0; max-width: 750px; }
+    .lead { color: #b4b4b4; max-width: 710px; margin: 18px 0 0; font-size: 14px; }
+    .context { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 25px; }
+    .tag { display: inline-block; border: 1px solid #383838; border-radius: 4px; padding: 5px 9px; color: #c6c6c6; font-size: 11px; }
+    .tag.active { border-color: #999; color: #fff; }
+    .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; }
+    .card { background: #101010; border: 1px solid #292929; border-radius: 9px; padding: 22px; min-width: 0; }
+    .hero { grid-column: span 7; padding: 30px; background: linear-gradient(135deg, #191919 0%, #0f0f0f 75%); }
+    .hero .large { display: block; font-size: clamp(70px, 12vw, 126px); letter-spacing: -.09em; line-height: 1.1; font-weight: 700; margin: 18px 0 11px; }
+    .hero p { color: #a9a9a9; max-width: 500px; margin: 18px 0 0; font-size: 12px; }
+    .side { grid-column: span 5; display: flex; flex-direction: column; gap: 14px; }
+    .side .card { flex: 1; }
+    .metric-line { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 9px 0 12px; }
+    .metric-line strong { font-size: 28px; line-height: 1; letter-spacing: -.06em; }
+    .metric-line span, .meta { color: #aaa; font-size: 12px; }
+    .bar { display: block; width: 100%; height: 11px; border-radius: 99px; background: #303030; overflow: hidden; }
+    .bar-fill { display: block; width: 0; height: 100%; border-radius: 99px; background: #e6e6e6; }
+    .section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin: 51px 0 17px; }
+    h2 { font-size: 20px; letter-spacing: -.03em; margin: 0; }
+    h3 { font-size: 16px; margin: 9px 0 15px; letter-spacing: -.02em; }
+    .section-title p { color: #999; font-size: 12px; margin: 0; text-align: right; }
+    .phase { grid-column: span 6; }
+    .phase.is-active {
+      border-color: #777;
+      background: linear-gradient(145deg, #1a1a1a 0%, #111 72%);
+      box-shadow: inset 0 0 0 1px #383838;
+    }
+    .phase-top { display: flex; justify-content: space-between; gap: 14px; align-items: start; }
+    .phase-number { color: #888; font-size: 12px; }
+    .phase .metric-line strong { font-size: 19px; }
+    .phase .metric-line { margin: 19px 0 10px; }
+    .phase details { border-top: 1px solid #2c2c2c; margin-top: 22px; padding-top: 13px; }
+    .phase summary { cursor: pointer; color: #ccc; font-size: 12px; }
+    .phase ul { list-style: none; margin: 14px 0 0; padding: 0; }
+    .phase li { display: flex; gap: 10px; padding: 6px 0; color: #aaa; font-size: 12px; }
+    .phase li .mark { width: 14px; flex: none; font-weight: bold; }
+    .phase li.done { color: #f2f2f2; }
+    .phase li.active { color: #dedede; }
+    .criteria { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .criterion { border: 1px solid #2b2b2b; background: #101010; border-radius: 7px; padding: 15px; display: flex; gap: 14px; align-items: start; }
+    .criterion code { color: #eee; font-size: 12px; white-space: nowrap; }
+    .criterion div { color: #aaa; font-size: 12px; }
+    .criterion small { display: block; margin-top: 6px; color: #888; font-size: 11px; }
+    .notice { border-left: 3px solid #a0a0a0; background: #151515; padding: 17px 20px; color: #c4c4c4; font-size: 12px; margin-top: 30px; }
+    footer { border-top: 1px solid #2a2a2a; margin-top: 48px; padding-top: 18px; color: #888; font-size: 11px; }
+    footer a { color: #ccc; }
+    @media (max-width: 760px) {
+      .shell { padding-left: 18px; padding-right: 18px; }
+      .intro { padding-top: 40px; }
+      .hero, .side, .phase { grid-column: 1 / -1; }
+      .criteria { grid-template-columns: 1fr; }
+      .section-title { flex-direction: column; gap: 4px; }
+      .section-title p { text-align: left; }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      a { transition: color .18s ease; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell">
+      <a class="brand" href="OS-IMPLEMENTATION-PLAN.pt-BR.md">CYBERDECK5 <span>/ OS TAB5</span></a>
+      <nav aria-label="Documentos do projeto">
+        <a href="OS-IMPLEMENTATION-PLAN.pt-BR.md">Plano</a>
+        <a href="OS-TAB5-REQUIREMENTS.pt-BR.md">Requisitos</a>
+        <a href="../code-map.md">Mapa do código</a>
+      </nav>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="intro">
+      <p class="eyebrow">Acompanhamento / implementação</p>
+      <h1>Um sistema operacional <br>para o Tab5, passo a passo.</h1>
+      <p class="lead">Visão dos marcos do plano, com rastreabilidade separada da validação no dispositivo. Progresso de documentação ou testes host não equivale a firmware aprovado.</p>
+      <div class="context">
+        <span class="tag active" id="current-phase">FASE EM ANDAMENTO</span>
+        <span class="tag">ESP32-P4 / M5STACK TAB5</span>
+        <span class="tag">FONTE: PLANO VIGENTE</span>
+      </div>
+    </div>
+
+    <section class="grid" aria-label="Resumo do progresso">
+      <div class="card hero">
+        <span class="kicker">Marcos concluídos · fases 0–5</span>
+        <output class="large" id="overall-percent">—</output>
+        <div id="overall-progress" class="bar" role="progressbar" aria-label="Marcos concluídos no plano" aria-valuemin="0"><span class="bar-fill"></span></div>
+        <p id="overall-summary"></p>
+      </div>
+      <div class="side">
+        <div class="card">
+          <span class="kicker">Rastreabilidade / Fase 1</span>
+          <div class="metric-line"><strong id="slices-count">—</strong><span>recortes documentados</span></div>
+          <div id="slices-progress" class="bar" role="progressbar" aria-label="Recortes de requisitos documentados" aria-valuemin="0"><span class="bar-fill"></span></div>
+          <p class="meta">Recortes documentados não equivalem a aceite físico.</p>
+        </div>
+        <div class="card">
+          <span class="kicker">Aceite do produto</span>
+          <div class="metric-line"><strong id="criteria-count">—</strong><span>critérios OS-TAB5 aceitos</span></div>
+          <div id="criteria-progress" class="bar" role="progressbar" aria-label="Critérios OS-TAB5 aceitos" aria-valuemin="0"><span class="bar-fill"></span></div>
+          <p class="meta">Aceitar somente após evidência exigida pelo plano, inclusive no Tab5 quando aplicável.</p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="phases-heading">
+      <div class="section-title"><h2 id="phases-heading">Fases do plano</h2><p>Concluído / total de itens; trabalho parcial não soma como concluído.</p></div>
+      <div class="grid" id="phases"></div>
+    </section>
+
+    <section aria-labelledby="criteria-heading">
+      <div class="section-title"><h2 id="criteria-heading">Critérios de aceite</h2><p>OS-TAB5-01…08 · evidência antes de marcar como aceito</p></div>
+      <div class="criteria" id="criteria"></div>
+    </section>
+
+    <aside class="notice"><strong>Regra de atualização.</strong> Atualize os estados dos marcos e critérios no bloco <code>const dashboard</code> abaixo somente com evidência nos documentos/testes do projeto. Concilie as listas com o plano ao adicionar ou concluir um item; não antecipe aceite físico, release ou melhoria de desempenho. Este arquivo não consulta o dispositivo nem atualiza os dados automaticamente.</aside>
+    <footer>
+      Fonte: <a href="OS-IMPLEMENTATION-PLAN.pt-BR.md">plano vigente</a> e <a href="OS-TAB5-REQUIREMENTS.pt-BR.md">matriz de requisitos</a>. <span id="updated"></span> · Página estática, sem rede e sem bibliotecas externas.
+    </footer>
+  </main>
+
+  <script>
+    // Atualize este bloco junto com o plano e as evidências. "active" não é "done".
+    const dashboard = {
+      updated: "05/11/2026",
+      phases: [
+        { name: "Fronteira e inventário", state: "done", items: [
+          ["Identificar FreeRTOS, ESP-IDF e BSP", "done"],
+          ["Distinguir system runtime de kernel", "done"],
+          ["Avaliar responsabilidades segundo Tanenbaum", "done"],
+          ["Delimitar loader, syscalls e isolamento", "done"],
+          ["Conferir apps, SDK e ordem de boot no código", "done"]
+        ] },
+        { name: "Requisitos operacionais", state: "done", items: [
+          ["Completar inventário funcional dos três recortes", "done"],
+          ["Definir resultado, falha e recuperação por fluxo", "done"],
+          ["Classificar criticidade de cada serviço", "done"],
+          ["Fechar matriz requisito → módulo → teste → Tab5", "done"],
+          ["Consolidar baseline de formatos e interfaces", "done"]
+        ] },
+        { name: "Contratos de recursos", state: "todo", items: [
+          ["Auditar fronteiras apps/plataforma", "todo"],
+          ["Registrar limites e ownership dos recursos críticos", "todo"],
+          ["Preservar foreground, console e grants", "todo"],
+          ["Conferir boot Hosted/SDMMC sem reordenar", "todo"],
+          ["Documentar falha fatal do mount SD", "todo"],
+          ["Evitar quotas/abstrações sem enforcement", "todo"],
+          ["Revisar locks e falhas de lifecycle", "todo"]
+        ] },
+        { name: "Medição e compatibilidade", state: "todo", items: [
+          ["Definir cenários de carga e falha seguros", "todo"],
+          ["Medir heap, stack, latência e perdas", "todo"],
+          ["Coletar baseline antes de alterar código", "todo"],
+          ["Otimizar somente gargalos medidos", "todo"],
+          ["Validar falhas com recuperação segura", "todo"],
+          ["Fixar budgets derivados de medições", "todo"]
+        ] },
+        { name: "Segurança proporcional", state: "todo", items: [
+          ["Mapear ativos, exposição e atualização", "todo"],
+          ["Separar grants cooperativos de isolamento", "todo"],
+          ["Avaliar controles e recuperação", "todo"],
+          ["Reabrir arquitetura só com novo requisito", "todo"]
+        ] },
+        { name: "Release e manutenção", state: "todo", items: [
+          ["Executar gates host e build", "todo"],
+          ["Validar critérios afetados no Tab5", "todo"],
+          ["Atualizar mapas e rastreabilidade", "todo"],
+          ["Seguir política de versão; tag só sob pedido", "todo"]
+        ] }
+      ],
+      slices: [
+        ["Boot, recovery, console e Serial-JTAG", "done"],
+        ["Conectividade e apps compiladas", "done"],
+        ["Periféricos, SD e poweroff", "done"]
+      ],
+      criteria: [
+        ["OS-TAB5-01", "Responsabilidades identificadas", "done"],
+        ["OS-TAB5-02", "Fluxos, falhas e recuperação definidos", "done"],
+        ["OS-TAB5-03", "Limites e backpressure verificados", "todo"],
+        ["OS-TAB5-04", "Boot e recovery validados no Tab5", "todo"],
+        ["OS-TAB5-05", "Orçamento de RAM, stack e latência", "todo"],
+        ["OS-TAB5-06", "Modelo de ameaça e controles", "todo"],
+        ["OS-TAB5-07", "Compatibilidade de apps e dados", "active"],
+        ["OS-TAB5-08", "Otimização com ganho medido", "todo"]
+      ]
+    };
+
+    const labels = { done: "Concluído", active: "Em andamento", todo: "Pendente" };
+    const countDone = items => items.filter(item => item[1] === "done").length;
+    const progress = (element, done, total) => {
+      element.setAttribute("aria-valuenow", String(done));
+      element.setAttribute("aria-valuemax", String(total));
+      element.querySelector(".bar-fill").style.width = `${done / total * 100}%`;
+    };
+
+    const phaseItems = dashboard.phases.flatMap(phase => phase.items);
+    const completed = countDone(phaseItems);
+    document.querySelector("#overall-percent").textContent = `${Math.round(completed / phaseItems.length * 100)}%`;
+    document.querySelector("#overall-summary").textContent = `${completed} de ${phaseItems.length} itens concluídos. Trabalho parcial e validações físicas pendentes não contam como entregas concluídas.`;
+    progress(document.querySelector("#overall-progress"), completed, phaseItems.length);
+    const currentPhase = dashboard.phases.findIndex(phase => phase.state === "active");
+    const latestCompletedPhase = dashboard.phases.reduce((latest, phase, index) => phase.state === "done" ? index : latest, -1);
+    document.querySelector("#current-phase").textContent = currentPhase >= 0
+      ? `FASE ${currentPhase} · EM ANDAMENTO`
+      : latestCompletedPhase >= 0 && latestCompletedPhase + 1 < dashboard.phases.length
+        ? `FASE ${latestCompletedPhase} CONCLUÍDA · PRÓXIMA: ${latestCompletedPhase + 1}`
+        : "TODAS AS FASES CONCLUÍDAS";
+
+    const slicesDone = countDone(dashboard.slices);
+    document.querySelector("#slices-count").textContent = `${slicesDone} / ${dashboard.slices.length}`;
+    progress(document.querySelector("#slices-progress"), slicesDone, dashboard.slices.length);
+
+    const criteriaDone = dashboard.criteria.filter(criterion => criterion[2] === "done").length;
+    document.querySelector("#criteria-count").textContent = `${criteriaDone} / ${dashboard.criteria.length}`;
+    progress(document.querySelector("#criteria-progress"), criteriaDone, dashboard.criteria.length);
+    document.querySelector("#updated").textContent = `Atualização declarada: ${dashboard.updated}`;
+
+    const phaseContainer = document.querySelector("#phases");
+    dashboard.phases.forEach((phase, index) => {
+      const article = document.createElement("article");
+      article.className = `card phase${phase.state === "active" ? " is-active" : ""}`;
+      const top = document.createElement("div");
+      top.className = "phase-top";
+      const title = document.createElement("div");
+      const number = document.createElement("span");
+      number.className = "phase-number";
+      number.textContent = `FASE 0${index}`;
+      const heading = document.createElement("h3");
+      heading.textContent = phase.name;
+      title.append(number, heading);
+      const badge = document.createElement("span");
+      badge.className = `tag ${phase.state === "active" ? "active" : ""}`;
+      badge.textContent = labels[phase.state];
+      top.append(title, badge);
+
+      const summary = document.createElement("div");
+      summary.className = "metric-line";
+      const quantity = document.createElement("strong");
+      const done = countDone(phase.items);
+      quantity.textContent = `${done} / ${phase.items.length}`;
+      const caption = document.createElement("span");
+      caption.textContent = "itens concluídos";
+      summary.append(quantity, caption);
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      bar.setAttribute("role", "progressbar");
+      bar.setAttribute("aria-valuemin", "0");
+      const fill = document.createElement("span");
+      fill.className = "bar-fill";
+      bar.append(fill);
+      progress(bar, done, phase.items.length);
+      bar.setAttribute("aria-label", `Fase ${index}: ${done} de ${phase.items.length} itens concluídos`);
+
+      const details = document.createElement("details");
+      details.open = phase.state === "active";
+      const toggle = document.createElement("summary");
+      toggle.textContent = "Itens da fase";
+      const list = document.createElement("ul");
+      phase.items.forEach(([text, state]) => {
+        const item = document.createElement("li");
+        item.className = state;
+        const mark = document.createElement("span");
+        mark.className = "mark";
+        mark.setAttribute("aria-hidden", "true");
+        mark.textContent = state === "done" ? "✓" : state === "active" ? "◐" : "·";
+        const label = document.createElement("span");
+        label.textContent = `${text} — ${labels[state].toLowerCase()}`;
+        item.append(mark, label);
+        list.append(item);
+      });
+      details.append(toggle, list);
+      article.append(top, summary, bar, details);
+      phaseContainer.append(article);
+    });
+
+    const criteriaContainer = document.querySelector("#criteria");
+    dashboard.criteria.forEach(([id, title, state]) => {
+      const item = document.createElement("article");
+      item.className = "criterion";
+      const code = document.createElement("code");
+      code.textContent = id;
+      const body = document.createElement("div");
+      body.textContent = title;
+      const status = document.createElement("small");
+      status.textContent = labels[state];
+      body.append(status);
+      item.append(code, body);
+      criteriaContainer.append(item);
+    });
+  </script>
+</body>
+</html>

@@ -2,10 +2,13 @@
 
 **Idiomas:** [English](README.md) | [Português](README.pt-BR.md)
 
-OS embarcado simplificado para o único alvo M5Stack Tab5, com uma única tela
-TUI touch orientada a command apps compiladas. A primeira ferramenta é um
-cliente SSH interativo no terminal. A arquitetura separa
-`platform/hardware`, `kernel/runtime`, `SDK` e `apps`; o BSP Tab5 é vendored.
+Ambiente operacional embarcado, específico do M5Stack Tab5, construído sobre o
+kernel FreeRTOS e a plataforma ESP-IDF. Oferece uma TUI touch para command apps
+compiladas, incluindo um cliente SSH interativo. As camadas do cyberdeck5 são
+`platform/hardware`, `system runtime`, `SDK` e `apps`; o BSP Tab5 é vendored.
+
+[Plano de implementação](docs/OS-IMPLEMENTATION-PLAN.pt-BR.md) ·
+[Dashboard de progresso](docs/OS-IMPLEMENTATION-DASHBOARD.html)
 
 ## Características
 
