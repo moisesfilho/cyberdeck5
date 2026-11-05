@@ -1,0 +1,74 @@
+# Fase 5 — registro de release e manutenção do Tab5
+
+**Estado em 05/11/2026:** gates locais da entrega documental executados para
+a versão de desenvolvimento `1.6.0`; release ainda não solicitado.
+Este registro não cria release, tag, flash nem aceite de cenários físicos não
+executados. `version.txt` é a fonte da versão; pelo `AGENTS.md`, ela só é
+"liberada" quando houver tag `vMAJOR.MINOR.PATCH` no commit que a introduziu.
+Não criar tag sem pedido explícito.
+
+## Base e proveniência
+
+| Item | Evidência e limite |
+| --- | --- |
+| Alvo | M5Stack Tab5, ESP32-P4, ESP-IDF 6.1; versão em `version.txt`: `1.6.0`. |
+| Imagem observada | `docs/OS-PHASE3-BASELINE.pt-BR.md`: firmware `39953bf`, readback integral do único slot `factory` com SHA-256 igual ao build `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`. O hash é de conteúdo, não autenticação criptográfica do boot. |
+| Histórico de boot | Boot normal e checkpoint recuperado após safe mode; boot posterior à leitura eFuse também normal em `docs/OS-PHASE4-THREAT-MODEL.pt-BR.md`. Esses ensaios ocorreram antes deste registro documental: não atribuir automaticamente uma nova imagem ao HEAD de documentação. |
+| Versão/release | `1.6.0` ainda sem tag `v1.6.0`; desenvolvimento, não release. Mudanças só documentais não alteram `version.txt`. |
+
+## Gates por mudança
+
+1. Confirmar `git status`, `version.txt`, alvo IDF, hash do build e identidade
+   do firmware instalado. Não inferir hash do dispositivo apenas de
+   `sys.info.fw_version`. Registrar o commit de código e eventuais diffs
+   funcionais da imagem; commits só documentais posteriores não mudam seu
+   conteúdo.
+2. Executar `make -C tests/host/keymap test`,
+   `make -C tests/host/keymap verify`, `idf.py build` com ESP-IDF exportado e
+   `git diff --check`. Registrar resultado, ambiente e falhas sem marcar gate
+   `done` a partir de um subconjunto de testes.
+3. Para **cada mudança funcional**, validar no Tab5 os fluxos afetados após
+   build/flash aprovado, conforme `AGENTS.md`, com efeito observado (não apenas
+   ACK da ponte), versão/hash e registro de reboot/panic. Mudança só documental
+   não requer flash; aproveitar evidência física prévia somente para o mesmo
+   conteúdo de firmware e cenário, sem declarar cenários adicionais aceitos.
+4. Atualizar plano, dashboard, mapa de código e roteiros/evidências relevantes.
+   Aplicar a política de versão do `AGENTS.md`; não etiquetar release sem
+   solicitação explícita.
+
+## Limitações conhecidas e decisão de produto
+
+- O operador aceitou o funcionamento dos contratos implementados no uso pessoal
+  observado. Fase 3 continua `active` para aceite técnico integral; isso **não**
+  impede apps simples e confiáveis, mas não substitui orçamento de stack/RAM ou
+  teste físico dos fluxos de uma app nova.
+- SD é obrigatório para o boot. Sem ele, `sd_mount` abortou e houve reinícios
+  automáticos (journal chegou a 65 interrupções) antes da recuperação em safe
+  mode. Não repetir falha física SD/NVS sem limitar um único boot e evitar
+  reenergização acidental. O problema é a política de repetição, não a
+  obrigatoriedade do cartão.
+- Uma consulta `music.status` após pause/resume não recebeu resposta, embora a
+  seguinte tenha respondido sem reboot. Primeiras consultas Serial-JTAG após
+  reconexão USB também perderam resposta; causa não demonstrada. Não registrar
+  esses fluxos como livres de defeitos. Confirmação humana de speaker/jack e
+  budgets de outras tasks ainda não constam da evidência instrumentada.
+- Fase 4/OS-TAB5-06 foi aceita apenas no modelo pessoal: LAN controlada,
+  manutenção USB, apps compiladas confiáveis, riscos de HTTP sem auth/TLS e
+  credenciais em claro no SD aceitos. Isso não prova proteção contra peers na
+  LAN ou acesso físico; um chat com IA exige revisão própria de dados e chaves.
+
+## Rodada de gates desta entrega documental — 05/11/2026
+
+| Gate | Resultado |
+| --- | --- |
+| Host | `make -C tests/host/keymap test`: PASS, suíte agregada completa, inclusive contrato IMU; sem `clean` nem execução concorrente de cobertura. |
+| LVGL shim | `make -C tests/host/keymap verify`: PASS; `LV_KEY_*` iguais aos do LVGL gerenciado. |
+| Dashboard | `make -C tests/host/keymap test_os_dashboard_contract`: PASS após atualizar plano e estados. |
+| Firmware | `source /home/moises/esp/esp-idf/export.sh && idf.py build`: PASS, ESP-IDF 6.1/esp32p4, app `0x27a6e0` com `0x185920` bytes (38%) livres na partição de 4 MiB. Bootloader `0x5b00`, margem de `0x500` bytes (5%); observar essa margem em mudanças futuras. |
+| Imagem | SHA-256 de `build/cyberdeck5.bin` após build `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`, igual ao readback documentado da imagem `39953bf`. Identidade de bytes, não atestação de segurança. |
+| Diferenças | `git diff --check`: PASS. Conferir também `git diff --cached --check` antes do commit. |
+| Hardware | Sem flash nesta entrega exclusivamente documental; evidências anteriores da mesma imagem em Fases 3–4. Não se executaram novos cenários físicos, não se atribui ao HEAD documental um firmware novo e não se reclassificam pendências técnicas como resolvidas. |
+
+A Fase 5 permanece `active`: não há tag `v1.6.0` nem pedido explícito de
+liberação. Nenhuma mudança funcional ou incremento de versão foi necessário
+nesta rodada; os gates devem ser repetidos para a próxima imagem alterada.

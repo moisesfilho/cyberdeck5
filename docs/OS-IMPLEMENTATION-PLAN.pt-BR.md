@@ -376,13 +376,26 @@ teste de recuperação após adulteração nem implantação de controles novos.
 **Objetivo:** estabelecer que cada versão liberada do firmware corresponde a
 uma configuração e evidência operacional reproduzíveis.
 
-- [ ] Executar gates host, contratos e build definidos em `AGENTS.md`.
-- [ ] Validar no Tab5 os critérios físicos afetados pela mudança e registrar
-  hash/versão do firmware e resultados.
-- [ ] Atualizar `code-map.md`, arquitetura, rastreabilidade e documentação de
-  validação no mesmo trabalho.
-- [ ] Incrementar a versão apenas segundo a política do `AGENTS.md`; não criar
-  tag sem solicitação explícita.
+**Em andamento:** os gates locais desta rodada documental passaram; registro em
+[`OS-PHASE5-RELEASE-GATE.pt-BR.md`](OS-PHASE5-RELEASE-GATE.pt-BR.md).
+Esta rodada organiza evidências da imagem `1.6.0` e valida gates locais;
+documentação nova não modifica o binário instalado. Sem tag `v1.6.0` não há
+versão liberada nos termos do `AGENTS.md`, e não será criada tag por inferência.
+Aceite operacional pessoal e Fase 4 concluída não apagam os defeitos/limites
+conhecidos da Fase 3. Toda mudança funcional futura exige validação dos
+critérios afetados no Tab5 antes do gate final dessa mudança.
+
+- [x] Executar gates host, contratos e build definidos em `AGENTS.md` nesta
+  rodada documental; repetir para qualquer imagem funcional futura.
+- [x] Verificar aplicabilidade da validação no Tab5: esta rodada muda apenas
+  documentação, sem alterar critério físico; conservar hash/versão e evidência
+  prévia da mesma imagem, sem novo flash nem ampliar aceite. Para mudança
+  funcional, validar os critérios afetados no Tab5 antes de aprovar seu gate.
+- [x] Atualizar `code-map.md`, rastreabilidade e documentação de validação
+  nesta rodada; arquitetura de firmware não foi alterada.
+- [ ] Aplicar a política de versão do `AGENTS.md` à próxima mudança funcional
+  e, somente se houver pedido explícito de release, criar a tag correspondente.
+  Esta rodada documental não incrementa `version.txt`; `1.6.0` segue sem tag.
 
 **Aceite:** qualidade, build e validação física registrados; pendências são
 marcadas como pendentes, nunca inferidas a partir de testes host.
@@ -421,10 +434,10 @@ matriz abaixo à medida que os requisitos da Fase 1 forem aprovados:
 
 | Requisito | Módulo/dono | Teste host/contrato | Validação Tab5 | Estado |
 | --- | --- | --- | --- | --- |
-| OS-TAB5-01..04/07: boot, recovery, console e Serial-JTAG | `main/app_main.cpp`, system apps, runtime, shell e bridge; matriz detalhada em `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | `test_boot_sequence`, `test_recovery_policy`, `test_recovery_runtime`, `test_app_runtime`, `test_shell_app`, `test_serial_ndjson_dispatch`, `test_serial_term_dump` e contratos complementares na matriz | Roteiro Serial-JTAG, após confirmar firmware e segurança | OS-TAB5-01/02 aceitos como documentação; validação física 04/07 pendente |
-| OS-TAB5-01/02/07: conectividade e apps | `cyberdeck_system_apps.cpp`, manifests e adapters por app no Recorte 2 de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | `test_app_runtime` (boot/demo/foreground) e testes por módulo listados na matriz | Conforme risco, periféricos e autorização; identificar imagem antes de executar | Contratos iniciais; Tab5 pendente |
-| OS-TAB5-01/02/07: periféricos, SD e poweroff | `app_main.cpp`, adapters de display/bateria/screen-off/poweroff, shell/storage; Recorte 3 de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | Testes de bateria, display, proteção de tela, SD e poweroff listados na matriz | Apenas cenários seguros aprovados; poweroff não executado nesta entrega | OS-TAB5-01/02 aceitos como documentação; aceite integrado/07 no Tab5 pendente |
-| OS-TAB5-03..08: formatos, limites, falhas físicas e desempenho | Baseline de formatos/timeout nos requisitos, inventário de recursos em `docs/OS-RESOURCE-CONTRACTS.pt-BR.md` | `test_os_resource_contract` e gates por módulo; medições ainda não coletadas | Conforme risco/escopo e segurança | Contratos host da Fase 2 concluídos; OS-TAB5-03 requer verificação de fronteiras por módulo; validações físicas/medidas pendentes para fases 3–5 |
+| OS-TAB5-01..04/07: boot, recovery, console e Serial-JTAG | `main/app_main.cpp`, system apps, runtime, shell e bridge; matriz detalhada em `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | `test_boot_sequence`, `test_recovery_policy`, `test_recovery_runtime`, `test_app_runtime`, `test_shell_app`, `test_serial_ndjson_dispatch`, `test_serial_term_dump` e contratos complementares na matriz | Boot normal e safe mode após falha SD documentados no baseline; não repetir falha física sem controle | OS-TAB5-01/02 documentais; uso cotidiano aceito pelo operador; OS-TAB5-04/07 técnicos ainda active |
+| OS-TAB5-01/02/07: conectividade e apps | `cyberdeck_system_apps.cpp`, manifests e adapters por app no Recorte 2 de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | `test_app_runtime` (boot/demo/foreground) e testes por módulo listados na matriz | Vários fluxos observados pelo operador; playback medido com perda pontual de resposta serial posterior | Uso pessoal aceito; paridade instrumentada de todos os apps permanece parcial |
+| OS-TAB5-01/02/07: periféricos, SD e poweroff | `app_main.cpp`, adapters de display/bateria/screen-off/poweroff, shell/storage; Recorte 3 de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` | Testes de bateria, display, proteção de tela, SD e poweroff listados na matriz | Poweroff bateria-only e canário pós-boot observados; boot sem SD entrou em loop e foi recuperado | Aceite operacional pessoal; recuperação técnica integral ainda pendente |
+| OS-TAB5-03..08: formatos, limites, falhas físicas e desempenho | Baseline de formatos/timeout nos requisitos, inventário de recursos em `docs/OS-RESOURCE-CONTRACTS.pt-BR.md` | `test_os_resource_contract` e gates por módulo | Séries de bateria/playback e boot em imagem identificada; budgets de outras tasks não medidos | Fase 2 host concluída; OS-TAB5-06 concluído no escopo pessoal; OS-TAB5-03/04/05/07/08 mantêm seus gates próprios |
 
 ## 8. Relação com os demais documentos
 

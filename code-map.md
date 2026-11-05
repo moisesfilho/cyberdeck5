@@ -981,7 +981,10 @@ a raiz do repositorio.
   baseline de compatibilidade, contratos de recursos, medicao antes/depois de
   otimizacoes, confiabilidade fisica, modelo de ameaca e release; nao propoem
   kernel proprio ou boot degradado SD nao implementado. Gatilhos de mudanca de
-  escopo exigem reavaliacao arquitetural.
+  escopo exigem reavaliacao arquitetural. A Fase 5 referencia
+  `docs/OS-PHASE5-RELEASE-GATE.pt-BR.md`: identidade da imagem `1.6.0`, gates
+  host/verify/build, validacao fisica por mudanca funcional, limites conhecidos
+  e politica de tag de release; nao confundir commit documental com firmware.
 - `docs/OS-RESOURCE-CONTRACTS.pt-BR.md` audita a Fase 2: fronteiras das apps,
   adapters e SDK, filas/buffers/tasks criticos, dono, limite na fonte,
   overflow/teardown, ordem de locks e exclusoes do gate SD. O contrato host
@@ -3150,6 +3153,10 @@ O roteiro da ponte serial esta em
 - `docs/OS-IMPLEMENTATION-DASHBOARD.html`: dashboard offline do plano; sem
   dependencias externas, mostra progresso geral, por fase, por recorte de
   requisitos e por criterios de aceite.
+- `docs/OS-PHASE5-RELEASE-GATE.pt-BR.md`: registro de gates de release da
+  Fase 5; exige versao/identidade da imagem, testes, build e verificacao no
+  Tab5 por fluxo funcional afetado. Distingue uso pessoal aceito, gates
+  tecnicos restantes da Fase 3 e tag nao criada para a versao `1.6.0`.
 - `tests/host/keymap/test_os_dashboard_contract.py`: contrato do dashboard
   contra as fases/checkboxes/criterios do plano e links HTML relativos.
 - `docs/OS-TAB5-REQUIREMENTS.pt-BR.md`: baseline documental concluido da Fase 1 para
