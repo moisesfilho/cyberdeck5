@@ -48,6 +48,17 @@ def main() -> None:
             pass
         else:
             raise AssertionError("collector overwrote previous evidence")
+        for url in ("file:///etc/passwd", "ftp://127.0.0.1/battery", "http:///battery"):
+            invalid_output = Path(directory) / "invalid.csv"
+            with patch.object(collector, "urlopen") as get:
+                try:
+                    collector.collect(url, 1, invalid_output)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(f"collector accepted invalid URL: {url}")
+                get.assert_not_called()
+            assert not invalid_output.exists()
     print("PASS: phase-3 battery collector preserves samples, errors and evidence")
 
 

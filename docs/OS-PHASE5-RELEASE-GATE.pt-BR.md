@@ -116,3 +116,22 @@ rodada host/build, validação física e decisão humana sobre a tag.
 - Pendente: autorização humana **separada** para tag `v1.7.0` apontar para
   `912e291` e eventual publicação de release. Os defeitos/limites da Fase 3
   permanecem registrados; esta candidata não os corrigiu.
+
+## Quality Gate remoto — correção da ferramenta host
+
+- O run `42113869917` (`113fc7e`) falhou no lint de segurança: Bandit B310
+  em `tools/collect_battery_series.py` (`urlopen` aceitava esquemas não HTTP).
+  Host/coverage/build do CI foram pulados nesse run; os gates locais acima
+  não equivalem a um CI aprovado.
+- A ferramenta host agora verifica esquema HTTP e presença de host antes de
+  criar CSV ou abrir a URL; o teste `test_phase3_battery_collector.py` cobre
+  rejeição de esquemas inválidos sem conexão. O `# nosec B310` no ponto de
+  abertura está restrito a essa validação efetiva, não é dispensa geral.
+- Validação local da correção: teste focado e suíte host agregada PASS;
+  `make -C tests/host/keymap verify` PASS; Bandit 1.9.4 (`-r tools -ll`) sem
+  achados medium/high, Ruff 0.17.1 (`--select F tools`) PASS e build ESP-IDF
+  6.1 PASS. SHA-256 de `build/cyberdeck5.bin` permaneceu
+  `d4404708764ce6d8d49050ded73c35a86a93ad346e7dd96cbbc6f7cbeeca241a`;
+  correção apenas na ferramenta host, sem novo flash.
+- Gate remoto do commit de correção e decisão de release continuam pendentes;
+  nenhuma alteração de firmware foi feita após a imagem `912e291` validada.

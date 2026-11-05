@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import time
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 
@@ -20,6 +21,9 @@ FIELDS = (
 
 
 def collect(url: str, seconds: int, output: Path) -> int:
+    parsed = urlsplit(url)
+    if parsed.scheme != "http" or not parsed.hostname:
+        raise ValueError("battery collector requires an HTTP URL with a host")
     output.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
     failures = 0
@@ -34,7 +38,8 @@ def collect(url: str, seconds: int, output: Path) -> int:
                    "elapsed_ms": round((time.monotonic() - start) * 1000)}
             begun = time.monotonic()
             try:
-                with urlopen(url, timeout=0.8) as response:
+                # The URL scheme and host are validated before any file or request.
+                with urlopen(url, timeout=0.8) as response:  # nosec B310
                     row["http_status"] = response.status
                     if response.status != 200:
                         raise ValueError("HTTP status is not 200")
