@@ -244,6 +244,13 @@ Uma janela adicional de 301 pontos cobriu 300 s contínuos com latch ativo e
 carregador desligado. Falha TCP no loopback seguida de sucesso no HTTP local
 e três screenshots estáveis deram evidência parcial de degradação/recuperação
 sem destino externo; não transferir esse resultado para perda de rádio/SD.
+Após autorização geral para os testes, playback real na imagem `39953bf`
+gerou 60 amostras a 1 Hz com progresso monotônico e decoder ativo. Em uma
+segunda sessão, uma consulta `music.status` após retomar de pause não recebeu
+resposta; o Tab5 continuou ligado e a consulta seguinte respondeu, mas a
+causa não está identificada. O player foi fechado e os ciclos adicionais
+foram interrompidos, conforme o roteiro. Ainda não há avaliação humana de
+speaker/jack nem orçamento aprovado; ver evidência no baseline.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

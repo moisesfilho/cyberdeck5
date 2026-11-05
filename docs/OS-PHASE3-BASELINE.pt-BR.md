@@ -13,6 +13,11 @@ etapa. Não executar poweroff controlado, retirada/falha física do SD, corrupç
 de dados/NVS ou interrupção forçada de boot. Esses cenários ficam explicitamente
 pendentes; nenhuma simulação host equivale a aceite do hardware.
 
+**Atualização posterior da autorização:** o operador aprovou todos os testes,
+incluindo playback e os cenários físicos antes condicionados. Isso não elimina
+as pré-condições de backup, instrumentação, preparo e intervenção física de
+cada roteiro, nem permite repetir um teste após falha sem diagnóstico.
+
 **Esclarecimento do operador, na mesma data:** poweroff, falha de SD,
 NVS/recovery e outros fluxos foram validados por ele **historicamente, em
 firmware anterior, não no `1.5.0`**. Aceitar sua confirmação como registro
@@ -405,6 +410,44 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
   Uptime cresceu até `00:15:09`, `safe_mode=false`; os BMPs contêm tela e
   ficaram apenas em `/tmp/opencode/`, não versionados.
 
+### Playback real e perda pontual de resposta Serial-JTAG — `39953bf` (parcial)
+
+- Após autorização explícita para todos os testes, no firmware identificado
+  pelo readback acima, `sys.info` mostrou boot normal e uptime `00:20:56`.
+  `screen.wake`, `ui.type music` (somente antes do foreground) e um único
+  `ui.tap 'Play / Pause'` iniciaram uma faixa de duração declarada 121560 ms.
+  `music.status` confirmou `playing` com posição crescente. O coletor
+  `tools/collect_music_status_series.py` registrou 60/60 amostras sem erro,
+  espaçadas exatamente por 1000 ms, uptime `00:21:55`→`00:22:54`:
+  [`phase3-music-playback-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-music-playback-1.6.0-20261105.csv),
+  SHA-256 `2eb787e9e3ad225de912d5e3b6723b8ddc4bf558985b4f60786aa891e6ba18f5`.
+  Em todos os pontos `state=playing`, 14 faixas, duração declarada 121560 ms;
+  posição 9216→68208 ms, zero regressões. Heap interno livre ficou em
+  141923 B nessa janela, mínimo histórico 109376 B; PSRAM livre variou
+  29310540–29310952 B. O CSV não contém metadados das faixas.
+- Consulta após a série: `music.diagnostics` geração 1, queued/started=1/1,
+  falhas=0 e `failure_stage=none`; 366 reads, 3565 decodes e 3565 writes;
+  máximos read/decode/codec-start/write de 5585/10984/43872/31965 us.
+  `music.trace` retornou apenas 16 eventos recentes, `lost=11001`,
+  `truncated=true`: não é histórico completo nem prova ausência de underrun.
+  A tela havia apagado por inatividade; `screen.wake` e `ui.escape`
+  fecharam o player, `music.status` passou a `player_not_running`, o prompt
+  voltou e `ping`/`sys.info` responderam sem reboot (uptime `00:23:28`).
+- Em uma segunda abertura, `ui.tap 'Play / Pause'` confirmou `playing`;
+  outro toque confirmou `paused`. Um terceiro toque retornou ACK, mas o
+  `music.status` imediatamente seguinte **não recebeu resposta** na CLI
+  (`nenhuma resposta do dispositivo`, exit 2). O cenário foi interrompido:
+  não se repetiu o toque. Diagnóstico passivo posterior: `/dev/ttyACM0`
+  presente; `sys.info` respondeu uptime `00:24:15`, sem safe mode ou reboot;
+  `music.status` mostrou `playing` e posição 22896 ms. `ui.escape` fechou a
+  sessão; `music.status` retornou `player_not_running`, prompt reapareceu e
+  uptime cresceu a `00:24:29`. Causa da perda única de resposta **não
+  demonstrada**: pode ser transporte/timeout, mas não foi provado. Por regra
+  do roteiro, não prosseguir com ciclos de playback nem marcar esse fluxo
+  integralmente validado antes de investigar. A série sem falhas não anula
+  esse incidente. Nenhuma inspeção humana de som audível, speaker ou jack foi
+  registrada nesta rodada.
+
 ## Pendências para fechar a Fase 3
 
 1. A imagem `39953bf` tem build/hash, flash verificado e readback integral
@@ -413,9 +456,11 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
    attestation. A identificação da imagem anterior `1.5.0` continua limitada
    à versão, não ao hash; não comparar binários anteriores como iguais com
    base somente em `fw_version`.
-2. As séries de 1 s cobrem repouso/captura HTTP, player parado e uma task
-   serial; três scans da fila e um do browser já têm duração/high-water
-   físicos. Faltam stack de outros workers, overflow e tempo de
+ 2. As séries de 1 s cobrem repouso/captura HTTP, player parado e uma task
+   serial; a série de 60 s de playback também foi medida, mas houve uma
+   perda posterior de resposta serial durante pause/resume, sob análise.
+   Três scans da fila e um do browser já têm duração/high-water físicos.
+   Faltam stack de outros workers, overflow e tempo de
    operações de editor/BLE/player ativo sob cenários representativos. Não fixar
    budgets a partir de uma janela curta nem da soma de mínimos por região.
 3. Medir os cenários seguros da matriz com tempos por estágio e configuração

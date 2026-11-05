@@ -1090,6 +1090,11 @@ a raiz do repositorio.
   Netdiag TCP loopback 1 falhou/80 funcionou depois do cooldown; screenshots
   HTTP sequenciais mantiveram PSRAM estavel apos reserva estatica inicial.
   Dados e limites em `docs/OS-PHASE3-BASELINE.pt-BR.md`; BMPs ficam fora do repo.
+  Playback na mesma imagem: serie de 60 amostras a 1 Hz em
+  `tests/manual/evidence/phase3-music-playback-1.6.0-20261105.csv` mostrou
+  progresso monotono sem falha de decoder; apos pause/resume uma consulta
+  `music.status` perdeu resposta, embora consultas subsequentes e uptime
+  permanecessem normais. Player fechado; investigar antes de repetir ciclos.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.

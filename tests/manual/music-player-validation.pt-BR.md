@@ -15,6 +15,13 @@ versão/hash, porta, resposta NDJSON, logs seriais e `sys.info` antes/depois.
 Qualquer safe mode, ausência de resposta, reboot inesperado, panic ou WDT encerra
 o cenário; não repetir clear/reset/playback automaticamente.
 
+Na imagem `39953bf` (05/11/2026), uma série de 60 s tocando passou sem falhas,
+mas a primeira consulta `music.status` após um comando posterior de retomada
+não recebeu resposta; consultas passivas seguintes responderam, sem reboot, e
+o player foi fechado. **Não repetir ciclos de playback até investigar** a
+perda de resposta. A autorização posterior do operador para todos os testes
+não dispensa esse gate. Detalhes e CSV em `docs/OS-PHASE3-BASELINE.pt-BR.md`.
+
 ## 1. Recovery e boot normal — gate obrigatório
 
 `events.read` também exporta o journal NVS de recovery como um frame
