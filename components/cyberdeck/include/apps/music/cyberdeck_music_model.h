@@ -14,6 +14,16 @@ inline constexpr std::uint32_t k_max_track_bytes = 32U * 1024U * 1024U;
 
 enum class repeat_mode : std::uint8_t { off, all, one };
 enum class playback_state : std::uint8_t { stopped, playing, paused, error };
+struct scan_measurement {
+    bool completed = false;
+    bool succeeded = false;
+    std::uint32_t duration_ms = 0;
+    std::uint32_t stack_high_water_bytes = 0;
+};
+struct scan_measurements {
+    scan_measurement queue;
+    scan_measurement browser;
+};
 enum class error_stage : std::uint8_t { none, open, id3, decode, codec_start, codec_write, read, io };
 
 struct track {

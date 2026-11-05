@@ -855,8 +855,9 @@ devem ser revisitados contra o código vigente antes de cada implementação.
        fsync enquanto o fsync binário está retido. Todos os waits de sincronização do harness runtime
        e shim expiram em cinco segundos e falham explicitamente.
 
-Mapa de navegacao do OS embarcado simplificado ESP-IDF para o unico alvo
-M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
+Mapa de navegacao do ambiente operacional embarcado do M5Stack Tab5
+(ESP32-P4), integrado sobre FreeRTOS/ESP-IDF. Os caminhos abaixo sao relativos
+a raiz do repositorio.
 
 ## Visao geral
 
@@ -954,6 +955,14 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
   sem zero-padding dentro dos limites dos buffers e aplica clipping no slot de
   30%. A política de bump está em
   `AGENTS.md`; versões de manifests de apps são independentes.
+  Candidata `1.7.0` autorizada pelo operador em 05/11/2026: `1.6.0` surgiu em
+  `0917276`, mas o ultimo codigo funcional validado é `39953bf` (mesmo hash
+  de binário que os commits documentais seguintes). Não etiquetar `0917276`
+  como se fosse essa imagem nem etiquetar um commit que não introduziu a
+  versão. `912e291` introduz `1.7.0`: build/readback factory SHA-256
+  `d4404708764ce6d8d49050ded73c35a86a93ad346e7dd96cbbc6f7cbeeca241a`,
+  flash/boot `sys.info`/header/pwd/HTTP bateria aprovados no Tab5; ver
+  `docs/OS-PHASE5-RELEASE-GATE.pt-BR.md`. Sem tag `v1.7.0` até aceite explícito.
 - Aplicacao: uma unica tela TUI LVGL, com header, relogio, indicador Wi-Fi, bateria e terminal.
 - Organizacao: `components/cyberdeck/src/apps/` contem fluxos de produto;
   `components/cyberdeck/src/platform/` contem integracoes de hardware e runtime.
@@ -963,9 +972,213 @@ M5Stack Tab5 (ESP32-P4). Os caminhos abaixo sao relativos a raiz do repositorio.
   snapshots a partir de task dedicada e a UI apenas os consome.
 - Artefatos de cobertura gcov comprimidos (`*.gcov.json.gz`) sao ignorados pelo
   Git para manter o repositorio livre de relatorios gerados.
-- A arquitetura e o plano de transformacao ficam em `docs/ARCHITECTURE*.md` e
-  `docs/OS-TRANSFORMATION-PLAN.pt-BR.md`, com as camadas platform/hardware,
-  kernel/runtime, SDK e apps, status das Fases 1-10 e backlog aprovado.
+- A arquitetura atual fica em `docs/ARCHITECTURE*.md`; o registro historico de
+  decisoes, fases e evidencias fica em `docs/OS-TRANSFORMATION-PLAN.pt-BR.md`.
+  O plano executavel vigente e `docs/OS-IMPLEMENTATION-PLAN.pt-BR.md`. O produto
+  integrado combina
+  FreeRTOS/ESP-IDF/BSP com as camadas cyberdeck5 `platform/hardware`,
+  `system runtime`, SDK e apps; o cyberdeck5 nao implementa kernel proprio.
+- `docs/OS-MATURITY-ASSESSMENT.pt-BR.md` analisa essas responsabilidades pela
+  lente de Tanenbaum, considerando o produto integrado e o alvo dedicado Tab5.
+  Registra as 12 apps de `cyberdeck_system_apps.cpp`, a diferença entre apps
+  registradas e ativas, os limites de grants/quotas e o boot atual IDF 6 com
+  preparo ESP-Hosted antes do mount SD obrigatório. Nao atribui percentuais
+  sem metodo nem trata loader, syscalls, POSIX ou isolamento como requisitos.
+- `docs/OS-IMPLEMENTATION-PLAN.pt-BR.md` define premissas, criterios OS-TAB5,
+  inventario de apps/funcionalidades e criterios OS-TAB5-01..08. As fases cobrem
+  baseline de compatibilidade, contratos de recursos, medicao antes/depois de
+  otimizacoes, confiabilidade fisica, modelo de ameaca e release; nao propoem
+  kernel proprio ou boot degradado SD nao implementado. Gatilhos de mudanca de
+  escopo exigem reavaliacao arquitetural. A Fase 5 referencia
+  `docs/OS-PHASE5-RELEASE-GATE.pt-BR.md`: identidade histórica da imagem `1.6.0`
+  e preparação da candidata `1.7.0`, gates
+  host/verify/build, validacao fisica por mudanca funcional, limites conhecidos
+  e politica de tag de release; nao confundir commit documental com firmware.
+  Registra o Quality Gate remoto verde de `fb6214c` (run `42114544943`) e a
+  decisao de integrar em `develop` sem criar tag de release.
+- `docs/OS-RESOURCE-CONTRACTS.pt-BR.md` audita a Fase 2: fronteiras das apps,
+  adapters e SDK, filas/buffers/tasks criticos, dono, limite na fonte,
+  overflow/teardown, ordem de locks e exclusoes do gate SD. O contrato host
+  `tests/host/keymap/test_os_resource_contract.py` confronta boot, grants,
+  leases, filas e quarentena com o codigo de producao e roda no agregado do
+  Makefile. Nao prova limites de stack ou quiescencia fisica no Tab5; Fase 3.
+- `docs/OS-PHASE3-BASELINE.pt-BR.md` inicia a Fase 3: matriz de cenarios seguros
+  versus falhas condicionadas, primeira observacao fisica sem flash (fw 1.5.0,
+  sem hash atestado) e lacunas de heap minimo/stack/boot/apps. A serie HTTP
+  read-only de bateria em `tests/manual/evidence/phase3-battery-20261105.csv`
+  foi coletada pelo `tools/collect_battery_series.py` (1 Hz, 60 amostras);
+  `test_phase3_battery_collector.py` valida a ferramenta sem rede no agregado
+  host, inclusive rejeicao de URL nao HTTP/sem host antes de abrir conexao ou
+  criar CSV (Bandit B310). O `tools/collect_sysinfo_series.py` usa uma unica
+  sessao Serial-JTAG para 60 amostras a 1 Hz de heap/uptime; a serie em repouso esta em
+  `tests/manual/evidence/phase3-sysinfo-20261105.csv`, com contrato host
+  `test_phase3_sysinfo_collector.py`. Evidencia de estado estavel nao aceita
+  transientes nem fase completa. A matriz host de falhas exercita
+  `test_time_sync`, `test_netdiag_controller`, `test_wifi_event_dispatch` e
+  `test_net_coordinator` sem tocar no hardware; nao substitui reconexao fisica.
+  A tabela de alcance da telemetria identifica
+  `handle_sys_info` (heap instantaneo), logs `HOSTED_DIAG` no `main/app_main.cpp`
+  (boot parcial), high-water do scan de musica e diagnosticos/trace do player,
+  distinguindo-os de minimos historicos e budgets ainda nao medidos. Validacoes fisicas historicas confirmadas
+  pelo usuario sao registradas separadamente; nao equivalem a aceite no fw
+  1.5.0 observado antes desta instrumentacao.
+  A entrega 1.6.0 adiciona em `sys.info` minimos por regiao ESP-IDF para heap
+  interno/DMA/PSRAM e high-water da propria task serial em bytes (campos
+  opcionais ao ler imagens antigas). `tools/collect_sysinfo_series.py` inclui
+  esses campos na serie; `main/app_main.cpp` registra `app_main_complete` com
+  `t_us` e `boot_ready` para medir o trecho final do boot em um log completo.
+  Testes: `test_serial_sysinfo_wifi.cpp` e `test_phase3_sysinfo_collector.py`.
+  Flash validado do snapshot `0917276` em `/dev/ttyACM0` com binario SHA-256
+  `4dbe949e3f0fa5a971d6c9c36c2acab0f1a9cd0910aed36c3bcc803b017f5f4e`:
+  boot/checkpoint normal, 60 amostras seriais e 60 HTTP sem falhas,
+  tres screenshots e arquivo SD descartavel criado/lido/removido. Evidencias
+  redigidas em `docs/OS-PHASE3-BASELINE.pt-BR.md`; CSVs versionados em
+  `tests/manual/evidence/phase3-{sysinfo,battery}-1.6.0-20261105.csv`.
+  O screenshot reserva uma vez `s_snapshot_storage` em
+  `components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp`;
+  a copia temporaria do frame e liberada, nao confundir cache com leak.
+  Incidente de ensaio sem playback: `ui.type "music status"` com player em
+  foreground envia Enter e aciona `cyberdeck_music_manager::action::toggle`;
+  o ACK da ponte nao e retorno do shell. A consulta segura e o novo comando
+  NDJSON `music.status`, em `cyberdeck_serial_bridge.{h,cpp}` e
+  `tools/cyberdeck_cli.py`: usa `global_application().player_snapshot()` e
+  `queue_scan_active()` atomico, responde estado/progresso/contagem sem
+  titulo/caminho nem tecla injetada; `test_serial_sysinfo_wifi.cpp` cobre
+  parser, ausencia de app, payload bounded e privacidade. O roteiro de
+  `tests/manual/music-player-validation.pt-BR.md` foi corrigido.
+  `tools/collect_music_status_series.py` coleta `music.status` + `sys.info`
+  na mesma sessao Serial-JTAG a 1 Hz, sem copiar metadados privados; seu
+  contrato isolado e `test_phase3_music_status_collector.py`.
+  Imagem `96cc6bd` flashada com SHA-256
+  `ca6aaa61595a25de9f1b80441fb04e8680f95afdf0c8ed4884f0eece4afffcd9`:
+  `music.status` antes do app -> player_not_running; depois da abertura ->
+  stopped/14 faixas/scan encerrado; serie 60/60 a 1 Hz sem playback, CSV
+  `tests/manual/evidence/phase3-music-status-1.6.0-20261105.csv`.
+  Nao mediu duracao do scan nem stack do worker; detalhes e hash do CSV em
+  `docs/OS-PHASE3-BASELINE.pt-BR.md`.
+  `ui.escape` na ponte Serial-JTAG injeta somente `LV_KEY_ESC` pela mesma fila
+  bounded de `cyberdeck_keyboard_input`; o gate screen_off impede interacao
+  com app oculta, e o ACK nao prova efeito. A CLI expoe `ui.escape`; validar
+  fechamento pelo `term.dump`/`ui.dump`. Testes host em
+  `test_serial_screen_guard.cpp`, `test_serial_screen_guard_contract.py` e
+  `test_term_dump_cli.py`.
+  Snapshot `84c67d2` flashado (SHA-256
+  `ef4bacfb1ecb8e52d722d17de1711f1523a245a58274dda96128af983fbdc53c`):
+  `ui.escape` fechou player e editor limpo, confirmado por `music.status`,
+  `ui.dump`, `term.dump`, `cat` do arquivo inexistente e uptime monotônico.
+  Ver `docs/OS-PHASE3-BASELINE.pt-BR.md`; recusa com tela apagada e wake foram
+  confirmados no dispositivo.
+  Proxima instrumentacao: `scan_measurements` em
+  `include/apps/music/cyberdeck_music_model.h` representa duracao em ms e
+  minimo livre da stack (bytes) por scan queue/browser; `cyberdeck_music_app.cpp`
+  registra no worker antes de sinalizar conclusao, com leitura sincronizada
+  via `application::scan_metrics()` em `cyberdeck_music_app.h`. A ponte expoe
+  `music.scan` read-only em `cyberdeck_serial_bridge.{h,cpp}` e a CLI em
+  `tools/cyberdeck_cli.py`. `collect_music_status_series.py` agora inclui as
+  duas medicoes por amostra, sem metadados de faixas. Testes:
+  `test_music_app.cpp`, `test_serial_sysinfo_wifi.cpp`,
+  `test_phase3_music_status_collector.py`, `test_term_dump_cli.py` e
+  `test_music_scan_stack_contract.py` (high-water capturado/publicado antes do
+  sinal de conclusao, depois logado com o mesmo valor antes da delecao).
+  Snapshot `39953bf` flashado (binario SHA-256
+  `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`):
+  fila 472/354/353 ms, folga 2688/2704/2704 B, browser 10 ms/3824 B na
+  primeira abertura; `browser.completed=false` nas reaberturas porque o modelo
+  estava em cache. CSV de 60 amostras a 1 Hz em
+  `tests/manual/evidence/phase3-music-scan-1.6.0-20261105.csv`; detalhes e
+  limites da evidencia em `docs/OS-PHASE3-BASELINE.pt-BR.md`.
+  Readback fisico `read-flash 0x10000 0x27a6e0` com esptool no unico slot
+  factory e SHA-256 igual a `build/cyberdeck5.bin`; sem dump no repo. Editor
+  descartavel edit/save/cat/rm confirmou round-trip simples em `/data`, sem
+  transferir aceite para falha real de FAT/SD. Evidencias e limites no baseline.
+  `tests/manual/serial-bridge-validation.pt-BR.md` documenta readback bounded
+  do slot factory, comparacao de hash e reboot normal, sem publicar dump bruto.
+  GET /battery a 1 Hz no mesmo binario registrou corte natural 8198→8201 mV,
+  CHG_EN on→off e latch ativo, com serie pos-corte; CSVs
+  `tests/manual/evidence/phase3-battery-{readback,postcut}-1.6.0-20261105.csv`.
+  USB permaneceu conectado para descoberta do IP; sem aceite bateria-only.
+  A serie adicional `tests/manual/evidence/phase3-battery-latch-1.6.0-20261105.csv`
+  traz 180/180 amostras com latch ativo; intervalo entre series nao permite
+  afirmar 5 minutos continuos sem observacao.
+  `tests/manual/evidence/phase3-battery-latch-contiguous-1.6.0-20261105.csv`
+  cobre 301 pontos/300 s continuos com latch ativo; ainda com USB ligado.
+  Netdiag TCP loopback 1 falhou/80 funcionou depois do cooldown; screenshots
+  HTTP sequenciais mantiveram PSRAM estavel apos reserva estatica inicial.
+  Dados e limites em `docs/OS-PHASE3-BASELINE.pt-BR.md`; BMPs ficam fora do repo.
+  Playback na mesma imagem: serie de 60 amostras a 1 Hz em
+  `tests/manual/evidence/phase3-music-playback-1.6.0-20261105.csv` mostrou
+  progresso monotono sem falha de decoder; apos pause/resume uma consulta
+  `music.status` perdeu resposta, embora consultas subsequentes e uptime
+  permanecessem normais. Player fechado; investigar antes de repetir ciclos.
+  Com USB removida pelo operador, `tests/manual/evidence/phase3-battery-only-release-1.6.0-20261105.csv`
+  mostra 60 pontos a 1 Hz com bateria-only e latch ja liberado na primeira
+  amostra. Poweroff local de uma tentativa foi fisicamente confirmado pelo
+  operador; o canario descartavel `/data/phase3-poweroff-canary-20261105.txt`
+  (31 B, CRC32 837892956) foi relido apos relight em boot normal. Primeira
+  consulta serial apos cada reconexao USB nao respondeu; HTTP e a segunda
+  consulta responderam. Ver limites no baseline antes de ampliar testes.
+  Boot sem SD na imagem `39953bf` falhou no `sd_mount` com ESP_ERR_TIMEOUT e
+  ESP_ERROR_CHECK/abort; automatic reboot loop levou o journal a 65
+  interrupcoes e safe mode. Inserir SD religou inesperadamente. Recuperacao
+  com SD montado, canario legivel, um clear de safe mode persistido e reset
+  controlado resultou em boot normal (`sd_mount=ESP_OK`, checkpoint OK).
+  Logs brutos privados em `/tmp/opencode/phase3-{boot-no-sd,sd-restored-boot}-20261105.log`;
+  nao repetir falha fisica SD/NVS sem controle de um unico boot. Decisao
+  posterior do operador: SD e disco obrigatorio; nao iniciar/reiniciar ao
+  faltar cartao e consequencia aceita, nao defeito/bloqueio. Opcional no
+  futuro: tela de erro explicita antes da UI normal (atualmente apos mount).
+  Aceite operacional posterior do operador cobre os contratos/recursos
+  implementados no uso pessoal observado; nao transforma os testes historicos
+  em medicoes completas nem explica perda pontual de resposta serial.
+  Fase 3 fica active para aceite tecnico integral e medidas dirigidas,
+  sem bloquear apps simples. Ver baseline para limites das evidencias.
+  `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
+  conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
+  nao podem substituir a entrada de modulo.
+- `docs/OS-PHASE4-THREAT-MODEL.pt-BR.md` registra a Fase 4 documental: ativos,
+  superficie LAN (`apps/screenshot/screenshot_server.cpp`), USB Serial-JTAG
+  (`apps/serial/cyberdeck_serial_bridge.cpp`), credenciais SD
+  (`apps/wifi/wifi_storage.cpp`, `apps/ssh/ssh_client.cpp`), configuracao efetiva
+  local (`sdkconfig`) e particionamento (`partitions.csv`). Compara confinamento
+  e grants cooperativos com controles de autenticacao/isolamento ausentes;
+  decisao do operador em 05/11/2026: LAN controlada, acesso fisico fora do
+  adversario e USB local suficiente; riscos de HTTP sem auth/TLS, Wi-Fi em
+  claro no SD e boot/criptografia desativados aceitos nesse escopo. `sdkconfig`
+  e `partitions.csv` mostram controles desativados e `factory` unico; leitura
+  eFuse somente leitura confirma Secure Boot e flash encryption desativados,
+  separada do readback da imagem `39953bf`/`1.6.0`. Reset posterior:
+  `sd_mount=ESP_OK`, checkpoint persistido, `boot_ready=1`, sys.info normal.
+  Evidencias eFuse/log bruto privadas em `/tmp/opencode/phase4-*`; nenhum
+  firmware/eFuse alterado. Fase 4/OS-TAB5-06 concluidos no escopo pessoal
+  aprovado: um operador, apps simples confiaveis, uso intermitente e LAN
+  controlada, sem alegar protecao contra peers LAN/acesso fisico ou fechar
+  os gates tecnicos pendentes da Fase 3. Chat com IA exige revisao propria
+  de dados enviados, credenciais e conectividade.
+- `docs/OS-IMPLEMENTATION-DASHBOARD.html` e a visualizacao estatica em HTML/CSS/JS
+  local: os itens de `const dashboard` representam os checkboxes das Fases 0-5
+  do plano, recortes da Fase 1 e criterios OS-TAB5-01..08. Barras e totais sao
+  derivados dos estados `done/active/todo`; atualizar o arquivo junto com plano,
+  requisitos e evidencias. `test_os_dashboard_contract.py` reconcilia contagem e
+  estado concluido dos checkboxes de cada fase, IDs dos criterios e links locais;
+  o Makefile o inclui no agregado host e verifica também a paridade dos três
+  recortes com `OS-TAB5-REQUIREMENTS.pt-BR.md`. A fase `active` recebe destaque visual
+  e seus itens iniciam expandidos. Recortes documentados nao equivalem a aceite
+  fisico.
+- `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` registra os tres recortes da Fase 1:
+  inventario de
+  criticidade extraido de `main/app_main.cpp`, `cyberdeck_system_apps.cpp` e
+  `cyberdeck_shell_app.cpp`; requisitos OS-TAB5-BOOT-01/02,
+  OS-TAB5-CONSOLE-01 e OS-TAB5-SERIAL-01 com precondicao, observavel, falha,
+  dono e links para testes host/roteiro Serial-JTAG. O segundo recorte mapeia
+  Wi-Fi/SSH/screenshot/time sync, BLE, editor, netdiag, player e demo; o teste
+  comportamental em `test_app_runtime.cpp` protege a admissao de demo e da
+  dependencia da shell pelo serial sem ativar editor foreground. O Recorte 3
+  cobre display/IMU/teclado, bateria/GET /battery, screen-off, SD/storage e
+  poweroff, com donos, falhas e gates seguros: nao autoriza corte fisico ou
+  retirada de SD. A Fase 1 foi concluida documentalmente com matriz de
+  criticidade, cenarios/recuperacao, ledger de timeouts e tabela de formatos.
+  As arquiteturas PT/EN ganharam matriz de responsabilidades. Gates fisicos e
+  compatibilidade integrada permanecem nas fases 3/5. Nenhum firmware mudou.
 - `components/m5stack_tab5/` é o BSP vendored do único alvo; sua API é
   documentação upstream/gerada e não o SDK de aplicações.
 
@@ -1691,10 +1904,13 @@ destrói recursos potencialmente usados.
      inicial. A variante candidata permanece ativa em dois arquivos ignorados de
      `managed_components` (`eh_host_bus_sdio.c` e `eh_host_mcu_transport_channels.c`);
      sua reprodução explícita está versionada em `tools/esp-hosted-cpu-staging.patch`
-     e `tools/prepare_esp_hosted_cpu_staging.py` (aplicar após resolver componentes,
-     verificar revisão/hash antes do build; restore reversível). O patch é um
-     artefato-fonte necessário ao script; hashes de origem e destino ficam no
-     próprio script, sem manifestos auxiliares no componente vendorizado.
+      e `tools/prepare_esp_hosted_cpu_staging.py` (aplicar após resolver componentes,
+      verificar revisão/hash antes do build; restore reversível). O patch é um
+      artefato-fonte necessário ao script; hashes de origem e destino ficam no
+      próprio script, sem manifestos auxiliares no componente vendorizado.
+      `main/idf_component.yml` fixa `espressif/esp_hosted` em `3.0.10`: o range
+      anterior `^3.0.9` resolveu `3.1.0` e impediu o gate de staging. Não
+      editar os fontes gerados à mão nem relaxar as verificações por hash.
      `CMakeLists.txt`
      executa verify após project() e antes do link do ELF em cada build:
      reconfigure e build incremental sem patch falham fechado. O teste
@@ -1870,7 +2086,7 @@ shortcuts remain interactive documentation, not shell commands.
 | `components/cyberdeck/include/apps/runtime/cyberdeck_app_storage.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp` | `storage_facade::bounded_read`, `read_result` | API SDK pública de leitura com buffer pertencente ao chamador, EOF/erro explícitos e limite de 12288 bytes; usa internamente a operação `cat` já confinada, sem expor detalhes de filesystem. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_app_logger.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_logger.cpp` | `logger::event`, `logger::write` | Porta SDK com níveis tipados, tag/payload de tamanho fixo e rejeição de campos sensíveis; o adaptador `event_log_logger` preserva o lifecycle e o backend persistente existente. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_command_catalog.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_command_catalog.cpp` | `command_catalog::build`, `dispatch` | Catálogo bounded derivado dos manifestos compilados; dispatch retorna nulo para comandos legados, preservando o parser do shell. O runtime encaminha o token declarado, inclusive `edit`, preserva os argumentos de `edit <arquivo>` e inicia de forma lazy/idempotente o app `foreground` antes do execute pelo caminho normal de dependências, grants e lifecycle; falha de start rejeita o comando, enquanto apps `service` não são auto-iniciados. |
-| `components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp` | `resource`, `grant`, `runtime::app_grant`, `application::app_grant`, `runtime::inspect_sd_package`, `resource_from_name` | Autoridade bounded de grants: valida recursos declarados no manifesto (desconhecidos/duplicados/overflow recusados), reserva quotas fixas de resources/grants no registro e em cada start, valida assets compilados sem bloquear catálogo vazio, separa capabilities metadados, cria geração por ciclo e revoga geração/grant antes do teardown. Mutex curto serializa valid/allows, publicação/cópia do grant da aplicação e as transições de estado observadas por grants; não é mantido durante hooks, logging ou quota operations. Falhas de init/start invalidam sob o mesmo lock; restart recebe geração nova. TEST-GRANT-01..08 planejados pelo tester cobrem linearização, falhas, cópias e concorrência/TSan. Limite de 16 aplicações preservado. A fronteira SD expõe somente validação de metadata/data e nunca instalação ou execução. |
+| `components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp` | `resource`, `grant`, `runtime::app_grant`, `application::app_grant`, `runtime::inspect_sd_package`, `resource_from_name` | Autoridade bounded de grants: valida recursos declarados no manifesto (desconhecidos/duplicados/overflow recusados), reserva quotas fixas de resources/grants no registro e em cada start, valida assets compilados sem bloquear catálogo vazio, separa capabilities metadados, cria geração por ciclo e revoga geração/grant somente após teardown bem-sucedido (falha de join preserva grant até retry). Mutex curto serializa valid/allows, publicação/cópia do grant da aplicação e as transições de estado observadas por grants; não é mantido durante hooks, logging ou quota operations. Falhas de init/start invalidam sob o mesmo lock; restart recebe geração nova. TEST-GRANT-01..08 planejados pelo tester cobrem linearização, falhas, cópias e concorrência/TSan. Limite de 16 aplicações preservado. A fronteira SD expõe somente validação de metadata/data e nunca instalação ou execução. |
 | `tests/host/keymap/grant_traceability.md` | `REQ/AC-GRANT-01..05` → `TEST-GRANT-01..08` | Matriz de rastreabilidade da validação isolada de grants, incluindo cenários comportamentais e execução ThreadSanitizer. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_resource_catalog.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp` | `resource_catalog`, `compiled_resources`, `asset_metadata`, `verify_asset` | Catálogo readonly de até 16 assets compilados, com metadados estáticos, lookup por índice/ID, checksum e ausência fail-closed. O registro dos system apps faz diagnóstico bounded e não bloqueia boot quando o catálogo está vazio; não possui mutação, backend de escrita ou caminho de código executável. |
 | `components/cyberdeck/include/apps/runtime/cyberdeck_sd_package.h`, `components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp` | `sd_package`, `sd_package_metadata`, `sd_package_view` | Validador host-testável de pacote SD somente para dados/assets: `format_version` compatível, versão, nome, tamanho máximo de 12288 bytes e checksum FNV-1a. Ausente, corrompido ou incompatível é rejeitado; o módulo não instala nem interpreta conteúdo e o system-app registry apenas diagnostica a ausência opcional. |
@@ -2938,9 +3154,35 @@ O roteiro da ponte serial esta em
   mapa, incluindo a politica de busca progressiva, a consistencia de
   documentacao e limiares, a memoria de projeto como fonte derivada, a regra de
   versao liberada por tag e a exigencia de serie temporal na validacao fisica.
+  Ao avancar o plano OS Tab5, sincronizar dashboard/criterios com evidencias;
+  validar a paridade via `test_os_dashboard_contract`.
 - `README.md` e `README.pt-BR.md`: recursos, uso do shell, Wi-Fi, SSH, comandos locais `netdiag` (status, DNS, TCP, HTTPS HEAD, resultado e cancelamento), screenshot e ponte serial.
 - `docs/ARCHITECTURE.md` e `docs/ARCHITECTURE.pt-BR.md`: principios, boot, concorrencia Wi-Fi, screenshot,
   ponte serial, bateria e UI.
+- `docs/OS-MATURITY-ASSESSMENT.pt-BR.md`: avaliacao analitica de maturidade
+  do produto integrado pela lente de Tanenbaum, inventario real de apps,
+  dependencias de boot IDF 6/SD e gatilhos de escopo; nao prescreve kernel proprio.
+- `docs/OS-IMPLEMENTATION-PLAN.pt-BR.md`: plano de implementacao orientado aos
+  requisitos do Tab5, com premissas, inventario de compatibilidade,
+  criterios OS-TAB5-01..08, baseline/otimizacao mensurada, fases e gates.
+- `docs/OS-IMPLEMENTATION-DASHBOARD.html`: dashboard offline do plano; sem
+  dependencias externas, mostra progresso geral, por fase, por recorte de
+  requisitos e por criterios de aceite.
+- `docs/OS-PHASE5-RELEASE-GATE.pt-BR.md`: registro de gates de release da
+  Fase 5; exige versao/identidade da imagem, testes, build e verificacao no
+  Tab5 por fluxo funcional afetado. Distingue uso pessoal aceito, gates
+  tecnicos restantes da Fase 3, candidata `1.7.0` e tag ainda nao criada.
+- `tests/host/keymap/test_os_dashboard_contract.py`: contrato do dashboard
+  contra as fases/checkboxes/criterios do plano e links HTML relativos.
+- `docs/OS-TAB5-REQUIREMENTS.pt-BR.md`: baseline documental concluido da Fase 1 para
+  boot/recovery, console, Serial-JTAG, conectividade, apps compiladas, hardware,
+  SD e poweroff; rastreia
+  `test_boot_sequence`, `test_recovery_policy`, `test_app_runtime`, `test_shell_app`,
+  testes de rede/BLE/editor/netdiag/player e roteiro manual. Aceite no
+  dispositivo permanece pendente.
+- `tests/host/keymap/test_app_runtime.cpp` cobre adicionalmente
+  OS-TAB5-BOOT-02: `start_all()` tenta demo e serial, inicia shell pela
+  dependencia do serial e nao inicia editor foreground independente.
 - `tests/manual/tui-shell-validation.pt-BR.md`: validacao no dispositivo.
 - `docs/WIFI.md`: fluxos Wi-Fi, incluindo auditoria local e salvamento explícito
   da rede conectada.

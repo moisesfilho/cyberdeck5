@@ -89,7 +89,8 @@ branch = connect_tail[:connect_tail.index(end_marker) + len(end_marker)]
 assert branch.endswith(FAILURE_BRANCH + end_marker), f"unexpected creation/failure branch:\n{branch}"
 
 # TEST-SSH-008: the externally allocated stack must stay documented.
-map_line = next(line for line in CODE_MAP.splitlines() if "ssh_client.cpp" in line)
+map_line = next(line for line in CODE_MAP.splitlines()
+                if line.startswith("| `components/cyberdeck/src/apps/ssh/ssh_client.cpp` |"))
 for token in ("xTaskCreateWithCaps", "MALLOC_CAP_SPIRAM", "vTaskDeleteWithCaps", "24576"):
     assert token in map_line, f"code-map.md ssh_client.cpp line must document {token}"
 

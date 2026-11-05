@@ -2,10 +2,13 @@
 
 **Idiomas:** [English](README.md) | [Português](README.pt-BR.md)
 
-OS embarcado simplificado para o único alvo M5Stack Tab5, com uma única tela
-TUI touch orientada a command apps compiladas. A primeira ferramenta é um
-cliente SSH interativo no terminal. A arquitetura separa
-`platform/hardware`, `kernel/runtime`, `SDK` e `apps`; o BSP Tab5 é vendored.
+Ambiente operacional embarcado, específico do M5Stack Tab5, construído sobre o
+kernel FreeRTOS e a plataforma ESP-IDF. Oferece uma TUI touch para command apps
+compiladas, incluindo um cliente SSH interativo. As camadas do cyberdeck5 são
+`platform/hardware`, `system runtime`, `SDK` e `apps`; o BSP Tab5 é vendored.
+
+[Plano de implementação](docs/OS-IMPLEMENTATION-PLAN.pt-BR.md) ·
+[Dashboard de progresso](docs/OS-IMPLEMENTATION-DASHBOARD.html)
 
 ## Características
 
@@ -319,7 +322,7 @@ JSON por linha, limitado a 4096 bytes e correlacionado por `rid`
 e é filtrada pelo cliente.
 
 Comandos: `ping`, `sys.info`, `wifi.status`, `wifi.scan`, `ui.echo`,
-`ui.click X Y`, `ui.tap <alvo>`, `ui.type <texto>`, `ui.dump`, `ui.clear`,
+`ui.click X Y`, `ui.tap <alvo>`, `ui.type <texto>`, `ui.escape`, `ui.dump`, `ui.clear`,
 `screen.shot` (metadados do frame) e `screen.dump`, que transmite a tela
 LVGL como chunks BMP de 1024 bytes em Base64 com CRC32 por chunk e total.
 
@@ -332,6 +335,14 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
 
 `pyserial` é necessário no host (`pip install pyserial`). Consulte
 `tests/manual/serial-bridge-validation.pt-BR.md` para o roteiro no dispositivo.
+`sys.info` também informa mínimos acumulados por região/capacidade de heap e
+a menor folga de stack da própria task serial, em bytes. Não são a medição de
+todas as tasks nem um mínimo simultâneo do dispositivo.
+Com o player em foreground, use `music.status` para consultar reprodução e
+scan sem injetar teclas. `ui.type "music status"` envia Enter e alterna a
+reprodução, em vez de consultar o shell.
+`music.scan` informa duração do último scan da fila/browser e a menor folga
+da stack da task de scan, em bytes, sem nomes nem caminhos das faixas.
 
 ## Estrutura
 

@@ -15,6 +15,13 @@ versão/hash, porta, resposta NDJSON, logs seriais e `sys.info` antes/depois.
 Qualquer safe mode, ausência de resposta, reboot inesperado, panic ou WDT encerra
 o cenário; não repetir clear/reset/playback automaticamente.
 
+Na imagem `39953bf` (05/11/2026), uma série de 60 s tocando passou sem falhas,
+mas a primeira consulta `music.status` após um comando posterior de retomada
+não recebeu resposta; consultas passivas seguintes responderam, sem reboot, e
+o player foi fechado. **Não repetir ciclos de playback até investigar** a
+perda de resposta. A autorização posterior do operador para todos os testes
+não dispensa esse gate. Detalhes e CSV em `docs/OS-PHASE3-BASELINE.pt-BR.md`.
+
 ## 1. Recovery e boot normal — gate obrigatório
 
 `events.read` também exporta o journal NVS de recovery como um frame
@@ -54,15 +61,14 @@ best-effort e não substitui `sys.info` nem altera o latch.
 
 ## 2. Abertura, scan e inspeção — modo estrito sem playback
 
-**Escopo desta rodada:** abrir o player, consultar status/lista e inspecionar a
-surface. Não reproduza áudio. São permitidos somente `music` sem argumentos,
-`music status`, `music list` e inspeção não interativa por `term.dump`, `ui.dump`
-ou captura de tela. Não envie `music play`, `play`, `resume` ou qualquer comando
-equivalente; não toque em `Play/Pause`, `Next` ou outro controle de playback; não
-pressione fisicamente/virtualmente Enter, N, P ou Space no player, nem execute
-qualquer ação que possa iniciar ou retomar a reprodução. Use `ui.type` somente
-para os três comandos permitidos acima; não digite no campo Command. Se o
-foco/estado tornar uma ação ambígua, não a execute.
+**Escopo desta rodada:** abrir o player e consultar estado/scan sem playback.
+`ui.type "music"` é permitido **somente antes** da transição para foreground.
+Depois que o player abriu, **não use `ui.type`, nem para `music status` ou
+`music list`**: ele injeta Enter, que o player interpreta como Play/Pause,
+independentemente do texto. `ok:true` da ponte não prova execução pelo shell.
+Use `music.status` (NDJSON read-only), `music.diagnostics`, `term.dump` e
+`ui.dump`. Não toque em Play/Pause, Next, Enter, N, P ou Space. Se o foco/estado
+tornar uma ação ambígua, não a execute.
 
 Pré-condição: boot normal comprovado e sem reboot/WDT durante a captura.
 
@@ -75,37 +81,48 @@ dos 64 itens. O browser mostra somente pastas e MP3; navegar não altera a queue
 Não é necessário — e não basta — `app start cyberdeck.music`: o start isolado
 apenas sobe o app, sem abrir a surface nem iniciar o scan. `player` não é alias.
 
-Subcomandos (`music status|list|play|...`) só são aceitos enquanto o player é o
-foreground ativo; fora disso a resposta é
+Subcomandos (`music status|list|play|...`) pertencem ao app, mas não são
+consultáveis via `ui.type` no player em foreground. Fora dele, o shell responde
 `app: command requires active foreground`.
 
 O console e a ponte Serial-JTAG permanecem vivos com o player aberto. Isso é
-requisito do contrato: `ui.type`, `term.dump` e `sys.info` devem continuar
-respondendo enquanto a surface está na tela.
+requisito do contrato: `term.dump`, `music.status` e `sys.info` devem continuar
+respondendo enquanto a surface está na tela. A resposta de `ui.type` não
+confirma o efeito, e Enter pode iniciar reprodução.
 
 ```text
 sys.info
 ui.type "music"
 term.dump          # esperado: music: opening player
 ui.dump            # surface do player com status, lista rolável e controles
-ui.type "music status"
-term.dump          # esperado: queue: scan complete + queue: N tracks
-ui.type "music list"
-term.dump          # lista limitada a 64 faixas
+music.status       # state, queue_scanning, track_count, position_ms, duration_ms
+music.scan         # queue/browser: completed, succeeded, duration_ms, stack_high_water_bytes
+music.diagnostics  # contadores read-only, sem título/caminho da faixa
 ```
 
-Aguarde `queue: scan complete` em `music status` antes de qualquer outro comando
+Para observar estado e heap no mesmo intervalo, use **somente uma sessão**
+Serial-JTAG: `python3 tools/collect_music_status_series.py --seconds 60
+--out /tmp/opencode/music-status.csv`. A ferramenta nunca sobrescreve o CSV,
+registra uma amostra por segundo, inclusive as últimas medições dos dois scans,
+e não coleta títulos/caminhos de faixas. `stack_high_water_bytes` é a menor
+folga de stack **da task de scan** durante a execução, não consumo máximo.
+Ao reabrir o player, o browser pode reutilizar o modelo em cache: nesse caso
+`browser.completed=false` após a nova abertura significa que **não houve
+scan do browser nessa sessão**, e não que ele falhou. Compare a medição da fila
+separadamente; `duration_ms` tem resolução de tick FreeRTOS.
+
+Aguarde `queue_scanning=false` em `music.status` antes de avaliar a contagem
 de fila. Com o scan em andamento, `music` e `music queue <dir>` são rejeitados com
 `scan unavailable or another scan is active`; não repetir durante a coleta. A
-surface mostra status, browser rolável de pastas/MP3 e controles; `music status`
-acrescenta `queue: truncated at 64 tracks` quando a queue é truncada.
+surface mostra status, browser rolável de pastas/MP3 e controles; a consulta
+NDJSON informa `track_count` sem expor títulos ou caminhos.
 Esse limite da queue recursiva é independente do limite de 64 entradas do browser
 por pasta.
 
 Não use `music queue /musica` no fluxo normal: esse já é o diretório padrão do
-scan. Nesta rodada, não use `queue <diretório>` nem qualquer comando além de
-`music`, `music status` e `music list`. Registre o resultado do scan e a
-identidade das faixas somente como inspeção; não tente reproduzi-las.
+scan. Nesta rodada, não use `queue <diretório>` nem comandos por `ui.type`
+depois de abrir o player. Registre contagem/estado sem títulos ou caminhos;
+não tente reproduzir faixas.
 
 Após consultar status/lista, use apenas dumps/captura para inspecionar a surface,
 o header e o estado visual. Se surgir erro, WDT, reboot, serviço indisponível ou
@@ -147,7 +164,7 @@ confundir a posição visual da linha com o índice da queue recursiva:
    corresponder pelo path do arquivo, não pelo índice visual do browser.
 4. Confirme que Previous, Play/Pause, Next, seek, volume, Command, Esc e os
    comandos textuais existentes continuam operando como antes. Registre
-   `music status`/`music list` antes/depois; não repita uma ação se o resultado
+    `music.status` antes/depois; não use `ui.type` para a consulta nem repita uma ação se o resultado
    for ambíguo ou houver erro/reboot.
 
 ### 3.2. Cenário Play Selected (registro de validação manual)
@@ -166,15 +183,15 @@ tocando/pausada e use `P` ou o botão `Play Selected`: a faixa destacada deve
 iniciar do começo, uma única vez. Enter continua sendo toggle da faixa corrente (playing→pause,
 paused→resume); em stopped inicia a faixa destacada. Alterar highlight sozinho
 não deve iniciar áudio. Em fila vazia/seleção inválida, a ação deve falhar sem
-substituir playback. Verifique status/posição via `music status`, sem enviar
+    substituir playback. Verifique status/posição via `music.status`, sem enviar
 comandos de controle duplicados. N permanece sem binding; comandos textuais
 `music select` e `music play` devem manter o comportamento existente.
 
 Com a surface do player aberta, **Enter alterna playback** (pausa/resume; inicia
 a seleção somente quando stopped): ele não
 serve para "acordar" a tela. Se a proteção de tela apagar o display, religue com
-injeção vazia (`ui.type ""`) e só então retome a inspeção — esse evento é
-consumido apenas para religar e não executa comando.
+`screen.wake` e só então retome a inspeção — `ui.type` é recusado com
+`screen_off` quando a tela está apagada, e Enter ativo pode iniciar playback.
 
 A inspeção visual pode usar `screen.dump` pela ponte serial ou o endpoint HTTP
 `GET /screenshot`:
@@ -203,7 +220,7 @@ Os itens de interação abaixo estão fora do escopo desta rodada e não devem s
 executados:
 
 - toque: `ui.tap "Play/Pause"`, `ui.tap "Next"`, `ui.tap "Volume +"` e conferir o
-  efeito em `music status`/`ui.dump`;
+  efeito em `music.status`/`ui.dump`;
 - teclado: Enter, ←/→, ↑/↓, +/− e Esc. Esc deve retornar ao shell **na mesma
   sessão** (prompt/linha anterior preservados) e sem desmontar a ponte serial;
 - `sys.info` antes e depois de cada bloco: uptime crescente, sem reboot/panic/WDT;
@@ -264,18 +281,25 @@ reboot `FreeRTOS Task "music_player" should not return, Aborting now!` após Esc
 
 ### 4.1. ESC com o player parado
 
-1. `ui.type "music"`, aguarde `queue: scan complete` e `music status` (estado
+Os cenários de playback abaixo são históricos/condicionados. Para novas
+execuções, consulte estado/progresso por `music.status` (não `ui.type`) e
+use somente a interface de controle explicitamente autorizada. `ui.type`
+enquanto o player está aberto injeta Enter e pode iniciar/alternar áudio;
+ele não envia comandos de shell nem Escape.
+
+1. `ui.type "music"`, aguarde `queue_scanning=false` em `music.status` (estado
    `stopped`).
 2. Registre `sys.info`.
-3. Envie Escape (`ui.type ""` não envia ESC; use o teclado físico ou
-   `ui.type` com o comando de shell equivalente ao Escape usado na rodada).
-4. Confirme `term.dump` com o prompt de volta, `music status` recusado (app não
+3. Envie Escape com o teclado físico ou `ui.escape` da ponte (tela acesa);
+   `ui.type` não envia Escape.
+4. Confirme `term.dump` com o prompt de volta, `music.status` recusado (app não
    está em foreground) e `sys.info` sem reboot.
 
 ### 4.2. ESC tocando
 
-1. Reabra `music`, aguarde o scan e envie `music play 1`.
-2. Confirme `music status` com estado `playing` e progresso crescendo.
+1. Reabra `music`, aguarde o scan e inicie uma faixa pelo controle autorizado
+   (não por `ui.type`).
+2. Confirme `music.status` com estado `playing` e progresso crescendo.
 3. Envie Escape durante a reprodução.
 4. Critérios da seção + áudio silencioso depois do Esc (sem necessidade de
    medir qualidade) e `sys.info` com uptime monotônico.
@@ -286,12 +310,13 @@ reboot `FreeRTOS Task "music_player" should not return, Aborting now!` após Esc
 2. Envie Escape imediatamente após `ui.type "music"` (antes de
    `queue: scan complete`).
 3. Confirme `stop stage=cancel_scan`, ausência de publicação de fila parcial
-   (`music status` recusado após o fechamento), prompt de volta e uptime
+   (`music.status` recusado após o fechamento), prompt de volta e uptime
    monotônico.
 
 ### 4.4. Ciclo ESC → reabrir → tocar, 5 vezes
 
-Repita cinco vezes: abrir `music`, aguardar o scan, `music play 1`, confirmar
+Repita cinco vezes: abrir `music`, aguardar o scan, iniciar pelo controle
+autorizado, confirmar
 `playing`, Escape, confirmar prompt, `sys.info`. Critérios:
 
 - uptime estritamente crescente em todas as leituras, sem reset de contadores;
@@ -316,8 +341,8 @@ recalculado a cada frame com o bitrate daquele frame, fazendo `elapsed/total`
 **Pré-requisito:** firmware construído a partir deste snapshot e faixa MP3
 (preferencialmente VBR) presente em `/musica`.
 
-1. Abra o player (`ui.type "music"`), aguarde `queue: scan complete` e inicie a
-   faixa (`music play 1`).
+1. Abra o player (`ui.type "music"`), aguarde `queue_scanning=false` e inicie a
+   faixa pelo controle autorizado (não por `ui.type`).
 2. Confirme no log serial uma única linha
    `music: playback duration generation=... duration_ms=... has_toc=... source=probe`
    (ou `source=pending_fallback`, seguida de
@@ -336,7 +361,7 @@ recalculado a cada frame com o bitrate daquele frame, fazendo `elapsed/total`
    - nenhuma amostra mostra total alternando entre valores diferentes.
 4. Deixe a faixa terminar naturalmente (sem seek). No EOF, a última amostra
    `progress:` deve satisfazer `elapsed == total` com tolerância de ±1 s; a
-   reprodução para e `music status` mostra `stopped`.
+   reprodução para e `music.status` mostra `stopped`.
 5. Registre `sys.info` antes/depois: uptime crescente, sem reboot/panic/WDT, e
    `ping` da ponte Serial-JTAG respondendo.
 
@@ -352,7 +377,7 @@ caso `stopped + faixa selecionada` inicia áudio. Com fila concluída, seleciona
 uma faixa diferente da atual usando ↑/↓ e pressionar Enter deve iniciar essa
 faixa; durante `playing`, Enter pausa; durante `paused`, Enter retoma. Com fila
 vazia ou seleção inválida, Enter não deve iniciar faixa arbitrária. Confirmar
-cada estado por `music status`, observar uptime/log serial e parar conforme o
+cada estado por `music.status`, observar uptime/log serial e parar conforme o
 protocolo de validação autorizado. Preservar os limites de segurança e a regra
 de não repetir automaticamente após panic/reboot.
 
@@ -370,9 +395,9 @@ comprovado (seção 1) e uma faixa **VBR** em `/musica`. Cobre o defeito em que
 o minimp3 devolvia `samples=0` para o frame já consumido e a reprodução morria
 com `state: error / error_stage: decode`.
 
-1. Abra o player (`ui.type "music"`), aguarde `queue: scan complete` e inicie a
-   faixa (`music play 1`).
-2. Envie `seek 60` e confirme: a faixa **continua tocando**, `music status`
+1. Abra o player (`ui.type "music"`), aguarde `queue_scanning=false` e inicie a
+   faixa pelo controle autorizado (não por `ui.type`).
+2. Envie `seek 60` e confirme: a faixa **continua tocando**, `music.status`
    mostra `playing` (nunca `error`) e a posição fica próxima de 60 s (±1 s).
 3. Repita com alvos **dentro da duração exibida** no rótulo `progress:
    <elapsed>/<total>`: `seek 60` (≈ metade da faixa curta), `seek 100` (≈ 80 %)
@@ -385,8 +410,8 @@ com `state: error / error_stage: decode`.
    `music: playback seek generation=... target_ms=... byte=... toc_position_ms=... discard_ms=...`.
    Com TOC, `discard_ms` deve ser pequeno (≤ 5000); sem TOC, `discard_ms=0`.
 5. Confirme em `term.dump`/`screen.dump` que o `progress:` mostra a posição no
-   alvo e que o total não muda, e que `music status` nunca exibe
-   `error_stage: decode`.
+    alvo e que o total não muda, e que `music.status` nunca exibe
+    `state: error`; para o estágio específico, consulte `music.diagnostics`.
 6. Registre `sys.info` antes/depois: uptime crescente, sem reboot/panic/WDT, e
    `ping` da ponte Serial-JTAG respondendo.
 

@@ -36,6 +36,18 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 - Prefira a menor alteracao correta e valide referencias e testes relacionados
   quando o trabalho estiver concluido.
 
+## Acompanhamento do plano OS Tab5
+
+- Quando uma entrega avancar itens de `docs/OS-IMPLEMENTATION-PLAN.pt-BR.md`,
+  recortes de `docs/OS-TAB5-REQUIREMENTS.pt-BR.md` ou criterios OS-TAB5,
+  atualize `docs/OS-IMPLEMENTATION-DASHBOARD.html` no mesmo trabalho.
+- Edite os estados no bloco `const dashboard` com base nas evidencias; `active`
+  nao conta como `done`. Recorte documentado, teste host e validacao fisica
+  devem permanecer distintos. Nao marque aceite no Tab5 sem evidencias do
+  firmware em execucao e do cenario correspondente.
+- Execute `make -C tests/host/keymap test_os_dashboard_contract` para verificar
+  paridade de checkboxes, IDs dos criterios e links com o plano vigente.
+
 ## Consistencia de documentacao e limiares
 
 - Ao mudar um limiar, uma constante de dominio ou uma janela (tensao de corte,

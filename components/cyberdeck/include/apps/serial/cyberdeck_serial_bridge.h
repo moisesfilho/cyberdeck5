@@ -50,6 +50,7 @@
  *                         primeira tecla para religar a tela e a injecao se
  *                         perderia silenciosamente.
  *   - ui.dump           : a arvore consultada nao e a tela visivel.
+ *   - ui.escape         : Escape nao deve atingir a app oculta.
  *   - term.dump         : snapshot textual da tela ativa.
  *   - screen.shot       : captura o framebuffer (tela preta) e substitui a
  *                         sessao de dump ativa.
@@ -69,7 +70,7 @@
  * Os comandos que MUDAM a protecao (`screen on|off|timeout`) continuam
  * exclusivos do shell, via `ui.type`; a ponte nao tem side channel para eles.
  */
-namespace cyberdeck_music { struct diagnostics_snapshot; struct trace_page; }
+namespace cyberdeck_music { struct diagnostics_snapshot; struct trace_page; struct snapshot; struct scan_measurements; }
 namespace cyberdeck_serial {
 
 /* Limites do protocolo (contrato fixado pelos testes host). */
@@ -156,6 +157,10 @@ struct SysInfo {
     std::uint32_t dma_free = 0;
     std::uint32_t dma_largest = 0;
     std::uint32_t psram_free = 0;
+    std::uint32_t internal_min_free = 0;
+    std::uint32_t dma_min_free = 0;
+    std::uint32_t psram_min_free = 0;
+    std::uint32_t serial_stack_high_water_bytes = 0;
 };
 
 struct WifiNet {
@@ -171,11 +176,17 @@ std::string handle_sys_info(const std::string &rid);
 std::string handle_wifi_scan(const std::string &rid, const std::vector<WifiNet> &nets);
 std::string music_diagnostics_to_json(const cyberdeck_music::diagnostics_snapshot &stats);
 std::string music_trace_to_json(const cyberdeck_music::trace_page &page);
+std::string music_status_to_json(const cyberdeck_music::snapshot &status, bool queue_scanning);
+std::string music_scan_to_json(const cyberdeck_music::scan_measurements &metrics);
 #ifndef ESP_PLATFORM
 using music_diagnostics_provider = bool (*)(void *, cyberdeck_music::diagnostics_snapshot &);
 using music_trace_provider = bool (*)(void *, std::uint32_t, std::uint32_t, cyberdeck_music::trace_page &);
+using music_status_provider = bool (*)(void *, cyberdeck_music::snapshot &, bool &);
+using music_scan_provider = bool (*)(void *, cyberdeck_music::scan_measurements &);
 void set_music_diagnostics_provider_for_test(music_diagnostics_provider provider, void *context);
 void set_music_trace_provider_for_test(music_trace_provider provider, void *context);
+void set_music_status_provider_for_test(music_status_provider provider, void *context);
+void set_music_scan_provider_for_test(music_scan_provider provider, void *context);
 #endif
 
 /* ------------------------------------------------------------------ */

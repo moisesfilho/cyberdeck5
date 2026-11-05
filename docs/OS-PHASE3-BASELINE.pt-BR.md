@@ -1,0 +1,586 @@
+# Fase 3 — baseline e gates físicos do Tab5
+
+O baseline antecede qualquer mudança de desempenho. Não inferir commit ou hash
+da imagem instalada a partir de `version.txt`/`sys.info.fw_version`: essa
+resposta identifica a versão, mas não autentica o binário. Quando houver
+mudança de firmware, registrar hash do build gravado e boot do dispositivo
+antes de comparar medições. Poweroff, retirada de SD, corrupção, descarga/carga
+forçada e reset para safe mode exigem cenário específico, backup e autorização
+de risco; não são sondagens de rotina desta fase.
+
+**Aceite operacional posterior do operador (05/11/2026):** após vários testes
+físicos no Tab5, considera os contratos e recursos implementados funcionais
+para o uso pessoal cotidiano observado. Isso inclui o relato de que safe mode
+já atuou diante de falhas anteriores; o ensaio abaixo também registrou safe
+mode e recuperação após boot sem SD na imagem identificada. O aceite por uso
+**não** substitui medições de todas as tasks, speaker/jack ou testes específicos
+de uma app nova; não explica a perda ocasional de resposta Serial-JTAG.
+Essa anomalia não bloqueia criar apps simples de uso diário. A Fase 3 permanece
+aberta para medições e investigação direcionada quando necessárias; não repetir
+falhas físicas SD/NVS sem controle comprovado de um único boot.
+
+**Decisão posterior do operador (05/11/2026):** o SD funciona como disco
+obrigatório. Sem cartão, o fato de o sistema não iniciar ou reiniciar tentando
+montá-lo novamente é consequência **aceita**, não defeito e não gate pendente
+para apps/release. O termo "tentando" significa uma nova tentativa de mount
+em cada boot após o abort, não busca contínua no mesmo boot. A única melhoria
+de UX cogitada é opcional: detectar a ausência e apresentar na tela que o
+sistema não pode ser iniciado sem cartão. A UI hoje é inicializada **após** o
+mount; implementar essa mensagem exigiria um caminho mínimo de display antes
+da UI normal, sem oferecer funcionamento sem SD. O registro do ensaio e a
+restrição de não repeti-lo sem controle seguro permanecem válidos.
+
+**Decisão do operador em 05/11/2026:** apenas testes físicos seguros nesta
+etapa. Não executar poweroff controlado, retirada/falha física do SD, corrupção
+de dados/NVS ou interrupção forçada de boot. Esses cenários ficam explicitamente
+pendentes; nenhuma simulação host equivale a aceite do hardware.
+
+**Atualização posterior da autorização:** o operador aprovou todos os testes,
+incluindo playback e os cenários físicos antes condicionados. Isso não elimina
+as pré-condições de backup, instrumentação, preparo e intervenção física de
+cada roteiro, nem permite repetir um teste após falha sem diagnóstico.
+
+**Esclarecimento do operador, na mesma data:** poweroff, falha de SD,
+NVS/recovery e outros fluxos foram validados por ele **historicamente, em
+firmware anterior, não no `1.5.0`**. Aceitar sua confirmação como registro
+histórico desses ensaios, sem imputar à imagem atualmente instalada um teste
+que não foi feito nela. Para poweroff, há evidência já registrada em
+[`poweroff-implementation-plan.md`](../poweroff-implementation-plan.md) e
+[`poweroff-validation.pt-BR.md`](../tests/manual/poweroff-validation.pt-BR.md):
+versão histórica `cef3257-dirty`/ESP-IDF 5.5.5, corte confirmado pelo operador
+nas três fontes suportadas; readback/hash do canário em bateria-only e
+bateria+USB, cabo-only declarado sem hash independente. Falha física de SD e
+NVS/recovery e os demais fluxos ficam registrados **como confirmação histórica
+do operador, sem versão/cenário/log detalhado neste trabalho**. Essa confirmação
+não equivale a métricas de heap/stack/latência, nem a aceite de OS-TAB5-04/05/07
+no firmware atual; os critérios continuam abertos no dashboard.
+
+## Cenários e modo de evidência
+
+| Fluxo | Observação segura inicial | Teste de carga/falha condicionado | Grandezas que ainda faltam |
+| --- | --- | --- | --- |
+| Boot/recovery | `sys.info`, versão, uptime crescente, flags recovery e `HOSTED_DIAG` em boot observado sem reset induzido | Falha SD/Hosted, NVS ou interrupção de boot só com preparo/recuperação específicos | duração dos estágios de boot em imagem identificada; stack/min heap |
+| Shell/SD/editor/foreground | `screen.wake` se off, `pwd` + `term.dump`, arquivos **descartáveis** em `/data`, transição documentada para editor | Injetar I/O fault primeiro em host; never remove SD in use | latência comando/render, throughput SD, round-trip/hash e grants/teardown |
+| Wi-Fi/SSH/HTTP/time sync | `wifi.status`, `GET /battery` e screenshot em LAN própria; só SSH para peer autorizado | Queda de rede controlada/timeout se recuperação segura; não expor credenciais | latência HTTP e erro por estágio, eventos de perda/reconexão, tempo de sync |
+| BLE | Inspecionar status/scan sem parear peer novo; conservar bonds | Desconexão/reconexão de peer próprio sem apagar NVS | tempo de scan, contadores de descartes, recuperação após callback stale |
+| Netdiag | `status`/`result` sem gerar tráfego remoto | DNS/TCP/HTTPS somente a destino explicitamente autorizado | duração de estágios e cancelamento/join |
+| Música | `music status`/`list` apenas após conferir dono de foreground e versão | Play/pause/stop só com faixa e áudio autorizados; `ui.type` envia Enter e pode acionar playback | latência e perdas do trace, carga decoder/I2S, stack do worker |
+| Bateria/poweroff | `GET /battery` read-only a 1 Hz sem cabo serial e `sys.info` antes/depois | Ciclo de carga/corte e poweroff só sob procedimento específico por fonte, canário/hash e recuperação | transiente de 100→90%, validade de INA, estado elétrico e série em mudança |
+
+Critérios OS-TAB5-04/05/07/08 **não** ficam aceitos por observação isolada.
+O inventário de recursos e limites prévios está em
+[`OS-RESOURCE-CONTRACTS.pt-BR.md`](OS-RESOURCE-CONTRACTS.pt-BR.md); testes de
+host protegem políticas, não tempos e recursos no ESP32-P4.
+
+## Primeira observação física — 05/11/2026 (parcial)
+
+- USB Serial-JTAG `/dev/ttyACM0` identificado por
+  `usb-Espressif_USB_JTAG_serial_debug_unit_...-if00`; CLI `sys.info` respondeu
+  `chip=esp32p4`, `idf_version=v6.1`, `fw_version=1.5.0`,
+  `safe_mode=false`, `interrupted_boots=0`, `recovery_persisted=true`.
+  O HEAD de trabalho era `3284b33` (somente docs/testes após firmware), **mas
+  não foi obtido hash/commit verificável da imagem instalada**. Não declarar
+  paridade exata de imagem com esse HEAD.
+- `sys.info` inicial: uptime `02:12:38`, `free_heap=31462715`,
+  `internal_free=177459`, `dma_free=137971`, `psram_free=31285256` bytes.
+  `sys.info` posterior: uptime `02:15:20`, `free_heap=31462719`, sem reboot
+  observado. Não há série de heap, mínimo histórico de heap ou high-water de
+  cada task nessas duas leituras; não extrair orçamento desses números.
+- Na primeira tentativa `ping` não recebeu resposta; `sys.info` subsequente
+  respondeu. Uma consulta serial concorreu indevidamente com `screen.status`:
+  `screen.status` respondeu `off=true` e o outro processo recebeu
+  `SerialException` (perda de bytes/porta). A porta USB é de leitor único;
+  comandos subsequentes foram serializados e `sys.info` voltou a responder.
+  **Essa disputa é erro do procedimento host**, não evidência de reboot/panic.
+- Após `screen.wake` (`woke=true`), `ui.type pwd` recebeu ACK e `term.dump`
+  confirmou texto exato `/$ pwd\n/\n/$ ` (`truncated=false`). Isso observa
+  console e retorno local, não editor/teclado físico/latência de boot.
+- `ui.type 'netdiag status'` recebeu ACK e `term.dump` confirmou
+  `interface=WIFI_STA_DEF`, campos IP/gateway/DNS e RSSI, com retorno ao prompt
+  `/$ ` e sem operação remota DNS/TCP/HTTPS. Os endereços não foram copiados
+  para esta evidência. `sys.info` posterior mostrou uptime `02:25:22`,
+  `safe_mode=false` e `free_heap=31462343` bytes; ausência de queda de uptime
+  nesta janela não valida ainda a duração/recuperação de outras apps.
+- Coletor: `tools/collect_battery_series.py` com `--seconds 60`, uma requisição
+  read-only por segundo ao `GET /battery` na LAN, sem cabo Serial-JTAG para a
+  leitura de bateria. Série: [`tests/manual/evidence/phase3-battery-20261105.csv`](../tests/manual/evidence/phase3-battery-20261105.csv).
+  SHA-256 do CSV (LF normalizado): `99a7e8d5e6a95b9b260afcf8eba10ecc65c98c449530131e6731b9666bf956f3`.
+  60/60 respostas HTTP 200, sem falhas; 59 intervalos consecutivos de 1000 ms
+  (resolução 1 s, duração 59 s entre primeira e última amostra), maior latência
+  HTTP de 130 ms. `uptime_s` 8031→8090, `sampled_age_ms` máximo 615;
+  `bus_voltage_mv` 8060–8061, `current_ma` 2, `percentage` 100,
+  `state=external`, `charge=not_charging`, `protection_active=true`,
+  `charger_enabled=false` em toda a série. **Não atravessou transiente de
+  partida, corte nem reancoragem**; não comprova estabilidade fora desse estado.
+- Coletor `tools/collect_sysinfo_series.py` com **uma única sessão**
+  Serial-JTAG (`--seconds 60`), sem concorrência de outro leitor: série
+  [`tests/manual/evidence/phase3-sysinfo-20261105.csv`](../tests/manual/evidence/phase3-sysinfo-20261105.csv),
+  SHA-256 `6ae9b389d2769e6296199b05845870f3d060fadab58742da19d774e92a85e149`.
+  60/60 respostas `sys.info`, 59 intervalos de 1000 ms, duração 59 s,
+  latência de resposta 3–4 ms, uptime `02:33:07`→`02:34:06`. Durante **este**
+  estado o `free_heap` ficou em 31462343, `internal_free` em 177371,
+  `dma_free` em 137883 e `psram_free` em 31284972 bytes. Valores constantes
+  em repouso não são mínimos históricos nem high-water de tasks; ainda não
+  cobrem carga, boot ou transientes de recursos.
+
+## Alcance da telemetria atual (auditoria no código, sem novo teste físico)
+
+| Grandeza | Fonte já disponível | O que o dado permite afirmar | Lacuna antes de definir orçamento |
+| --- | --- | --- | --- |
+| Heap | `handle_sys_info()` em `apps/serial/cyberdeck_serial_bridge.cpp`: `esp_get_free_heap_size()`, `heap_caps_get_free_size()` e `heap_caps_get_largest_free_block()` para as capacidades já publicadas; firmware em desenvolvimento `1.6.0` acrescenta `heap_caps_get_minimum_free_size()` para interno, DMA e PSRAM | Amostras instantâneas e maior bloco livre **na hora do pedido**; os novos mínimos são soma dos menores valores por **região**, possivelmente atingidos em momentos diferentes (nota da API ESP-IDF), e não mínimo global simultâneo | Cenários sob carga, stack das demais tasks e picos de alocação; a série antiga `1.5.0` não contém esses campos |
+| Stack | Log `scan stack_high_water_mark_bytes` na saída de `apps/music/cyberdeck_music_app.cpp::scan_entry()`; `sys.info` novo captura `uxTaskGetStackHighWaterMark(nullptr)` em `serial_brg` | Mínimo livre desde a criação **somente** da task amostrada, em bytes no port ESP-IDF; não publicar handle de task encerrada | High-water das outras tasks e sob cargas representativas; não inferir sobra pelo tamanho de stack configurado |
+| Boot | `HOSTED_DIAG` em `main/app_main.cpp`: begin/end de `hosted_prepare`, `sd_mount` (inclusive `duration_ms`) e `battery_protection`; a próxima imagem adiciona `app_main_complete` com `boot_ready` e `t_us` | Duração dos estágios instrumentados se o log do **mesmo boot** estiver completo; `app_main_complete` indica término da função, não checkpoint persistido | Identidade da imagem, custo de ROM/bootloader e detalhes de display e serviços; `sys.info.uptime` após horas não mede duração do boot |
+| Resposta serial | `collect_sysinfo_series.py` mede monotonicamente a chamada `CyberdeckSession.exchange()` | Latência ponta-a-ponta no host nessa sessão (3–4 ms), incluindo transporte, parser e resposta | Tempo interno da task, de UI, de SD ou percentis sob carga; não usar essa latência como orçamento de firmware |
+| Player | `music.diagnostics` (contadores e tempo total/máximo de read/decode/write/backend) e `music.trace` (ring bounded, cursor, `lost`) | Evidência por geração com resultado e perdas somente quando o player é exercitado e os eventos ainda estão no ring | Não há série desta imagem/cenário; não concluir sobre stutter, carga do codec ou throughput com contadores zerados/sem execução |
+
+**Instrumentação mínima em preparação:** os campos de mínimo e stack acima
+foram escolhidos por terem custo limitado à consulta `sys.info`; o log de fim
+do `app_main` não adiciona polling. Mudanças de firmware exigem versão, build,
+teste host e validação na imagem gravada. Não comparar a imagem antiga `1.5.0`
+sem hash atestado com a nova como se fossem o mesmo baseline. Nenhum budget
+numérico novo é definido por esta auditoria.
+
+## Injeção de falhas no host: fronteira do que é comprovável
+
+As fixtures em `tests/host/keymap/` permitem exercitar estes casos sem mudar a
+rede do Tab5 nem apagar dados. Em 05/11/2026,
+`make -C tests/host/keymap test_time_sync test_netdiag_controller test_wifi_event_dispatch test_net_coordinator`
+terminou com status 0; netdiag controller: 122 checks/0 falhas; Wi-Fi dispatch:
+112/0; net coordinator: 151 checks; time sync: alvo executado sem falha.
+
+| Fluxo host | Cenário coberto pela fixture | O que ainda não é provado |
+| --- | --- | --- |
+| `test_time_sync.cpp` | Timeout, DNS/TLS/HTTP inválido, fallback, stop entre etapas e falha de persistência do evento | Deadline real no rádio/stack lwIP, quiescência física após perda de Wi-Fi |
+| `test_netdiag_controller.cpp` | Falhas por estágio DNS/TCP/HTTPS, timeout, grant revogado, cancelamento e token stale | Tempo em rede real, fechamento de socket em disputa e estabilidade da UI |
+| `test_wifi_event_dispatch.cpp` e `test_net_coordinator.cpp` | Eventos stale, rollback de segredo não confirmado, retry/teardown, pressão de fila e prioridade de cancelamento | Comportamento do driver Hosted/C6 e reconexão no dispositivo |
+
+São testes **host** de política e dos adapters simulados, não injeção física de
+falha nem aceite de OS-TAB5-04/07. Ao observar falha real mais tarde, registrar
+token/geração, resultado e uptime antes/depois sem atribuir silêncio a sucesso.
+
+## Imagem instrumentada e observação física — 05/11/2026 (parcial)
+
+- Snapshot do código `0917276`, `version.txt=1.6.0`, ESP-IDF v6.1,
+  ESP-Hosted `3.0.10` com CPU-staging verificado. `make -C tests/host/keymap
+  clean test` e `verify` passaram; `idf.py build` passou com 38 % da partição de
+  app livre. SHA-256 de `build/cyberdeck5.bin`:
+  `4dbe949e3f0fa5a971d6c9c36c2acab0f1a9cd0910aed36c3bcc803b017f5f4e`.
+  Flash em `/dev/ttyACM0` com `idf.py -p /dev/ttyACM0 flash` retornou
+  **`Hash of data verified`**; não houve erase NVS nem SD. É evidência do
+  binário gravado pelo processo de flash, não atestação criptográfica remota.
+  `sys.info` após o flash respondeu `fw_version=1.6.0`, `safe_mode=false`,
+  `interrupted_boots=0` e `recovery_persisted=true` com uptime `00:00:06`.
+- Coletor Serial-JTAG `tools/collect_sysinfo_series.py`, **sessão exclusiva**,
+  60 amostras a 1 Hz (59 intervalos de 1000 ms; 59 s entre extremos), sem erro,
+  uptime `00:00:28`→`00:01:27`:
+  [`phase3-sysinfo-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-sysinfo-1.6.0-20261105.csv),
+  SHA-256 `74b241cb8e894d6142f47dddde413d79b20e0f6dc6c8166c94089b1760512968`.
+  `internal_free` 177259–177459 B, `internal_min_free` 136400 B;
+  `dma_free` 137771–137971 B, `dma_min_free` 96912 B;
+  `psram_free` 27535160–31285016 B, `psram_min_free` no fim
+  27532636 B; `serial_stack_high_water_bytes` 10572–10620 B.
+  Latência host de `sys.info` 4–8 ms. **Esses mínimos são somas de marcas por
+  região desde o início da imagem**, não mínimos simultâneos nem medição de
+  stacks de todos os workers. Não extrapolar budgets desta janela curta.
+- Carga moderada **durante** a série serial: três `GET /screenshot`
+  sequenciais, HTTP 200, BMP 1280×720×24 de 2764854 B em 3,195 / 3,425 /
+  3,116 s no host. Arquivos BMP ficaram apenas em `/tmp/opencode/` por conterem
+  conteúdo da tela. A diferença persistente de ~1,8 MiB de PSRAM após a
+  primeira captura corresponde ao buffer RGB565 estático retido por
+  `cyberdeck_display_port.cpp::s_snapshot_storage` (`BSP_LCD_H_RES ×
+  BSP_LCD_V_RES × 2 + 64` bytes, `std::call_once`); a cópia temporária por
+  request é liberada em `cyberdeck_display_release`. **Não** atribuir a
+  diferença a vazamento sem outro teste. Depois do reset controlado, o heap
+  retornou ao patamar pré-captura; a série não demonstra ausência universal de
+  vazamentos.
+- Coletor HTTP independente `tools/collect_battery_series.py`, 60 respostas
+  HTTP 200 a 1 Hz, sem falhas (59 s entre extremos), uptime `59`→`118` s:
+  [`phase3-battery-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-1.6.0-20261105.csv),
+  SHA-256 `345eacef6f2eb0207e6045189daa53c499207693c50af978f3b5afee81b8de54`.
+  Tensão 8128–8170 mV, corrente -216 a -151 mA, percentual 98 constante,
+  `state=charging`, `charge=not_charging` (sinal CHG_STAT separado da corrente),
+  proteção inativa e carregador habilitado durante a série; idade da amostra
+  0–997 ms e latência HTTP 23–331 ms. Não atravessou o corte de carga nem a
+  reancoragem, portanto **não** aceita o ciclo completo da bateria.
+- `idf.py monitor` iniciou **um reset controlado após o fim dos coletores**;
+  `timeout 35s` terminou com código 124 esperado por limite do monitor, não
+  por falha do firmware. Log bruto local (não commitado: contém dados de rede)
+  `/tmp/opencode/phase3-boot-1.6.0-20261105.log`, SHA-256
+  `d761bfc5a78b400898b149fe56cc3f579802e5451681d63e63f80158d2ba3afd`.
+  Linhas `HOSTED_DIAG`: `hosted_prepare` 73542→2434408 us (2360,866 ms);
+  `sd_mount` 2434632→2504271 us (`ESP_OK`, 69 ms no log);
+  `battery_protection` 5480023→5593955 us (`ESP_OK`, 113,932 ms);
+  `app_main_complete boot_ready=1 t_us=9352450`. O checkpoint recovery
+  retornou `ESP_OK persisted=1`; após o monitor, `sys.info` indicou uptime
+  crescente, safe mode false. `t_us` mede desde o timer ESP, **não** ROM,
+  bootloader ou tempo total desde energização. Sem panic/WDT no log capturado;
+  ocorreram avisos não fatais de GPIO ISR já instalado e IRK do NimBLE (`rc=8`),
+  que não são evidência de BLE funcional.
+- I/O SD e shell em imagem `1.6.0`: `fs.write` criou **apenas** o descartável
+  `/sdcard/data/phase3-sysinfo-20261105.txt` (15 B, CRC32 2069341589);
+  `ui.type 'cat /data/phase3-sysinfo-20261105.txt'` + `term.dump` exibiu
+  `PHASE3-1.6.0-OK`. `rm` removeu somente esse arquivo; `cat` subsequente
+  retornou `file not found`. Uptime `00:00:42`→`00:01:49`, sem reboot
+  inesperado. Isto não valida editor, round-trip de encoding ou falha física
+  do SD.
+
+### Player: incidente na inspeção sem playback (nova rodada, **não aceita**)
+
+Na imagem `1.6.0` anterior (SHA-256
+`4dbe949e3f0fa5a971d6c9c36c2acab0f1a9cd0910aed36c3bcc803b017f5f4e`),
+`ui.type "music"` abriu a superfície e iniciou o
+scan. Uma tentativa posterior de `ui.type "music status"` recebeu ACK, mas
+`term.dump` **não** mostrou a resposta esperada e `ui.dump` exibiu progresso
+de reprodução (`5s / 121s`). O código confirma a causa: no foreground do
+player, `ui.type` injeta Enter e `cyberdeck_music_manager::manager::handle`
+roteia Enter para `action::toggle`; o texto **não** foi executado pelo shell.
+`music.diagnostics` read-only mostrou uma geração ativa, sem falhas, e depois
+uma geração aposentada naturalmente (`read_calls=512`, `failures=0`); não houve
+novo `play` intencional nem repetição da ação insegura. Uma tentativa de clique
+em botão durante a proteção de tela retornou `screen_off`, sem efeito; após
+`screen.wake`, o clique foi aceito, mas `pause_count=0`, portanto **não** atribuir
+parada ao clique. O roteiro `tests/manual/music-player-validation.pt-BR.md`
+foi corrigido para proibir `ui.type` após abrir o player. Não usar
+esta rodada como aceite de scan seguro, player, áudio ou latências. Nenhuma
+rota HTTP nova é necessária para esta lacuna: o protocolo Serial-JTAG já
+expõe diagnósticos do player e permite uma consulta read-only bounded.
+
+### Consulta segura do player — imagem instrumentada subsequente (parcial)
+
+- Código `96cc6bd`, mesma versão de desenvolvimento `1.6.0` **sem tag**,
+  binário diferente do baseline anterior: SHA-256 de `build/cyberdeck5.bin`
+  `ca6aaa61595a25de9f1b80441fb04e8680f95afdf0c8ed4884f0eece4afffcd9`.
+  `idf.py build`, `make -C tests/host/keymap clean test`, `verify` e
+  `test_os_dashboard_contract` passaram; flash em `/dev/ttyACM0` confirmou
+  `Hash of data verified`. `sys.info` pós-flash reportou `fw_version=1.6.0`,
+  `safe_mode=false`, zero boots interrompidos, recovery persistido e uptime
+  `00:00:06`; hash de flash **não** é atestação independente da imagem rodando.
+- Com a app parada, `music.status` retornou `player_not_running`. Após
+  `screen.status` (`off=false`) e **uma única** chamada `ui.type music` no shell,
+  não houve mais injeção de teclas. `music.status` informou `state=stopped`,
+  `queue_scanning=false`, `track_count=14`, posição/duração 0; o scan já havia
+  terminado antes da primeira consulta, portanto sua latência e high-water
+  **não foram medidos**.
+- Coletor `tools/collect_music_status_series.py`, uma única sessão USB
+  Serial-JTAG, `--seconds 60`, resolução 1 Hz: 60/60 respostas válidas, 59
+  intervalos de 1000 ms, sem falhas, uptime `00:00:28`→`00:01:27`:
+  [`phase3-music-status-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-music-status-1.6.0-20261105.csv),
+  SHA-256 `47efd7e0d0b8d275b6630039ec596d6e3e0c56904edbecb385f423455f57106e`.
+  Em toda a série `state=stopped`, `queue_scanning=false`, contagem 14,
+  posição/duração 0. `internal_free=177003` B,
+  `internal_min_free=129820` B, `dma_free=137515` B,
+  `dma_min_free=90332` B; `psram_free` 31241064–31243580 B,
+  `psram_min_free=31146488` B; folga mínima reportada da task serial
+  10476–10608 B. Latência conjunta das duas consultas no host 5–10 ms.
+  O CSV não contém SSIDs, títulos nem caminhos de faixas.
+- `music.diagnostics` antes e depois da série confirmou
+  `generations_queued=0`, `generations_started=0`, `generations_retired=0`,
+  `failures=0` e `read_calls=0`; `sys.info` final indicou uptime
+  `00:01:45`, `safe_mode=false`, sem reboot observado. Isso valida **apenas**
+  inspeção passiva e estabilidade nessa janela; não atesta reprodução,
+  teardown, custos sob decoder ativo, BLE, editor ou budgets da Fase 3.
+
+### Retorno de foreground sem Enter — `ui.escape` (parcial)
+
+- Snapshot `84c67d2`, firmware `1.6.0` ainda sem tag, binário SHA-256
+  `ef4bacfb1ecb8e52d722d17de1711f1523a245a58274dda96128af983fbdc53c`.
+  `make -C tests/host/keymap clean test verify`, `idf.py build` e contrato do
+  dashboard passaram; flash em `/dev/ttyACM0` verificou o hash gravado.
+  `sys.info` no boot: `safe_mode=false`, `interrupted_boots=0`, uptime 6 s;
+  não há atestação independente do hash em execução.
+- Em tela acesa, `ui.type music` abriu o player; `music.status` indicou
+  `stopped`, 14 faixas e scan concluído. `ui.escape` retornou ACK e a consulta
+  seguinte a `music.status` respondeu `player_not_running`; `ui.dump` mostrou
+  novamente terminal/prompt. `sys.info` avançou até 33 s, sem reboot observado.
+  As consultas serial foram sequenciais; o ACK isolado não foi usado como prova.
+- `ui.type 'edit /data/phase3-escape-no-save-20261105.txt'` abriu o editor
+  vazio (`ui.dump` mostrou cursor e barra de atalhos). `ui.escape` devolveu
+  o prompt em `term.dump`; `cat` do mesmo caminho confirmou `file not found`
+  (nenhuma gravação). Uptime chegou a 53 s, sem reboot observado.
+  Isto cobre só abrir/fechar editor limpo, não dirty/save, round-trip ou
+  falha de I/O. A recusa de `ui.escape` com a tela apagada está coberta em
+  host; no dispositivo, após timeout de inatividade, `screen.status` confirmou
+  `off=true`, `ui.escape` retornou `screen_off` e `screen.status` permaneceu
+  `off=true`. `screen.wake` respondeu `woke=true`; uptime chegou a 4m14s sem
+  reboot observado.
+
+### Duração e stack do scan de música — imagem `39953bf` (parcial)
+
+- Firmware ainda `1.6.0` sem tag, binário SHA-256
+  `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`,
+  diferente dos snapshots anteriores. `make -C tests/host/keymap clean test
+  verify`, `idf.py build` e contrato do dashboard passaram; flash em
+  `/dev/ttyACM0` verificou o hash. `sys.info` no boot indicou uptime 6 s,
+  `safe_mode=false`, `interrupted_boots=0`. Esse registro continua sem
+  atestação independente do **binário inteiro** em execução.
+- `music.scan` antes de abrir retornou `player_not_running`. Após uma única
+  abertura do player, a fila concluiu em **472 ms**, com **2688 B de folga
+  mínima** na task `music_scan` de 6144 B; o browser concluiu em **10 ms**,
+  com **3824 B livres**. A duração usa ticks FreeRTOS, portanto o resultado
+  de 10 ms tem resolução de um tick, não precisão submilissegundo.
+- `tools/collect_music_status_series.py` (`music.status`, `music.scan`,
+  `sys.info` sequenciais na mesma sessão Serial-JTAG) produziu 60/60 amostras
+  válidas a 1 Hz, 59 intervalos de 1000 ms, uptime `00:00:24`→`00:01:23`:
+  [`phase3-music-scan-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-music-scan-1.6.0-20261105.csv),
+  SHA-256 `b48f5192c65e3fd769baf1f8e5bc7049e8187acad0aea3a6ee3d2db3ffaf929b`.
+  Nas 60 amostras, `state=stopped`, `track_count=14`, `position_ms=0`, os
+  dois scans concluídos com sucesso e as métricas acima permaneceram
+  estáveis; latência conjunta das três consultas no host 6–15 ms.
+  `music.diagnostics` ao fim confirmou zero gerações de playback e zero
+  falhas; uptime chegou a `00:01:39`. O CSV não inclui SSID ou nomes/caminhos
+  de faixas.
+- Após `screen.wake` e `ui.escape`, `music.scan` voltou a responder
+  `player_not_running`. Duas aberturas/fechamentos adicionais, sem Enter no
+  foreground, deram **354 ms / 2704 B** e **353 ms / 2704 B** para a fila;
+  `music.status` manteve `stopped`, 14 faixas, posição 0. O browser manteve
+  o modelo anterior em cache entre sessões e não iniciou novo scan:
+  `browser.completed=false` com duração/stack zero significa **não medido
+  nessa sessão**, não falha. Uptime final `00:02:29`, sem reboot observado.
+  Essa pequena amostra não aprova orçamento de latência, stack nem throughput;
+  ainda faltam decoder/playback e outros workers.
+
+### Readback independente e editor descartável — `39953bf` (parcial)
+
+- Após encerrar o player e sem outro leitor na porta, o esptool fez apenas
+  `read-flash 0x10000 0x27a6e0` da partição `factory` (offset confirmado na
+  tabela de partições), com reset controlado antes/depois. SHA-256 dos
+  **2.598.624 bytes lidos** foi exatamente
+  `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`,
+  igual ao `build/cyberdeck5.bin`. O dump bruto ficou apenas em
+  `/tmp/opencode/phase3-readback-39953bf.bin`, **não versionado**; não leu
+  NVS ou SD. `sys.info` após o reset voltou com uptime 6 s,
+  `safe_mode=false`, zero boots interrompidos. Isto identifica o conteúdo
+  inteiro gravado no único slot app `factory` da imagem em execução após
+  boot normal, sem reivindicar remote attestation/secure boot.
+- No shell, `cat /data/phase3-editor-roundtrip-20261105.txt` inicialmente
+  retornou `file not found`. `edit` abriu buffer novo; `ui.type
+  PHASE3_EDITOR_ROUNDTRIP` escreveu a linha e Enter inseriu newline,
+  `ui.dump` mostrou dirty (`*`); `ui.escape` apresentou confirmação
+  `Salvar / Descartar / Cancelar`. Enter na confirmação salvou e fechou;
+  `cat` retornou `PHASE3_EDITOR_ROUNDTRIP` com newline. `rm` removeu apenas
+  esse arquivo descartável, e `cat` voltou a retornar `file not found`.
+  Uptime foi de 6 s pós-reset a 1m10s, sem reboot/panic observado.
+  Este ensaio não mede hash de bytes via reader independente, codecs legados,
+  conflito de save nem falha física/atômica de FAT/SD.
+
+### Corte de carga observado pela LAN — `39953bf` (parcial)
+
+- O coletor `tools/collect_battery_series.py` usou **somente HTTP** durante
+  as amostras, com 60 respostas 200 a 1 Hz e 59 intervalos de 1000 ms:
+  [`phase3-battery-readback-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-readback-1.6.0-20261105.csv),
+  SHA-256 `90c27bf844fdf954f5ba1c9259806abd5fac82e3f8fe8aea3f7fddf375e1eee3`.
+  Uptime 94→153 s, sem falha HTTP. Com proteção ligada e 100% na escala da
+  política, o corte ocorreu **uma vez entre t=33 s e 34 s**: 8198 mV,
+  -183 mA, `protection_active=false`, `charger_enabled=true` → 8201 mV,
+  -192 mA, `protection_active=true`, `charger_enabled=false`.
+  Entre t=38 s e 39 s, corrente chegou a +2 mA e `state` mudou de
+  `charging` para `external`; `charge=not_charging` é a leitura separada
+  de CHG_STAT, não substitui a evidência de corrente. A série não mostrou
+  segunda transição de CHG_EN.
+- Série pós-corte independente de 60 amostras a 1 Hz, uptime 190→249 s,
+  60 HTTP 200/0 falhas:
+  [`phase3-battery-postcut-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-postcut-1.6.0-20261105.csv),
+  SHA-256 `7d4e1705b31479f6cadcfc55493a1e99a3670f844d16a8823a4b1993869b20de`.
+  `state=external`, corrente +2 mA, 8115–8120 mV, percentual 100%,
+  proteção ativa e carregador desligado em todas as amostras. Há um intervalo
+   **não observado** entre as séries; dois CSVs separados não provam cinco
+   minutos contínuos sem oscilação.
+- Terceira série pós-corte de 180 amostras a 1 Hz, uptime 266→445 s,
+  180 HTTP 200/0 falhas:
+  [`phase3-battery-latch-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-latch-1.6.0-20261105.csv),
+  SHA-256 `0d52978a50da48203e6a5b3f970300acb96f281121492fd90717ed1cbb768e89`.
+  Em todas as amostras `state=external`, percentual 100%, corrente +2 mA,
+  8107–8113 mV, proteção ativa e carregador desligado. O uptime final é
+  317 s posterior ao instante do corte (128 s), mas houve intervalos
+  não observados entre estas séries: elas isoladamente não comprovam cinco
+  minutos **contínuos**. A janela independente de 301 amostras abaixo cobre
+  300 s entre extremos sem lacunas.
+- Janela **contínua** pós-corte de 301 amostras HTTP 200 a 1 Hz,
+  300 intervalos de exatamente 1000 ms, uptime 463→763 s, sem falha:
+  [`phase3-battery-latch-contiguous-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-latch-contiguous-1.6.0-20261105.csv),
+  SHA-256 `89058b821eb1d76d6209d5662ccbe4aff76871a9e9f934740f85f51ea9b0fd8e`.
+  Em todos os pontos: `state=external`, `charge=not_charging`, 100%,
+  corrente +2 mA, 8102–8107 mV, `protection_active=true` e
+  `charger_enabled=false`; latência HTTP 12–175 ms, idade da amostra 1–1000 ms.
+  `sys.info` após a coleta indicou uptime `00:13:10`, sem safe mode/reboot.
+  Isso satisfaz **somente** a observação contínua de cinco minutos do latch
+  com a fonte atual conectada, não prova leitura física do pino CHG_EN nem
+  cobre rearme/ausência de fonte.
+- **Limite material:** o cabo USB Serial-JTAG permaneceu fisicamente ligado
+  para descobrir o IP antes das coletas, embora nenhum leitor serial estivesse
+  aberto durante os requests HTTP. A fonte elétrica não foi isolada: isso
+  **não** aceita os cenários bateria-only/sem USB do roteiro manual, o rearme
+  a 90% ou o corte da energia pelo poweroff. Não desligar a proteção nem
+  desconectar alimentação para forçar uma segunda transição nesta etapa.
+
+### Degradação de rede local e carga HTTP — `39953bf` (parcial)
+
+- Com shell e Wi-Fi disponíveis, `netdiag tcp 127.0.0.1 1` concluiu em
+  `state=failed`, `error=tcp_failed`, duração 4 ms; depois do cooldown,
+  `netdiag tcp 127.0.0.1 80` concluiu em `state=complete`, duração 5 ms.
+  As duas consultas `netdiag result` devolveram o prompt; não houve acesso a
+  destino externo, mudança da rede ou perda de uptime. Isto demonstra
+  tratamento de conexão recusada e operação posterior bem-sucedida, **não**
+  injeção de perda de Wi-Fi/Hosted, timeout DNS/TLS ou recovery de todos os
+  serviços.
+- Três `GET /screenshot` sequenciais retornaram HTTP 200 e BMP 24-bit
+  1280×720 com 2.764.854 B: 3,436 / 3,135 / 3,458 s no host.
+  `sys.info` antes da primeira captura: `psram_free=31270928` B; após duas:
+  29403132 B; após a terceira: **29403132 B**, sem queda adicional.
+  A primeira diferença corresponde à reserva estática da porta de display
+  já explicada no baseline anterior; não inferir ausência universal de leak.
+  Uptime cresceu até `00:15:09`, `safe_mode=false`; os BMPs contêm tela e
+  ficaram apenas em `/tmp/opencode/`, não versionados.
+
+### Playback real e perda pontual de resposta Serial-JTAG — `39953bf` (parcial)
+
+- Após autorização explícita para todos os testes, no firmware identificado
+  pelo readback acima, `sys.info` mostrou boot normal e uptime `00:20:56`.
+  `screen.wake`, `ui.type music` (somente antes do foreground) e um único
+  `ui.tap 'Play / Pause'` iniciaram uma faixa de duração declarada 121560 ms.
+  `music.status` confirmou `playing` com posição crescente. O coletor
+  `tools/collect_music_status_series.py` registrou 60/60 amostras sem erro,
+  espaçadas exatamente por 1000 ms, uptime `00:21:55`→`00:22:54`:
+  [`phase3-music-playback-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-music-playback-1.6.0-20261105.csv),
+  SHA-256 `2eb787e9e3ad225de912d5e3b6723b8ddc4bf558985b4f60786aa891e6ba18f5`.
+  Em todos os pontos `state=playing`, 14 faixas, duração declarada 121560 ms;
+  posição 9216→68208 ms, zero regressões. Heap interno livre ficou em
+  141923 B nessa janela, mínimo histórico 109376 B; PSRAM livre variou
+  29310540–29310952 B. O CSV não contém metadados das faixas.
+- Consulta após a série: `music.diagnostics` geração 1, queued/started=1/1,
+  falhas=0 e `failure_stage=none`; 366 reads, 3565 decodes e 3565 writes;
+  máximos read/decode/codec-start/write de 5585/10984/43872/31965 us.
+  `music.trace` retornou apenas 16 eventos recentes, `lost=11001`,
+  `truncated=true`: não é histórico completo nem prova ausência de underrun.
+  A tela havia apagado por inatividade; `screen.wake` e `ui.escape`
+  fecharam o player, `music.status` passou a `player_not_running`, o prompt
+  voltou e `ping`/`sys.info` responderam sem reboot (uptime `00:23:28`).
+- Em uma segunda abertura, `ui.tap 'Play / Pause'` confirmou `playing`;
+  outro toque confirmou `paused`. Um terceiro toque retornou ACK, mas o
+  `music.status` imediatamente seguinte **não recebeu resposta** na CLI
+  (`nenhuma resposta do dispositivo`, exit 2). O cenário foi interrompido:
+  não se repetiu o toque. Diagnóstico passivo posterior: `/dev/ttyACM0`
+  presente; `sys.info` respondeu uptime `00:24:15`, sem safe mode ou reboot;
+  `music.status` mostrou `playing` e posição 22896 ms. `ui.escape` fechou a
+  sessão; `music.status` retornou `player_not_running`, prompt reapareceu e
+  uptime cresceu a `00:24:29`. Causa da perda única de resposta **não
+  demonstrada**: pode ser transporte/timeout, mas não foi provado. Por regra
+  do roteiro, não prosseguir com ciclos de playback nem marcar esse fluxo
+  integralmente validado antes de investigar. A série sem falhas não anula
+  esse incidente. Nenhuma inspeção humana de som audível, speaker ou jack foi
+  registrada nesta rodada.
+
+### Bateria-only e poweroff supervisionado — `39953bf` (parcial)
+
+- Antes da intervenção, `sys.info` mostrou uptime `00:27:11`, boot normal;
+  `GET /battery` pela LAN mostrou `external`, 100%, 8098 mV, +2 mA,
+  proteção ativa e carregador desligado. O operador confirmou bateria
+  instalada e retirou fisicamente a USB Serial-JTAG; confirmou que o Tab5
+  permaneceu ligado. O coletor HTTP, sem leitor serial nem cabo USB, obteve
+  **60/60 respostas 200 a 1 Hz**, 59 intervalos de 1000 ms, uptime
+  1663→1722 s:
+  [`phase3-battery-only-release-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-only-release-1.6.0-20261105.csv),
+  SHA-256 `beb4944641f956b61ae09de5065ed11e877d17fca1bd2cf471f5d4fb9411fa5c`.
+  Em toda a série `state=battery`, `available=true`, descarga 99–186 mA,
+  tensão 8020–8060 mV, 100%, proteção inativa e carregador habilitado.
+  A liberação ocorreu **entre a amostra anterior com fonte e a primeira
+  amostra sem fonte**, não se observou a quinta amostra que a causou; tampouco
+  foi testado o rearme exatamente a 90% ou medido nível físico do pino.
+- O operador reconectou a USB para preparar o teste de poweroff com backup
+  previamente verificado. A **primeira** consulta `sys.info` após reconexão
+  não recebeu resposta (exit 2); `GET /battery` continuou HTTP 200 com
+  uptime 1791 s e a segunda consulta serial respondeu uptime `00:29:55`,
+  sem reboot. O mesmo padrão de primeira leitura ausente reapareceu após
+  outro ciclo USB/boot abaixo. Não atribuir causa a transporte/firmware sem
+  diagnóstico; nenhum desses timeouts foi usado como evidência de corte.
+- O canário novo `/data/phase3-poweroff-canary-20261105.txt` foi confirmado
+  ausente (`cat: file not found`), gravado via `fs.write` em
+  `/sdcard/data/phase3-poweroff-canary-20261105.txt` (31 B, CRC32
+  `837892956`) e relido por `cat` com o conteúdo exato
+  `PHASE3_POWEROFF_CANARY_20261105` (sem newline). O operador retirou a USB,
+  enviou `poweroff` e `y` uma única vez no teclado local e **confirmou o corte
+  físico**, não apenas tela preta/queda da porta. Não havia gravação pendente
+  conhecida; não se retirou SD durante o desligamento. Em seguida religou
+  pelo procedimento normal com SD instalado e reconectou USB, confirmando TUI.
+- Após o relight, a primeira consulta serial perdeu resposta, mas HTTP
+  respondeu uptime 27 s; a segunda consulta `sys.info` respondeu uptime 29 s,
+  `safe_mode=false`, `interrupted_boots=0`. `cat` releu o mesmo texto exato do
+  canário e o uptime chegou a 40 s, sem reboot adicional. A leitura textual
+  confirma o conteúdo observado, não constitui hash independente do SD nem
+  prova corte elétrico por instrumentação automatizada; o corte foi observado
+  pelo operador. O canário foi **preservado** para verificações futuras, não
+  removido. Este ensaio cobre poweroff **bateria-only** uma vez na imagem
+  identificada, não todas as fontes nem falhas físicas de SD/NVS.
+
+### SD ausente no boot e recuperação — `39953bf` (controle experimental falhou)
+
+- Após backup verificado pelo operador e teste de que o botão físico corta a
+  alimentação mesmo com USB conectada, o Tab5 foi desligado com SD instalado;
+  `/dev/ttyACM0` desapareceu. O operador retirou o cartão somente com aparelho
+  desligado e fez uma tentativa de ligar sem SD. Relatou LED acender por um
+  instante, tela preta e LED apagar. A captura Serial-JTAG privada
+  `/tmp/opencode/phase3-boot-no-sd-20261105.log` (45486 B, SHA-256
+  `925bcec535bbaf862c5f484d28953770b2945acf4cdd35c15de9dd07a1a6801e`)
+  mostrou **múltiplos** boots com `sd_mount end result=ESP_ERR_TIMEOUT`,
+  `ESP_ERROR_CHECK failed` em `sd_mount_err`, `abort()` e `Rebooting...`.
+  Embora a ação humana de ligar tenha ocorrido uma vez, o firmware reiniciou
+  automaticamente antes de ser interrompido: não descrever como um único
+  reboot controlado nem como recuperação degradada. Não houve TUI funcional
+  sem SD. O log bruto pode conter dados de rede; permanece fora do repositório.
+- Ao recolocar o SD com o Tab5 aparentemente desligado, o aparelho **ligou
+  inesperadamente**. O journal NVS capturado depois mostrou
+  `transition=boot_begin` crescendo até `interrupted=65`; em seguida houve
+  checkpoint persistido com `safe=1`, `pending=0`, `interrupted=0`.
+  `sys.info` retornou `safe_mode=true`; o SD montou e o canário de 31 B foi
+  relido integralmente. Uma primeira consulta serial após o reinício perdeu
+  resposta; a seguinte respondeu. HTTP no IP anterior estava indisponível
+  durante a transição, sem diagnóstico isolado da conectividade.
+- O journal NVS foi examinado **antes** de agir. Com checkpoint concluído e
+  canário íntegro, um único `sys.safe_mode.clear` respondeu `cleared=true`;
+  `sys.info` mostrou `safe_mode=false`, e o journal confirmou
+  `transition=clear result=ESP_OK persisted=1 safe=0 pending=0 interrupted=0`.
+  Um único reset controlado via `idf.py monitor` (timeout esperado do coletor)
+  registrou `sd_mount end result=ESP_OK duration_ms=69`,
+  `checkpoint result=ESP_OK persisted=1 ... safe_mode=0 pending=0 interrupted=0`
+  e `app_main_complete boot_ready=1`, sem marcador de panic. Log privado
+  `/tmp/opencode/phase3-sd-restored-boot-20261105.log` (15534 B, SHA-256
+  `f2b3c4cdba806f32c3d8195539cce9ae53125166993d85dca01c512c14dbd055`).
+  `sys.info` após boot confirmou uptime 24 s, `safe_mode=false`, zero boots
+  interrompidos; o canário permaneceu legível. O journal final registrou
+  `load ... safe=0 pending=0 interrupted=0` e novo checkpoint persistido.
+- **Controle do ensaio físico falhou (não é defeito do produto):** o
+  procedimento não limitou automaticamente reinícios sem SD, e inserir o
+  cartão religou o Tab5. Não repetir boot sem
+  SD nem induzir corrupção/interrupção NVS nesta configuração antes de existir
+  limitação física/instrumentada de um único boot e recuperação reproduzível.
+  A recuperação após reinserção foi observada, mas não torna segura a
+  repetição do cenário. Não atribuir os 65 boots a interações manuais.
+
+## Pendências de aceite técnico integral da Fase 3 (não bloqueiam apps simples)
+
+1. A imagem `39953bf` tem build/hash, flash verificado e readback integral
+   do único slot app `factory`, seguido por boot normal; isso identifica
+   independentemente o conteúdo gravado sem prometer secure boot/remote
+   attestation. A identificação da imagem anterior `1.5.0` continua limitada
+   à versão, não ao hash; não comparar binários anteriores como iguais com
+   base somente em `fw_version`.
+ 2. As séries de 1 s cobrem repouso/captura HTTP, player parado e uma task
+   serial; a série de 60 s de playback também foi medida, mas houve uma
+   perda posterior de resposta serial durante pause/resume, sob análise.
+   Três scans da fila e um do browser já têm duração/high-water físicos.
+   Faltam stack de outros workers, overflow e tempo de
+   operações de editor/BLE/player ativo sob cenários representativos. Não fixar
+   budgets a partir de uma janela curta nem da soma de mínimos por região.
+3. Medir os cenários seguros da matriz com tempos por estágio e configuração
+   idêntica antes/depois; separar tempo de render, rede, storage e codec. Só
+   otimizar gargalo observado e reproduzível; sem evidência de gargalo não há
+   mudança/redução de stack, fila ou timeout a justificar.
+ 4. Injeções seguras de rede/timeout passaram em shims; bateria-only e um
+    poweroff supervisionado foram exercitados. O boot sem SD confirmou falha
+    fatal, porém **gerou múltiplos reinícios**, atingiu safe mode e expôs
+    reenergização ao inserir o cartão; recuperação com SD e clear único passou.
+    Não induzir falha NVS/novo boot sem SD sem controle de um único boot e
+    método seguro de recuperação. Esses ensaios não são requisito para boot
+    sem cartão nem gate de correção. Outros cenários físicos pertinentes e
+    budgets aprovados ainda condicionam o aceite técnico integral da Fase 3;
+    o aceite operacional delimitado acima permanece válido.

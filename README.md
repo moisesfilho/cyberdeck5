@@ -2,10 +2,13 @@
 
 **Languages:** [English](README.md) | [Português](README.pt-BR.md)
 
-Simplified embedded OS for the only supported target, M5Stack Tab5, with one
-touch TUI for compiled command apps. The first tool is an interactive SSH
-client in the terminal. The architecture separates `platform/hardware`,
-`kernel/runtime`, `SDK`, and `apps`; the Tab5 BSP is vendored.
+Device-specific embedded operating environment for the M5Stack Tab5, built on
+the FreeRTOS kernel and ESP-IDF platform. It provides a touch TUI for compiled
+command apps, including an interactive SSH client. The cyberdeck5 layers are
+`platform/hardware`, `system runtime`, `SDK`, and `apps`; the Tab5 BSP is vendored.
+
+[Implementation plan](docs/OS-IMPLEMENTATION-PLAN.pt-BR.md) ·
+[Progress dashboard](docs/OS-IMPLEMENTATION-DASHBOARD.html)
 
 ## Características
 
@@ -347,7 +350,7 @@ JSON object per line, bounded to 4096 bytes and correlated by `rid`
 filtered by the client.
 
 Commands: `ping`, `sys.info`, `wifi.status`, `wifi.scan`, `ui.echo`,
-`ui.click X Y`, `ui.tap <target>`, `ui.type <text>`, `ui.dump`, `ui.clear`,
+`ui.click X Y`, `ui.tap <target>`, `ui.type <text>`, `ui.escape`, `ui.dump`, `ui.clear`,
 `screen.shot` (frame metadata) and `screen.dump`, which streams the LVGL
 screen as 1024-byte Base64 BMP chunks with per-chunk and total CRC32.
 
@@ -360,6 +363,14 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
 
 `pyserial` is required on the host (`pip install pyserial`). See
 `tests/manual/serial-bridge-validation.pt-BR.md` for the on-device checklist.
+`sys.info` also reports optional heap low-water sums by memory capability and
+the serial task's minimum free stack in bytes. These do not measure other tasks
+or prove a simultaneous whole-device minimum.
+With the music app in the foreground, use `music.status` for read-only playback
+and queue-scan telemetry. Do not send `ui.type "music status"`: its Enter key
+toggles playback instead of querying the shell.
+`music.scan` reports the last queue/browser scan duration and minimum free
+scan-task stack in bytes, without revealing track names or paths.
 
 ## Estrutura
 

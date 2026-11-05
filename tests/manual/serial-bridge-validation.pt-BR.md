@@ -4,7 +4,7 @@
 **Escopo:** ponte manual NDJSON na porta USB Serial-JTAG (`bridge_start`) e a
 CLI host `tools/cyberdeck_cli.py`, exercitando correlacao por `rid`, envelopes
 de sucesso/erro, tolerancia a logs intercalados, comandos de UI (`ui.*`),
-contratos `sys.info`/`wifi.*`, `term.dump` e a captura `screen.shot`/`screen.dump` (BMP em
+contratos `sys.info`/`wifi.*`/`music.status`, `term.dump` e a captura `screen.shot`/`screen.dump` (BMP em
 chunks Base64 com CRC32).
 **Estado sob validacao:** task `serial_brg` iniciada ao fim do boot; protocolo
 NDJSON com uma linha por mensagem, limite de 4096 bytes, `{"rid","ok":true,
@@ -83,6 +83,7 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 | U10 | `ui.type` rapido repetido (linha longa) | Fila bounded (8) + 30 ms entre eventos: nada perdido, sem flood |  |  |
 | U11 | `ui.dump` | `result.nodes` com `class/text/x/y/w/h`; acao visivel refletida no dump (ex.: dump apos `ui.click` mostra o estado novo) |  |  |
 | U12 | `ui.dump` com UI ocupada (roda de log girando) | Resposta sob `bsp_display_lock`, sem deadlock; UI permanece responsiva ao toque |  |  |
+| U13 | `ui.escape` com app em foreground e tela acesa | Injeta apenas Escape pela fila bounded, sem Enter; confirmar fechamento por `term.dump`/`ui.dump`, ACK isolado não prova efeito |  |  |
 
 ### 4.1. Estratégia preferencial de validação textual
 
@@ -104,6 +105,11 @@ widgets (por exemplo, confirmar que uma tela foi aberta). Reserve
 aspectos visuais que o texto não representa; não use OCR como primeira opção
 para conferir uma resposta textual.
 
+Para sair de um app sem injetar Enter, use `ui.escape` (tela acesa) e confirme
+o retorno ao shell com `term.dump`. A ponte retorna ACK de injeção, não de
+fechamento. Com a proteção de tela ativa, recebe `screen_off`: primeiro use
+`screen.wake`. `ui.type ""` **não** substitui Escape.
+
 ### 4.2. Editor (`TEST-EDIT-UI/INPUT/COMMANDS/DIRTY/NEW/SAVE-FAILURE/LIFECYCLE/SERIAL`)
 
 Com o shell no menu, use `ui.type "edit /tmp/novo.txt"` e confirme a superfície
@@ -122,7 +128,8 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.dump
 python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump
 ```
 
-Atalhos/gestos exigem teclado ou toque físico; repita abrir/fechar/reabrir e
+Atalhos/gestos exigem teclado ou toque físico; `ui.escape` cobre apenas a saída
+sem Enter. Repita abrir/fechar/reabrir e
 desconectar/reconectar Serial-JTAG para confirmar estado limpo e ausência de
 callbacks tardios.
 
@@ -131,7 +138,7 @@ callbacks tardios.
 Registradas em validação real; valem para qualquer cenário executado pela ponte.
 
 - **Tela apagada recusa os comandos de UI (desde 30/out/2026).** Com a proteção
-  de tela ativa, `ui.click`, `ui.tap`, `ui.type`, `ui.clear`, `ui.dump`,
+  de tela ativa, `ui.click`, `ui.tap`, `ui.type`, `ui.clear`, `ui.escape`, `ui.dump`,
   `term.dump`, `screen.shot` e `screen.dump` falham com
   `error_code="screen_off"` e `error="tela apagada: use screen.wake antes"`;
   nenhum deles alcanca a árvore de widgets nem captura o framebuffer.
@@ -223,6 +230,40 @@ firmware correspondente e uma execucao deste roteiro.
 
 ## 6. sys.info / wifi
 
+### Boot sem SD: limite físico observado (05/11/2026)
+
+Na imagem `39953bf`, um boot com cartão retirado **apenas com o aparelho
+desligado** encontrou `sd_mount=ESP_ERR_TIMEOUT`, seguido de
+`ESP_ERROR_CHECK`/`abort()` e reinícios automáticos; o journal chegou a 65
+boots interrompidos antes de a alimentação/SD serem restaurados. Inserir o
+cartão com o aparelho aparentemente desligado o religou inesperadamente.
+Com SD restaurado, o checkpoint concluiu, um `sys.safe_mode.clear` único foi
+persistido e o boot controlado seguinte ficou normal; canário legível.
+Decisão posterior do operador: o SD é obrigatório; não iniciar/reiniciar
+tentando novamente o mount quando ele falta é consequência aceita, **não**
+defeito nem requisito de boot sem cartão. Opcionalmente, uma versão futura
+poderia mostrar antes da UI normal uma mensagem de que o sistema não pode
+iniciar sem cartão de memória. O histórico abaixo registra o risco do ensaio
+físico, não transforma o comportamento do produto em bug.
+**Não repita o boot sem SD nem induza falha física de NVS** até existir um
+controle comprovado de um único boot, captura de logs e corte seguro sem
+reenergização acidental. Log bruto fica privado; roteiro e evidências em
+`docs/OS-PHASE3-BASELINE.pt-BR.md`.
+
+### Identidade de imagem sem endpoint adicional (leitura do flash)
+
+Se `fw_version` for igual em builds distintos e for necessário comparar os
+bytes gravados, confirme o offset do slot `factory` na tabela de partições
+gerada (`gen_esp32part.py build/partition_table/partition-table.bin`). Com a
+porta Serial-JTAG livre, o player/editor fechados e a imagem compilada, leia
+**somente o comprimento de `build/cyberdeck5.bin`** a partir desse offset com
+`esptool read-flash`; compare SHA-256 do arquivo lido ao binário local.
+O esptool reinicia o dispositivo para entrar/sair do bootloader; confirme
+`sys.info` e o boot normal depois. Não leia nem publique NVS, SD, partição
+inteira ou o dump bruto: guarde este apenas em `/tmp/opencode/`. A igualdade
+prova o conteúdo do slot de app naquele instante, não secure boot ou
+atestação remota de toda a cadeia de execução.
+
 | ID | Acao | Resultado esperado | Pass/Fail | Obs |
 |----|------|--------------------|-----------|-----|
 | W1 | `sys.info` | `fw_version`, `idf_version`, `chip=="esp32p4"`, `free_heap` (numero), `uptime` `HH:MM:SS` |  |  |
@@ -230,6 +271,25 @@ firmware correspondente e uma execucao deste roteiro.
 | W3 | `wifi.scan` | `networks` com `ssid` (<=32 bytes), `rssi`, `open`; ordenado/estavel; sem hang |  |  |
 | W4 | `wifi.scan` com Wi-Fi desabilitado | Lista vazia `[]` ou erro tipado; resposta dentro do timeout (8 s) |  |  |
 | W5 | `wifi.scan` repetido rapido | Nenhum resultado vazio/corrompido (semaforo drenado); o dispositivo aceita o proximo scan normalmente |  |  |
+
+Na imagem com telemetria da Fase 3, `sys.info` inclui
+`internal_min_free`, `dma_min_free` e `psram_min_free` (somas de mínimos por
+região/capability, não mínimo simultâneo do heap) e
+`serial_stack_high_water_bytes` (menor folga da task `serial_brg` desde sua
+criação; no ESP-IDF a unidade é byte). Compare com os valores instantâneos
+`internal_free`, `dma_free`, `psram_free`, e não trate campos ausentes em
+imagens antigas como zero medido. O coletor `tools/collect_sysinfo_series.py`
+registra essas colunas opcionais.
+
+Com o player em foreground, consulte `music.status` pela ponte (read-only):
+`python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 music.status`. O resultado
+contém somente `state`, `queue_scanning`, `track_count`, `position_ms` e
+`duration_ms`; não inclui título, caminho ou credenciais. Se o player não está
+rodando, retorna `player_not_running`. **Não use `ui.type "music status"` no
+player:** Enter é Play/Pause, não consulta ao shell.
+`music.scan` consulta sem teclas as últimas medições de scan da fila e do
+browser (`completed`, `succeeded`, `duration_ms`, `stack_high_water_bytes`);
+`completed=false` significa que não há resultado final desse tipo de scan.
 
 ### 5.1. Auditoria Wi-Fi no terminal (`wifi audit`)
 

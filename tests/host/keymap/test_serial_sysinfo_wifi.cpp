@@ -21,6 +21,7 @@
  *     - handlers retornam envelope NDJSON com rid ecoado e ok:true
  */
 #include "apps/serial/cyberdeck_serial_bridge.h"
+#include "apps/music/cyberdeck_music_model.h"
 
 #include <cstdio>
 #include <cstring>
@@ -42,6 +43,10 @@ void test_sys_info_json_contract(){
     info.dma_free=24000;
     info.dma_largest=12000;
     info.psram_free=2000000;
+    info.internal_min_free=31000;
+    info.dma_min_free=11000;
+    info.psram_min_free=1800000;
+    info.serial_stack_high_water_bytes=2048;
     info.uptime="00:01:23";
     std::string j = cyberdeck_serial::sys_info_to_json(info);
     CHECK(j.find("\"fw_version\"")!=std::string::npos);
@@ -52,6 +57,10 @@ void test_sys_info_json_contract(){
     CHECK(j.find("\"internal_largest\":32000")!=std::string::npos);
     CHECK(j.find("\"dma_largest\":12000")!=std::string::npos);
     CHECK(j.find("\"psram_free\":2000000")!=std::string::npos);
+    CHECK(j.find("\"internal_min_free\":31000")!=std::string::npos);
+    CHECK(j.find("\"dma_min_free\":11000")!=std::string::npos);
+    CHECK(j.find("\"psram_min_free\":1800000")!=std::string::npos);
+    CHECK(j.find("\"serial_stack_high_water_bytes\":2048")!=std::string::npos);
     CHECK(j.front()=='{' && j.back()=='}');
     CHECK(j.find('\n')==std::string::npos);
     // No secrets should leak in sys.info (password/psk etc must not appear)
@@ -68,6 +77,8 @@ void test_sys_info_json_contract(){
     CHECK(out.free_heap==123456);
     CHECK(out.internal_free==64000 && out.internal_largest==32000);
     CHECK(out.dma_free==24000 && out.dma_largest==12000 && out.psram_free==2000000);
+    CHECK(out.internal_min_free==31000 && out.dma_min_free==11000 && out.psram_min_free==1800000);
+    CHECK(out.serial_stack_high_water_bytes==2048);
     CHECK(out.uptime=="00:01:23");
     // out must be deterministic across parses
     cyberdeck_serial::SysInfo out2; CHECK(cyberdeck_serial::sys_info_from_json(j, out2));
@@ -79,6 +90,10 @@ void test_sys_info_json_contract(){
     const std::string legacy = "{\"fw_version\":\"1\",\"idf_version\":\"2\",\"chip\":\"x\",\"free_heap\":12,\"uptime\":\"00:00:01\"}";
     CHECK(cyberdeck_serial::sys_info_from_json(legacy, out));
     CHECK(out.dma_free == 0 && out.psram_free == 0);
+    CHECK(out.internal_min_free == 0 && out.serial_stack_high_water_bytes == 0);
+    const std::string previous = "{\"fw_version\":\"1\",\"idf_version\":\"2\",\"chip\":\"x\",\"free_heap\":12,\"uptime\":\"00:00:01\",\"internal_free\":10,\"dma_free\":8}";
+    CHECK(cyberdeck_serial::sys_info_from_json(previous, out));
+    CHECK(out.internal_free == 10 && out.dma_free == 8 && out.internal_min_free == 0);
 }
 
 void test_wifi_scan_json_contract(){
@@ -154,12 +169,74 @@ void test_sys_info_bounded_and_valid_json(){
     CHECK(j.front()=='{' && j.back()=='}');
 }
 
+bool music_status_fixture(void *, cyberdeck_music::snapshot &status, bool &queue_scanning) {
+    status.state = cyberdeck_music::playback_state::playing;
+    status.track_count = 64;
+    status.position_ms = 2500;
+    status.current.duration_ms = 120000;
+    std::strcpy(status.current.title.data(), "private track title");
+    std::strcpy(status.current.path.data(), "/sdcard/private.mp3");
+    queue_scanning = true;
+    return true;
+}
+
+bool music_scan_fixture(void *, cyberdeck_music::scan_measurements &metrics) {
+    metrics.queue = {true, true, 120, 3024};
+    metrics.browser = {false, false, 0, 0};
+    return true;
+}
+
+void test_music_scan_measurements() {
+    const char *request = "{\"rid\":\"scan-1\",\"type\":\"music.scan\"}";
+    const auto unavailable = cyberdeck_serial::dispatch_one(request, std::strlen(request));
+    CHECK(!unavailable.ok);
+    CHECK(unavailable.err == cyberdeck_serial::dispatch_error::player_not_running);
+    cyberdeck_serial::set_music_scan_provider_for_test(music_scan_fixture, nullptr);
+    const auto response = cyberdeck_serial::dispatch_one(request, std::strlen(request));
+    CHECK(response.ok);
+    CHECK(response.envelope_json ==
+          "{\"rid\":\"scan-1\",\"ok\":true,\"result\":{\"version\":1,\"read_only\":true,"
+          "\"queue\":{\"completed\":true,\"succeeded\":true,\"duration_ms\":120,\"stack_high_water_bytes\":3024},"
+          "\"browser\":{\"completed\":false,\"succeeded\":false,\"duration_ms\":0,\"stack_high_water_bytes\":0}}}");
+    CHECK(response.envelope_json.find("\"queue\":{\"completed\":true,\"succeeded\":true,\"duration_ms\":120,\"stack_high_water_bytes\":3024}") != std::string::npos);
+    CHECK(response.envelope_json.find("\"browser\":{\"completed\":false,\"succeeded\":false,\"duration_ms\":0,\"stack_high_water_bytes\":0}") != std::string::npos);
+    CHECK(response.envelope_json.size() < cyberdeck_serial::k_max_ndjson_line);
+    cyberdeck_serial::set_music_scan_provider_for_test(nullptr, nullptr);
+}
+
+void test_music_status_read_only() {
+    const char *request = "{\"rid\":\"status-1\",\"type\":\"music.status\"}";
+    auto unavailable = cyberdeck_serial::dispatch_one(request, std::strlen(request));
+    CHECK(!unavailable.ok);
+    CHECK(unavailable.err == cyberdeck_serial::dispatch_error::player_not_running);
+    cyberdeck_serial::set_music_status_provider_for_test(music_status_fixture, nullptr);
+    const auto result = cyberdeck_serial::dispatch_one(request, std::strlen(request));
+    CHECK(result.ok);
+    CHECK(result.envelope_json.find("\"rid\":\"status-1\"") != std::string::npos);
+    CHECK(result.envelope_json.find("\"state\":\"playing\"") != std::string::npos);
+    CHECK(result.envelope_json.find("\"queue_scanning\":true") != std::string::npos);
+    CHECK(result.envelope_json.find("\"track_count\":64") != std::string::npos);
+    CHECK(result.envelope_json.find("\"position_ms\":2500") != std::string::npos);
+    CHECK(result.envelope_json.find("\"duration_ms\":120000") != std::string::npos);
+    CHECK(result.envelope_json.find("private") == std::string::npos);
+    CHECK(result.envelope_json.size() < cyberdeck_serial::k_max_ndjson_line);
+    cyberdeck_serial::set_music_status_provider_for_test(nullptr, nullptr);
+    cyberdeck_music::snapshot stopped{};
+    CHECK(cyberdeck_serial::music_status_to_json(stopped, false).find("\"state\":\"stopped\"") != std::string::npos);
+    stopped.state = cyberdeck_music::playback_state::paused;
+    CHECK(cyberdeck_serial::music_status_to_json(stopped, false).find("\"state\":\"paused\"") != std::string::npos);
+    stopped.state = cyberdeck_music::playback_state::error;
+    CHECK(cyberdeck_serial::music_status_to_json(stopped, false).find("\"state\":\"error\"") != std::string::npos);
+}
+
 } // namespace
 int main(){
     test_sys_info_json_contract();
     test_wifi_scan_json_contract();
     test_handlers_return_envelope_with_rid();
     test_sys_info_bounded_and_valid_json();
+    test_music_status_read_only();
+    test_music_scan_measurements();
     if(s_failures==0){ std::printf("PASS: serial_sysinfo_wifi (%d checks)\n",s_checks); return 0; }
     std::printf("FAIL: %d de %d checks falharam\n",s_failures,s_checks); return 1;
 }

@@ -267,6 +267,10 @@ def build_request(args) -> dict:
         return {"type": "ping"}
     if args.command == "sys.info":
         return {"type": "sys.info"}
+    if args.command == "music.status":
+        return {"type": "music.status"}
+    if args.command == "music.scan":
+        return {"type": "music.scan"}
     if args.command == "wifi.status":
         return {"type": "wifi.status"}
     if args.command == "wifi.scan":
@@ -281,6 +285,8 @@ def build_request(args) -> dict:
         return {"type": "ui.tap", "target": args.target}
     if args.command == "ui.type":
         return {"type": "ui.type", "text": args.text}
+    if args.command == "ui.escape":
+        return {"type": "ui.escape"}
     if args.command == "ui.dump":
         return {"type": "ui.dump"}
     if args.command == "term.dump":
@@ -455,6 +461,8 @@ def make_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("ping", help="heartbeat NDJSON (REQ-002)")
     sub.add_parser("sys.info", help="versoes/heap/uptime (REQ-008)")
+    sub.add_parser("music.status", help="estado do player e scan sem injetar Enter")
+    sub.add_parser("music.scan", help="duração e stack dos scans concluídos do player")
     sub.add_parser("wifi.status", help="estado da conexao Wi-Fi")
     sub.add_parser("wifi.scan", help="varredura sincrona de redes (REQ-009)")
     p_click = sub.add_parser("ui.click", help="clique por coordenada absoluta")
@@ -464,6 +472,7 @@ def make_parser() -> argparse.ArgumentParser:
     p_tap.add_argument("target")
     p_type = sub.add_parser("ui.type", help="digita texto no prompt + Enter")
     p_type.add_argument("text")
+    sub.add_parser("ui.escape", help="injeta somente Escape (nao envia Enter)")
     sub.add_parser("ui.dump", help="arvore visivel (classes/texto/coordenadas)")
     sub.add_parser("term.dump", help="snapshot textual do terminal renderizado")
     sub.add_parser("events.read", help="exporta o log SD e o journal NVS de recovery")

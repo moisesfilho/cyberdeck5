@@ -1,9 +1,12 @@
 # Arquitetura
 
-`cyberdeck5` targets only the M5Stack Tab5 and is evolving into a simplified
-embedded OS with `platform/hardware`, `kernel/runtime`, `SDK`, and `apps`
-layers. Runtime and applications are compiled into the firmware. See the
-[transformation plan](OS-TRANSFORMATION-PLAN.pt-BR.md).
+`cyberdeck5` is an embedded operating environment for its only supported target,
+the M5Stack Tab5. The integrated product combines the FreeRTOS kernel and
+ESP-IDF/BSP platform with cyberdeck5's `platform/hardware`, `system runtime`,
+`SDK`, and `apps` layers. Runtime and applications are compiled into the
+firmware; cyberdeck5 does not implement its own kernel or memory isolation
+between apps. See the [transformation plan](OS-TRANSFORMATION-PLAN.pt-BR.md) and
+[implementation plan](OS-IMPLEMENTATION-PLAN.pt-BR.md).
 
 ## Princípios
 
@@ -114,16 +117,42 @@ reboot.
 Tab5. ESP-IDF-managed components remain outside this reorganization. Tactility
 drivers are not being ported and GPL code is not copied.
 
+## Tab5 product responsibility matrix
+
+| Surface/requirement | cyberdeck5 | FreeRTOS | ESP-IDF | M5Stack BSP | Hardware |
+| --- | --- | --- | --- | --- | --- |
+| Boot, safe mode, checkpoint | Composition order, policy, diagnostics and recovery | Tasks, synchronization and scheduler | Boot, NVS, components and system services | SD/display initialization and Tab5 APIs | ESP32-P4, C6, SDMMC and physical power |
+| Runtime and apps | Registration, lifecycle/cooperative grants, shell, apps and SDK interfaces | Task concurrency and lifecycle | Consumed network, VFS, TLS and driver APIs | Tab5-specific interfaces | Peripherals and external peers |
+| Display, touch, keyboard, sensors | Models, policy, views and input dispatch | Tasks, queues and synchronization | LVGL/I2C and driver integration | Panel/touch, keyboard and bus | DSI, touch, IMU, INA226 and expanders |
+| Wi-Fi, SSH, HTTP, time sync, BLE | Connection policy, protocol, UI, allowlists and product persistence | Workers, queues, cooperative timeout/join | ESP-Hosted, Wi-Fi, sockets, HTTP/TLS and NimBLE | Tab5 transport/controller | C6/radios, access points, servers and BLE peers |
+| SD and persistent data | Virtual namespace, product formats, grants, transactions and recovery | Lease coordination and workers | VFS/FATFS/NVS and sync | Mount, handle and storage resources | SD card, flash and buses |
+| Poweroff | One-shot admission, quiescence, ordering and fail-closed policy | Workers/watchdog and cooperative deadlines | Storage/sync APIs | Expander and board signal | Rail/charger and physical power cut |
+
+These columns assign behavioral ownership; they do not guarantee fault
+isolation or security. Grants are cooperative and apps share memory. When an API
+crosses a boundary, cyberdeck5 retains its policy while the primitive/driver
+belongs to the platform, BSP or hardware. Per-flow requirements, tests and
+failure scenarios are in
+[`OS-TAB5-REQUIREMENTS.pt-BR.md`](OS-TAB5-REQUIREMENTS.pt-BR.md); production
+contracts remain the source of timeout and format limits.
+
 ## Fluxo de boot atual
 
-O estado confirmado ainda concentra em `app_main` a montagem do SD, a
-inicialização de NVS e recovery, o registro e o logging dos system apps, o
+O estado confirmado ainda concentra em `app_main` a inicialização de NVS e
+recovery, a preparação ESP-Hosted no caminho normal **antes** do mount SD
+(controlador SDMMC compartilhado no IDF 6), a recuperação de sidecars, o
+registro e o logging dos system apps, o
 display, IMU/UI, screenshot, `screen_off`, bateria, teclado, brilho e o
 startup normal ou safe mode dos serviços, seguido do checkpoint de recovery.
 
-1. Montar o SD e validar o handle do BSP.
-2. Inicializar NVS e recovery, registrar os system apps e iniciar o event log
-   quando possível; falhas de NVS/recovery/logging preservam o diagnóstico.
+ 1. Inicializar NVS/recovery; preparar ESP-Hosted no boot normal, montar o SD e
+    validar o handle do BSP. Falha de mount passa por `ESP_ERROR_CHECK` antes da
+    UI: boot sem SD não é um modo degradado existente. O SD é requisito do
+    produto; ausência impede a inicialização e o reboot volta a tentar o mount,
+    comportamento aceito pelo operador. Mensagem em tela para cartão ausente
+    seria melhoria opcional e exigiria display de erro antes da UI normal.
+2. Recuperar sidecars sob coordenador SD, registrar system apps e iniciar o
+   event log quando possível; falhas de NVS/recovery/logging preservam o diagnóstico.
 3. Inicializar display/LVGL pelo BSP do Tab5.
 4. Sob lock do display, iniciar IMU, UI, screenshot e proteção de tela
    (`screen_off_init`); falha nessas etapas interrompe o boot.
@@ -429,9 +458,9 @@ ponte.
 ## SDK and applications
 
 Compiled applications implement the bounded manifest/lifecycle contract and
-declare their resources. The first planned SDK surface is
-`storage.bounded_read` plus `logger`; the current storage facade is only a
-resource authorization and does not imply that bounded reads are implemented.
+declare their resources. The SDK already provides `storage.bounded_read`,
+confined save operations used by the editor, and bounded `logger` output;
+facades revalidate grants.
 Reply/output compatibility with the shell and SSH must be established before
 standardizing command-app replies.
 

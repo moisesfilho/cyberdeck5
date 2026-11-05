@@ -151,6 +151,10 @@ bool application::start() {
         scan_cancel_.store(false, std::memory_order_release);
         scan_quiescing_.store(false, std::memory_order_release);
     }
+    {
+        std::lock_guard<std::mutex> lock(scan_metrics_mutex_);
+        scan_metrics_ = {};
+    }
     running_ = true;
     return true;
 }
@@ -224,6 +228,10 @@ bool application::scan_directory(std::string_view path) {
     scan_truncated_.store(false, std::memory_order_release);
     scan_attempted_.store(true, std::memory_order_release);
     scan_join_pending_.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(scan_metrics_mutex_);
+        scan_metrics_.queue = {};
+    }
     if (xTaskCreate(scan_entry, "music_scan", 6144, this, 4, &scan_task_) != pdPASS) {
         scan_task_ = nullptr;
         scan_running_.store(false, std::memory_order_release);
@@ -237,8 +245,20 @@ bool application::scan_directory(std::string_view path) {
 void application::scan_entry(void *context) {
     auto *self = static_cast<application *>(context);
     const bool browser_scan = self->scan_is_browser_.load(std::memory_order_acquire);
+    const TickType_t started = xTaskGetTickCount();
     const bool succeeded = browser_scan ? self->scan_browser_sync(self->scan_path_.data())
                                         : self->scan_directory_sync(self->scan_path_.data());
+    const auto elapsed = static_cast<std::uint64_t>(xTaskGetTickCount() - started) * portTICK_PERIOD_MS;
+    const scan_measurement measurement{true, succeeded,
+                                       static_cast<std::uint32_t>(std::min<std::uint64_t>(elapsed, UINT32_MAX)),
+                                       static_cast<std::uint32_t>(uxTaskGetStackHighWaterMark(nullptr))};
+    {
+        std::lock_guard<std::mutex> lock(self->scan_metrics_mutex_);
+        if (browser_scan)
+            self->scan_metrics_.browser = measurement;
+        else
+            self->scan_metrics_.queue = measurement;
+    }
     if (browser_scan) {
         self->browser_scan_state_.store(succeeded ? browser_scan_state::ready : browser_scan_state::error,
                                         std::memory_order_release);
@@ -251,7 +271,7 @@ void application::scan_entry(void *context) {
     const SemaphoreHandle_t completed = self->scan_done_;
     xSemaphoreGive(completed);
     ESP_LOGI(k_tag, "scan stack_high_water_mark_bytes=%u stack_bytes=6144",
-             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+             static_cast<unsigned>(measurement.stack_high_water_bytes));
     vTaskDelete(nullptr);
 }
 
@@ -281,6 +301,10 @@ bool application::browser_scan(std::string_view directory) {
     browser_scan_state_.store(browser_scan_state::scanning, std::memory_order_release);
     scan_cancel_.store(false, std::memory_order_release);
     scan_join_pending_.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(scan_metrics_mutex_);
+        scan_metrics_.browser = {};
+    }
     if (xTaskCreate(scan_entry, "music_scan", 6144, this, 4, &scan_task_) != pdPASS) {
         scan_task_ = nullptr;
         scan_running_.store(false, std::memory_order_release);

@@ -36,6 +36,13 @@ class application final : public cyberdeck_apps::application {
     bool browser_scan_active() const {
         return browser_scan_state_.load(std::memory_order_acquire) == browser_scan_state::scanning;
     }
+    bool queue_scan_active() const {
+        return legacy_scan_running_.load(std::memory_order_acquire);
+    }
+    scan_measurements scan_metrics() const {
+        std::lock_guard<std::mutex> lock(scan_metrics_mutex_);
+        return scan_metrics_;
+    }
     browser_scan_state get_browser_scan_state() const {
         return browser_scan_state_.load(std::memory_order_acquire);
     }
@@ -63,6 +70,8 @@ class application final : public cyberdeck_apps::application {
     browser_scan_ops browser_ops_ = default_browser_scan_ops();
     mutable std::mutex queue_mutex_;
     mutable std::mutex scan_publication_mutex_;
+    mutable std::mutex scan_metrics_mutex_;
+    scan_measurements scan_metrics_{};
     TaskHandle_t scan_task_ = nullptr;
     SemaphoreHandle_t scan_done_ = nullptr;
     std::array<char, k_max_path_bytes + 1> scan_path_{};
