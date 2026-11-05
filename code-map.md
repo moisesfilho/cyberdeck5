@@ -1013,6 +1013,15 @@ a raiz do repositorio.
   esses campos na serie; `main/app_main.cpp` registra `app_main_complete` com
   `t_us` e `boot_ready` para medir o trecho final do boot em um log completo.
   Testes: `test_serial_sysinfo_wifi.cpp` e `test_phase3_sysinfo_collector.py`.
+  Flash validado do snapshot `0917276` em `/dev/ttyACM0` com binario SHA-256
+  `4dbe949e3f0fa5a971d6c9c36c2acab0f1a9cd0910aed36c3bcc803b017f5f4e`:
+  boot/checkpoint normal, 60 amostras seriais e 60 HTTP sem falhas,
+  tres screenshots e arquivo SD descartavel criado/lido/removido. Evidencias
+  redigidas em `docs/OS-PHASE3-BASELINE.pt-BR.md`; CSVs versionados em
+  `tests/manual/evidence/phase3-{sysinfo,battery}-1.6.0-20261105.csv`.
+  O screenshot reserva uma vez `s_snapshot_storage` em
+  `components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp`;
+  a copia temporaria do frame e liberada, nao confundir cache com leak.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.

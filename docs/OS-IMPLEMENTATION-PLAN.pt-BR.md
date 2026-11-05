@@ -205,15 +205,15 @@ houver alteração de firmware.
 **Objetivo:** provar que os limites e a recuperação funcionam no dispositivo
 real, não apenas em shims host.
 
-**Em andamento:** cenários e riscos separados em
-[`OS-PHASE3-BASELINE.pt-BR.md`](OS-PHASE3-BASELINE.pt-BR.md). Série inicial de
-`GET /battery` e de `sys.info` a 1 Hz e observação do console no Tab5
-registradas; faltam
-identidade do binário, boot observado, stack/heap mínimo, cenários de apps e
-transientes. Não reduzir limites nem declarar aceite físico agregado a partir
-desse recorte. Ensaios físicos antigos confirmados pelo operador ficam
-registrados como históricos, sem transferir aceite ao firmware observado
-anteriormente como 1.5.0 nem à nova imagem até validação correspondente.
+**Em andamento:** cenários e riscos em
+[`OS-PHASE3-BASELINE.pt-BR.md`](OS-PHASE3-BASELINE.pt-BR.md). A imagem
+instrumentada `1.6.0` tem SHA-256 de build, flash verificado, boot normal
+observado, séries a 1 Hz de heap/stack serial e bateria, carga HTTP moderada e
+I/O descartável no SD. Faltam atestação independente da imagem em execução,
+stack de outras tasks, orçamento aprovado, paridade de apps/transientes e
+recuperação sob falhas reais. Não reduzir limites nem declarar aceite físico
+agregado a partir deste recorte. Ensaios antigos do operador seguem históricos,
+sem transferência automática de aceite à nova imagem.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

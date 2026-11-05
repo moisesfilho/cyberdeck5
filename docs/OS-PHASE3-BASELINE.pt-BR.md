@@ -131,17 +131,82 @@ São testes **host** de política e dos adapters simulados, não injeção físi
 falha nem aceite de OS-TAB5-04/07. Ao observar falha real mais tarde, registrar
 token/geração, resultado e uptime antes/depois sem atribuir silêncio a sucesso.
 
+## Imagem instrumentada e observação física — 05/11/2026 (parcial)
+
+- Snapshot do código `0917276`, `version.txt=1.6.0`, ESP-IDF v6.1,
+  ESP-Hosted `3.0.10` com CPU-staging verificado. `make -C tests/host/keymap
+  clean test` e `verify` passaram; `idf.py build` passou com 38 % da partição de
+  app livre. SHA-256 de `build/cyberdeck5.bin`:
+  `4dbe949e3f0fa5a971d6c9c36c2acab0f1a9cd0910aed36c3bcc803b017f5f4e`.
+  Flash em `/dev/ttyACM0` com `idf.py -p /dev/ttyACM0 flash` retornou
+  **`Hash of data verified`**; não houve erase NVS nem SD. É evidência do
+  binário gravado pelo processo de flash, não atestação criptográfica remota.
+  `sys.info` após o flash respondeu `fw_version=1.6.0`, `safe_mode=false`,
+  `interrupted_boots=0` e `recovery_persisted=true` com uptime `00:00:06`.
+- Coletor Serial-JTAG `tools/collect_sysinfo_series.py`, **sessão exclusiva**,
+  60 amostras a 1 Hz (59 intervalos de 1000 ms; 59 s entre extremos), sem erro,
+  uptime `00:00:28`→`00:01:27`:
+  [`phase3-sysinfo-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-sysinfo-1.6.0-20261105.csv),
+  SHA-256 `74b241cb8e894d6142f47dddde413d79b20e0f6dc6c8166c94089b1760512968`.
+  `internal_free` 177259–177459 B, `internal_min_free` 136400 B;
+  `dma_free` 137771–137971 B, `dma_min_free` 96912 B;
+  `psram_free` 27535160–31285016 B, `psram_min_free` no fim
+  27532636 B; `serial_stack_high_water_bytes` 10572–10620 B.
+  Latência host de `sys.info` 4–8 ms. **Esses mínimos são somas de marcas por
+  região desde o início da imagem**, não mínimos simultâneos nem medição de
+  stacks de todos os workers. Não extrapolar budgets desta janela curta.
+- Carga moderada **durante** a série serial: três `GET /screenshot`
+  sequenciais, HTTP 200, BMP 1280×720×24 de 2764854 B em 3,195 / 3,425 /
+  3,116 s no host. Arquivos BMP ficaram apenas em `/tmp/opencode/` por conterem
+  conteúdo da tela. A diferença persistente de ~1,8 MiB de PSRAM após a
+  primeira captura corresponde ao buffer RGB565 estático retido por
+  `cyberdeck_display_port.cpp::s_snapshot_storage` (`BSP_LCD_H_RES ×
+  BSP_LCD_V_RES × 2 + 64` bytes, `std::call_once`); a cópia temporária por
+  request é liberada em `cyberdeck_display_release`. **Não** atribuir a
+  diferença a vazamento sem outro teste. Depois do reset controlado, o heap
+  retornou ao patamar pré-captura; a série não demonstra ausência universal de
+  vazamentos.
+- Coletor HTTP independente `tools/collect_battery_series.py`, 60 respostas
+  HTTP 200 a 1 Hz, sem falhas (59 s entre extremos), uptime `59`→`118` s:
+  [`phase3-battery-1.6.0-20261105.csv`](../tests/manual/evidence/phase3-battery-1.6.0-20261105.csv),
+  SHA-256 `345eacef6f2eb0207e6045189daa53c499207693c50af978f3b5afee81b8de54`.
+  Tensão 8128–8170 mV, corrente -216 a -151 mA, percentual 98 constante,
+  `state=charging`, `charge=not_charging` (sinal CHG_STAT separado da corrente),
+  proteção inativa e carregador habilitado durante a série; idade da amostra
+  0–997 ms e latência HTTP 23–331 ms. Não atravessou o corte de carga nem a
+  reancoragem, portanto **não** aceita o ciclo completo da bateria.
+- `idf.py monitor` iniciou **um reset controlado após o fim dos coletores**;
+  `timeout 35s` terminou com código 124 esperado por limite do monitor, não
+  por falha do firmware. Log bruto local (não commitado: contém dados de rede)
+  `/tmp/opencode/phase3-boot-1.6.0-20261105.log`, SHA-256
+  `d761bfc5a78b400898b149fe56cc3f579802e5451681d63e63f80158d2ba3afd`.
+  Linhas `HOSTED_DIAG`: `hosted_prepare` 73542→2434408 us (2360,866 ms);
+  `sd_mount` 2434632→2504271 us (`ESP_OK`, 69 ms no log);
+  `battery_protection` 5480023→5593955 us (`ESP_OK`, 113,932 ms);
+  `app_main_complete boot_ready=1 t_us=9352450`. O checkpoint recovery
+  retornou `ESP_OK persisted=1`; após o monitor, `sys.info` indicou uptime
+  crescente, safe mode false. `t_us` mede desde o timer ESP, **não** ROM,
+  bootloader ou tempo total desde energização. Sem panic/WDT no log capturado;
+  ocorreram avisos não fatais de GPIO ISR já instalado e IRK do NimBLE (`rc=8`),
+  que não são evidência de BLE funcional.
+- I/O SD e shell em imagem `1.6.0`: `fs.write` criou **apenas** o descartável
+  `/sdcard/data/phase3-sysinfo-20261105.txt` (15 B, CRC32 2069341589);
+  `ui.type 'cat /data/phase3-sysinfo-20261105.txt'` + `term.dump` exibiu
+  `PHASE3-1.6.0-OK`. `rm` removeu somente esse arquivo; `cat` subsequente
+  retornou `file not found`. Uptime `00:00:42`→`00:01:49`, sem reboot
+  inesperado. Isto não valida editor, round-trip de encoding ou falha física
+  do SD.
+
 ## Pendências para fechar a Fase 3
 
-1. Confirmar identidade do binário em execução de maneira não destrutiva ou
-   compilar/gravar uma imagem aprovada como etapa de validação de firmware
-   implementado; registrar SHA-256, log de boot e cenário completo. Flash não
-   substitui a identificação do baseline anterior.
-2. Repetir a série de heap de 1 s sob cenários representativos (a primeira
-   série é somente em repouso); medir os mínimos adicionados na imagem nova,
-   stack high-water das outras tasks e overflow sem interferir na UI. Validar
-   no Tab5 a versão e a semântica dos campos antes de usar números em budgets.
-   Não fixar budgets a partir da amostra isolada.
+1. A imagem nova tem build/hash, flash verificado e log de boot; falta uma
+   atestação independente do binário em execução. A identificação da imagem
+   anterior `1.5.0` continua limitada à versão, não ao hash; não comparar
+   binários anteriores como iguais com base somente em `fw_version`.
+2. As séries de 1 s na imagem nova cobrem repouso/captura HTTP e uma task
+   serial. Faltam stack high-water das outras tasks, overflow e tempo de
+   operações de editor/BLE/player sob cenários representativos. Não fixar
+   budgets a partir de uma janela curta nem da soma de mínimos por região.
 3. Medir os cenários seguros da matriz com tempos por estágio e configuração
    idêntica antes/depois; separar tempo de render, rede, storage e codec. Só
    otimizar gargalo observado e reproduzível; sem evidência de gargalo não há
