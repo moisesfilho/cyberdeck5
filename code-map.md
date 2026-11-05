@@ -1109,6 +1109,11 @@ a raiz do repositorio.
   controlado resultou em boot normal (`sd_mount=ESP_OK`, checkpoint OK).
   Logs brutos privados em `/tmp/opencode/phase3-{boot-no-sd,sd-restored-boot}-20261105.log`;
   nao repetir falha fisica SD/NVS sem controle de um unico boot.
+  Aceite operacional posterior do operador cobre os contratos/recursos
+  implementados no uso pessoal observado; nao transforma os testes historicos
+  em medicoes completas nem resolve loop sem SD ou perda pontual de resposta
+  serial. Fase 3 fica active para aceite tecnico integral e medidas dirigidas,
+  sem bloquear apps simples. Ver baseline para limites das evidencias.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.
@@ -1126,8 +1131,11 @@ a raiz do repositorio.
   separada do readback da imagem `39953bf`/`1.6.0`. Reset posterior:
   `sd_mount=ESP_OK`, checkpoint persistido, `boot_ready=1`, sys.info normal.
   Evidencias eFuse/log bruto privadas em `/tmp/opencode/phase4-*`; nenhum
-  firmware/eFuse alterado. OS-TAB5-06 continua active sem alegar protecao
-  contra peers LAN/acesso fisico ou fechar os gates pendentes da Fase 3.
+  firmware/eFuse alterado. Fase 4/OS-TAB5-06 concluidos no escopo pessoal
+  aprovado: um operador, apps simples confiaveis, uso intermitente e LAN
+  controlada, sem alegar protecao contra peers LAN/acesso fisico ou fechar
+  os gates tecnicos pendentes da Fase 3. Chat com IA exige revisao propria
+  de dados enviados, credenciais e conectividade.
 - `docs/OS-IMPLEMENTATION-DASHBOARD.html` e a visualizacao estatica em HTML/CSS/JS
   local: os itens de `const dashboard` representam os checkboxes das Fases 0-5
   do plano, recortes da Fase 1 e criterios OS-TAB5-01..08. Barras e totais sao

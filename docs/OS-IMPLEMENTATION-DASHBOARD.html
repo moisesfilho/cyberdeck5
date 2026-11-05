@@ -179,19 +179,19 @@
         ] },
         { name: "Medição e compatibilidade", state: "active", items: [
           ["Definir cenários de carga e falha seguros", "done"],
-          // Bateria-only/poweroff passaram; boot sem SD gerou loop (65 interrupcoes) antes de recuperacao. NVS fisico/budgets pendentes.
+          // Operacao cotidiana aceita pelo operador; loop sem SD e resposta serial ocasional conhecidos. Budgets e gates tecnicos seguem abertos.
           ["Medir heap, stack, latência e perdas", "active"],
           ["Coletar baseline antes de alterar código", "active"],
           ["Otimizar somente gargalos medidos", "todo"],
           ["Validar falhas com recuperação segura", "active"],
           ["Fixar budgets derivados de medições", "todo"]
         ] },
-        { name: "Segurança proporcional", state: "active", items: [
+        { name: "Segurança proporcional", state: "done", items: [
           ["Mapear ativos, exposição e atualização", "done"],
           ["Separar grants cooperativos de isolamento", "done"],
-          // Riscos aceitos na LAN controlada; build/eFuses verificados. Revisao de limites/recuperacao pendente; OS-TAB5-06 active.
-          ["Avaliar controles e recuperação", "active"],
-          ["Reabrir arquitetura só com novo requisito", "todo"]
+          // Uso pessoal com apps confiaveis: riscos aceitos, build/eFuses e boot normal verificados. Nao equivale a seguranca contra acesso fisico/LAN.
+          ["Avaliar controles e recuperação", "done"],
+          ["Reabrir arquitetura só com novo requisito", "done"]
         ] },
         { name: "Release e manutenção", state: "todo", items: [
           ["Executar gates host e build", "todo"],
@@ -211,7 +211,7 @@
         ["OS-TAB5-03", "Limites e backpressure verificados", "todo"],
         ["OS-TAB5-04", "Boot e recovery validados no Tab5", "active"],
         ["OS-TAB5-05", "Orçamento de RAM, stack e latência", "active"],
-        ["OS-TAB5-06", "Modelo de ameaça e controles", "active"],
+        ["OS-TAB5-06", "Modelo de ameaça e controles", "done"],
         ["OS-TAB5-07", "Compatibilidade de apps e dados", "active"],
         ["OS-TAB5-08", "Otimização com ganho medido", "todo"]
       ]

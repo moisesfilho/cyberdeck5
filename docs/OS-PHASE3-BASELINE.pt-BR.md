@@ -8,6 +8,18 @@ antes de comparar medições. Poweroff, retirada de SD, corrupção, descarga/ca
 forçada e reset para safe mode exigem cenário específico, backup e autorização
 de risco; não são sondagens de rotina desta fase.
 
+**Aceite operacional posterior do operador (05/11/2026):** após vários testes
+físicos no Tab5, considera os contratos e recursos implementados funcionais
+para o uso pessoal cotidiano observado. Isso inclui o relato de que safe mode
+já atuou diante de falhas anteriores; o ensaio abaixo também registrou safe
+mode e recuperação após boot sem SD na imagem identificada. O aceite por uso
+**não** substitui medições de todas as tasks, speaker/jack ou testes específicos
+de uma app nova; tampouco corrige o loop de boot sem SD ou explica a perda
+ocasional de resposta Serial-JTAG. Essas são limitações conhecidas, não
+bloqueios gerais para criar apps simples de uso diário. A Fase 3 permanece
+aberta para correções e medições direcionadas quando necessárias; não repetir
+falhas físicas SD/NVS sem controle comprovado de um único boot.
+
 **Decisão do operador em 05/11/2026:** apenas testes físicos seguros nesta
 etapa. Não executar poweroff controlado, retirada/falha física do SD, corrupção
 de dados/NVS ou interrupção forçada de boot. Esses cenários ficam explicitamente
@@ -533,7 +545,7 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
   A recuperação após reinserção foi observada, mas não torna segura a
   repetição do cenário. Não atribuir os 65 boots a interações manuais.
 
-## Pendências para fechar a Fase 3
+## Pendências de aceite técnico integral da Fase 3 (não bloqueiam apps simples)
 
 1. A imagem `39953bf` tem build/hash, flash verificado e readback integral
    do único slot app `factory`, seguido por boot normal; isso identifica
@@ -558,4 +570,5 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
     reenergização ao inserir o cartão; recuperação com SD e clear único passou.
     Não induzir falha NVS/novo boot sem SD até haver controle de um único boot
     e método seguro de recuperação. Sem esses gates, critérios físicos e
-    budgets aprovados, a Fase 3 não pode ser marcada `done`.
+    budgets aprovados, a Fase 3 não pode ser marcada `done` no aceite técnico
+    integral; o aceite operacional delimitado acima permanece válido.

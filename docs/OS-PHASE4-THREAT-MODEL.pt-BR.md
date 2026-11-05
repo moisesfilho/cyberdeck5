@@ -1,9 +1,11 @@
 # Fase 4 — modelo de ameaça do Tab5
 
-**Estado em 05/11/2026:** o operador aprovou o escopo e aceitou explicitamente
-os riscos residuais abaixo; nenhum controle foi habilitado por este documento.
-A Fase 3 permanece aberta. Este modelo não certifica segurança nem autoriza
-gravar eFuses, apagar SD/NVS ou mudar o processo de atualização.
+**Estado em 05/11/2026:** Fase 4 e OS-TAB5-06 concluídos **no escopo pessoal
+aprovado**; o operador aceitou explicitamente os riscos residuais abaixo.
+Nenhum controle foi habilitado por este documento. A Fase 3 permanece aberta
+para aceite técnico integral, com uso cotidiano aceito pelo operador. Este
+modelo não certifica segurança nem autoriza gravar eFuses, apagar SD/NVS ou
+mudar o processo de atualização.
 
 ## Escopo, ativos e adversários
 
@@ -16,6 +18,11 @@ LAN, tráfego interceptável e entradas remotas/arquivos malformados continuam
 sendo fontes de risco: controle da rede não autentica cada peer nem torna o
 HTTP confidencial. Apps de terceiros instaláveis, isolamento entre processos
 e adversário com execução nativa já obtida **não** fazem parte das garantias.
+O dispositivo tem um operador, uso intermitente (nem sempre conectado) e apps
+simples compiladas e confiáveis, como música, notas e eventual chat com IA.
+Um chat futuro precisa de revisão própria de dados enviados ao serviço externo,
+credenciais, conectividade e custo antes de ser considerado coberto por este
+aceite; o uso pessoal não torna automaticamente esses dados privados.
 
 **Aceite explícito de risco pelo operador (05/11/2026):** manter nesta etapa
 HTTP sem autenticação/TLS, credenciais Wi-Fi em texto claro no SD e Secure
@@ -130,6 +137,7 @@ grants atuais não atendem esse requisito.
 2. Configuração e eFuses foram verificadas, e o boot posterior observado;
    **não** foram testados ataques, migração de controles ou recuperação após
    adulteração. Nenhum controle novo foi instalado nesta fase.
-3. Fase 3 e seus gates físicos/budgets seguem abertos; o loop sem SD não está
-   corrigido. Controles futuros exigem plano próprio de migração, backup,
-   recuperação e validação antes de marcar aceite.
+3. Fase 3 e seus gates técnicos físicos/budgets seguem abertos; o loop sem SD
+   não está corrigido. Isso não impede considerar o sistema adequado ao uso
+   pessoal observado. Controles futuros exigem plano próprio de migração,
+   backup, recuperação e validação antes de marcar seu aceite.

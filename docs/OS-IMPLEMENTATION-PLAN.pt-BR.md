@@ -205,15 +205,28 @@ houver alteração de firmware.
 **Objetivo:** provar que os limites e a recuperação funcionam no dispositivo
 real, não apenas em shims host.
 
-**Em andamento:** cenários e riscos em
+**Aceite operacional delimitado pelo operador (05/11/2026):** após testes físicos
+repetidos no seu Tab5, considera os contratos e as funções implementadas
+adequados ao uso pessoal cotidiano observado (apps simples e confiáveis, como
+música e notas). Esse aceite por uso não é uma medição de todas as tasks nem
+certifica ausência de defeitos. Mantêm-se como limitações conhecidas o loop
+de reinícios ao iniciar sem SD e a perda ocasional de resposta Serial-JTAG;
+safe mode/recovery foi observado pelo operador em falhas anteriores e também
+na recuperação documentada após o ensaio sem SD. A Fase 3 fica **active** para
+tratar essas limitações e reunir métricas quando uma regressão, novo app mais
+exigente ou otimização as tornar necessárias; não bloqueia a criação de apps
+simples dentro do escopo aprovado. Não repetir falha física SD/NVS sem controle
+seguro de um único boot.
+
+**Evidências e limites técnicos:** cenários e riscos em
 [`OS-PHASE3-BASELINE.pt-BR.md`](OS-PHASE3-BASELINE.pt-BR.md). A imagem
 instrumentada `1.6.0` tem SHA-256 de build, flash verificado, boot normal
 observado, séries a 1 Hz de heap/stack serial e bateria, carga HTTP moderada e
-I/O descartável no SD. Faltam atestação independente da imagem em execução,
-stack de outras tasks, orçamento aprovado, paridade de apps/transientes e
-recuperação sob falhas reais. Não reduzir limites nem declarar aceite físico
-agregado a partir deste recorte. Ensaios antigos do operador seguem históricos,
-sem transferência automática de aceite à nova imagem.
+I/O descartável no SD. Readback integral do slot factory confirmou a imagem
+`39953bf`; faltam high-water de outras tasks, budgets numéricos e cobertura
+instrumentada dos demais transientes. O aceite operacional do usuário não
+converte essas lacunas em medições nem transfere automaticamente resultados de
+firmware anterior à imagem atual.
 Na inspeção do player foi detectado que `ui.type` em foreground injeta Enter e
 pode iniciar áudio; o roteiro foi corrigido e a consulta read-only
 `music.status` foi acrescentada à ponte Serial-JTAG. Sua inspeção física
@@ -295,12 +308,14 @@ geral não substitui essas pré-condições. Logs privados e limites no baseline
 - [ ] Derivar budgets aprovados dos dados e só então fixá-los em configuração,
   código e contratos; manter documentação sincronizada com a fonte de verdade.
 
-**Aceite:** limites de OS-TAB5-04/05 atendidos, sem reboot/panic inesperado,
-sem corrupção observada e com comportamento degradado documentado **onde
-implementado**. OS-TAB5-07/08 exige paridade de fluxos e ganho mensurado sem
-regressão. Toda validação registra firmware/commit, porta, comandos, uptime,
-logs e configuração/periféricos conectados. Pendência física mantém o critério
-em aberto, não impede registro de testes host verdes.
+**Aceite:** uso operacional cotidiano aprovado pelo operador no escopo acima,
+com anomalias conhecidas preservadas no registro. OS-TAB5-04/05/07 permanecem
+`active` para aceite técnico integral: recuperação sob falha SD não foi
+controlada, budgets não foram fixados e nem todos os cenários foram medidos.
+OS-TAB5-08 só se aplica ao declarar uma otimização; exigir antes/depois sem
+regressão. Ao validar mudanças afetadas, registrar firmware/commit, comandos,
+uptime, logs e periféricos. Esses gates não impedem avançar com apps simples;
+não converter observação do operador em números ou em correção de defeitos.
 
 **Validação:** testes host, `verify`, `idf.py build` e validação física conforme
 `AGENTS.md` e `tests/manual/serial-bridge-validation.pt-BR.md`.
@@ -329,27 +344,32 @@ um reset controlado registrou `sd_mount=ESP_OK`, checkpoint persistido e
 `boot_ready=1`, e `sys.info` confirmou modo normal. Uma primeira consulta
 serial perdeu resposta e o HTTP estava indisponível antes do reset; a causa
 permanece indeterminada. Dumps e logs brutos ficam fora do repositório.
-O inventário e o aceite não comprovam resistência a ataques ou recuperação
-de alterações futuras: manter OS-TAB5-06 e Fase 4 em acompanhamento até
-revisão final dos limites documentados; não inferir aceite físico da Fase 3.
+**Conclusão no escopo pessoal aprovado:** um operador, apps simples compiladas
+e confiáveis (música, notas e eventual chat com IA), uso intermitente e nem
+sempre conectado à LAN controlada. O modelo registra os limites de segurança,
+os riscos aceitos e a verificação de configuração/eFuses e boot normal; não
+exige multiusuário, sandbox para apps hostis, OTA, Secure Boot ou criptografia.
+OS-TAB5-06 e a Fase 4 ficam concluídos **apenas nesse modelo de ameaça**.
+Isso não comprova resistência a ataques, não resolve as pendências da Fase 3
+nem dispensa revisão de privacidade/rede ao implementar chat com IA.
 
 - [x] Documentar ativos, interfaces de entrada, acesso físico, serviços LAN,
   credenciais/configuração e processo de atualização.
 - [x] Separar ameaças cobertas por confinamento/grants cooperativos das que
   exigiriam isolamento de hardware ou autenticação.
-- [ ] Avaliar Secure Boot, criptografia de flash, proteção de credenciais,
-  autenticação de endpoints e estratégia de atualização: riscos aceitos no
-  escopo aprovado e opções/impactos documentados; revisão final de recuperação
-  e limites do aceite ainda pendente antes de concluir o marco. Nenhum controle
-  futuro será implantado sem requisito e método de recuperação próprios.
-- [ ] Se código não confiável ou apps independentes forem requisito, produzir
-  uma decisão arquitetural separada comparando PMP/syscall/loader com adoção de
-  plataforma (por exemplo, Zephyr/NuttX). Não iniciar kernel próprio como
-  consequência implícita deste plano.
+- [x] Avaliar Secure Boot, criptografia de flash, proteção de credenciais,
+  autenticação de endpoints e estratégia de atualização: neste uso pessoal,
+  riscos aceitos e alternativas/impactos de recuperação registrados; nenhum
+  controle novo aplicado. Mudança futura requer requisito e recuperação próprios.
+- [x] Verificar o gatilho arquitetural: código não confiável ou apps
+  independentes **não** são requisito atual. Se passarem a ser, produzir decisão
+  separada comparando PMP/syscall/loader com adoção de plataforma (por exemplo,
+  Zephyr/NuttX) antes de implementar. Não iniciar kernel próprio por inferência.
 
-**Aceite:** declarações de segurança não excedem os controles realmente
-habilitados; riscos aceitos e não cobertos são explícitos; configuração e
-recuperação foram validadas no dispositivo.
+**Aceite no escopo aprovado:** declarações de segurança não excedem os
+controles habilitados; riscos aceitos e não cobertos são explícitos; build,
+eFuses e boot normal posterior foram verificados no dispositivo. Não houve
+teste de recuperação após adulteração nem implantação de controles novos.
 
 ### Fase 5 — Release e manutenção
 
