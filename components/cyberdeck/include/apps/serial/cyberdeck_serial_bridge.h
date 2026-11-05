@@ -50,6 +50,7 @@
  *                         primeira tecla para religar a tela e a injecao se
  *                         perderia silenciosamente.
  *   - ui.dump           : a arvore consultada nao e a tela visivel.
+ *   - ui.escape         : Escape nao deve atingir a app oculta.
  *   - term.dump         : snapshot textual da tela ativa.
  *   - screen.shot       : captura o framebuffer (tela preta) e substitui a
  *                         sessao de dump ativa.

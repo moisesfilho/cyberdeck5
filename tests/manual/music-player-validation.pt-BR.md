@@ -276,7 +276,8 @@ ele não envia comandos de shell nem Escape.
 1. `ui.type "music"`, aguarde `queue_scanning=false` em `music.status` (estado
    `stopped`).
 2. Registre `sys.info`.
-3. Envie Escape com o teclado físico; `ui.type` não envia Escape.
+3. Envie Escape com o teclado físico ou `ui.escape` da ponte (tela acesa);
+   `ui.type` não envia Escape.
 4. Confirme `term.dump` com o prompt de volta, `music.status` recusado (app não
    está em foreground) e `sys.info` sem reboot.
 

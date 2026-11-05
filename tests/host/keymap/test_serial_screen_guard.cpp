@@ -64,8 +64,8 @@ using namespace cyberdeck_serial;
 
 void test_ui_commands_blocked_when_screen_off()
 {
-    const char *const gated[] = {"ui.click", "ui.tap",     "ui.type",     "ui.clear",
-                                 "ui.dump",  "term.dump",  "screen.shot", "screen.dump"};
+    const char *const gated[] = {"ui.click", "ui.tap", "ui.type", "ui.clear", "ui.escape",
+                                  "ui.dump", "term.dump", "screen.shot", "screen.dump"};
     for (const char *type : gated) {
         CHECK(ui_command_needs_screen_on(type));
     }
@@ -129,8 +129,8 @@ void test_refusal_envelope()
 
 void test_types_known_and_dispatch_host()
 {
-    /* Ambos precisam estar em k_known; senao o parse devolve unknown_type. */
-    for (const char *type : {"screen.status", "screen.wake"}) {
+    /* Tipos precisam estar em k_known; senao o parse devolve unknown_type. */
+    for (const char *type : {"screen.status", "screen.wake", "ui.escape"}) {
         const std::string line = std::string("{\"rid\":\"k1\",\"type\":\"") + type + "\"}";
         request req;
         dispatch_error err = dispatch_error::invalid_json;

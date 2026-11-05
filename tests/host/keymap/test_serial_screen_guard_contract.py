@@ -42,7 +42,7 @@ CLI = ROOT / "tools/cyberdeck_cli.py"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 CODEMAP = ROOT / "code-map.md"
 
-GATED = ("ui.click", "ui.tap", "ui.type", "ui.clear", "ui.dump", "term.dump",
+GATED = ("ui.click", "ui.tap", "ui.type", "ui.clear", "ui.escape", "ui.dump", "term.dump",
          "screen.shot", "screen.dump")
 ALLOWED = ("ping", "ui.echo", "sys.info", "sys.safe_mode.clear", "wifi.status",
            "wifi.scan", "events.read", "fs.write", "screen.status",
@@ -50,7 +50,7 @@ ALLOWED = ("ping", "ui.echo", "sys.info", "sys.safe_mode.clear", "wifi.status",
 
 # Chamadas que so podem ocorrer DEPOIS do guard (ordem no corpo real).
 UI_SIDE_EFFECTS = ("find_click_at(", "find_clickable_by_text(", "lv_async_call(",
-                   "exec_ui_type(", "exec_ui_clear()", "dump_obj(",
+                    "exec_ui_type(", "exec_ui_clear()", "inject_escape()", "dump_obj(",
                    "exec_term_dump(", "exec_screen_shot(", "exec_screen_dump(")
 
 
@@ -125,7 +125,7 @@ def main():
     guard_body = block_after(device_exec, guard_at)
     require("return d;" in guard_body,
             "o guard deve retornar antes de qualquer efeito colateral")
-    for token in ("screen_off_turn_on(", "exec_ui_type(", "exec_ui_clear()",
+    for token in ("screen_off_turn_on(", "exec_ui_type(", "exec_ui_clear()", "inject_escape()",
                   "dump_obj(", "exec_term_dump(", "exec_screen_dump(",
                   "exec_screen_shot(", "lv_async_call("):
         require(token not in guard_body,

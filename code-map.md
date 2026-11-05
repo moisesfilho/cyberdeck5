@@ -1041,6 +1041,12 @@ a raiz do repositorio.
   `tests/manual/evidence/phase3-music-status-1.6.0-20261105.csv`.
   Nao mediu duracao do scan nem stack do worker; detalhes e hash do CSV em
   `docs/OS-PHASE3-BASELINE.pt-BR.md`.
+  `ui.escape` na ponte Serial-JTAG injeta somente `LV_KEY_ESC` pela mesma fila
+  bounded de `cyberdeck_keyboard_input`; o gate screen_off impede interacao
+  com app oculta, e o ACK nao prova efeito. A CLI expoe `ui.escape`; validar
+  fechamento pelo `term.dump`/`ui.dump`. Testes host em
+  `test_serial_screen_guard.cpp`, `test_serial_screen_guard_contract.py` e
+  `test_term_dump_cli.py`.
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.

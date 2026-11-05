@@ -221,6 +221,9 @@ sem playback foi observada na imagem `1.6.0` de hash diferente: 60/60 amostras
 de estado/heap a 1 Hz, sem acionamento do decoder. Latência de scan, stack do
 worker, playback e budgets continuam pendentes; não classificar a tentativa
 anterior (com Enter involuntário) como inspeção passiva nem aceite de música.
+Para observar o retorno de apps em foreground sem acionar Enter, a ponte tem
+`ui.escape` (única tecla, guardada quando a tela está apagada). Seu ACK não
+comprova teardown; confirmar o retorno por `term.dump` e uptime no Tab5.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

@@ -283,6 +283,8 @@ def build_request(args) -> dict:
         return {"type": "ui.tap", "target": args.target}
     if args.command == "ui.type":
         return {"type": "ui.type", "text": args.text}
+    if args.command == "ui.escape":
+        return {"type": "ui.escape"}
     if args.command == "ui.dump":
         return {"type": "ui.dump"}
     if args.command == "term.dump":
@@ -467,6 +469,7 @@ def make_parser() -> argparse.ArgumentParser:
     p_tap.add_argument("target")
     p_type = sub.add_parser("ui.type", help="digita texto no prompt + Enter")
     p_type.add_argument("text")
+    sub.add_parser("ui.escape", help="injeta somente Escape (nao envia Enter)")
     sub.add_parser("ui.dump", help="arvore visivel (classes/texto/coordenadas)")
     sub.add_parser("term.dump", help="snapshot textual do terminal renderizado")
     sub.add_parser("events.read", help="exporta o log SD e o journal NVS de recovery")

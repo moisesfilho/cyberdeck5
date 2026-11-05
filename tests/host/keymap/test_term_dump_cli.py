@@ -145,6 +145,8 @@ def test_build_request_shape():
     status = cli.build_request(parser.parse_args(["music.status"]))
     require(status == {"type": "music.status"},
             "music.status deve ser consulta sem texto/tecla/Enter")
+    escape = cli.build_request(parser.parse_args(["ui.escape"]))
+    require(escape == {"type": "ui.escape"}, "ui.escape deve enviar apenas Escape sem texto/Enter")
 
 
 # ---------------------------------------------------------------------

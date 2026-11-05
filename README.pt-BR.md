@@ -322,7 +322,7 @@ JSON por linha, limitado a 4096 bytes e correlacionado por `rid`
 e é filtrada pelo cliente.
 
 Comandos: `ping`, `sys.info`, `wifi.status`, `wifi.scan`, `ui.echo`,
-`ui.click X Y`, `ui.tap <alvo>`, `ui.type <texto>`, `ui.dump`, `ui.clear`,
+`ui.click X Y`, `ui.tap <alvo>`, `ui.type <texto>`, `ui.escape`, `ui.dump`, `ui.clear`,
 `screen.shot` (metadados do frame) e `screen.dump`, que transmite a tela
 LVGL como chunks BMP de 1024 bytes em Base64 com CRC32 por chunk e total.
 

@@ -83,6 +83,7 @@ Registre em cada execucao: `device_id`, `data`, `commit`/`hash` do firmware,
 | U10 | `ui.type` rapido repetido (linha longa) | Fila bounded (8) + 30 ms entre eventos: nada perdido, sem flood |  |  |
 | U11 | `ui.dump` | `result.nodes` com `class/text/x/y/w/h`; acao visivel refletida no dump (ex.: dump apos `ui.click` mostra o estado novo) |  |  |
 | U12 | `ui.dump` com UI ocupada (roda de log girando) | Resposta sob `bsp_display_lock`, sem deadlock; UI permanece responsiva ao toque |  |  |
+| U13 | `ui.escape` com app em foreground e tela acesa | Injeta apenas Escape pela fila bounded, sem Enter; confirmar fechamento por `term.dump`/`ui.dump`, ACK isolado não prova efeito |  |  |
 
 ### 4.1. Estratégia preferencial de validação textual
 
@@ -104,6 +105,11 @@ widgets (por exemplo, confirmar que uma tela foi aberta). Reserve
 aspectos visuais que o texto não representa; não use OCR como primeira opção
 para conferir uma resposta textual.
 
+Para sair de um app sem injetar Enter, use `ui.escape` (tela acesa) e confirme
+o retorno ao shell com `term.dump`. A ponte retorna ACK de injeção, não de
+fechamento. Com a proteção de tela ativa, recebe `screen_off`: primeiro use
+`screen.wake`. `ui.type ""` **não** substitui Escape.
+
 ### 4.2. Editor (`TEST-EDIT-UI/INPUT/COMMANDS/DIRTY/NEW/SAVE-FAILURE/LIFECYCLE/SERIAL`)
 
 Com o shell no menu, use `ui.type "edit /tmp/novo.txt"` e confirme a superfície
@@ -122,7 +128,8 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 ui.dump
 python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 term.dump
 ```
 
-Atalhos/gestos exigem teclado ou toque físico; repita abrir/fechar/reabrir e
+Atalhos/gestos exigem teclado ou toque físico; `ui.escape` cobre apenas a saída
+sem Enter. Repita abrir/fechar/reabrir e
 desconectar/reconectar Serial-JTAG para confirmar estado limpo e ausência de
 callbacks tardios.
 
@@ -131,7 +138,7 @@ callbacks tardios.
 Registradas em validação real; valem para qualquer cenário executado pela ponte.
 
 - **Tela apagada recusa os comandos de UI (desde 30/out/2026).** Com a proteção
-  de tela ativa, `ui.click`, `ui.tap`, `ui.type`, `ui.clear`, `ui.dump`,
+  de tela ativa, `ui.click`, `ui.tap`, `ui.type`, `ui.clear`, `ui.escape`, `ui.dump`,
   `term.dump`, `screen.shot` e `screen.dump` falham com
   `error_code="screen_off"` e `error="tela apagada: use screen.wake antes"`;
   nenhum deles alcanca a árvore de widgets nem captura o framebuffer.

@@ -712,7 +712,7 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
                                            "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear",
                                              "screen.status", "screen.wake", "music.diagnostics", "music.trace",
-                                             "music.status"};
+                                             "music.status", "ui.escape"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -1065,6 +1065,7 @@ bool ui_command_needs_screen_on(const std::string &type)
      * arvore ativa precisa entrar aqui explicitamente (fail-closed apenas
      * para o que esta enumerado; os demais seguem sem estado de tela). */
     return type == "ui.click" || type == "ui.tap" || type == "ui.type" || type == "ui.clear" ||
+           type == "ui.escape" ||
            type == "ui.dump" || type == "term.dump" || type == "screen.shot" ||
            type == "screen.dump";
 }
@@ -1522,6 +1523,12 @@ void inject_text(const char *text, std::size_t len)
 void inject_enter()
 {
     cyberdeck_keyboard_input(nullptr, 0, 0, LV_KEY_ENTER);
+    vTaskDelay(pdMS_TO_TICKS(k_inject_delay_ms));
+}
+
+void inject_escape()
+{
+    cyberdeck_keyboard_input(nullptr, 0, 0, LV_KEY_ESC);
     vTaskDelay(pdMS_TO_TICKS(k_inject_delay_ms));
 }
 
@@ -2194,6 +2201,12 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
     if (req.type == "ui.clear") {
         d.handled = true;
         exec_ui_clear();
+        d.result = ok_result(req, "{\"ok\":true}");
+        return d;
+    }
+    if (req.type == "ui.escape") {
+        d.handled = true;
+        inject_escape();
         d.result = ok_result(req, "{\"ok\":true}");
         return d;
     }
