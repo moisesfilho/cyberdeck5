@@ -70,7 +70,7 @@
  * Os comandos que MUDAM a protecao (`screen on|off|timeout`) continuam
  * exclusivos do shell, via `ui.type`; a ponte nao tem side channel para eles.
  */
-namespace cyberdeck_music { struct diagnostics_snapshot; struct trace_page; struct snapshot; }
+namespace cyberdeck_music { struct diagnostics_snapshot; struct trace_page; struct snapshot; struct scan_measurements; }
 namespace cyberdeck_serial {
 
 /* Limites do protocolo (contrato fixado pelos testes host). */
@@ -177,13 +177,16 @@ std::string handle_wifi_scan(const std::string &rid, const std::vector<WifiNet> 
 std::string music_diagnostics_to_json(const cyberdeck_music::diagnostics_snapshot &stats);
 std::string music_trace_to_json(const cyberdeck_music::trace_page &page);
 std::string music_status_to_json(const cyberdeck_music::snapshot &status, bool queue_scanning);
+std::string music_scan_to_json(const cyberdeck_music::scan_measurements &metrics);
 #ifndef ESP_PLATFORM
 using music_diagnostics_provider = bool (*)(void *, cyberdeck_music::diagnostics_snapshot &);
 using music_trace_provider = bool (*)(void *, std::uint32_t, std::uint32_t, cyberdeck_music::trace_page &);
 using music_status_provider = bool (*)(void *, cyberdeck_music::snapshot &, bool &);
+using music_scan_provider = bool (*)(void *, cyberdeck_music::scan_measurements &);
 void set_music_diagnostics_provider_for_test(music_diagnostics_provider provider, void *context);
 void set_music_trace_provider_for_test(music_trace_provider provider, void *context);
 void set_music_status_provider_for_test(music_status_provider provider, void *context);
+void set_music_scan_provider_for_test(music_scan_provider provider, void *context);
 #endif
 
 /* ------------------------------------------------------------------ */

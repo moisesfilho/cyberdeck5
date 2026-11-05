@@ -89,13 +89,16 @@ ui.type "music"
 term.dump          # esperado: music: opening player
 ui.dump            # surface do player com status, lista rolável e controles
 music.status       # state, queue_scanning, track_count, position_ms, duration_ms
+music.scan         # queue/browser: completed, succeeded, duration_ms, stack_high_water_bytes
 music.diagnostics  # contadores read-only, sem título/caminho da faixa
 ```
 
 Para observar estado e heap no mesmo intervalo, use **somente uma sessão**
 Serial-JTAG: `python3 tools/collect_music_status_series.py --seconds 60
 --out /tmp/opencode/music-status.csv`. A ferramenta nunca sobrescreve o CSV,
-registra uma amostra por segundo e não coleta títulos/caminhos de faixas.
+registra uma amostra por segundo, inclusive as últimas medições dos dois scans,
+e não coleta títulos/caminhos de faixas. `stack_high_water_bytes` é a menor
+folga de stack **da task de scan** durante a execução, não consumo máximo.
 
 Aguarde `queue_scanning=false` em `music.status` antes de avaliar a contagem
 de fila. Com o scan em andamento, `music` e `music queue <dir>` são rejeitados com

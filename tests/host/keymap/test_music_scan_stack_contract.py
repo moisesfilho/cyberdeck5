@@ -4,7 +4,8 @@
 The scan runs on a 6144-byte FreeRTOS task. `read_metadata` must therefore fill
 the bounded `metadata` struct instead of copying a whole `track` onto that
 stack. Browser staging is a bounded heap allocation; `scan_entry` logs the
-high-water mark before it deletes itself so device peak remains observable.
+high-water mark before it signals completion so a read-only snapshot can
+preserve the final value after the worker deletes itself.
 """
 
 import re
@@ -39,7 +40,8 @@ walk_body = scan_sync[walk_start:walk_end]
 metadata_struct = re.search(r"struct metadata \{\n(.*?)\n\};", model_header, re.S)
 
 high_water_mark = scan_entry.find("uxTaskGetStackHighWaterMark(nullptr)")
-telemetry = re.search(r"ESP_LOGI\([^;]*uxTaskGetStackHighWaterMark\(nullptr\)", scan_entry)
+telemetry = re.search(r'ESP_LOGI\(k_tag, "scan stack_high_water_mark_bytes=%u stack_bytes=6144",\s*'
+                      r'static_cast<unsigned>\(measurement\.stack_high_water_bytes\)\)', scan_entry)
 ui_browser_callers = {
     "status timer": function_body(ui_source, "void process_music_status(lv_timer_t *)"),
     "browser action": function_body(ui_source, "bool music_view_browser_action(bool play_selected) {"),
@@ -92,9 +94,14 @@ checks = {
     "scan_entry logs the stack high-water mark":
         telemetry is not None and "stack_high_water_mark_bytes=%u" in telemetry.group(0)
         and "stack_bytes=6144" in telemetry.group(0),
-    "high-water-mark log follows completion and precedes self-deletion":
-        high_water_mark > scan_entry.index("xSemaphoreGive(completed)")
-        and high_water_mark < scan_entry.index("vTaskDelete(nullptr)"),
+    "high-water mark is published before completion, then logged before self-deletion":
+        0 <= high_water_mark < scan_entry.index("scan_metrics_mutex_")
+        < scan_entry.index("legacy_scan_running_.store(false")
+        < scan_entry.index("xSemaphoreGive(completed)")
+        < scan_entry.index("ESP_LOGI(k_tag, \"scan stack_high_water_mark_bytes")
+        < scan_entry.index("vTaskDelete(nullptr)")
+        and "self->scan_metrics_.queue = measurement" in scan_entry
+        and "self->scan_metrics_.browser = measurement" in scan_entry,
     "LVGL owns one static BSS browser snapshot and copies it atomically through one helper":
         re.search(r"cyberdeck_music::browser_snapshot\s+s_music_browser_snapshot\s*;", ui_source) is not None
         and "return music.get_browser_snapshot(s_music_browser_snapshot);" in ui_source

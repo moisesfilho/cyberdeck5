@@ -712,7 +712,7 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
                                            "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear",
                                              "screen.status", "screen.wake", "music.diagnostics", "music.trace",
-                                             "music.status", "ui.escape"};
+                                             "music.status", "music.scan", "ui.escape"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -997,12 +997,34 @@ std::string music_status_to_json(const cyberdeck_music::snapshot &status, bool q
     return json;
 }
 
+std::string music_scan_to_json(const cyberdeck_music::scan_measurements &metrics)
+{
+    auto append = [](std::string &json, const char *name, const cyberdeck_music::scan_measurement &item) {
+        json += ",\"";
+        json += name;
+        json += "\":{\"completed\":";
+        json += item.completed ? "true" : "false";
+        json += ",\"succeeded\":";
+        json += item.succeeded ? "true" : "false";
+        json += ",\"duration_ms\":" + std::to_string(item.duration_ms);
+        json += ",\"stack_high_water_bytes\":" + std::to_string(item.stack_high_water_bytes);
+        json += "}";
+    };
+    std::string json = "{\"version\":1,\"read_only\":true";
+    append(json, "queue", metrics.queue);
+    append(json, "browser", metrics.browser);
+    json += "}";
+    return json;
+}
+
 #ifndef ESP_PLATFORM
 music_diagnostics_provider s_music_diagnostics_provider = nullptr;
 music_trace_provider s_music_trace_provider = nullptr;
 music_status_provider s_music_status_provider = nullptr;
+music_scan_provider s_music_scan_provider = nullptr;
 void *s_music_diagnostics_context = nullptr;
 void *s_music_status_context = nullptr;
+void *s_music_scan_context = nullptr;
 #endif
 
 std::string handle_sys_info(const std::string &rid)
@@ -1123,6 +1145,12 @@ void set_music_status_provider_for_test(music_status_provider provider, void *co
 {
     s_music_status_provider = provider;
     s_music_status_context = context;
+}
+
+void set_music_scan_provider_for_test(music_scan_provider provider, void *context)
+{
+    s_music_scan_provider = provider;
+    s_music_scan_context = context;
 }
 #endif
 
@@ -3224,6 +3252,30 @@ dispatch_result dispatch_one(const char *line, std::size_t len)
         status_response.result_json = music_status_to_json(status, queue_scanning);
         res.ok = true;
         res.envelope_json = build_envelope(status_response);
+        return res;
+    }
+    if (req.type == "music.scan") {
+        cyberdeck_music::scan_measurements metrics{};
+#ifdef ESP_PLATFORM
+        const bool available = cyberdeck_music::global_player().running();
+        if (available)
+            metrics = cyberdeck_music::global_application().scan_metrics();
+#else
+        const bool available = s_music_scan_provider != nullptr &&
+                               s_music_scan_provider(s_music_scan_context, metrics);
+#endif
+        if (!available) {
+            res.ok = false;
+            res.err = dispatch_error::player_not_running;
+            res.envelope_json = build_error_envelope(req.rid, res.err, "music player not running");
+            return res;
+        }
+        response scan_response{};
+        scan_response.rid = req.rid;
+        scan_response.ok = true;
+        scan_response.result_json = music_scan_to_json(metrics);
+        res.ok = true;
+        res.envelope_json = build_envelope(scan_response);
         return res;
     }
 

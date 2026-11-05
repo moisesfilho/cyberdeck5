@@ -387,6 +387,10 @@ int main() {
     CHECK(wait_until(
         [&] { return music.execute("music", "status").output.find("queue: scan complete") != std::string::npos; },
         std::chrono::seconds(2)));
+    const auto queue_metrics = music.scan_metrics();
+    CHECK(queue_metrics.queue.completed && queue_metrics.queue.succeeded);
+    CHECK(queue_metrics.queue.stack_high_water_bytes == 512);
+    CHECK(!queue_metrics.browser.completed);
     fs::create_directories(fs::path(scan_root) / "musica" / "albums");
     write_file(fs::path(scan_root) / "musica" / "albums" / "browser.mp3", "browser-data");
     player.state.state = cyberdeck_music::playback_state::playing;
@@ -406,6 +410,7 @@ int main() {
     }
     CHECK(music.browser_scan("/musica"));
     CHECK(music.browser_scan_active());
+    CHECK(!music.scan_metrics().browser.completed);
     CHECK(music.get_browser_scan_state() == cyberdeck_music::browser_scan_state::scanning);
     {
         std::unique_lock<std::mutex> lock(scan_gate_mutex);
@@ -420,6 +425,10 @@ int main() {
     scan_gate_changed.notify_all();
     CHECK(wait_until([&] { return !music.browser_scan_active(); }, std::chrono::seconds(2)));
     CHECK(music.get_browser_scan_state() == cyberdeck_music::browser_scan_state::ready);
+    const auto browser_metrics = music.scan_metrics();
+    CHECK(browser_metrics.browser.completed && browser_metrics.browser.succeeded);
+    CHECK(browser_metrics.browser.stack_high_water_bytes == 512);
+    CHECK(browser_metrics.queue.completed);
     CHECK(music.get_browser_snapshot(browser_after));
     CHECK(browser_after.count == 2 && browser_after.entries[0].type == cyberdeck_music::browser_entry_type::directory &&
           std::string_view(browser_after.entries[0].name.data()) == "albums" &&

@@ -224,6 +224,11 @@ anterior (com Enter involuntário) como inspeção passiva nem aceite de música
 Para observar o retorno de apps em foreground sem acionar Enter, a ponte tem
 `ui.escape` (única tecla, guardada quando a tela está apagada). Seu ACK não
 comprova teardown; confirmar o retorno por `term.dump` e uptime no Tab5.
+O fechamento do player e do editor limpo, a recusa com tela apagada e o wake
+foram observados no Tab5 (detalhes no baseline). O scan de música passou a
+publicar sua duração e a menor folga de stack antes de destruir a task,
+consultáveis via `music.scan`; ainda falta medir essa instrumentação em uma
+imagem gravada, sem atribuir números à imagem anterior.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

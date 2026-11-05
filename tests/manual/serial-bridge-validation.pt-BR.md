@@ -253,6 +253,9 @@ contém somente `state`, `queue_scanning`, `track_count`, `position_ms` e
 `duration_ms`; não inclui título, caminho ou credenciais. Se o player não está
 rodando, retorna `player_not_running`. **Não use `ui.type "music status"` no
 player:** Enter é Play/Pause, não consulta ao shell.
+`music.scan` consulta sem teclas as últimas medições de scan da fila e do
+browser (`completed`, `succeeded`, `duration_ms`, `stack_high_water_bytes`);
+`completed=false` significa que não há resultado final desse tipo de scan.
 
 ### 5.1. Auditoria Wi-Fi no terminal (`wifi audit`)
 

@@ -341,6 +341,8 @@ todas as tasks nem um mínimo simultâneo do dispositivo.
 Com o player em foreground, use `music.status` para consultar reprodução e
 scan sem injetar teclas. `ui.type "music status"` envia Enter e alterna a
 reprodução, em vez de consultar o shell.
+`music.scan` informa duração do último scan da fila/browser e a menor folga
+da stack da task de scan, em bytes, sem nomes nem caminhos das faixas.
 
 ## Estrutura
 

@@ -1047,6 +1047,24 @@ a raiz do repositorio.
   fechamento pelo `term.dump`/`ui.dump`. Testes host em
   `test_serial_screen_guard.cpp`, `test_serial_screen_guard_contract.py` e
   `test_term_dump_cli.py`.
+  Snapshot `84c67d2` flashado (SHA-256
+  `ef4bacfb1ecb8e52d722d17de1711f1523a245a58274dda96128af983fbdc53c`):
+  `ui.escape` fechou player e editor limpo, confirmado por `music.status`,
+  `ui.dump`, `term.dump`, `cat` do arquivo inexistente e uptime monotônico.
+  Ver `docs/OS-PHASE3-BASELINE.pt-BR.md`; recusa com tela apagada e wake foram
+  confirmados no dispositivo.
+  Proxima instrumentacao: `scan_measurements` em
+  `include/apps/music/cyberdeck_music_model.h` representa duracao em ms e
+  minimo livre da stack (bytes) por scan queue/browser; `cyberdeck_music_app.cpp`
+  registra no worker antes de sinalizar conclusao, com leitura sincronizada
+  via `application::scan_metrics()` em `cyberdeck_music_app.h`. A ponte expoe
+  `music.scan` read-only em `cyberdeck_serial_bridge.{h,cpp}` e a CLI em
+  `tools/cyberdeck_cli.py`. `collect_music_status_series.py` agora inclui as
+  duas medicoes por amostra, sem metadados de faixas. Testes:
+  `test_music_app.cpp`, `test_serial_sysinfo_wifi.cpp`,
+  `test_phase3_music_status_collector.py`, `test_term_dump_cli.py` e
+  `test_music_scan_stack_contract.py` (high-water capturado/publicado antes do
+  sinal de conclusao, depois logado com o mesmo valor antes da delecao).
   `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
   conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
   nao podem substituir a entrada de modulo.

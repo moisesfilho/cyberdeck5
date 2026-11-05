@@ -15,8 +15,10 @@ from cyberdeck_cli import CyberdeckSession
 STATUS_FIELDS = ("state", "queue_scanning", "track_count", "position_ms", "duration_ms")
 HEAP_FIELDS = ("internal_free", "internal_min_free", "dma_free", "dma_min_free",
                "psram_free", "psram_min_free", "serial_stack_high_water_bytes")
+SCAN_FIELDS = ("completed", "succeeded", "duration_ms", "stack_high_water_bytes")
 FIELDS = ("timestamp_utc", "elapsed_ms", "latency_ms", "error", "fw_version", "uptime",
-          *STATUS_FIELDS, *HEAP_FIELDS)
+          *STATUS_FIELDS, *HEAP_FIELDS,
+          *(f"{kind}_{field}" for kind in ("queue", "browser") for field in SCAN_FIELDS))
 
 
 def query(session: CyberdeckSession, kind: str) -> dict:
@@ -42,16 +44,22 @@ def collect(session: CyberdeckSession, seconds: int, output: Path) -> int:
             begun = time.monotonic()
             try:
                 status = query(session, "music.status")
+                scan = query(session, "music.scan")
                 info = query(session, "sys.info")
                 if (status.get("state") not in ("stopped", "playing", "paused", "error")
                         or type(status.get("queue_scanning")) is not bool
                         or any(type(status.get(key)) is not int for key in STATUS_FIELDS[2:])
                         or not isinstance(info.get("fw_version"), str)
                         or not isinstance(info.get("uptime"), str)
-                        or any(type(info.get(key)) is not int for key in HEAP_FIELDS)):
+                        or any(type(info.get(key)) is not int for key in HEAP_FIELDS)
+                        or any(not isinstance(scan.get(kind), dict) or
+                               any(type(scan[kind].get(field)) is not (bool if field in ("completed", "succeeded") else int)
+                                   for field in SCAN_FIELDS) for kind in ("queue", "browser"))):
                     raise ValueError("missing or invalid telemetry")
                 row.update({key: status[key] for key in STATUS_FIELDS})
                 row.update({key: info[key] for key in ("fw_version", "uptime", *HEAP_FIELDS)})
+                row.update({f"{kind}_{field}": scan[kind][field]
+                            for kind in ("queue", "browser") for field in SCAN_FIELDS})
             except (OSError, RuntimeError, ValueError, serial.SerialException) as exc:
                 row["error"] = type(exc).__name__
                 failures += 1

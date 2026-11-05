@@ -253,6 +253,30 @@ expõe diagnósticos do player e permite uma consulta read-only bounded.
   inspeção passiva e estabilidade nessa janela; não atesta reprodução,
   teardown, custos sob decoder ativo, BLE, editor ou budgets da Fase 3.
 
+### Retorno de foreground sem Enter — `ui.escape` (parcial)
+
+- Snapshot `84c67d2`, firmware `1.6.0` ainda sem tag, binário SHA-256
+  `ef4bacfb1ecb8e52d722d17de1711f1523a245a58274dda96128af983fbdc53c`.
+  `make -C tests/host/keymap clean test verify`, `idf.py build` e contrato do
+  dashboard passaram; flash em `/dev/ttyACM0` verificou o hash gravado.
+  `sys.info` no boot: `safe_mode=false`, `interrupted_boots=0`, uptime 6 s;
+  não há atestação independente do hash em execução.
+- Em tela acesa, `ui.type music` abriu o player; `music.status` indicou
+  `stopped`, 14 faixas e scan concluído. `ui.escape` retornou ACK e a consulta
+  seguinte a `music.status` respondeu `player_not_running`; `ui.dump` mostrou
+  novamente terminal/prompt. `sys.info` avançou até 33 s, sem reboot observado.
+  As consultas serial foram sequenciais; o ACK isolado não foi usado como prova.
+- `ui.type 'edit /data/phase3-escape-no-save-20261105.txt'` abriu o editor
+  vazio (`ui.dump` mostrou cursor e barra de atalhos). `ui.escape` devolveu
+  o prompt em `term.dump`; `cat` do mesmo caminho confirmou `file not found`
+  (nenhuma gravação). Uptime chegou a 53 s, sem reboot observado.
+  Isto cobre só abrir/fechar editor limpo, não dirty/save, round-trip ou
+  falha de I/O. A recusa de `ui.escape` com a tela apagada está coberta em
+  host; no dispositivo, após timeout de inatividade, `screen.status` confirmou
+  `off=true`, `ui.escape` retornou `screen_off` e `screen.status` permaneceu
+  `off=true`. `screen.wake` respondeu `woke=true`; uptime chegou a 4m14s sem
+  reboot observado.
+
 ## Pendências para fechar a Fase 3
 
 1. A imagem nova tem build/hash, flash verificado e log de boot; falta uma

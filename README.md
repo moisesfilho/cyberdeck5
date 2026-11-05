@@ -369,6 +369,8 @@ or prove a simultaneous whole-device minimum.
 With the music app in the foreground, use `music.status` for read-only playback
 and queue-scan telemetry. Do not send `ui.type "music status"`: its Enter key
 toggles playback instead of querying the shell.
+`music.scan` reports the last queue/browser scan duration and minimum free
+scan-task stack in bytes, without revealing track names or paths.
 
 ## Estrutura
 

@@ -180,6 +180,30 @@ bool music_status_fixture(void *, cyberdeck_music::snapshot &status, bool &queue
     return true;
 }
 
+bool music_scan_fixture(void *, cyberdeck_music::scan_measurements &metrics) {
+    metrics.queue = {true, true, 120, 3024};
+    metrics.browser = {false, false, 0, 0};
+    return true;
+}
+
+void test_music_scan_measurements() {
+    const char *request = "{\"rid\":\"scan-1\",\"type\":\"music.scan\"}";
+    const auto unavailable = cyberdeck_serial::dispatch_one(request, std::strlen(request));
+    CHECK(!unavailable.ok);
+    CHECK(unavailable.err == cyberdeck_serial::dispatch_error::player_not_running);
+    cyberdeck_serial::set_music_scan_provider_for_test(music_scan_fixture, nullptr);
+    const auto response = cyberdeck_serial::dispatch_one(request, std::strlen(request));
+    CHECK(response.ok);
+    CHECK(response.envelope_json ==
+          "{\"rid\":\"scan-1\",\"ok\":true,\"result\":{\"version\":1,\"read_only\":true,"
+          "\"queue\":{\"completed\":true,\"succeeded\":true,\"duration_ms\":120,\"stack_high_water_bytes\":3024},"
+          "\"browser\":{\"completed\":false,\"succeeded\":false,\"duration_ms\":0,\"stack_high_water_bytes\":0}}}");
+    CHECK(response.envelope_json.find("\"queue\":{\"completed\":true,\"succeeded\":true,\"duration_ms\":120,\"stack_high_water_bytes\":3024}") != std::string::npos);
+    CHECK(response.envelope_json.find("\"browser\":{\"completed\":false,\"succeeded\":false,\"duration_ms\":0,\"stack_high_water_bytes\":0}") != std::string::npos);
+    CHECK(response.envelope_json.size() < cyberdeck_serial::k_max_ndjson_line);
+    cyberdeck_serial::set_music_scan_provider_for_test(nullptr, nullptr);
+}
+
 void test_music_status_read_only() {
     const char *request = "{\"rid\":\"status-1\",\"type\":\"music.status\"}";
     auto unavailable = cyberdeck_serial::dispatch_one(request, std::strlen(request));
@@ -212,6 +236,7 @@ int main(){
     test_handlers_return_envelope_with_rid();
     test_sys_info_bounded_and_valid_json();
     test_music_status_read_only();
+    test_music_scan_measurements();
     if(s_failures==0){ std::printf("PASS: serial_sysinfo_wifi (%d checks)\n",s_checks); return 0; }
     std::printf("FAIL: %d de %d checks falharam\n",s_failures,s_checks); return 1;
 }
