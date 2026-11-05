@@ -33,8 +33,11 @@ curl -s http://<ip>/battery
 Resposta esperada (uma linha, ordem fixa, sem quebras):
 
 ```json
-{"schema":1,"state":"battery","charge":"not_charging","available":true,"bus_voltage_mv":7900,"current_ma":120,"percentage":88,"protection_enabled":true,"protection_active":false,"charger_enabled":true,"sampled_at_us":123456789,"sampled_age_ms":250,"fw_version":"1.6.0","uptime_s":42}
+{"schema":1,"state":"battery","charge":"not_charging","available":true,"bus_voltage_mv":7900,"current_ma":120,"percentage":88,"protection_enabled":true,"protection_active":false,"charger_enabled":true,"sampled_at_us":123456789,"sampled_age_ms":250,"fw_version":"1.7.0","uptime_s":42}
 ```
+
+O valor de `fw_version` é apenas ilustrativo: na validação, derive a versão
+esperada de `version.txt` e confirme o hash da imagem gravada separadamente.
 
 ## Validacao dos campos
 

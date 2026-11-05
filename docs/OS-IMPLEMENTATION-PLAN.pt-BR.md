@@ -22,7 +22,8 @@ marcos deste plano, os recortes de requisitos e os critérios de aceite. Ele é
 uma projeção atualizada manualmente junto com este documento e suas evidências;
 percentuais não substituem os gates no Tab5.
 
-**Base em desenvolvimento:** `version.txt` = `1.6.0`, alvo `esp32p4`, build local com
+**Base em desenvolvimento:** `version.txt` = `1.7.0` (candidata a release; não
+etiquetada), alvo `esp32p4`, build local com
 `IDF_VER=v6.1` (em `build/build.ninja`), como confirma também `code-map.md`.
 O build local não identifica, por si, o firmware em execução no Tab5. Menções a
 ESP-IDF 5.5.5 em evidências históricas documentam aquela validação, não a
@@ -387,26 +388,29 @@ teste de recuperação após adulteração nem implantação de controles novos.
 **Objetivo:** estabelecer que cada versão liberada do firmware corresponde a
 uma configuração e evidência operacional reproduzíveis.
 
-**Em andamento:** os gates locais desta rodada documental passaram; registro em
+**Em andamento:** os gates locais da rodada anterior (`1.6.0`) passaram; registro em
 [`OS-PHASE5-RELEASE-GATE.pt-BR.md`](OS-PHASE5-RELEASE-GATE.pt-BR.md).
-Esta rodada organiza evidências da imagem `1.6.0` e valida gates locais;
-documentação nova não modifica o binário instalado. Sem tag `v1.6.0` não há
-versão liberada nos termos do `AGENTS.md`, e não será criada tag por inferência.
-Aceite operacional pessoal e Fase 4 concluída não apagam os defeitos/limites
-conhecidos da Fase 3. Toda mudança funcional futura exige validação dos
+Para preparar release da imagem funcional validada `39953bf` sem etiquetar o
+commit anterior `0917276` que introduziu `1.6.0`, o operador autorizou criar
+`1.7.0` no commit candidato. É preciso build, testes, flash/readback e validação
+pertinente dessa **nova imagem** antes de solicitar autorização separada para
+tag `v1.7.0`. A evidência física de `1.6.0` é referência, não aceite automático
+da nova versão. Sem tag não há versão liberada segundo o `AGENTS.md`.
+Aceite operacional pessoal e Fase 4 concluída não apagam as anomalias e
+limites de evidência da Fase 3. Toda mudança funcional futura exige validação dos
 critérios afetados no Tab5 antes do gate final dessa mudança.
 
-- [x] Executar gates host, contratos e build definidos em `AGENTS.md` nesta
-  rodada documental; repetir para qualquer imagem funcional futura.
-- [x] Verificar aplicabilidade da validação no Tab5: esta rodada muda apenas
-  documentação, sem alterar critério físico; conservar hash/versão e evidência
-  prévia da mesma imagem, sem novo flash nem ampliar aceite. Para mudança
-  funcional, validar os critérios afetados no Tab5 antes de aprovar seu gate.
-- [x] Atualizar `code-map.md`, rastreabilidade e documentação de validação
-  nesta rodada; arquitetura de firmware não foi alterada.
-- [ ] Aplicar a política de versão do `AGENTS.md` à próxima mudança funcional
-  e, somente se houver pedido explícito de release, criar a tag correspondente.
-  Esta rodada documental não incrementa `version.txt`; `1.6.0` segue sem tag.
+- [x] Executar gates host, contratos e build definidos em `AGENTS.md` para a
+  candidata `1.7.0`: suíte completa, `verify`, contratos focados e build
+  ESP-IDF 6.1 passaram; repetir para qualquer imagem alterada.
+- [ ] Validar no Tab5 a candidata `1.7.0` após flash/readback, registrando
+  hash/versão e efeito observado. Reutilizar evidência física anterior apenas
+  para o mesmo conteúdo de firmware e cenário, nunca como nova validação.
+- [ ] Atualizar `code-map.md`, rastreabilidade e documentação de validação da
+  candidata com resultados host/build/dispositivo; arquitetura de apps não mudou.
+- [ ] Concluir a política de versão do `AGENTS.md`: `version.txt` candidata
+  `1.7.0` aprovada pelo operador, mas a tag `v1.7.0` depende de validação da
+  imagem candidata e autorização explícita separada. Nenhuma tag foi criada.
 
 **Aceite:** qualidade, build e validação física registrados; pendências são
 marcadas como pendentes, nunca inferidas a partir de testes host.

@@ -1,20 +1,20 @@
 # Fase 5 — registro de release e manutenção do Tab5
 
-**Estado em 05/11/2026:** gates locais da entrega documental executados para
-a versão de desenvolvimento `1.6.0`; release ainda não solicitado.
-Este registro não cria release, tag, flash nem aceite de cenários físicos não
-executados. `version.txt` é a fonte da versão; pelo `AGENTS.md`, ela só é
-"liberada" quando houver tag `vMAJOR.MINOR.PATCH` no commit que a introduziu.
+**Estado em 05/11/2026:** o operador autorizou preparar `1.7.0` como candidata
+a release, sem autorizar tag/publicação ainda. Os gates documentais anteriores
+de `1.6.0` são históricos, não substituem os da nova imagem. `version.txt` é a
+fonte da versão; pelo `AGENTS.md`, ela só é "liberada" quando houver tag
+`vMAJOR.MINOR.PATCH` no commit que a introduziu.
 Não criar tag sem pedido explícito.
 
 ## Base e proveniência
 
 | Item | Evidência e limite |
 | --- | --- |
-| Alvo | M5Stack Tab5, ESP32-P4, ESP-IDF 6.1; versão em `version.txt`: `1.6.0`. |
+| Alvo | M5Stack Tab5, ESP32-P4, ESP-IDF 6.1; versão candidata em `version.txt`: `1.7.0`. |
 | Imagem observada | `docs/OS-PHASE3-BASELINE.pt-BR.md`: firmware `39953bf`, readback integral do único slot `factory` com SHA-256 igual ao build `5e355d17772c5fe62c47b637a6a672cc64ef4e177947adf024db3b25764f59c2`. O hash é de conteúdo, não autenticação criptográfica do boot. |
 | Histórico de boot | Boot normal e checkpoint recuperado após safe mode; boot posterior à leitura eFuse também normal em `docs/OS-PHASE4-THREAT-MODEL.pt-BR.md`. Esses ensaios ocorreram antes deste registro documental: não atribuir automaticamente uma nova imagem ao HEAD de documentação. |
-| Versão/release | `1.6.0` ainda sem tag `v1.6.0`; desenvolvimento, não release. Mudanças só documentais não alteram `version.txt`. |
+| Versão/release | `1.6.0` foi introduzida em `0917276`, mas a imagem validada inclui alterações funcionais até `39953bf`; nenhuma tag `v1.6.0` existe. Preparar `1.7.0` no commit candidato permite etiquetar o próprio commit que introduz essa versão, **somente após** validação/consentimento final. |
 
 ## Gates por mudança
 
@@ -71,6 +71,27 @@ Não criar tag sem pedido explícito.
 | Diferenças | `git diff --check`: PASS. Conferir também `git diff --cached --check` antes do commit. |
 | Hardware | Sem flash nesta entrega exclusivamente documental; evidências anteriores da mesma imagem em Fases 3–4. Não se executaram novos cenários físicos, não se atribui ao HEAD documental um firmware novo e não se reclassificam pendências técnicas como resolvidas. |
 
-A Fase 5 permanece `active`: não há tag `v1.6.0` nem pedido explícito de
-liberação. Nenhuma mudança funcional ou incremento de versão foi necessário
-nesta rodada; os gates devem ser repetidos para a próxima imagem alterada.
+A Fase 5 permanece `active`: não há tag `v1.6.0` nem `v1.7.0`. A rodada
+documental de `1.6.0` não mudou firmware; a candidata `1.7.0` exige nova
+rodada host/build, validação física e decisão humana sobre a tag.
+
+## Candidata `1.7.0` — preparação (05/11/2026)
+
+- Base funcional: código de `39953bf` (após esse commit só houve alterações em
+  documentação/evidências); alteração de firmware desta candidata limitada à
+  versão em `version.txt`. Nenhuma versão de app/`api_version` foi alterada.
+- Testes focados `test_battery_http_contract`,
+  `test_battery_protection_contract` e `test_os_dashboard_contract`: PASS.
+  `idf.py build` ESP-IDF v6.1/esp32p4: PASS, app `0x27a6e0`, partição
+  `0x400000`, 38% livre; bootloader `0x5b00`, margem `0x500`. SHA-256 do app
+  `d4404708764ce6d8d49050ded73c35a86a93ad346e7dd96cbbc6f7cbeeca241a`.
+  `esptool image-info` confirma `App version: 1.7.0`, alvo ESP32-P4 e
+  `ESP-IDF: v6.1` na imagem compilada. Linker emitiu aviso de `kill` não
+  implementado na dependência libssh; a compilação concluiu.
+  `make -C tests/host/keymap verify`: PASS (paridade LVGL shim).
+- `make -C tests/host/keymap test`: PASS, suíte host completa, incluindo
+  contrato IMU; sem `clean` ou execução concorrente de cobertura.
+- Ainda pendentes nesta candidata: commit de introdução da versão,
+  flash/readback, boot/observáveis no Tab5 e decisão
+  explícita sobre tag/publicação. A aprovação anterior de testes físicos
+  autoriza preparar/validar a imagem, **não** liberar uma tag automaticamente.

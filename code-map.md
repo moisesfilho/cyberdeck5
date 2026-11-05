@@ -955,6 +955,11 @@ a raiz do repositorio.
   sem zero-padding dentro dos limites dos buffers e aplica clipping no slot de
   30%. A política de bump está em
   `AGENTS.md`; versões de manifests de apps são independentes.
+  Candidata `1.7.0` autorizada pelo operador em 05/11/2026: `1.6.0` surgiu em
+  `0917276`, mas o ultimo codigo funcional validado é `39953bf` (mesmo hash
+  de binário que os commits documentais seguintes). Não etiquetar `0917276`
+  como se fosse essa imagem nem etiquetar um commit que não introduziu a
+  versão. Sem tag `v1.7.0` até aceite explícito após validação da nova imagem.
 - Aplicacao: uma unica tela TUI LVGL, com header, relogio, indicador Wi-Fi, bateria e terminal.
 - Organizacao: `components/cyberdeck/src/apps/` contem fluxos de produto;
   `components/cyberdeck/src/platform/` contem integracoes de hardware e runtime.
@@ -982,7 +987,8 @@ a raiz do repositorio.
   otimizacoes, confiabilidade fisica, modelo de ameaca e release; nao propoem
   kernel proprio ou boot degradado SD nao implementado. Gatilhos de mudanca de
   escopo exigem reavaliacao arquitetural. A Fase 5 referencia
-  `docs/OS-PHASE5-RELEASE-GATE.pt-BR.md`: identidade da imagem `1.6.0`, gates
+  `docs/OS-PHASE5-RELEASE-GATE.pt-BR.md`: identidade histórica da imagem `1.6.0`
+  e preparação da candidata `1.7.0`, gates
   host/verify/build, validacao fisica por mudanca funcional, limites conhecidos
   e politica de tag de release; nao confundir commit documental com firmware.
 - `docs/OS-RESOURCE-CONTRACTS.pt-BR.md` audita a Fase 2: fronteiras das apps,
@@ -3159,7 +3165,7 @@ O roteiro da ponte serial esta em
 - `docs/OS-PHASE5-RELEASE-GATE.pt-BR.md`: registro de gates de release da
   Fase 5; exige versao/identidade da imagem, testes, build e verificacao no
   Tab5 por fluxo funcional afetado. Distingue uso pessoal aceito, gates
-  tecnicos restantes da Fase 3 e tag nao criada para a versao `1.6.0`.
+  tecnicos restantes da Fase 3, candidata `1.7.0` e tag ainda nao criada.
 - `tests/host/keymap/test_os_dashboard_contract.py`: contrato do dashboard
   contra as fases/checkboxes/criterios do plano e links HTML relativos.
 - `docs/OS-TAB5-REQUIREMENTS.pt-BR.md`: baseline documental concluido da Fase 1 para
