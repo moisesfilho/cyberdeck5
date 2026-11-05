@@ -363,6 +363,9 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
 
 `pyserial` is required on the host (`pip install pyserial`). See
 `tests/manual/serial-bridge-validation.pt-BR.md` for the on-device checklist.
+`sys.info` also reports optional heap low-water sums by memory capability and
+the serial task's minimum free stack in bytes. These do not measure other tasks
+or prove a simultaneous whole-device minimum.
 
 ## Estrutura
 

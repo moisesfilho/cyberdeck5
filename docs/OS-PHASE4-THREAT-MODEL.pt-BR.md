@@ -2,7 +2,7 @@
 
 **Estado:** inventário e fronteiras documentados em 05/11/2026; controles
 propostos não aprovados nem habilitados por este documento. A Fase 3 e a
-validação física do firmware `1.5.0` continuam abertas. Não usar o inventário
+validação física integrada (a imagem anterior reportou `1.5.0`) continuam abertas. Não usar o inventário
 como certificação de segurança ou autorização para gravar eFuses, apagar SD/NVS
 ou trocar o processo de atualização.
 

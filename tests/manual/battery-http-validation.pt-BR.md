@@ -5,7 +5,7 @@ Serial-JTAG. O endpoint nao amostra o INA226, nao abre I2C, nao adquire o lock d
 display e nao escreve no SD: ele apenas projeta o snapshot de politica em cache
 e o timestamp da ultima amostra.
 
-Firmware esperado: a versao gravada (hoje `1.5.0`; o `fw_version` no corpo da
+Firmware esperado: a versao gravada (consultar `version.txt`; o `fw_version` no corpo da
 resposta deve conferir com o firmware em execucao).
 
 ## Pre-requisitos
@@ -33,7 +33,7 @@ curl -s http://<ip>/battery
 Resposta esperada (uma linha, ordem fixa, sem quebras):
 
 ```json
-{"schema":1,"state":"battery","charge":"not_charging","available":true,"bus_voltage_mv":7900,"current_ma":120,"percentage":88,"protection_enabled":true,"protection_active":false,"charger_enabled":true,"sampled_at_us":123456789,"sampled_age_ms":250,"fw_version":"1.5.0","uptime_s":42}
+{"schema":1,"state":"battery","charge":"not_charging","available":true,"bus_voltage_mv":7900,"current_ma":120,"percentage":88,"protection_enabled":true,"protection_active":false,"charger_enabled":true,"sampled_at_us":123456789,"sampled_age_ms":250,"fw_version":"1.6.0","uptime_s":42}
 ```
 
 ## Validacao dos campos
@@ -49,7 +49,7 @@ Resposta esperada (uma linha, ordem fixa, sem quebras):
 | `protection_active` | latch de corte ativo |
 | `charger_enabled` | nivel comandado de `CHG_EN` (nao e a leitura do pad) |
 | `sampled_at_us`, `sampled_age_ms` | timestamp da ultima amostra da politica e idade em ms; `null` se nunca amostrou; a idade fica abaixo do periodo do amostrador (~1 s) e pode variar entre leituras (dente-de-serra do timer da UI) |
-| `fw_version` | a versao gravada (hoje `1.5.0`), nunca um valor fixo do roteiro |
+| `fw_version` | a versao gravada (consultar `version.txt`), nunca um valor fixo do roteiro |
 | `uptime_s` | cresce entre duas chamadas; queda indica reboot |
 
 Duas chamadas seguidas devem manter `uptime_s` crescente e `sampled_age_ms`

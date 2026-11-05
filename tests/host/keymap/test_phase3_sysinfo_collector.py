@@ -22,7 +22,9 @@ class FakeSession:
         if len(self.requests) == 2:
             raise RuntimeError("timeout")
         return [{"ok": True, "result": {"uptime": "00:00:12", "free_heap": 1000,
-                                       "internal_free": 400, "ssid": "do-not-copy"}}]
+                                       "internal_free": 400, "internal_min_free": 300,
+                                       "serial_stack_high_water_bytes": 1200,
+                                       "ssid": "do-not-copy"}}]
 
 
 def main() -> None:
@@ -35,6 +37,8 @@ def main() -> None:
         assert session.requests == [{"type": "sys.info"}] * 2
         assert failures == 1 and len(rows) == 2
         assert rows[0]["uptime"] == "00:00:12" and rows[0]["internal_free"] == "400"
+        assert rows[0]["internal_min_free"] == "300"
+        assert rows[0]["serial_stack_high_water_bytes"] == "1200"
         assert rows[1]["error"] == "RuntimeError" and not rows[1]["free_heap"]
         assert "ssid" not in output.read_text(encoding="utf-8")
         assert b"\r\n" not in output.read_bytes()

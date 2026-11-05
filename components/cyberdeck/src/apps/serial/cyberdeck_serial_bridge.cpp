@@ -789,6 +789,14 @@ std::string sys_info_to_json(const SysInfo &info)
     out += std::to_string(info.dma_largest);
     out += ",\"psram_free\":";
     out += std::to_string(info.psram_free);
+    out += ",\"internal_min_free\":";
+    out += std::to_string(info.internal_min_free);
+    out += ",\"dma_min_free\":";
+    out += std::to_string(info.dma_min_free);
+    out += ",\"psram_min_free\":";
+    out += std::to_string(info.psram_min_free);
+    out += ",\"serial_stack_high_water_bytes\":";
+    out += std::to_string(info.serial_stack_high_water_bytes);
     out.push_back('}');
     return out;
 }
@@ -797,7 +805,8 @@ bool sys_info_from_json(const std::string &json, SysInfo &out)
 {
     static const std::vector<std::string> wanted = {"fw_version", "idf_version", "chip", "free_heap", "uptime",
                                                     "internal_free", "internal_largest", "dma_free", "dma_largest",
-                                                    "psram_free"};
+                                                     "psram_free", "internal_min_free", "dma_min_free",
+                                                     "psram_min_free", "serial_stack_high_water_bytes"};
     std::vector<json_field> fields(wanted.size());
     static const std::vector<std::string> legacy_wanted = {"fw_version", "idf_version", "chip", "free_heap",
                                                            "uptime"};
@@ -852,6 +861,14 @@ bool sys_info_from_json(const std::string &json, SysInfo &out)
         out.dma_largest = 0;
         out.psram_free = 0;
     }
+    out.internal_min_free = fields[10].k == json_field::kind::absent
+                                ? 0 : static_cast<std::uint32_t>(std::strtoul(fields[10].raw.c_str(), nullptr, 10));
+    out.dma_min_free = fields[11].k == json_field::kind::absent
+                           ? 0 : static_cast<std::uint32_t>(std::strtoul(fields[11].raw.c_str(), nullptr, 10));
+    out.psram_min_free = fields[12].k == json_field::kind::absent
+                             ? 0 : static_cast<std::uint32_t>(std::strtoul(fields[12].raw.c_str(), nullptr, 10));
+    out.serial_stack_high_water_bytes = fields[13].k == json_field::kind::absent
+                                            ? 0 : static_cast<std::uint32_t>(std::strtoul(fields[13].raw.c_str(), nullptr, 10));
     return true;
 }
 
@@ -977,6 +994,10 @@ std::string handle_sys_info(const std::string &rid)
     info.dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA);
     info.dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
     info.psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    info.internal_min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    info.dma_min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_DMA);
+    info.psram_min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    info.serial_stack_high_water_bytes = uxTaskGetStackHighWaterMark(nullptr);
     const std::int64_t total_secs = esp_timer_get_time() / 1000000;
     char up[16] = {0};
     std::snprintf(up, sizeof(up), "%02d:%02d:%02d", static_cast<int>(total_secs / 3600),

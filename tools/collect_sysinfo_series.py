@@ -16,6 +16,8 @@ FIELDS = (
     "timestamp_utc", "elapsed_ms", "latency_ms", "error", "fw_version",
     "uptime", "free_heap", "internal_free", "internal_largest", "dma_free",
     "dma_largest", "psram_free", "safe_mode", "interrupted_boots",
+    "internal_min_free", "dma_min_free", "psram_min_free",
+    "serial_stack_high_water_bytes",
 )
 TELEMETRY = FIELDS[4:]
 

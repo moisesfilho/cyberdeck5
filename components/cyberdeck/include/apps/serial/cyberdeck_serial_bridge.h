@@ -156,6 +156,10 @@ struct SysInfo {
     std::uint32_t dma_free = 0;
     std::uint32_t dma_largest = 0;
     std::uint32_t psram_free = 0;
+    std::uint32_t internal_min_free = 0;
+    std::uint32_t dma_min_free = 0;
+    std::uint32_t psram_min_free = 0;
+    std::uint32_t serial_stack_high_water_bytes = 0;
 };
 
 struct WifiNet {

@@ -231,6 +231,15 @@ firmware correspondente e uma execucao deste roteiro.
 | W4 | `wifi.scan` com Wi-Fi desabilitado | Lista vazia `[]` ou erro tipado; resposta dentro do timeout (8 s) |  |  |
 | W5 | `wifi.scan` repetido rapido | Nenhum resultado vazio/corrompido (semaforo drenado); o dispositivo aceita o proximo scan normalmente |  |  |
 
+Na imagem com telemetria da Fase 3, `sys.info` inclui
+`internal_min_free`, `dma_min_free` e `psram_min_free` (somas de mínimos por
+região/capability, não mínimo simultâneo do heap) e
+`serial_stack_high_water_bytes` (menor folga da task `serial_brg` desde sua
+criação; no ESP-IDF a unidade é byte). Compare com os valores instantâneos
+`internal_free`, `dma_free`, `psram_free`, e não trate campos ausentes em
+imagens antigas como zero medido. O coletor `tools/collect_sysinfo_series.py`
+registra essas colunas opcionais.
+
 ### 5.1. Auditoria Wi-Fi no terminal (`wifi audit`)
 
 > Pre-condicao: a tela TUI esta visivel e o terminal local esta no menu, sem

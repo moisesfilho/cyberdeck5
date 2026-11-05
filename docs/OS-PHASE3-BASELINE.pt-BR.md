@@ -100,21 +100,18 @@ host protegem políticas, não tempos e recursos no ESP32-P4.
 
 | Grandeza | Fonte já disponível | O que o dado permite afirmar | Lacuna antes de definir orçamento |
 | --- | --- | --- | --- |
-| Heap | `handle_sys_info()` em `apps/serial/cyberdeck_serial_bridge.cpp`: `esp_get_free_heap_size()` e `heap_caps_get_free_size()` para interno, DMA e PSRAM; `heap_caps_get_largest_free_block()` para interno/DMA | Amostras instantâneas e maior bloco livre **na hora do pedido**, não em todas as tasks ou durante o boot; a série CSV só acompanhou repouso | Mínimo histórico por capability/estágio e pico durante ações; não confundir menor amostra observada com mínimo global |
-| Stack | Log `scan stack_high_water_mark_bytes` na saída de `apps/music/cyberdeck_music_app.cpp::scan_entry()` | Uma task de scan de música, apenas quando esse fluxo executa e o log é capturado | High-water das outras tasks e sob cargas representativas; não inferir sobra pelo tamanho de stack configurado |
-| Boot | `HOSTED_DIAG` em `main/app_main.cpp`: begin/end de `hosted_prepare`, `sd_mount` (inclusive `duration_ms`) e `battery_protection` | Duração dos estágios instrumentados se o log do **mesmo boot** estiver completo | Identidade da imagem, tempo da partida até checkpoint/console, display e serviços; `sys.info.uptime` após horas não mede duração do boot. Não provocar reset só para coletar log |
+| Heap | `handle_sys_info()` em `apps/serial/cyberdeck_serial_bridge.cpp`: `esp_get_free_heap_size()`, `heap_caps_get_free_size()` e `heap_caps_get_largest_free_block()` para as capacidades já publicadas; firmware em desenvolvimento `1.6.0` acrescenta `heap_caps_get_minimum_free_size()` para interno, DMA e PSRAM | Amostras instantâneas e maior bloco livre **na hora do pedido**; os novos mínimos são soma dos menores valores por **região**, possivelmente atingidos em momentos diferentes (nota da API ESP-IDF), e não mínimo global simultâneo | Cenários sob carga, stack das demais tasks e picos de alocação; a série antiga `1.5.0` não contém esses campos |
+| Stack | Log `scan stack_high_water_mark_bytes` na saída de `apps/music/cyberdeck_music_app.cpp::scan_entry()`; `sys.info` novo captura `uxTaskGetStackHighWaterMark(nullptr)` em `serial_brg` | Mínimo livre desde a criação **somente** da task amostrada, em bytes no port ESP-IDF; não publicar handle de task encerrada | High-water das outras tasks e sob cargas representativas; não inferir sobra pelo tamanho de stack configurado |
+| Boot | `HOSTED_DIAG` em `main/app_main.cpp`: begin/end de `hosted_prepare`, `sd_mount` (inclusive `duration_ms`) e `battery_protection`; a próxima imagem adiciona `app_main_complete` com `boot_ready` e `t_us` | Duração dos estágios instrumentados se o log do **mesmo boot** estiver completo; `app_main_complete` indica término da função, não checkpoint persistido | Identidade da imagem, custo de ROM/bootloader e detalhes de display e serviços; `sys.info.uptime` após horas não mede duração do boot |
 | Resposta serial | `collect_sysinfo_series.py` mede monotonicamente a chamada `CyberdeckSession.exchange()` | Latência ponta-a-ponta no host nessa sessão (3–4 ms), incluindo transporte, parser e resposta | Tempo interno da task, de UI, de SD ou percentis sob carga; não usar essa latência como orçamento de firmware |
 | Player | `music.diagnostics` (contadores e tempo total/máximo de read/decode/write/backend) e `music.trace` (ring bounded, cursor, `lost`) | Evidência por geração com resultado e perdas somente quando o player é exercitado e os eventos ainda estão no ring | Não há série desta imagem/cenário; não concluir sobre stutter, carga do codec ou throughput com contadores zerados/sem execução |
 
-**Próxima decisão técnica, sem mudança automática:** especificar por cenário
-qual grandeza falta, unidade, ponto de amostragem e custo de observação;
-instrumentar só métricas ausentes que possam alterar uma decisão de orçamento
-ou hipótese de gargalo. A instrumentação é uma mudança de firmware com versão,
-build, teste host e validação segura do binário novo; não permite comparar com
-a imagem `1.5.0` sem hash atestado como se fossem o mesmo baseline. Um boot
-espontâneo pode fornecer logs sem reset induzido, desde que captura, tempo e
-identidade da imagem sejam registrados. Nenhum budget numérico novo é definido
-por esta auditoria.
+**Instrumentação mínima em preparação:** os campos de mínimo e stack acima
+foram escolhidos por terem custo limitado à consulta `sys.info`; o log de fim
+do `app_main` não adiciona polling. Mudanças de firmware exigem versão, build,
+teste host e validação na imagem gravada. Não comparar a imagem antiga `1.5.0`
+sem hash atestado com a nova como se fossem o mesmo baseline. Nenhum budget
+numérico novo é definido por esta auditoria.
 
 ## Injeção de falhas no host: fronteira do que é comprovável
 
@@ -141,11 +138,10 @@ token/geração, resultado e uptime antes/depois sem atribuir silêncio a sucess
    implementado; registrar SHA-256, log de boot e cenário completo. Flash não
    substitui a identificação do baseline anterior.
 2. Repetir a série de heap de 1 s sob cenários representativos (a primeira
-   série é somente em repouso); obter mínimos históricos, stack high-water e
-   overflow sem interferir na UI. O `sys.info` atual não expõe mínimos nem
-   high-water. Só
-   instrumentar após definir a métrica e seu custo; versionar/validar no Tab5
-   qualquer firmware novo. Não fixar budgets a partir da amostra isolada.
+   série é somente em repouso); medir os mínimos adicionados na imagem nova,
+   stack high-water das outras tasks e overflow sem interferir na UI. Validar
+   no Tab5 a versão e a semântica dos campos antes de usar números em budgets.
+   Não fixar budgets a partir da amostra isolada.
 3. Medir os cenários seguros da matriz com tempos por estágio e configuração
    idêntica antes/depois; separar tempo de render, rede, storage e codec. Só
    otimizar gargalo observado e reproduzível; sem evidência de gargalo não há

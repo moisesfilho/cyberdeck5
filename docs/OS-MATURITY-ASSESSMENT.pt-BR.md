@@ -2,8 +2,8 @@
 
 Análise qualitativa de como as responsabilidades discutidas por Tanenbaum se
 distribuem no produto integrado do M5Stack Tab5 e na camada cyberdeck5. Não é
-uma pontuação de conformidade nem uma medição percentual. Retrato de
-2026-11-05: `version.txt` = `1.5.0`, build local configurado com ESP-IDF 6.1
+uma pontuação de conformidade nem uma medição percentual. Retrato anterior,
+registrado em 2026-11-05: `version.txt` = `1.5.0`, build local configurado com ESP-IDF 6.1
 (`build/build.ninja`), alvo ESP32-P4 e BSP M5Stack Tab5. Esses dados não provam
 que a mesma imagem esteja instalada no dispositivo.
 

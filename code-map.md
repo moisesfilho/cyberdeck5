@@ -1006,7 +1006,16 @@ a raiz do repositorio.
   (boot parcial), high-water do scan de musica e diagnosticos/trace do player,
   distinguindo-os de minimos historicos e budgets ainda nao medidos. Validacoes fisicas historicas confirmadas
   pelo usuario sao registradas separadamente; nao equivalem a aceite no fw
-  1.5.0 atual.
+  1.5.0 observado antes desta instrumentacao.
+  A entrega 1.6.0 adiciona em `sys.info` minimos por regiao ESP-IDF para heap
+  interno/DMA/PSRAM e high-water da propria task serial em bytes (campos
+  opcionais ao ler imagens antigas). `tools/collect_sysinfo_series.py` inclui
+  esses campos na serie; `main/app_main.cpp` registra `app_main_complete` com
+  `t_us` e `boot_ready` para medir o trecho final do boot em um log completo.
+  Testes: `test_serial_sysinfo_wifi.cpp` e `test_phase3_sysinfo_collector.py`.
+  `test_ssh_task_alloc_contract.py` localiza a linha exata da tabela SSH para
+  conferir sua stack em PSRAM; mencoes incidentais ao arquivo neste indice
+  nao podem substituir a entrada de modulo.
 - `docs/OS-PHASE4-THREAT-MODEL.pt-BR.md` inicia a Fase 4 documental: ativos,
   superficie LAN (`apps/screenshot/screenshot_server.cpp`), USB Serial-JTAG
   (`apps/serial/cyberdeck_serial_bridge.cpp`), credenciais SD
@@ -1765,10 +1774,13 @@ destrói recursos potencialmente usados.
      inicial. A variante candidata permanece ativa em dois arquivos ignorados de
      `managed_components` (`eh_host_bus_sdio.c` e `eh_host_mcu_transport_channels.c`);
      sua reprodução explícita está versionada em `tools/esp-hosted-cpu-staging.patch`
-     e `tools/prepare_esp_hosted_cpu_staging.py` (aplicar após resolver componentes,
-     verificar revisão/hash antes do build; restore reversível). O patch é um
-     artefato-fonte necessário ao script; hashes de origem e destino ficam no
-     próprio script, sem manifestos auxiliares no componente vendorizado.
+      e `tools/prepare_esp_hosted_cpu_staging.py` (aplicar após resolver componentes,
+      verificar revisão/hash antes do build; restore reversível). O patch é um
+      artefato-fonte necessário ao script; hashes de origem e destino ficam no
+      próprio script, sem manifestos auxiliares no componente vendorizado.
+      `main/idf_component.yml` fixa `espressif/esp_hosted` em `3.0.10`: o range
+      anterior `^3.0.9` resolveu `3.1.0` e impediu o gate de staging. Não
+      editar os fontes gerados à mão nem relaxar as verificações por hash.
      `CMakeLists.txt`
      executa verify após project() e antes do link do ELF em cada build:
      reconfigure e build incremental sem patch falham fechado. O teste

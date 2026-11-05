@@ -22,7 +22,7 @@ marcos deste plano, os recortes de requisitos e os critérios de aceite. Ele é
 uma projeção atualizada manualmente junto com este documento e suas evidências;
 percentuais não substituem os gates no Tab5.
 
-**Base examinada:** `version.txt` = `1.5.0`, alvo `esp32p4`, build local com
+**Base em desenvolvimento:** `version.txt` = `1.6.0`, alvo `esp32p4`, build local com
 `IDF_VER=v6.1` (em `build/build.ninja`), como confirma também `code-map.md`.
 O build local não identifica, por si, o firmware em execução no Tab5. Menções a
 ESP-IDF 5.5.5 em evidências históricas documentam aquela validação, não a
@@ -212,7 +212,8 @@ registradas; faltam
 identidade do binário, boot observado, stack/heap mínimo, cenários de apps e
 transientes. Não reduzir limites nem declarar aceite físico agregado a partir
 desse recorte. Ensaios físicos antigos confirmados pelo operador ficam
-registrados como históricos, sem transferir aceite ao firmware 1.5.0.
+registrados como históricos, sem transferir aceite ao firmware observado
+anteriormente como 1.5.0 nem à nova imagem até validação correspondente.
 
 - [x] Definir cenários representativos e de estresse a partir da Fase 1:
   boot/recovery, shell/editor/SD, troca de foreground, Wi-Fi/SSH/HTTP/time sync,

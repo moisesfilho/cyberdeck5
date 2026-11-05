@@ -166,5 +166,7 @@ extern "C" void app_main(void)
         ESP_LOGW(TAG, "recovery checkpoint deferred after startup failure");
     }
     app_runtime.set_command_dispatch_ready(true);
+    ESP_LOGI(TAG, "HOSTED_DIAG boot stage=app_main_complete boot_ready=%d t_us=%lld",
+             boot_ready, static_cast<long long>(esp_timer_get_time()));
     ESP_LOGI(TAG, "CYBERDECK5 iniciado");
 }

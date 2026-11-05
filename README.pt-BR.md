@@ -335,6 +335,9 @@ python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 screen.dump --out screen.bmp
 
 `pyserial` é necessário no host (`pip install pyserial`). Consulte
 `tests/manual/serial-bridge-validation.pt-BR.md` para o roteiro no dispositivo.
+`sys.info` também informa mínimos acumulados por região/capacidade de heap e
+a menor folga de stack da própria task serial, em bytes. Não são a medição de
+todas as tasks nem um mínimo simultâneo do dispositivo.
 
 ## Estrutura
 

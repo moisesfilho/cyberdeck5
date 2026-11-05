@@ -19,7 +19,7 @@ Pre-condicoes:
 python3 tools/cyberdeck_cli.py --port /dev/ttyACM0 sys.info
 ```
 
-Esperado: `fw_version` igual a versao gravada (hoje `1.5.0`), heap estavel, sem
+Esperado: `fw_version` igual a versao gravada (consultar `version.txt`), heap estavel, sem
 panic/reboot. Registrar uptime inicial.
 
 ## 2. Escala de corrente (300 uA/LSB)
