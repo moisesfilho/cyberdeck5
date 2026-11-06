@@ -1,5 +1,17 @@
 # Fase 4 — modelo de ameaça do Tab5
 
+**Nota posterior (OTA, 06/11/2026):** este documento registra a fotografia
+histórica de 05/11, antes da atualização por Wi-Fi. O código novo reserva
+`factory`/`ota_0`/`ota_1` e `otadata`, habilita rollback e oferece porta 8080
+para upload autenticado por HMAC-SHA256 de nonce, hash, tamanho e modo; a chave
+por dispositivo é provisionada somente por USB (`ota.key`). A tabela e a seção
+de verificação abaixo **descrevem a configuração anterior**, não o estado
+atual. A autenticação evita que um peer sem segredo instale imagem, mas HTTP
+continua sem confidencialidade/antidisponibilidade, o segredo em NVS não é
+protegido contra leitura física e Secure Boot/flash encryption continuam
+desativados. Não há aceite físico/rollback demonstrado neste documento; veja
+`AGENTS.md` para o procedimento e valide a migração USB antes de OTA.
+
 **Estado em 05/11/2026:** Fase 4 e OS-TAB5-06 concluídos **no escopo pessoal
 aprovado**; o operador aceitou explicitamente os riscos residuais abaixo.
 Nenhum controle foi habilitado por este documento. A Fase 3 permanece aberta

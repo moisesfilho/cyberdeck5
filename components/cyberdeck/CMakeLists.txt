@@ -45,7 +45,8 @@ idf_component_register(
         "src/apps/battery/cyberdeck_battery_console.cpp"
         "src/apps/bluetooth/cyberdeck_bluetooth_console.cpp"
         "src/apps/ssh/cyberdeck_ssh_console.cpp"
-        "src/apps/wifi/cyberdeck_wifi_console.cpp"
+         "src/apps/wifi/cyberdeck_wifi_console.cpp"
+         "src/apps/ota/cyberdeck_ota.cpp"
          "src/apps/runtime/cyberdeck_app_runtime.cpp"
          "src/apps/runtime/cyberdeck_resource_catalog.cpp"
          "src/apps/runtime/cyberdeck_sd_package.cpp"
@@ -131,6 +132,7 @@ idf_component_register(
     REQUIRES
         lvgl
         m5stack_tab5
+        esp_lvgl_port
         esp_wifi
         esp_netif
         esp_event
@@ -148,6 +150,8 @@ idf_component_register(
         libssh
          esp_http_server
          esp_http_client
+         app_update
+         mbedtls
          esp-tls
          lwip
     cjson

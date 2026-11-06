@@ -21,6 +21,8 @@ ALLOWLIST = {
         "BSP/SD-card storage adapter",
     "components/cyberdeck/src/apps/screenshot/screenshot_server.cpp":
         "ESP HTTP server/LVGL adapter",
+    "components/cyberdeck/src/apps/ota/cyberdeck_ota.cpp":
+        "ESP HTTP server/OTA/NVS/FreeRTOS adapter; structural OTA contract and Tab5 tests",
     "components/cyberdeck/src/apps/ssh/ssh_client.cpp":
         "libssh session with ESP-IDF/BSP/FreeRTOS integration",
     "components/cyberdeck/src/apps/system/cyberdeck_service_ports.cpp":

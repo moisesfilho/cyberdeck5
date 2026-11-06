@@ -568,6 +568,157 @@ Os alvos excluídos `test_event_log_shim`, `test_cat_worker_runtime` e
 artefatos `_bin` de state machine, event dispatch e store, além dos dois
 contratos, sem duplicar os cenários no agregado.
 
+## OTA via Wi-Fi
+
+`partitions.csv` e `sdkconfig.defaults` reservam `otadata` e os slots
+`factory`/`ota_0`/`ota_1` (4 MiB cada), com rollback do bootloader. A primeira
+migracao do layout requer flash USB; `version.txt` fornece a versao da imagem.
+O ensaio anterior de versão distinta avançou a imagem de `1.9.0` para `1.10.0`
+sem mudar os manifestos de apps; ambas as versões históricas permanecem no
+roteiro manual.
+`components/cyberdeck/include/apps/ota/cyberdeck_ota.h` e
+`src/apps/ota/cyberdeck_ota.cpp` implementam HTTP LAN na porta 8080,
+challenge de uso unico, HMAC-SHA256 sobre nonce/hash/tamanho/modo/versao,
+`POST /ota/prepare` sem payload para solicitar confirmacao fisica antes de
+transmitir bytes no modo confirmado, e `POST /ota` para gravacao streaming.
+Hash e projeto/versao embutidos sao validados antes da ativacao; `--silent`
+mantem envio direto. O handler usa `OTA_WITH_SEQUENTIAL_WRITES` para apagar
+setores durante a chegada dos chunks, reduzindo janelas contínuas de flash que
+podem afetar o scanout DSI da PSRAM. O checkpoint OTA requer IP no novo boot em
+ate 30 s.
+`cyberdeck_system_apps.cpp` registra o servico de rede; `app_main.cpp` confirma
+imagem `PENDING_VERIFY` somente depois do checkpoint normal. A ponte Serial-JTAG
+`cyberdeck_serial_bridge.cpp` fornece `ota.key` exclusivamente por USB para
+provisionamento local, nunca em rotas HTTP. `cyberdeck_ui.cpp` mostra versao,
+tamanho e prefixo SHA-256 na confirmacao fisica bounded (Enter/Esc ou botoes),
+depois estado de espera e progresso do upload; modo silencioso nao mostra modal.
+`tools/update_firmware.py` faz provisionamento inicial por USB e envia o binario
+pela LAN (`--silent`/`--confirm`); `test_ota_script.py` testa a autenticacao e
+as permissoes de chave; `test_ota_contract.py` fixa os limites da integracao
+ESP-IDF/Serial/LVGL. Ambos entram no agregado host. Procedimento
+operacional em `AGENTS.md` e roteiro em `tests/manual/ota-validation.pt-BR.md`;
+validar rollback/upload interrompido no Tab5, pois
+teste host/contrato nao comprova a flash real. O adapter ESP-only consta da
+allowlist explicita em `tools/coverage_scope_guard.py`. Em 06/11/2026, flash
+inicial, OTA silenciosa com troca de slot, recusa de MAC inválido e cancelamento
+injetado pela ponte foram observados no Tab5. Ensaio posterior confirmou
+ativação em `ota_1` após toque físico do usuário no botão Confirmar, sem novas
+piscadas relatadas; em seguida, atualização real `1.9.0`→`1.10.0` por
+`--confirm` foi ativada em `ota_0`, `running_valid=true`, Wi-Fi e uptime estáveis.
+O usuário reportou várias piscadas antes do modal nessa transferência; a causa
+visual ainda não foi diagnosticada. Investigação encontrou `screen.status off`
+pela proteção persistida de 1 min; o overlay próprio é preto. Na versão então
+instalada, o OTA só criava o modal após receber/validar a imagem. Há duas
+inicializações recentes de display nos logs, sem panic/reset reason; não se pode
+atribuir causalidade. Não repetir OTA antes de coletar monitor serial com tela ativa e timeout desabilitado pelo
+operador. Rollback provocado continua pendente (evidências no roteiro manual).
+Em 06/11/2026 foi implementado o novo protocolo confirmado `/ota/prepare` →
+aprovação física → `/ota`: cliente não transmite o binário antes de observar
+`approved_upload`; `--silent` segue direto. Build ESP-IDF e testes host passaram,
+e validação física foi concluída: flash USB para `factory`, metadados exibidos e
+confirmados fisicamente, envio após aprovação e ativação `factory` → `ota_0`
+(`running_valid=true`, `interrupted_boots=0`). Com `screen timeout 0`, o usuário
+viu flashes rápidos alternando o progresso e tela azul-clara durante o upload;
+fluxo concluiu sem panic, mas a falha visual persiste e sua causa é desconhecida.
+Timeout original de 1 min restaurado. O ensaio com `OTA_WITH_SEQUENTIAL_WRITES`
+foi realizado após autorização: o usuário confirmou piscadas azul/progresso
+persistentes durante upload; a mitigação não resolveu. Não repetir OTA sem nova
+autorização; rollback provocado continua pendente. O driver DSI
+do IDF associa underrun de leitura da memória externa a tela azul, mas a captura
+serial não registrou a mensagem do evento. A imagem de framebuffer está em
+PSRAM; a causa é compatível, porém ainda não confirmada. Erase sequencial não
+resolveu. Firmware 1.11.0 elevou somente a QoS de leitura do DW-GDMA memory
+master; OTA física autorizada concluiu em `ota_0`, mas o usuário confirmou que a
+piscada persistiu. Sem panic/underrun logado, checkpoint passou; a causa continua
+aberta. Não repetir OTA sem nova autorização.
+Nova tentativa 1.12.0: `sdkconfig.defaults` habilita
+`CONFIG_LCD_DSI_ISR_CACHE_SAFE` (seleciona a ISR segura do DW-GDMA); o overlay
+`components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c` aloca contexto interno,
+registra callback DSI em IRAM, sinaliza a conclusão por semáforo e libera o flush
+LVGL na task solicitante, nunca na ISR com cache desligado. Falha ao registrar
+callback devolve NULL e limpa display. `test_ble_integration_contract.py`
+verifica os limites estruturais. Build e testes focados passaram, mas o agregado
+host falhou no `test_time_sync_bin` (teardown de task, sem relação demonstrada
+com DSI). OTA física 1.11.0→1.12.0 foi confirmada por toque no Tab5 e validou
+`ota_1` (`0x820000`), checkpoint, Wi-Fi e `running_valid=true`, **porém o
+usuário observou novamente piscadas azul/ciano durante o upload**. O caminho
+cache-safe não resolveu o defeito visual; não repetir OTA sem nova investigação
+e autorização. Evidências e SHA-256 em `tests/manual/ota-validation.pt-BR.md`.
+Investigação subsequente sem novo upload: `cyberdeck_ui.cpp`
+(`process_ota_confirmation`, timer 250 ms) atualiza o label mesmo sem mudança
+de texto; o LVGL local invalida esse label e o driver DPI usa DMA2D para copiar
+áreas ao framebuffer único em PSRAM, lido continuamente pelo DW-GDMA. Essa
+concorrência é candidata, mas não comprovada: nenhum underrun apareceu no
+monitor, e o vídeo anterior não sincroniza eventos de flash/UI. O roteiro
+manual registra cálculo de banda, relato externo de flicker ciano e plano de
+medição antes de qualquer outro upload.
+Instrumentação preparada em 1.12.1 (estado anterior ao ensaio descrito abaixo):
+`components/esp_lvgl_port/include/esp_lvgl_port_dsi_diag.h` e
+`src/lvgl9/esp_lvgl_port_disp.c` registram contagem, tempo de flush completo,
+maior latência e pixels copiados pelo caminho DSI parcial, sob lock curto e
+somente durante upload; `cyberdeck_ota.cpp` agrega escritas/tempos de
+`esp_ota_write`, deltas dos flushes e atualizações de UI em até 96 buckets de
+1 s alocados no heap, sem log por chunk. Ao encerrar upload/validação grava
+resumo serial `ota_diag` antes do reboot; não inclui payload, chave ou token.
+Buckets de flush/UI são amostrados depois das escritas: são aproximação temporal,
+não rastreio exato de cada transferência. O driver IDF limpa o bit de underrun
+na ISR e não expõe contador público: `underruns=not_counted` é explícito, não
+equivale a zero. `test_ota_contract.py` inspeciona os limites estruturais; o
+manifesto `cyberdeck.ota` sobe para 1.0.1 e `version.txt` para 1.12.1.
+O espelho do manifesto em `test_shell_help.cpp` e o parser
+`test_shell_help_contract.py` aceitam versão própria explícita do serviço OTA,
+mantendo a paridade do fixture e a validação semver em vez de fixar um único
+literal para todos os serviços.
+Build ESP-IDF 6.1, `make -C tests/host/keymap test` e `verify` passaram para
+1.12.1. A escolha inicial de **somente código** foi substituída pela autorização
+posterior para o ensaio físico registrado a seguir.
+Ensaio posterior autorizado: USB flash 1.12.1 em factory com boot/IP válidos,
+depois uma OTA física da mesma imagem para `ota_0` (`running_valid=true`,
+checkpoint e uptime estáveis). `ota_diag` registrou 19,5 s, 777 writes com
+2.629.104 bytes/zero falhas, 96 flushes DSI e 27 updates do modal; no recorte
+após ~31% dos bytes ainda ocorreram 69 flushes/19 updates. Não há marca temporal
+da piscada para afirmar que esses flushes ocorreram depois dela. Usuário confirmou
+**azul/ciano antes do reboot**; cliente/monitor provaram reboot de ativação,
+não interrupção do upload. Flush concluído significa cópia ao framebuffer,
+não quadro entregue pelo scanout. Sem log de underrun e sem contador preciso,
+a causa visual permanece indeterminada. Timeout de 1 min restaurado;
+evidência detalhada no roteiro manual. Sem repetir OTA sem nova autorização.
+Instrumento validado fisicamente em 1.12.2: overlay
+`components/esp_lcd` compila os fontes originais do componente IDF 6.1 e uma
+cópia local de `dsi/esp_lcd_panel_dpi.c`, com SHA-256 fixo da origem no CMake
+para rejeitar versão não revisada; preserva também o `Kconfig` original para
+manter `CONFIG_LCD_DSI_ISR_CACHE_SAFE` e verifica o hash do wiring CMake.
+**Não edita a instalação do IDF**. A ISR
+conta o bit UNDERRUN antes de limpá-lo, e o callback DMA conta frames via
+atômicos lock-free em memória interna/IRAM-safe. Header
+`components/esp_lcd/include/esp_lcd_dpi_diagnostics.h` expõe snapshot
+cumulativo; `cyberdeck_ota.cpp` calcula deltas durante a transferência e
+registra por `sample_second`. `test_ota_contract.py` checa a ordem de captura
+e o wiring. Mesmo DMA ativo não prova entrega de pixels ao painel; detalhes e
+limites em `tests/manual/ota-validation.pt-BR.md`.
+Build corrigido 1.12.2 passou com `CONFIG_LCD_DSI_ISR_CACHE_SAFE=y`,
+`CONFIG_DW_GDMA_ISR_IRAM_SAFE=y` e objetos internos; `build.ninja` confirma
+fonte local e `nm` põe ISR/callback/contadores na RAM interna. Suíte host
+completa e `verify` passaram. O primeiro build (sem `Kconfig` no overlay)
+perdeu a opção cache-safe e **não foi flashado**.
+Ensaio autorizado: flash USB 1.12.2 em factory e uma OTA `--confirm` física
+da mesma imagem para `ota_0`; SHA-256 `33e6a3b8295498911bc90c18847f1d50efc2f58cf0fcd95e43b31245156ca593`,
+`running_valid=true`, checkpoint/IP e uptime estáveis. `ota_diag`: 19.749 ms,
+2.629.248 bytes, 863 writes, zero falhas, 1.130 conclusões DMA, **zero
+underruns bridge**, 106 flushes e 29 updates UI. Usuário e vídeo
+`/home/moises/Vídeos/20261106_164400.mp4` confirmam sem piscada azul/ciano
+durante upload; painel ficou azul somente no reboot. Sintoma não reproduzido
+nessa execução, mas não prova que a causa histórica foi corrigida; DMA/flush
+não confirmam eletricamente pixels no painel. Timeout restaurado em 1 minuto.
+Repetição posterior, a pedido do usuário: mesma imagem instalada novamente
+por OTA confirmada em `ota_0`, `running_valid=true`, checkpoint/IP e uptime
+estáveis. Relato: novamente sem piscada durante upload, azul apenas no reboot.
+Telemetria 18,034 s: bytes exatos, 837 writes/zero falhas, 1.032 frames DMA,
+zero underruns, 83 flushes/22 updates UI. Não houve vídeo nessa repetição;
+log em `/tmp/opencode/ota-diag-1.12.2-repeat-20261106.log` (0600). Dois ensaios
+sem sintoma fortalecem a repetibilidade do resultado, mas não provam causa
+raiz nem excluem falha rara; nenhuma nova OTA sem nova autorização.
+
 ## Planos de aplicativos e recursos
 
 Os planos numerados em `docs/` organizam a evolução proposta; o plano 01 foi
@@ -1273,8 +1424,8 @@ do IDF na maquina e carregar o ambiente quando necessario.
 | `cyberdeck_ui_init()` | `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | Compoe a tela TUI, registra callbacks/timers e inicializa os componentes visuais de header, terminal e teclado. |
 | `runtime::execute_line()` startup fence | `components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp` | Rejeita dispatch com `system startup in progress` enquanto `app_main` inicia apps. O flag atomic é desabilitado antes de UI/teclado e reabilitado depois do checkpoint, evitando que `app start`/comandos de apps concorram com `runtime::start_all()`. Cobertura comportamental em `test_app_runtime.cpp` e estrutural em `test_phase10_contract.py`. |
 | `wifi_mgr_hosted_transport_prepare()` / `wifi_mgr_start()` | `components/cyberdeck/src/apps/wifi/wifi_mgr.cpp` | `hosted_transport_prepare` alimenta o C6, aguarda 500 ms e inicializa/conecta Hosted antes do SD; `wifi_mgr_start` reutiliza esse transporte e depois inicia Wi-Fi/reconexão. `HOSTED_DIAG` registra fases de rail, `esp_hosted_init`, `connect_to_slave`, `esp_wifi_init/start` e duração/resultado de `esp_wifi_set_config`, sem SSID/senha. `CONFIG_ESP_HOSTED_AUTO_CALL_INIT_BEFORE_APP_MAIN=n` evita init prematuro no constructor. |
-| `bsp_display_start()` / `bsp_display_lcd_init()` | `components/m5stack_tab5/src/bsp_display.c` | Inicializa painel DSI/LVGL e touch. Em SoCs com `SOC_PSRAM_DMA_CAPABLE`, buffers de desenho e rotação SW usam PSRAM com capability DMA; demais SoCs preservam o allocator DMA padrão. Telemetria registra memória livre/maior bloco compatível, DMA e interna. Falha ao criar display limpa painel/PHY e encerra antes do touch; falha no touch remove display, limpa painel e desinicializa LVGL. Regressão estrutural no `test_ble_integration_contract.py`. |
-| Overlay `esp_lvgl_port` 2.9.0 | `components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c` | `main/idf_component.yml` fixa a versão de registry `^2` mas substitui o componente gerenciado via `override_path`. O cleanup do `lvgl_port_add_disp_priv` marca explicitamente falhas de alocação, tolera contexto nulo, remove display parcial e libera buffers/semaphore antes de retornar `NULL`; evita retorno ambíguo/vazamento no erro de rotação. O build do IDF seleciona o arquivo local (ver `build/build.ninja`). |
+| `bsp_display_start()` / `bsp_display_lcd_init()` | `components/m5stack_tab5/src/bsp_display.c` | Inicializa painel DSI/LVGL e touch. Em ESP32-P4, eleva a QoS de leitura (15/15) do DW-GDMA memory master usado no scanout DSI, mantendo write QoS em 0 e sem alterar clocks, backlight ou temporização do painel. Em SoCs com `SOC_PSRAM_DMA_CAPABLE`, buffers de desenho e rotação SW usam PSRAM com capability DMA; demais SoCs preservam o allocator DMA padrão. Telemetria registra memória livre/maior bloco compatível, DMA e interna. Falha ao criar display limpa painel/PHY e encerra antes do touch; falha no touch remove display, limpa painel e desinicializa LVGL. `test_ble_integration_contract.py` cobre a integração e a prioridade de leitura. |
+| Overlay `esp_lvgl_port` 2.9.0 | `components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c` | `main/idf_component.yml` fixa a versão de registry `^2` mas substitui o componente gerenciado via `override_path`. O cleanup do `lvgl_port_add_disp_priv` marca explicitamente falhas de alocação, tolera contexto nulo, remove display parcial e libera buffers/semáforos antes de retornar `NULL`. Com DSI cache-safe: contexto em RAM interna, callback em IRAM sinaliza semáforo, `lv_disp_flush_ready` acontece fora da ISR; falha de registro limpa display. O build do IDF seleciona o arquivo local (ver `build/build.ninja`). |
 | `screenshot_server_init()` / `screenshot_server_start()` / `screenshot_server_stop()` | `components/cyberdeck/src/apps/screenshot/screenshot_server.cpp` | Lifecycle do servidor HTTP por task proprietária, com fila bounded de snapshots/comando, handshake de prontidão, join/quiescência antes de `httpd_stop()` e quarentena fail-safe em timeout. |
 | `tab5_keyboard_init()` | `components/cyberdeck/src/platform/input/tab5_keyboard.cpp` | Inicia a task do teclado fisico e entrega eventos a `cyberdeck_keyboard_input`. |
 
@@ -1938,7 +2089,7 @@ destrói recursos potencialmente usados.
 
 | Arquivo | Simbolos/funcao | Papel |
 | --- | --- | --- |
-| `tests/host/keymap/test_shell_session.cpp` + `tests/host/keymap/test_shell_help.cpp` + `tests/host/keymap/test_shell_help_contract.py` + `tests/host/keymap/help_traceability.md` + `tests/host/keymap/shim/esp_err.h`, `shim/esp_wifi_types.h`, `shim/freertos/FreeRTOS.h` | `test_shell_help`, `test_shell_help_contract`; REQ-HELP-01..05 | Testa `handle_key`/`execute_line`/insercao de texto com um `host` falso: edicao e historico, comandos locais, portas de tela/Wi-Fi/bateria/log/SSH, tokens de conexao, passe com varios newlines, buffer de passkey e `help` dinamico via runtime real (eco `/$ help`, saida completa exata e ordenacao legacy/app, tags, manifests registrados incluindo lifecycle parado, omissao sem command, deduplicacao, precedencia legacy e ordem deterministica). `test_shell_help.cpp` cobre `<comando> help` para comandos legacy e manifests de app, incluindo desconhecido, sem execução/despacho, preservação da ajuda geral e flags; rastreia `REQ-HELP-DETAILS`. `test_shell_help_contract.py` reconcilia a registry real de 18 apps e manifests reais com fixtures/goldens comportamentais: dez apps com commands, sete serviços sem commands, wiring e uso declarado; é inspeção estrutural, não execução do firmware. `help_traceability.md` mapeia REQ-HELP-01..05 para cenários e evidências. Ambos os alvos estão no agregado `test`; os shims sao minimos e nao espelham logica de producao. |
+| `tests/host/keymap/test_shell_session.cpp` + `tests/host/keymap/test_shell_help.cpp` + `tests/host/keymap/test_shell_help_contract.py` + `tests/host/keymap/help_traceability.md` + `tests/host/keymap/shim/esp_err.h`, `shim/esp_wifi_types.h`, `shim/freertos/FreeRTOS.h` | `test_shell_help`, `test_shell_help_contract`; REQ-HELP-01..05 | Testa `handle_key`/`execute_line`/insercao de texto com um `host` falso: edicao e historico, comandos locais, portas de tela/Wi-Fi/bateria/log/SSH, tokens de conexao, passe com varios newlines, buffer de passkey e `help` dinamico via runtime real (eco `/$ help`, saida completa exata e ordenacao legacy/app, tags, manifests registrados incluindo lifecycle parado, omissao sem command, deduplicacao, precedencia legacy e ordem deterministica). `test_shell_help.cpp` cobre `<comando> help` para comandos legacy e manifests de app, incluindo desconhecido, sem execução/despacho, preservação da ajuda geral e flags; rastreia `REQ-HELP-DETAILS`. `test_shell_help_contract.py` reconcilia a registry real de 19 apps e manifests reais com fixtures/goldens comportamentais: dez apps com commands, oito serviços sem commands, wiring e uso declarado; é inspeção estrutural, não execução do firmware. `help_traceability.md` mapeia REQ-HELP-01..05 para cenários e evidências. Ambos os alvos estão no agregado `test`; os shims sao minimos e nao espelham logica de producao. |
 | `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | `cyberdeck_ui_init`, `cyberdeck_ui_deinit`, `cyberdeck_keyboard_input`, `shell_session_host`, `compose_console_line`, `get_rendered_output`, `render_terminal`, `local_key`, callbacks de SSH/Wi-Fi/BLE/cat, `refresh_battery_status` | Fachada LVGL 9: constrói e atualiza widgets, usa as APIs dedicadas `lv_obj_set_hidden`/`lv_obj_set_scroll_chain` para visibilidade e rolagem, mantém o pump de eventos e renderiza, mas não decide o que cada tecla faz. O estado de sessão (linha/cursor, histórico, SSID pendente, chave SSH pendente, buffer de passkey) e o roteamento de teclas/comandos vivem em `cyberdeck_shell_session::session`; a UI implementa a interface `host` (output, BLE, Wi-Fi, SSH, cat, shell local) e traduz `lv_key_t` para `cyberdeck_shell_session::key`. A construção visual do header e do terminal contínuo/teclado fica nos componentes `cyberdeck_header_view` e `cyberdeck_terminal_view`; a fila de entrada física fica no dispatcher `cyberdeck_keyboard_dispatch`; o pump de eventos BLE (`on_ble_event`/`process_ble_events`/`ble_submit_actions`) permanece na UI e delega o agendamento background ao `cyberdeck_ble_background::scheduler`. O scrollback fica no modelo UTF-8 bounded `cyberdeck_terminal_scrollback::model`; a view envia somente uma janela limitada aos slots de linha reutilizáveis e compõe scrollback, prompt/editor e cursor na mesma superfície. O textarea permanece oculto como alvo do teclado virtual e não duplica estado visual. Saída SSH marca repaint pendente e é coalescida pelo timer LVGL de 100 ms; caminhos interativos continuam com flush imediato. Os eventos SSH usam slots de armazenamento estático fora da stack, contadores de descarte saturantes separados para dados e estados e geração para descartar eventos stale; a geração esperada é invalidada no teardown. Callbacks SSH apenas publicam eventos e não adquirem lock direto do display. Init possui 13 fases de aquisição fail-closed, rollback em falhas parciais e 9 timers LVGL cancelados no teardown antes da árvore; o init é idempotente. O worker de exportação do survey e suas filas bounded de capacidade 1 têm lifecycle app-lifetime e são preservados no teardown/reinit; a task usa stack 8192 e não retém ponteiros de UI/controller. Completion fica na fila até o pump LVGL consumi-la e é aplicada pelo controller somente ao token correspondente; busy mantém nova admissão fechada enquanto a completion não for consumida. Payload/path são limpos após uso ou falha. |
 | `components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h`, `components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp` | `cyberdeck_shell_session::session`, `cyberdeck_shell_session::host`, `session::execute_line`; REQ-SURVEY-01..02,06,08 / AC-01..02,06,08 | O app de console `cyberdeck.wifi.shell` decide os comandos de survey (a sessão apenas encaminha a linha pelo dispatcher): duração 10–120 s (default 30), início exclusivo, cancelamento, bloqueio de `wifi search` durante amostragem, aviso de impacto potencial na conexão e exportação com confirmação separada para IDs masked (default) ou unmasked. Efeitos passam pelas portas `host` da UI. O controller rejeita solicitação nova enquanto um job está ativo sem substituir a confirmação existente; falhas de job admitido encerram estado somente para o token atual. O catálogo puro `cyberdeck_shell_help.h` formata comandos legacy em ordem com tags `[terminal]`, usage/descrição e parâmetros explicados em linhas próprias; entradas dinâmicas `[app]` seguem ao fim sem duplicar comandos legacy e usam cabeçalho próprio com descrição indentada na linha seguinte. `help` sem argumento mantém esse catálogo; `<comando> help` resolve primeiro o catálogo legacy e depois comandos declarados em manifests registrados, mostrando apenas metadados disponíveis (nome, ID, versão, descrição) sem iniciar app nem despachar comando; não resolvido gera erro explícito. `-h`/`--help` permanecem no dispatch existente. `test_shell_session.cpp` cobre parsing/fluxo shell e permanece no alvo `test_shell_session` e agregado `test`. |
 | `components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_header_view.h` | `cyberdeck_header_view::view` | Componente visual do header: cria a grade 30/40/30 e os widgets Bluetooth, Wi-Fi e bateria; recebe a versão canônica de `esp_app_desc_t::version`, valida três segmentos decimais sem zero-padding, bounded pelo descriptor e pelo buffer do título e mostra `CYBERDECK5 <version>` com clipping controlado no slot de 30%; aplica exatamente `cyberdeck_font` monoespaciada aos labels de título, relógio, Bluetooth e bateria, mantendo a métrica/line-height compartilhada. A bateria possui três labels — ícone, percentual base e overlay do percentual — e o overlay usa a mesma fonte, é ignorado pelo flex layout e deslocado 1 px para emulação real de negrito; acompanha texto/visibilidade sem alterar fonte, estados, ordem semântica ou geometria; usa `lv_obj_set_hidden` para ocultação e desativa rolagem; recebe somente estado/presentation já resolvidos e não conhece serviços, NVS, I2C ou modelos BLE/Wi-Fi. O botão de música (26x36, transparente, callback `dispatch_music_action`) mantém a centralização e o mesmo `cyberdeck_font`, mas desenha o glifo ASCII `>` porque `LV_SYMBOL_PLAY` (U+F04B) está fora da cobertura e aparecia como caixa; como o tema default é light, ele zera `radius`, `outline_width`, `shadow_width` e `shadow_opa` para não pintar a cápsula cinza em volta do glifo. Rastreia `REQ-HEADER-FONT-01..03`/`AC-HEADER-FONT-01`. |

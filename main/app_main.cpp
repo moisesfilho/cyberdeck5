@@ -9,6 +9,7 @@
 #include "platform/display/screen_off.h"
 #include "platform/input/tab5_keyboard.h"
 #include "apps/system/cyberdeck_system_apps.h"
+#include "apps/ota/cyberdeck_ota.h"
 #include "apps/system/cyberdeck_recovery.h"
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "apps/screenshot/screenshot_server.h"
@@ -162,8 +163,14 @@ extern "C" void app_main(void)
         if (checkpoint_err != ESP_OK) {
             ESP_LOGW(TAG, "recovery checkpoint unavailable: %s", esp_err_to_name(checkpoint_err));
         }
+        const esp_err_t ota_err = checkpoint_err == ESP_OK && !cyberdeck_recovery::safe_mode() &&
+                                      app_runtime.state("cyberdeck.ota") == cyberdeck_apps::app_state::running
+                                      ? cyberdeck_ota::confirm_boot() : cyberdeck_ota::reject_pending_boot();
+        if (ota_err != ESP_OK) ESP_LOGE(TAG, "OTA boot verification failed: %s", esp_err_to_name(ota_err));
     } else {
         ESP_LOGW(TAG, "recovery checkpoint deferred after startup failure");
+        const esp_err_t ota_err = cyberdeck_ota::reject_pending_boot();
+        if (ota_err != ESP_OK) ESP_LOGE(TAG, "OTA rollback unavailable: %s", esp_err_to_name(ota_err));
     }
     app_runtime.set_command_dispatch_ready(true);
     ESP_LOGI(TAG, "HOSTED_DIAG boot stage=app_main_complete boot_ready=%d t_us=%lld",

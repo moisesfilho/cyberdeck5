@@ -1,5 +1,11 @@
 # cyberdeck5
 
+Firmware OTA over local Wi-Fi: after the one-time USB partition migration and
+USB secret provisioning, run `python3 tools/update_firmware.py --host <TAB5-IP>
+--firmware build/cyberdeck5.bin --confirm` for physical confirmation on the
+device, or use `--silent` instead. See `AGENTS.md` for prerequisites, security
+and recovery precautions.
+
 **Languages:** [English](README.md) | [Português](README.pt-BR.md)
 
 Device-specific embedded operating environment for the M5Stack Tab5, built on

@@ -1,5 +1,11 @@
 # cyberdeck5
 
+Atualizacao de firmware via Wi-Fi: apos a migracao inicial por USB e o
+provisionamento local da chave, execute `python3 tools/update_firmware.py
+--host <IP-DO-TAB5> --firmware build/cyberdeck5.bin --confirm` (confirmacao
+fisica no Tab5) ou `--silent` (sem interacao). Pre-requisitos, seguranca e
+recuperacao em `AGENTS.md`.
+
 **Idiomas:** [English](README.md) | [Português](README.pt-BR.md)
 
 Ambiente operacional embarcado, específico do M5Stack Tab5, construído sobre o

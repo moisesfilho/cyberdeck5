@@ -162,8 +162,11 @@ EXPECTED_APPS = (
      "name": "Bluetooth service", "description": "ESP-Hosted BLE manager",
      "type": "background", "commands": (), "command": "", "usage": (), "owns_console": False},
     {"symbol": "&s_time_sync", "source": "system", "id": "cyberdeck.time_sync",
-     "name": "UTC time synchronization", "description": "Bounded HTTPS UTC clock synchronization",
-     "type": "background", "commands": (), "command": "", "usage": (), "owns_console": False},
+      "name": "UTC time synchronization", "description": "Bounded HTTPS UTC clock synchronization",
+      "type": "background", "commands": (), "command": "", "usage": (), "owns_console": False},
+    {"symbol": "&s_ota", "source": "system", "id": "cyberdeck.ota",
+     "name": "OTA firmware service", "description": "Authenticated LAN firmware updates",
+     "type": "service", "commands": (), "command": "", "usage": (), "owns_console": False},
     {"symbol": "&s_demo", "source": "demo", "id": "cyberdeck.demo",
      "name": "Demo application", "description": "Proof application for the compiled-in runtime",
      "type": "demo", "commands": ("demo",), "command": "demo", "usage": DEMO_USAGE,
@@ -214,7 +217,7 @@ EXPECTED_APPS = (
 )
 
 COMMAND_BEARING_COUNT = 10
-COMMANDLESS_SERVICE_COUNT = 7
+COMMANDLESS_SERVICE_COUNT = 8
 CONSOLE_OWNER_COUNT = 1
 
 FIXTURE_USAGE_FUNCTIONS = {
@@ -474,8 +477,9 @@ def _literal_manifest(source, marker="k_manifest{"):
 
 
 def _make_manifest_version(source):
-    match = re.search(r'cyberdeck_apps::manifest item\{id,\s*name,\s*"([^"]*)"', source)
-    if match is None:
+    match = re.search(r'std::string_view version\s*=\s*"([^"]+)"\)\s*\{\s*'
+                      r'cyberdeck_apps::manifest item\{id,\s*name,\s*version,', source)
+    if match is None or not re.fullmatch(r'(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)', match.group(1)):
         raise ContractError("cannot read the make_manifest version")
     return match.group(1)
 
@@ -491,13 +495,16 @@ def _service_manifest(source, symbol, version):
         raise ContractError(f"{symbol!r} does not build its manifest with make_manifest")
     paren_index = body.index("(", call_index)
     args = _split_top_level(body[paren_index + 1:_matching(body, paren_index, "(")])
-    if len(args) not in (10, 11):
+    if len(args) not in (10, 11, 12):
         raise ContractError(f"{symbol!r} declares {len(args)} make_manifest arguments")
-    commands = _string_list(args[10]) if len(args) == 11 else ()
+    commands = _string_list(args[10]) if len(args) >= 11 else ()
+    app_version = _decode_string(args[11]) if len(args) == 12 else version
+    if not re.fullmatch(r'(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)', app_version):
+        raise ContractError(f"{symbol!r} has an invalid app version")
     return {
         "id": _decode_string(args[0]),
         "name": _decode_string(args[1]),
-        "version": version,
+        "version": app_version,
         "description": _decode_string(args[2]),
         "command": "",
         "type": _normalise_type(args[6]),
@@ -533,7 +540,11 @@ def _fixture_helper_body(source, helper):
 
 
 def _fixture_helper_version(source, helper):
-    match = re.search(r'item\.version\s*=\s*"([^"]*)"', _strip_comments(_fixture_helper_body(source, helper)))
+    body = _strip_comments(_fixture_helper_body(source, helper))
+    if helper == "commandless_manifest" and "item.version = version;" in body:
+        match = re.search(r'std::string_view version\s*=\s*"([^"]+)"', source)
+    else:
+        match = re.search(r'item\.version\s*=\s*"([^"]*)"', body)
     if match is None:
         raise ContractError(f"{helper} does not set a manifest version")
     return match.group(1)
@@ -543,13 +554,15 @@ def _fixture_commandless_calls(source):
     """Map every `commandless_manifest("id", ...)` call site to its mirror."""
     pattern = re.compile(
         r'commandless_manifest\(\s*"(?P<id>[^"]+)"\s*,\s*"(?P<name>[^"]+)"\s*,\s*"(?P<desc>[^"]+)"'
-        r'(?:\s*,\s*(?P<type>[A-Za-z_:]+))?\s*\)')
+        r'(?:\s*,\s*(?P<type>[A-Za-z_:]+))?'
+        r'(?:\s*,\s*"(?P<version>[^"]+)")?\s*\)')
     calls = {}
     for match in pattern.finditer(source):
         calls[match.group("id")] = (
             match.group("name"),
             match.group("desc"),
             _normalise_type(match.group("type")) if match.group("type") else "service",
+            match.group("version") or "1.0.0",
         )
     return calls
 
@@ -993,7 +1006,7 @@ def main() -> int:
         require(len(command_bearing) == COMMAND_BEARING_COUNT,
                 "exactly 4 compiled-in applications must declare a command")
         require(len(commandless) == COMMANDLESS_SERVICE_COUNT,
-                "exactly 7 compiled-in services must declare no command")
+                 "exactly 8 compiled-in services must declare no command")
         require(len(console_owners) == CONSOLE_OWNER_COUNT,
                 "exactly 1 compiled-in application must own the console")
 
@@ -1033,7 +1046,8 @@ def main() -> int:
             if app["source"] != "system":
                 continue
             parsed = manifests[app["id"]]
-            require(parsed["argument_count"] == 10,
+            require(parsed["argument_count"] == 10 or
+                    (parsed["argument_count"] == 12 and not parsed["commands"]),
                     f"{app['id']}: a service must not pass a commands argument to make_manifest")
             require(parsed["commands"] == () and parsed["command"] == "",
                     f"{app['id']}: a service must not declare a shell command")
@@ -1050,10 +1064,10 @@ def main() -> int:
             require(mirror is not None,
                     f"{app['id']}: test_shell_help.cpp must register this service")
             if mirror is not None:
-                require(mirror == (app["name"], app["description"], app["type"]),
+                require(mirror == (app["name"], app["description"], app["type"], manifests[app["id"]]["version"]),
                         f"{app['id']}: service fixture mirrors another manifest: {mirror}")
         require(fixture_services.get("cyberdeck.shell")
-                == ("Terminal shell", "Primary foreground terminal application", "foreground"),
+                == ("Terminal shell", "Primary foreground terminal application", "foreground", service_version),
                 "the shell fixture must mirror the real manifest")
         require("shell_manifest.owns_console = true;" in help_test,
                 "the shell fixture must mirror owns_console")

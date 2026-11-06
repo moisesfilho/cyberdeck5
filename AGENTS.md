@@ -148,6 +148,55 @@ Siga esta ordem para localizar codigo, evitando buscas globais prematuras:
 
 ## Validacao de firmware no dispositivo
 
+### Atualizacao via Wi-Fi (OTA)
+
+O layout `partitions.csv` reserva `factory`, `ota_0`, `ota_1` (4 MiB cada) e
+`otadata` em flash de 16 MiB. A migracao do layout antigo (`factory` unico)
+exige **um flash inicial por USB** com `idf.py flash`; OTA nao altera tabela de
+particoes nem bootloader. Faca backup do estado persistente antes dessa migracao
+e confirme o boot, a NVS e o Wi-Fi no novo layout. Nao apague a NVS para
+"consertar" um boot sem diagnostico.
+
+Provisione o segredo da unidade **uma vez pela USB Serial-JTAG**, apos instalar
+o firmware com OTA (requer `pyserial` no computador):
+
+```bash
+python3 tools/update_firmware.py --provision --port /dev/ttyACM0
+```
+
+O script armazena `~/.config/cyberdeck5/ota.key` com permissao 0600. Nao
+imprima, commite, anexe a logs nem compartilhe esse arquivo. A rota `ota.key`
+existe **somente** na ponte USB; nao a encaminhe pela LAN, `ui.type` ou HTTP.
+Para atualizar sem cabo, com o Tab5 ligado ao Wi-Fi e o binario ESP32-P4 ja
+compilado:
+
+```bash
+python3 tools/update_firmware.py --host <IP-DO-TAB5> --firmware build/cyberdeck5.bin --confirm
+python3 tools/update_firmware.py --host <IP-DO-TAB5> --firmware build/cyberdeck5.bin --silent
+```
+
+`--confirm` envia primeiro apenas metadados autenticados e espera aprovacao
+**fisica no Tab5** (Enter ou botao Confirmar; Esc/Cancelar recusa, prazo 120 s);
+somente apos a aprovacao transmite o `.bin`. `--silent` mantem envio direto sem
+interacao. Ambos autenticam nonce de uso unico, modo, versao, tamanho e SHA-256
+com HMAC-SHA256. O servico esta na porta HTTP 8080, endpoints
+`GET /ota/challenge`, `POST /ota/prepare` (metadados, corpo vazio), `POST /ota`
+(corpo `.bin` bruto) e `GET /ota/status`; a imagem deve ser do projeto
+`cyberdeck5`, alvo ESP32-P4 e versao `MAJOR.MINOR.PATCH` valida. O dispositivo
+confere hash e versao embutida antes de ativar. Use o script em vez de montar as
+chamadas manualmente. O segredo nao e enviado em claro, mas HTTP
+nao protege metadados/disponibilidade contra intermediarios; nunca exponha a
+porta fora da LAN confiavel. O script acompanha o reboot e verifica que o slot
+mudou e a nova imagem foi validada; se nao houver resposta conclusiva,
+**nao reenvie automaticamente**.
+Verifique estado/versao e diagnosticos antes de tentar outra vez. Uma imagem
+nova so e confirmada no checkpoint de boot normal e apos Wi-Fi obter IP em
+ate 30 s; falha de boot ou de rede nesse prazo solicita rollback do ESP-IDF.
+`factory` e imagem de resgate, nao garantia de fallback
+automatico em toda falha. Para validar pela primeira vez, teste cancelamento,
+upload interrompido, hash incorreto, confirmacao, modo silencioso, perda de
+energia e rollback controlado, registrando build, imagem, boot e efeito.
+
 - Ordem padrão: implementação -> testes focados -> validação no dispositivo
   conectado (quando segura e autorizada) -> revisão final ampla. Faça o flash do
   firmware compilado somente como parte da validação aprovada, não para substituir

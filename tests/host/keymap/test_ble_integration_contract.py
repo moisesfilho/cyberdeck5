@@ -571,10 +571,38 @@ def check_adapter_composition(report: Report) -> None:
                    ".buff_spiram = draw_buffers_in_spiram" in bsp_display and
                    ".sw_rotate = true" in bsp_display,
                    "Tab5 display buffers must use DMA-capable PSRAM while preserving software rotation")
+    report.require('#include "hal/axi_icm_ll.h"' in bsp_display and
+                   "BSP_DSI_GDMA_MEMORY_MASTER_PORT 1" in bsp_display and
+                   "BSP_DSI_GDMA_MEMORY_READ_QOS 15" in bsp_display and
+                   "axi_icm_ll_set_dw_gdma_qos_arbiter_prio(BSP_DSI_GDMA_MEMORY_MASTER_PORT, 0," in bsp_display,
+                   "DSI scanout must favor DW-GDMA PSRAM reads without raising write QoS")
     report.require("bsp_display_lcd_init(cfg);" in bsp_display and
                    '"LVGL display initialization failed; touch init skipped"' in bsp_display and
                    "lvgl_port_remove_disp(disp);" in bsp_display,
                    "BSP must fail closed and clean display resources before touch or LVGL teardown")
+
+    defaults = (ROOT / "sdkconfig.defaults").read_text(encoding="utf-8")
+    port = (ROOT / "components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c").read_text(encoding="utf-8")
+    report.require("CONFIG_LCD_DSI_ISR_CACHE_SAFE=y" in defaults and
+                   "#if CONFIG_LCD_RGB_ISR_IRAM_SAFE || CONFIG_LCD_DSI_ISR_CACHE_SAFE" in port and
+                   "disp_ctx = heap_caps_malloc(sizeof(lvgl_port_display_ctx_t)," in port and
+                   "disp_ctx->dsi_flush_sem = xSemaphoreCreateBinary();" in port,
+                   "cache-safe DSI callbacks require internal context and an ISR-to-flush semaphore")
+    report.require("static LVGL_PORT_IRAM bool lvgl_port_flush_dpi_panel_ready_callback" in port and
+                   "xSemaphoreGiveFromISR(disp_ctx->dsi_flush_sem, &need_yield);" in port and
+                   "xSemaphoreTake(disp_ctx->dsi_flush_sem, portMAX_DELAY);" in port and
+                   "lv_disp_flush_ready(drv);" in port and
+                   "esp_lcd_dpi_panel_register_event_callbacks(disp_ctx->panel_handle, &cbs, user_ctx)" in port and
+                   "lvgl_port_remove_disp(disp);" in port,
+                   "DSI ISR must not call LVGL and callback registration failure must clean up")
+    dsi_callback = port[port.index("static LVGL_PORT_IRAM bool lvgl_port_flush_dpi_panel_ready_callback"):
+                        port.index("static LVGL_PORT_IRAM bool lvgl_port_flush_dpi_vsync_ready_callback")]
+    safe_callback = dsi_callback[dsi_callback.index("#if CONFIG_LCD_DSI_ISR_CACHE_SAFE"):
+                                 dsi_callback.index("#else")]
+    report.require("lv_disp_flush_ready" not in safe_callback and
+                   "lv_display_get_driver_data" not in safe_callback and
+                   "xPortInIsrContext()" in safe_callback,
+                   "cache-safe DSI ISR must only signal the flush and support task-context completion")
 
     lvgl_port_display = (ROOT / "components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c").read_text(encoding="utf-8")
     error_path = lvgl_port_display[lvgl_port_display.find("err:"):]

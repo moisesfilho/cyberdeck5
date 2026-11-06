@@ -23,6 +23,7 @@
 #endif
 
 #ifdef ESP_PLATFORM
+#include "apps/ota/cyberdeck_ota.h"
 #include "apps/music/cyberdeck_music_app.h"
 #include "platform/logging/event_log.h"
 #include "platform/storage/cyberdeck_sd_io_coordinator.h"
@@ -712,7 +713,7 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
                                            "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear",
                                              "screen.status", "screen.wake", "music.diagnostics", "music.trace",
-                                             "music.status", "music.scan", "ui.escape"};
+                                              "music.status", "music.scan", "ui.escape", "ota.key"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -2243,6 +2244,20 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
         d.result = cyberdeck_recovery::clear_safe_mode() == ESP_OK
                        ? ok_result(req, "{\"cleared\":true}")
                        : err_result(req, dispatch_error::internal, "recovery indisponivel");
+        return d;
+    }
+    if (req.type == "ota.key") {
+        d.handled = true;
+        char secret[65]{};
+        if (cyberdeck_ota::serial_key(secret, sizeof(secret)) != ESP_OK) {
+            d.result = err_result(req, dispatch_error::internal, "OTA secret unavailable");
+        } else {
+            std::string body = "{\"key\":\"";
+            body += secret;
+            body += "\"}";
+            d.result = ok_result(req, body);
+        }
+        std::memset(secret, 0, sizeof(secret));
         return d;
     }
     if (req.type == "ui.type") {

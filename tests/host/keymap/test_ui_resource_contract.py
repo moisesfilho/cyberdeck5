@@ -190,10 +190,11 @@ def main() -> int:
             "late cat results must be quiesced during UI teardown")
     require(cleanup.count("wifi_set_state_callback(nullptr, nullptr)") == 1,
             "Wi-Fi state callback must be unregistered exactly once per cleanup pass")
-    require(cleanup.count("lv_timer_del(") == 10 and
-            re.search(r"if\s*\(\s*s_music_status_timer\s*!=\s*nullptr\s*\)", cleanup)
-            is not None and "s_music_status_timer = nullptr;" in cleanup,
-            "all ten LVGL timers, including music status, must be explicitly canceled on teardown")
+    declared_timers = set(re.findall(r"lv_timer_t\s*\*\s*(s_[a-z_]+_timer)\s*=", source))
+    deleted_timers = re.findall(r"lv_timer_del\((s_[a-z_]+_timer)\)", cleanup)
+    require(declared_timers == set(deleted_timers) and len(deleted_timers) == len(declared_timers) and
+            all(f"{timer} = nullptr;" in cleanup for timer in declared_timers),
+            "every declared LVGL timer must be canceled exactly once and reset on teardown")
 
     # Survey export queues/task are deliberately process-lifetime, unlike UI
     # handles. They must be initialized once and never reclaimed by UI teardown.

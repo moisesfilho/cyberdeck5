@@ -1,5 +1,20 @@
 # Arquitetura
 
+## Firmware updates
+
+The 16 MiB flash reserves `otadata`, a 4 MiB factory rescue image and two
+4 MiB OTA slots. Migrating the previous factory-only layout requires one USB
+flash. The `cyberdeck.ota` service receives streamed images over LAN HTTP port
+8080. A per-device secret retrieved only by USB Serial-JTAG authenticates the
+single-use nonce, image SHA-256, declared version, size and mode with HMAC-SHA256.
+For `--confirm`, `/ota/prepare` sends metadata only; the Tab5 requests physical
+approval before `/ota` transfers any image bytes. The approved metadata is bound
+to that transfer, and the received image hash and embedded project/version are
+checked before selecting the boot slot. Approval and transfer each expire after
+120 seconds. `--silent` keeps direct transfer. The new boot is marked valid after the normal
+checkpoint and Wi-Fi obtains an IP within 30 seconds; failures request rollback. HTTP remains
+unencrypted, and Secure Boot and flash encryption are disabled. See `AGENTS.md`.
+
 `cyberdeck5` is an embedded operating environment for its only supported target,
 the M5Stack Tab5. The integrated product combines the FreeRTOS kernel and
 ESP-IDF/BSP platform with cyberdeck5's `platform/hardware`, `system runtime`,

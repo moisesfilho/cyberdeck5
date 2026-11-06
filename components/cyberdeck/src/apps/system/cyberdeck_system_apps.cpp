@@ -8,6 +8,7 @@
 #include "apps/event_log/cyberdeck_event_log_console_app.h"
 #include "apps/network/cyberdeck_netdiag_app.h"
 #include "apps/music/cyberdeck_music_app.h"
+#include "apps/ota/cyberdeck_ota.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/runtime/cyberdeck_resource_catalog.h"
 #include "apps/runtime/cyberdeck_sd_package.h"
@@ -189,8 +190,9 @@ cyberdeck_apps::manifest make_manifest(std::string_view id, std::string_view nam
                                        cyberdeck_apps::app_type type = cyberdeck_apps::app_type::service,
                                        std::initializer_list<std::string_view> capabilities = {},
                                        std::uint32_t stack_bytes = 0, std::uint32_t queue_depth = 0,
-                                       std::initializer_list<std::string_view> commands = {}) {
-    cyberdeck_apps::manifest item{id, name, "1.0.0", description, {}};
+                                        std::initializer_list<std::string_view> commands = {},
+                                        std::string_view version = "1.0.0") {
+    cyberdeck_apps::manifest item{id, name, version, description, {}};
     for (const std::string_view dependency : dependencies) {
         if (item.dependency_count == item.dependencies.size())
             break;
@@ -265,6 +267,12 @@ service_application s_time_sync{
                   {"cyberdeck.event_log", "cyberdeck.wifi"}, {"network", "clock"}, k_time_sync_lifecycle_timeout_ms,
                   cyberdeck_apps::app_type::background, {"network", "clock"}, 16384, 1),
     start_time_sync, stop_time_sync, true};
+service_application s_ota{
+    make_manifest("cyberdeck.ota", "OTA firmware service", "Authenticated LAN firmware updates",
+                   {"cyberdeck.wifi"}, {"network"}, 2000,
+                   cyberdeck_apps::app_type::service, {"network"}, 8192, 1, {}, "1.0.2"),
+    []() { return cyberdeck_ota::start() == ESP_OK; },
+    []() { return cyberdeck_ota::stop(2000) == ESP_OK; }, true};
 
 /* The six console applications keep one manifest per migrated shell command.
  * They own no console, declare no dependency on the service they talk to and
@@ -278,6 +286,7 @@ cyberdeck_apps::application *const k_apps[] = {
     &s_screenshot,
     &s_bluetooth,
     &s_time_sync,
+    &s_ota,
     &s_demo,
     &cyberdeck_editor::global_application(),
     &cyberdeck_netdiag::global_application(),
@@ -337,7 +346,7 @@ extern "C" esp_err_t cyberdeck_system_apps_start(void) {
     if (!all_started) {
         for (const char *id : {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial",
                                "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth", "cyberdeck.time_sync",
-                               "cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag", "cyberdeck.music",
+                                "cyberdeck.ota", "cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag", "cyberdeck.music",
                                "cyberdeck.wifi.shell", "cyberdeck.ssh.shell", "cyberdeck.bluetooth.shell",
                                "cyberdeck.battery.shell", "cyberdeck.screen.shell", "cyberdeck.event_log.shell"}) {
             if (runtime.state(id) == cyberdeck_apps::app_state::failed) {

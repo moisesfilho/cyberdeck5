@@ -26,6 +26,7 @@
 #include "esp_lcd_touch_st7123.h"
 #include "bsp/display.h"
 #include "bsp/touch.h"
+#include "hal/axi_icm_ll.h"
 
 #include "bsp/m5stack_tab5.h"
 
@@ -45,6 +46,8 @@ static esp_lcd_touch_handle_t tp;   // LCD touch handle
 #define LCD_PARAM_BITS         8
 #define LCD_LEDC_CH            CONFIG_BSP_DISPLAY_BRIGHTNESS_LEDC_CH
 #define BSP_LCD_ST712X_MIPI_DSI_LANE_BITRATE_MBPS 965
+#define BSP_DSI_GDMA_MEMORY_MASTER_PORT 1
+#define BSP_DSI_GDMA_MEMORY_READ_QOS 15
 
 typedef enum {
     BSP_TAB5_BOARD_VERSION_UNKNOWN = 0,
@@ -210,6 +213,11 @@ esp_err_t bsp_display_new(const bsp_display_config_t *config, esp_lcd_panel_hand
 esp_err_t bsp_display_new_with_handles(const bsp_display_config_t *config, bsp_lcd_handles_t *ret_handles)
 {
     esp_err_t ret = ESP_OK;
+
+    // DSI scanout reads its framebuffer through DW-GDMA memory master port 1.
+    // Favor those reads in AXI ICM arbitration to reduce scanout underruns.
+    axi_icm_ll_set_dw_gdma_qos_arbiter_prio(BSP_DSI_GDMA_MEMORY_MASTER_PORT, 0,
+                                             BSP_DSI_GDMA_MEMORY_READ_QOS);
 
     /* Enable Feature */
     BSP_ERROR_CHECK_RETURN_ERR(bsp_feature_enable(BSP_FEATURE_LCD, true));

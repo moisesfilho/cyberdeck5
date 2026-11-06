@@ -9,6 +9,7 @@
 #include "apps/event_log/cyberdeck_event_log_console_app.h"
 #include "apps/music/cyberdeck_music_app.h"
 #include "apps/music/cyberdeck_music_manager.h"
+#include "apps/ota/cyberdeck_ota.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/screen/cyberdeck_screen_console_app.h"
 #include "apps/ssh/cyberdeck_ssh_console_app.h"
@@ -102,6 +103,11 @@ lv_timer_t *s_wifi_survey_timer = nullptr;
 lv_timer_t *s_battery_timer = nullptr;
 lv_timer_t *s_terminal_output_timer = nullptr;
 lv_timer_t *s_music_status_timer = nullptr;
+lv_timer_t *s_ota_timer = nullptr;
+lv_obj_t *s_ota_modal = nullptr;
+lv_obj_t *s_ota_title = nullptr;
+lv_obj_t *s_ota_confirm_buttons[2]{};
+bool s_ota_visible = false;
 cyberdeck_terminal_scrollback::model s_scrollback;
 
 cyberdeck_terminal_filter s_ssh_output_filter;
@@ -611,6 +617,15 @@ void destroy_ui_resource_handles() {
         lv_timer_del(s_music_status_timer);
         s_music_status_timer = nullptr;
     }
+    if (s_ota_timer != nullptr) {
+        lv_timer_del(s_ota_timer);
+        s_ota_timer = nullptr;
+    }
+    s_ota_modal = nullptr;
+    s_ota_title = nullptr;
+    s_ota_confirm_buttons[0] = nullptr;
+    s_ota_confirm_buttons[1] = nullptr;
+    s_ota_visible = false;
     s_terminal_view.deinit();
     /* A deinit during BLE authentication must not leave the passkey resident.
      * Detaching also drops the console the shell application owns. */
@@ -752,6 +767,11 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
      * context, and some of the paths below can synchronously render. */
     if (screen_off_is_active()) {
         screen_off_turn_on();
+        return;
+    }
+    if (s_ota_visible) {
+        if (special_key == LV_KEY_ENTER) (void)cyberdeck_ota::decide(true);
+        else if (special_key == LV_KEY_ESC) (void)cyberdeck_ota::decide(false);
         return;
     }
     lv_display_trigger_activity(lv_disp_get_default());
@@ -2070,6 +2090,7 @@ void virtual_keyboard_changed(lv_event_t *event) {
 }
 
 void terminal_insert(lv_event_t *event) {
+    if (s_ota_visible) return;
     if (cyberdeck_poweroff_pending()) return;
     if (!event || s_rendering || !s_terminal)
         return;
@@ -2124,6 +2145,7 @@ void terminal_insert(lv_event_t *event) {
 }
 
 void terminal_changed(lv_event_t *) {
+    if (s_ota_visible) return;
     if (cyberdeck_poweroff_pending()) return;
     if (s_rendering || !s_terminal)
         return;
@@ -2155,6 +2177,15 @@ void terminal_changed(lv_event_t *) {
 }
 
 void terminal_key(lv_event_t *event) {
+    if (s_ota_visible) {
+        if (event != nullptr) {
+            const uint32_t key = lv_event_get_key(event);
+            if (key == LV_KEY_ENTER || key == LV_KEY_ESC) (void)cyberdeck_ota::decide(key == LV_KEY_ENTER);
+            lv_event_stop_processing(event);
+            lv_event_stop_bubbling(event);
+        }
+        return;
+    }
     if (cyberdeck_poweroff_pending()) return;
     if (!event || s_rendering)
         return;
@@ -2549,6 +2580,10 @@ void editor_local_key(uint32_t key) {
         route(LV_KEY_ENTER, cyberdeck_editor::key::enter);
 }
 void local_key(uint32_t key) {
+    if (s_ota_visible) {
+        if (key == LV_KEY_ENTER || key == LV_KEY_ESC) (void)cyberdeck_ota::decide(key == LV_KEY_ENTER);
+        return;
+    }
     if (music_view_opening()) {
         const auto mapped = key == LV_KEY_ENTER ? cyberdeck_music_manager::key::enter
             : key == LV_KEY_LEFT ? cyberdeck_music_manager::key::left
@@ -2577,6 +2612,71 @@ void local_key(uint32_t key) {
 
 void music_indicator_action(void *) {
     (void)cyberdeck_apps::global_runtime().execute_line("music");
+}
+
+void ota_decision_button(lv_event_t *event) {
+    if (lv_event_get_code(event) == LV_EVENT_CLICKED)
+        (void)cyberdeck_ota::decide(reinterpret_cast<uintptr_t>(lv_event_get_user_data(event)) != 0);
+}
+
+void process_ota_confirmation(lv_timer_t *) {
+    const int64_t refresh_started_us = esp_timer_get_time();
+    const auto current = cyberdeck_ota::status();
+    if (current.silent || current.state == cyberdeck_ota::phase::idle ||
+        current.state == cyberdeck_ota::phase::failed) {
+        if (s_ota_modal) lv_obj_set_hidden(s_ota_modal, true);
+        s_ota_visible = false;
+        return;
+    }
+    if (s_menu == nullptr) return;
+    screen_off_turn_on();
+    if (s_ota_modal == nullptr) {
+        // The window manager owns s_menu and deletes its children during teardown.
+        s_ota_modal = lv_btn_create(s_menu);
+        lv_obj_set_ignore_layout(s_ota_modal, true);
+        lv_obj_set_size(s_ota_modal, lv_pct(90), 190);
+        lv_obj_center(s_ota_modal);
+        lv_obj_set_style_bg_color(s_ota_modal, SURFACE, 0);
+        lv_obj_set_style_border_color(s_ota_modal, WHITE, 0);
+        s_ota_title = lv_label_create(s_ota_modal);
+        lv_obj_set_style_text_color(s_ota_title, WHITE, 0);
+        lv_obj_align(s_ota_title, LV_ALIGN_TOP_MID, 0, 14);
+        for (int index = 0; index < 2; ++index) {
+            auto *button = lv_btn_create(s_ota_modal);
+            s_ota_confirm_buttons[index] = button;
+            lv_obj_set_size(button, 120, 48);
+            lv_obj_align(button, LV_ALIGN_BOTTOM_MID, index == 0 ? -75 : 75, -12);
+            lv_obj_add_event_cb(button, ota_decision_button, LV_EVENT_CLICKED,
+                                reinterpret_cast<void *>(static_cast<uintptr_t>(index == 0)));
+            auto *label = lv_label_create(button);
+            lv_label_set_text(label, index == 0 ? "Confirmar" : "Cancelar");
+            lv_obj_center(label);
+        }
+    }
+    const bool awaiting_confirmation = current.state == cyberdeck_ota::phase::awaiting_confirmation;
+    for (auto *button : s_ota_confirm_buttons)
+        if (button) lv_obj_set_hidden(button, !awaiting_confirmation);
+
+    char message[144]{};
+    if (awaiting_confirmation) {
+        std::snprintf(message, sizeof(message), "Autorizar firmware %s?\n%lu bytes  SHA256 %.8s\nEnter: enviar   Esc: cancelar",
+                      current.version, static_cast<unsigned long>(current.total), current.sha256);
+    } else if (current.state == cyberdeck_ota::phase::approved_upload) {
+        std::snprintf(message, sizeof(message), "Firmware %s autorizado.\nAguardando envio...\nPrazo: %u s",
+                      current.version, current.remaining_seconds);
+    } else if (current.state == cyberdeck_ota::phase::receiving) {
+        const unsigned percent = current.total == 0 ? 0 :
+            static_cast<unsigned>((current.received * 100) / current.total);
+        std::snprintf(message, sizeof(message), "Enviando firmware %s\n%u%% (%lu/%lu bytes)", current.version,
+                      percent, static_cast<unsigned long>(current.received), static_cast<unsigned long>(current.total));
+    } else {
+        std::snprintf(message, sizeof(message), "Firmware %s validado.\nReiniciando...", current.version);
+    }
+    lv_label_set_text(s_ota_title, message);
+    lv_obj_set_hidden(s_ota_modal, false);
+    lv_obj_move_foreground(s_ota_modal);
+    s_ota_visible = true;
+    cyberdeck_ota::note_ui_refresh(static_cast<unsigned>(esp_timer_get_time() - refresh_started_us));
 }
 
 } // namespace
@@ -2889,10 +2989,11 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
     s_terminal_output_timer = lv_timer_create(process_terminal_output, 100, nullptr);
     s_music_status_timer = lv_timer_create(process_music_status, 250, nullptr);
+    s_ota_timer = lv_timer_create(process_ota_confirmation, 250, nullptr);
     if (s_clock_timer == nullptr || s_wifi_state_timer == nullptr || s_wifi_scan_timer == nullptr ||
         s_ble_timer == nullptr || s_ssh_timer == nullptr || s_wifi_audit_timer == nullptr ||
         s_wifi_survey_timer == nullptr || s_battery_timer == nullptr || s_terminal_output_timer == nullptr ||
-        s_music_status_timer == nullptr) {
+        s_music_status_timer == nullptr || s_ota_timer == nullptr) {
         destroy_ui_resource_handles();
         return ESP_ERR_NO_MEM;
     }
@@ -2921,6 +3022,12 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
 }
 
 extern "C" void cyberdeck_ui_deinit(void) {
+    if (s_ota_timer != nullptr) { lv_timer_del(s_ota_timer); s_ota_timer = nullptr; }
+    s_ota_modal = nullptr;
+    s_ota_title = nullptr;
+    s_ota_confirm_buttons[0] = nullptr;
+    s_ota_confirm_buttons[1] = nullptr;
+    s_ota_visible = false;
     s_cat_worker_ready = false;
     destroy_ui_resource_handles();
 }
@@ -2935,7 +3042,7 @@ extern "C" bool cyberdeck_ui_poweroff_freeze(uint32_t timeout_ms) {
         return false;
     for (auto *timer :
          {s_clock_timer, s_wifi_state_timer, s_wifi_scan_timer, s_ble_timer, s_ssh_timer, s_wifi_audit_timer,
-          s_wifi_survey_timer, s_battery_timer, s_terminal_output_timer, s_music_status_timer}) {
+           s_wifi_survey_timer, s_battery_timer, s_terminal_output_timer, s_music_status_timer, s_ota_timer}) {
         if (timer != nullptr)
             lv_timer_pause(timer);
     }

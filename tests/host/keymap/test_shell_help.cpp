@@ -520,12 +520,13 @@ cyberdeck_apps::manifest event_log_console_usage_manifest()
 }
 
 cyberdeck_apps::manifest commandless_manifest(const char *id, const char *name, const char *description,
-                                              cyberdeck_apps::app_type type = cyberdeck_apps::app_type::service)
+                                               cyberdeck_apps::app_type type = cyberdeck_apps::app_type::service,
+                                               std::string_view version = "1.0.0")
 {
     cyberdeck_apps::manifest item{};
     item.id = id;
     item.name = name;
-    item.version = "1.0.0";
+    item.version = version;
     item.description = description;
     item.type = type;
     return item;
@@ -1051,6 +1052,9 @@ int main()
         help_manifest_app time_sync(commandless_manifest(
             "cyberdeck.time_sync", "UTC time synchronization", "Bounded HTTPS UTC clock synchronization",
             cyberdeck_apps::app_type::background));
+        help_manifest_app ota(commandless_manifest(
+            "cyberdeck.ota", "OTA firmware service", "Authenticated LAN firmware updates",
+            cyberdeck_apps::app_type::service, "1.0.2"));
         cyberdeck_apps::demo_application demo;
         help_manifest_app editor(editor_usage_manifest());
         help_manifest_app netdiag(netdiag_usage_manifest());
@@ -1064,15 +1068,15 @@ int main()
         cyberdeck_apps::application *const registered[] = {
             &event_log,         &shell_app,        &wifi,
             &serial,            &ssh,              &screenshot,
-            &bluetooth,         &time_sync,        &demo,
+            &bluetooth,         &time_sync,        &ota,             &demo,
             &editor,            &netdiag,          &music,
             &wifi_console,      &ssh_console,      &bluetooth_console,
             &battery_console,   &screen_console,   &event_log_console};
         for (cyberdeck_apps::application *app : registered)
             check(h.apps.register_application(*app),
                   "TEST-HELP-APP-INVENTORY: inventory application registers");
-        check(h.apps.size() == 18,
-              "TEST-HELP-APP-INVENTORY: registers all 18 compiled-in applications");
+        check(h.apps.size() == 19,
+               "TEST-HELP-APP-INVENTORY: registers all 19 compiled-in applications");
 
         std::size_t command_bearing = 0;
         std::size_t commandless_services = 0;
@@ -1103,8 +1107,8 @@ int main()
                                                       "cyberdeck.battery.shell", "cyberdeck.screen.shell",
                                                       "cyberdeck.event_log.shell"},
               "TEST-HELP-APP-INVENTORY: command-bearing apps follow the registration order");
-        check(commandless_services == 7,
-              "TEST-HELP-APP-INVENTORY: exactly 7 services declare no shell command");
+        check(commandless_services == 8,
+               "TEST-HELP-APP-INVENTORY: exactly 8 services declare no shell command");
         check(console_owners == 1,
               "TEST-HELP-APP-INVENTORY: the shell is the single console owner excluded from app commands");
 
@@ -1136,7 +1140,7 @@ int main()
                   "TEST-HELP-APP-INVENTORY: general help appends every declared command once, in order");
         for (const char *service_id : {"cyberdeck.event_log", "cyberdeck.wifi", "cyberdeck.serial",
                                        "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth",
-                                       "cyberdeck.time_sync"})
+                                        "cyberdeck.time_sync", "cyberdeck.ota"})
             check(h.output.find(service_id) == std::string::npos,
                   "TEST-HELP-APP-INVENTORY: a commandless service never appears in help");
         check(h.output.find("shell [app]") == std::string::npos,

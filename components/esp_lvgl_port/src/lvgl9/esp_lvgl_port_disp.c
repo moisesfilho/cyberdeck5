@@ -5,6 +5,7 @@
  */
 
 #include <string.h>
+#include <stdatomic.h>
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "esp_err.h"
@@ -17,7 +18,9 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lvgl_port.h"
+#include "esp_lvgl_port_dsi_diag.h"
 #include "esp_lvgl_port_priv.h"
+#include "esp_timer.h"
 
 #define LVGL_PORT_PPA   (CONFIG_LVGL_PORT_ENABLE_PPA)
 
@@ -43,13 +46,51 @@
 #define CONFIG_LV_DRAW_BUF_ALIGN 1
 #endif
 
-#if CONFIG_LCD_RGB_ISR_IRAM_SAFE
+#if CONFIG_LCD_RGB_ISR_IRAM_SAFE || CONFIG_LCD_DSI_ISR_CACHE_SAFE
 #define LVGL_PORT_IRAM IRAM_ATTR
 #else
 #define LVGL_PORT_IRAM
 #endif
 
 static const char *TAG = "LVGL";
+static portMUX_TYPE s_dsi_diag_lock = portMUX_INITIALIZER_UNLOCKED;
+static atomic_bool s_dsi_diag_active;
+static lvgl_port_dsi_diag_snapshot_t s_dsi_diag;
+
+void lvgl_port_dsi_diag_begin(void)
+{
+    portENTER_CRITICAL(&s_dsi_diag_lock);
+    memset(&s_dsi_diag, 0, sizeof(s_dsi_diag));
+    atomic_store_explicit(&s_dsi_diag_active, true, memory_order_relaxed);
+    portEXIT_CRITICAL(&s_dsi_diag_lock);
+}
+
+lvgl_port_dsi_diag_snapshot_t lvgl_port_dsi_diag_read(void)
+{
+    portENTER_CRITICAL(&s_dsi_diag_lock);
+    lvgl_port_dsi_diag_snapshot_t snapshot = s_dsi_diag;
+    portEXIT_CRITICAL(&s_dsi_diag_lock);
+    return snapshot;
+}
+
+void lvgl_port_dsi_diag_end(void)
+{
+    portENTER_CRITICAL(&s_dsi_diag_lock);
+    atomic_store_explicit(&s_dsi_diag_active, false, memory_order_relaxed);
+    portEXIT_CRITICAL(&s_dsi_diag_lock);
+}
+
+static void dsi_diag_record_flush(uint32_t duration_us, uint32_t pixels)
+{
+    portENTER_CRITICAL(&s_dsi_diag_lock);
+    if (atomic_load_explicit(&s_dsi_diag_active, memory_order_relaxed)) {
+        ++s_dsi_diag.flushes;
+        s_dsi_diag.flush_us += duration_us;
+        if (duration_us > s_dsi_diag.max_flush_us) s_dsi_diag.max_flush_us = duration_us;
+        s_dsi_diag.pixels_copied += pixels;
+    }
+    portEXIT_CRITICAL(&s_dsi_diag_lock);
+}
 
 /*******************************************************************************
 * Types definitions
@@ -66,6 +107,7 @@ typedef struct {
     lv_display_t              *disp_drv;      /* LVGL display driver */
     lv_display_rotation_t     current_rotation;
     SemaphoreHandle_t         trans_sem;      /* Idle transfer mutex */
+    SemaphoreHandle_t         dsi_flush_sem;  /* DSI DMA2D completion */
     lvgl_port_rounder_cb_t    rounder_cb;     /* Rounder callback for display area */
 #if LVGL_PORT_PPA
     lvgl_port_ppa_handle_t    ppa_handle;
@@ -164,11 +206,20 @@ lv_display_t *lvgl_port_add_disp_dsi(const lvgl_port_display_cfg_t *disp_cfg,
         } else {
             cbs.on_color_trans_done = lvgl_port_flush_dpi_panel_ready_callback;
         }
-        /* Register done callback */
-        esp_lcd_dpi_panel_register_event_callbacks(disp_ctx->panel_handle, &cbs, disp);
-
-        /* Apply rotation from initial display configuration */
-        lvgl_port_disp_rotation_update(disp_ctx);
+        /* The cache-safe ISR may only dereference internal display context. */
+#if CONFIG_LCD_DSI_ISR_CACHE_SAFE
+        void *user_ctx = disp_ctx;
+#else
+        void *user_ctx = disp;
+#endif
+        esp_err_t register_err = esp_lcd_dpi_panel_register_event_callbacks(disp_ctx->panel_handle, &cbs, user_ctx);
+        if (register_err != ESP_OK) {
+            ESP_LOGE(TAG, "DSI callback registration failed: %s", esp_err_to_name(register_err));
+            lvgl_port_remove_disp(disp);
+            disp = NULL;
+        } else {
+            lvgl_port_disp_rotation_update(disp_ctx);
+        }
 #else
         ESP_RETURN_ON_FALSE(false, NULL, TAG, "This target does not support MIPI-DSI.");
 #endif
@@ -258,6 +309,9 @@ esp_err_t lvgl_port_remove_disp(lv_display_t *disp)
     if (disp_ctx->trans_sem) {
         vSemaphoreDelete(disp_ctx->trans_sem);
     }
+    if (disp_ctx->dsi_flush_sem) {
+        vSemaphoreDelete(disp_ctx->dsi_flush_sem);
+    }
 #if LVGL_PORT_PPA
     if (disp_ctx->ppa_handle) {
         lvgl_port_ppa_delete(disp_ctx->ppa_handle);
@@ -326,7 +380,7 @@ static lv_display_t *lvgl_port_add_disp_priv(const lvgl_port_display_cfg_t *disp
     }
 
     /* Display context */
-#if CONFIG_LCD_RGB_ISR_IRAM_SAFE
+#if CONFIG_LCD_RGB_ISR_IRAM_SAFE || CONFIG_LCD_DSI_ISR_CACHE_SAFE
     /* When ISR IRAM safety is enabled, the display context is passed directly
     * to the ISR callback as user_ctx. It must reside in internal RAM so it
     * remains accessible when the cache is disabled during SPI flash operations. */
@@ -351,6 +405,13 @@ static lv_display_t *lvgl_port_add_disp_priv(const lvgl_port_display_cfg_t *disp
     disp_ctx->flags.sw_rotate = disp_cfg->flags.sw_rotate;
     disp_ctx->current_rotation = LV_DISPLAY_ROTATION_0;
     disp_ctx->rounder_cb = disp_cfg->rounder_cb;
+
+#if CONFIG_LCD_DSI_ISR_CACHE_SAFE
+    if (priv_cfg && priv_cfg->disp_type == LVGL_PORT_DISP_TYPE_DSI && !priv_cfg->avoid_tearing) {
+        disp_ctx->dsi_flush_sem = xSemaphoreCreateBinary();
+        ESP_GOTO_ON_FALSE(disp_ctx->dsi_flush_sem, ESP_ERR_NO_MEM, err, TAG, "Failed to create DSI flush semaphore");
+    }
+#endif
 
     uint32_t buff_caps = 0;
 #if SOC_PSRAM_DMA_CAPABLE == 0
@@ -517,6 +578,9 @@ err:
         if (disp_ctx != NULL && disp_ctx->oled_buffer) {
             free(disp_ctx->oled_buffer);
         }
+        if (disp_ctx != NULL && disp_ctx->dsi_flush_sem) {
+            vSemaphoreDelete(disp_ctx->dsi_flush_sem);
+        }
         if (disp_ctx) {
             free(disp_ctx);
         }
@@ -540,23 +604,38 @@ static bool lvgl_port_flush_io_ready_callback(esp_lcd_panel_io_handle_t panel_io
 }
 
 #if (SOC_MIPI_DSI_SUPPORTED && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 3, 0))
-static bool lvgl_port_flush_dpi_panel_ready_callback(esp_lcd_panel_handle_t panel_io,
+static LVGL_PORT_IRAM bool lvgl_port_flush_dpi_panel_ready_callback(esp_lcd_panel_handle_t panel_io,
         esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx)
 {
+#if CONFIG_LCD_DSI_ISR_CACHE_SAFE
+    lvgl_port_display_ctx_t *disp_ctx = (lvgl_port_display_ctx_t *)user_ctx;
+    BaseType_t need_yield = pdFALSE;
+    if (xPortInIsrContext()) {
+        xSemaphoreGiveFromISR(disp_ctx->dsi_flush_sem, &need_yield);
+    } else {
+        xSemaphoreGive(disp_ctx->dsi_flush_sem);
+    }
+    return need_yield == pdTRUE;
+#else
     lv_display_t *disp_drv = (lv_display_t *)user_ctx;
     assert(disp_drv != NULL);
     lv_disp_flush_ready(disp_drv);
     return false;
+#endif
 }
 
-static bool lvgl_port_flush_dpi_vsync_ready_callback(esp_lcd_panel_handle_t panel_io,
+static LVGL_PORT_IRAM bool lvgl_port_flush_dpi_vsync_ready_callback(esp_lcd_panel_handle_t panel_io,
         esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx)
 {
     BaseType_t need_yield = pdFALSE;
 
+#if CONFIG_LCD_DSI_ISR_CACHE_SAFE
+    lvgl_port_display_ctx_t *disp_ctx = (lvgl_port_display_ctx_t *)user_ctx;
+#else
     lv_display_t *disp_drv = (lv_display_t *)user_ctx;
     assert(disp_drv != NULL);
     lvgl_port_display_ctx_t *disp_ctx = (lvgl_port_display_ctx_t *)lv_display_get_driver_data(disp_drv);
+#endif
     assert(disp_ctx != NULL);
 
     if (disp_ctx->trans_sem) {
@@ -780,7 +859,30 @@ static void lvgl_port_flush_callback(lv_display_t *drv, const lv_area_t *area, u
             xSemaphoreTake(disp_ctx->trans_sem, portMAX_DELAY);
         }
     } else {
-        esp_lcd_panel_draw_bitmap(disp_ctx->panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
+        const bool measure_dsi = disp_ctx->disp_type == LVGL_PORT_DISP_TYPE_DSI &&
+                                 atomic_load_explicit(&s_dsi_diag_active, memory_order_relaxed);
+        const int64_t flush_started_us = measure_dsi ? esp_timer_get_time() : 0;
+#if CONFIG_LCD_DSI_ISR_CACHE_SAFE
+        if (disp_ctx->disp_type == LVGL_PORT_DISP_TYPE_DSI && disp_ctx->dsi_flush_sem) {
+            xSemaphoreTake(disp_ctx->dsi_flush_sem, 0);
+        }
+#endif
+        esp_err_t draw_err = esp_lcd_panel_draw_bitmap(disp_ctx->panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
+#if CONFIG_LCD_DSI_ISR_CACHE_SAFE
+        if (disp_ctx->disp_type == LVGL_PORT_DISP_TYPE_DSI && disp_ctx->dsi_flush_sem) {
+            if (draw_err == ESP_OK) {
+                xSemaphoreTake(disp_ctx->dsi_flush_sem, portMAX_DELAY);
+            } else {
+                ESP_LOGE(TAG, "DSI draw failed: %s", esp_err_to_name(draw_err));
+            }
+            lv_disp_flush_ready(drv);
+        }
+#endif
+        if (measure_dsi && draw_err == ESP_OK) {
+            const int64_t elapsed_us = esp_timer_get_time() - flush_started_us;
+            dsi_diag_record_flush((uint32_t)elapsed_us,
+                                  (uint32_t)(offsetx2 - offsetx1 + 1) * (uint32_t)(offsety2 - offsety1 + 1));
+        }
     }
 
     if (disp_ctx->disp_type == LVGL_PORT_DISP_TYPE_RGB || (disp_ctx->disp_type == LVGL_PORT_DISP_TYPE_DSI

@@ -2189,6 +2189,14 @@ $(BATTERY_JSON_BIN): $(BATTERY_JSON_OBJS) $(BATTERY_JSON_TEST) $(BATTERY_JSON_SR
 # I2C, reader or display lock), no-store header and untouched /screenshot and
 # /events.txt wiring.  It reads production source and needs no device.
 .PHONY: test_battery_http_contract
+
+.PHONY: test_ota_script
+test_ota_script: test_ota_script.py ../../../tools/update_firmware.py
+	$(PYTHON) test_ota_script.py
+
+.PHONY: test_ota_contract
+test_ota_contract: test_ota_contract.py ../../../partitions.csv ../../../sdkconfig.defaults ../../../main/app_main.cpp ../../../components/cyberdeck/src/apps/ota/cyberdeck_ota.cpp ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp
+	$(PYTHON) test_ota_contract.py
 test_battery_http_contract: $(BATTERY_JSON_CONTRACT) ../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp ../../../components/cyberdeck/include/platform/sensors/battery_protection.h ../../../components/cyberdeck/src/platform/sensors/battery_protection.cpp $(BATTERY_JSON_HDR) $(BATTERY_JSON_SRC) ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md Makefile
 	$(PYTHON) $(BATTERY_JSON_CONTRACT)
 
@@ -3135,6 +3143,8 @@ test: test-build
 	@echo "==> Executando contrato dos system apps"
 	@$(MAKE) --no-print-directory test_system_apps_contract
 	@$(MAKE) --no-print-directory test_screenshot_lifecycle_contract
+	@$(MAKE) --no-print-directory test_ota_script
+	@$(MAKE) --no-print-directory test_ota_contract
 	@$(MAKE) --no-print-directory test_serial_lifecycle_contract
 	@$(MAKE) --no-print-directory test_net_session_ipc_contract
 	@echo "==> Executando contrato da alocacao externa da task SSH (PSRAM)"
