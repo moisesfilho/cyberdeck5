@@ -2,7 +2,12 @@ idf_build_get_property(target IDF_TARGET)
 if(NOT target STREQUAL "esp32p4")
     message(FATAL_ERROR "The local esp_lcd diagnostic overlay supports ESP32-P4 only")
 endif()
-if(NOT CONFIG_LCD_DSI_ISR_CACHE_SAFE OR NOT CONFIG_LCD_DSI_ISR_HANDLER_IN_IRAM)
+# IDF includes every component CMakeLists once in the early requirement
+# expansion, before Kconfig generation, so CONFIG_* is still undefined there.
+# Evaluating the configuration gate in that pass rejected clean builds; it runs
+# only in the real component processing pass, where the values are available.
+if(NOT CMAKE_BUILD_EARLY_EXPANSION AND
+   (NOT CONFIG_LCD_DSI_ISR_CACHE_SAFE OR NOT CONFIG_LCD_DSI_ISR_HANDLER_IN_IRAM))
     message(FATAL_ERROR "DSI diagnostic overlay requires the cache-safe IRAM ISR")
 endif()
 

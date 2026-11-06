@@ -67,7 +67,8 @@ overlay_cmake = (ROOT / "components/esp_lcd/CMakeLists.txt").read_text()
 assert "ESP-IDF esp_lcd DPI source changed" in overlay_cmake
 assert "ESP-IDF esp_lcd Kconfig changed" in overlay_cmake
 assert "ESP-IDF esp_lcd component wiring changed" in overlay_cmake
-assert "if(NOT CONFIG_LCD_DSI_ISR_CACHE_SAFE OR NOT CONFIG_LCD_DSI_ISR_HANDLER_IN_IRAM)" in overlay_cmake
+assert "if(NOT CMAKE_BUILD_EARLY_EXPANSION AND" in overlay_cmake
+assert "(NOT CONFIG_LCD_DSI_ISR_CACHE_SAFE OR NOT CONFIG_LCD_DSI_ISR_HANDLER_IN_IRAM)" in overlay_cmake
 assert "config LCD_DSI_ISR_CACHE_SAFE" in (ROOT / "components/esp_lcd/Kconfig").read_text()
 assert "dsi/esp_lcd_panel_dpi.c" in overlay_cmake
 assert overlay.index("atomic_fetch_add_explicit(&s_bridge_underruns") < overlay.index(
@@ -79,4 +80,26 @@ assert '"diagnostics unavailable: no memory"' in firmware
 assert "s_diag_ui_active.store(false" in firmware and "lvgl_port_dsi_diag_end();" in firmware
 assert upload.index("diagnostics->report(") < upload.index("esp_ota_get_partition_description(")
 assert "cyberdeck_ota::note_ui_refresh(" in ui and "s_ota_timer = lv_timer_create(process_ota_confirmation, 250" in ui
+# The default theme runs in light mode: every `lv_btn` inherits a rounded radius
+# and a grey drop shadow offset downwards, which paints a light band along the
+# bottom edge of the dark OTA panel.  Both the panel and its decision buttons
+# must flatten that inherited chrome, and the panel must not set a lone border
+# color without a width (dead style that hinted at the old bottom line).
+flatten = ui[ui.index("void flatten_btn_chrome(lv_obj_t *obj) {"):]
+flatten = flatten[:flatten.index("}")]
+for channel in ("lv_obj_set_style_radius(obj, 0, 0)",
+                "lv_obj_set_style_border_width(obj, 0, 0)",
+                "lv_obj_set_style_outline_width(obj, 0, 0)",
+                "lv_obj_set_style_shadow_width(obj, 0, 0)",
+                "lv_obj_set_style_shadow_opa(obj, LV_OPA_TRANSP, 0)"):
+    assert channel in flatten, channel
+modal = ui[ui.index("s_ota_modal = lv_btn_create(s_menu);"):ui.index("lv_label_set_text(s_ota_title, message);")]
+assert "flatten_btn_chrome(s_ota_modal);" in modal
+assert "flatten_btn_chrome(button);" in modal
+# The light theme paints `lv_btn` with `bg_color_primary` (blue); the panel
+# buttons must use the greyscale palette fill shared with the music controls.
+assert "const lv_color_t BUTTON = lv_color_hex(0x303030);" in ui
+assert "lv_obj_set_style_bg_color(button, BUTTON, 0);" in modal
+assert "border_color(s_ota_modal" not in ui
+assert modal.index("s_ota_modal = lv_btn_create(s_menu);") < modal.index("flatten_btn_chrome(s_ota_modal);")
 print("OTA partition/auth/boot/serial/UI/pre-confirm-upload contracts: PASS")

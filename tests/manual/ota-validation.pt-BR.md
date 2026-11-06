@@ -464,3 +464,39 @@ pendentes. A causa das piscadas anteriores não foi determinada.
   Log serial filtrado (0600):
   `/tmp/opencode/ota-diag-1.12.2-repeat-20261106.log`. Timeout 1 min mantido;
   não fazer nova OTA sem outra hipótese e autorização.
+
+## Aparência do modal — remoção da faixa inferior (1.13.0)
+
+- Defeito visual: o painel de confirmação/progresso desenhava uma faixa clara
+  na borda inferior. Causa: o tema LVGL default roda em modo **light**
+  (`CONFIG_LV_THEME_DEFAULT_DARK` não setado), então todo `lv_btn` herda raio
+  arredondado e sombra cinza (`shadow_width` 3, `shadow_opa` 50%,
+  `shadow_offset_y` +3). Sobre a superfície escura do painel, essa sombra
+  aparece como uma borda clara na base.
+- Correção: `flatten_btn_chrome()` em `cyberdeck_ui.cpp` zera raio, borda,
+  outline e sombra; é aplicado ao painel e aos botões Confirmar/Cancelar. A
+  linha `lv_obj_set_style_border_color(s_ota_modal, WHITE, 0)` foi removida por
+  ser estilo morto (sem `border_width`).
+- Verificação automatizada: `make -C tests/host/keymap test_ota_contract`
+  (inclui controle negativo por mutação do helper e da chamada).
+- Validação física em 06/11/2026 com firmware **1.13.0** (flash USB em
+  `factory`, `running_valid=true`, Wi‑Fi/IP): `POST /ota/prepare` abriu o modal
+  apenas com metadados, o usuário confirmou a tela correta e clicou em
+  **Cancelar**; `/ota/status` voltou a `idle` com `received=0` (nenhum byte de
+  imagem enviado), uptime contínuo e sem reboot. Captura da tela com o modal
+  aberto em `/tmp/opencode/ota-modal2.bmp` (artefato local): sem faixa clara na
+  borda inferior do painel. O painel tem a mesma cor do terminal (#0A0A0A), então
+  a prova é a ausência da sombra, não uma borda escura visível.
+- Observação resolvida em seguida: os botões Confirmar/Cancelar herdavam
+  `bg_color_primary` do tema light e apareciam em azul. Passaram a usar
+  `BUTTON` (#303030), o mesmo cinza elevado dos controles do player, mantendo
+  texto branco herdado do painel. `test_ota_contract.py` fixa a constante e a
+  chamada de `bg_color` no botão.
+- Atualização por OTA com essa imagem (SHA-256
+  `b75cb40ad744b015e1faf2811025e61d447c7a82ef0435b3a989e5c0e32c4804`,
+  2.629.376 bytes): envio `--silent` ativou `ota_0` (`4325376`) e uma
+  confirmação física posterior ativou `ota_1` (`8519680`); uma terceira
+  confirmação física voltou a `ota_0`. Todas com `running_version=1.13.0`,
+  `running_valid=true`, `received=0` no estado final (upload concluído antes),
+  `safe_mode=false` e `interrupted_boots=0`. Nenhuma piscada foi relatada nessas
+  transferências.

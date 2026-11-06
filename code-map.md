@@ -592,7 +592,13 @@ imagem `PENDING_VERIFY` somente depois do checkpoint normal. A ponte Serial-JTAG
 provisionamento local, nunca em rotas HTTP. `cyberdeck_ui.cpp` mostra versao,
 tamanho e prefixo SHA-256 na confirmacao fisica bounded (Enter/Esc ou botoes),
 depois estado de espera e progresso do upload; modo silencioso nao mostra modal.
-`tools/update_firmware.py` faz provisionamento inicial por USB e envia o binario
+O painel e `lv_btn`, entao herda o chrome do tema default em modo light (raio,
+outline e sombra cinza com offset para baixo); `flatten_btn_chrome()` zera esses
+canais no painel e nos botoes Confirmar/Cancelar, senao a sombra desenha uma
+faixa clara na borda inferior. Os botoes tambem recebem `BUTTON` (#303030), o
+mesmo cinza elevado dos controles do player, porque o tema os pintaria com
+`bg_color_primary` (azul). `test_ota_contract.py` fixa o helper, o preenchimento
+e as chamadas. `tools/update_firmware.py` faz provisionamento inicial por USB e envia o binario
 pela LAN (`--silent`/`--confirm`); `test_ota_script.py` testa a autenticacao e
 as permissoes de chave; `test_ota_contract.py` fixa os limites da integracao
 ESP-IDF/Serial/LVGL. Ambos entram no agregado host. Procedimento
@@ -687,7 +693,11 @@ Instrumento validado fisicamente em 1.12.2: overlay
 `components/esp_lcd` compila os fontes originais do componente IDF 6.1 e uma
 cópia local de `dsi/esp_lcd_panel_dpi.c`, com SHA-256 fixo da origem no CMake
 para rejeitar versão não revisada; preserva também o `Kconfig` original para
-manter `CONFIG_LCD_DSI_ISR_CACHE_SAFE` e verifica o hash do wiring CMake.
+manter `CONFIG_LCD_DSI_ISR_CACHE_SAFE` e verifica o hash do wiring CMake. O gate
+de configuração roda apenas no processamento real do componente
+(`NOT CMAKE_BUILD_EARLY_EXPANSION`): o IDF inclui todo CMakeLists numa expansão
+antecipada, antes do Kconfig, onde `CONFIG_*` ainda não existe, e avaliar a
+condição ali reprovava qualquer configure limpo (build do zero e CI).
 **Não edita a instalação do IDF**. A ISR
 conta o bit UNDERRUN antes de limpá-lo, e o callback DMA conta frames via
 atômicos lock-free em memória interna/IRAM-safe. Header

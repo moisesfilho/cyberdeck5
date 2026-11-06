@@ -89,6 +89,9 @@ const lv_color_t SURFACE = lv_color_hex(0x0A0A0A);
 const lv_color_t BORDER = lv_color_hex(0x2A2A2A);
 const lv_color_t WHITE = lv_color_hex(0xF2F2F2);
 const lv_color_t MUTED = lv_color_hex(0x8A8A8A);
+/* Elevated grey shared with the music control cells: the theme would paint the
+ * button with `bg_color_primary` (blue), which is outside this palette. */
+const lv_color_t BUTTON = lv_color_hex(0x303030);
 lv_obj_t *s_screen = nullptr;
 lv_obj_t *s_menu = nullptr;
 lv_obj_t *s_terminal = nullptr;
@@ -948,6 +951,18 @@ void style_base(lv_obj_t *obj, lv_color_t bg, lv_color_t text) {
     lv_obj_set_style_text_font(obj, &cyberdeck_font, 0);
     lv_obj_set_style_border_width(obj, 0, 0);
     lv_obj_set_style_radius(obj, 0, 0);
+}
+
+/* The default theme runs in light mode, so every `lv_btn` inherits a rounded
+ * radius and a grey drop shadow (width 3, opacity 50, offset down 3).  On the
+ * dark OTA panel that shadow paints a light band along the bottom edge, which
+ * reads as a border.  Overlays flatten the inherited chrome explicitly. */
+void flatten_btn_chrome(lv_obj_t *obj) {
+    lv_obj_set_style_radius(obj, 0, 0);
+    lv_obj_set_style_border_width(obj, 0, 0);
+    lv_obj_set_style_outline_width(obj, 0, 0);
+    lv_obj_set_style_shadow_width(obj, 0, 0);
+    lv_obj_set_style_shadow_opa(obj, LV_OPA_TRANSP, 0);
 }
 void hidden(lv_obj_t *obj, bool value) {
     if (obj)
@@ -2637,7 +2652,7 @@ void process_ota_confirmation(lv_timer_t *) {
         lv_obj_set_size(s_ota_modal, lv_pct(90), 190);
         lv_obj_center(s_ota_modal);
         lv_obj_set_style_bg_color(s_ota_modal, SURFACE, 0);
-        lv_obj_set_style_border_color(s_ota_modal, WHITE, 0);
+        flatten_btn_chrome(s_ota_modal);
         s_ota_title = lv_label_create(s_ota_modal);
         lv_obj_set_style_text_color(s_ota_title, WHITE, 0);
         lv_obj_align(s_ota_title, LV_ALIGN_TOP_MID, 0, 14);
@@ -2646,6 +2661,8 @@ void process_ota_confirmation(lv_timer_t *) {
             s_ota_confirm_buttons[index] = button;
             lv_obj_set_size(button, 120, 48);
             lv_obj_align(button, LV_ALIGN_BOTTOM_MID, index == 0 ? -75 : 75, -12);
+            lv_obj_set_style_bg_color(button, BUTTON, 0);
+            flatten_btn_chrome(button);
             lv_obj_add_event_cb(button, ota_decision_button, LV_EVENT_CLICKED,
                                 reinterpret_cast<void *>(static_cast<uintptr_t>(index == 0)));
             auto *label = lv_label_create(button);
