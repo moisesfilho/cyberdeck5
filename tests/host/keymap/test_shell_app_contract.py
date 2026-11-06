@@ -181,9 +181,16 @@ def main() -> int:
             "the dispatcher must run before the legacy parser")
     require("host_.app_runtime().execute_line(line)" not in execute,
             "the session must not hand every line to the runtime")
-    for legacy in ("CYBERDECK_CMD_WIFI", "CYBERDECK_CMD_SCREEN_ON"):
+    for legacy in ("CYBERDECK_CMD_CLEAR",):
         require(legacy in execute,
                 f"the legacy parser must keep owning {legacy}")
+    # Commands migrated to a manifest no longer belong to the legacy switch: the
+    # dispatcher must route them to the application that declares them.
+    for migrated in ("CYBERDECK_CMD_WIFI", "CYBERDECK_CMD_SCREEN_ON", "CYBERDECK_CMD_LOG",
+                     "CYBERDECK_CMD_SSH", "CYBERDECK_CMD_BLUETOOTH_SEARCH",
+                     "CYBERDECK_CMD_BATTERY_PROTECTION_ON"):
+        require(migrated not in execute,
+                f"a migrated command must not stay in the legacy switch: {migrated}")
     require("local_shell().execute(line)" in execute,
             "the local shell must stay the first owner of local commands")
     require("const bool help_request = is_help_request(line);" in execute,
@@ -206,8 +213,17 @@ def main() -> int:
     require("is_legacy_command" in console_hdr,
             "the reservation rule must be part of the console contract")
     catalog_commands = re.findall(r'\{"([a-z]+)",', help_catalog)
-    require(len(catalog_commands) >= 17,
-            "the help catalog must keep covering every shell and service command")
+    # Every legacy row is one help entry; the migrated commands are published by
+    # their manifests instead, so the count is derived from the catalog itself and
+    # the local-shell verbs must still be present.
+    require(len(catalog_commands) >= 12,
+            "the help catalog must keep covering every remaining shell command")
+    for required in ("help", "clear", "app", "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm",
+                     "rmdir", "poweroff"):
+        require(required in catalog_commands, f"the help catalog lost the {required} row")
+    for migrated in ("wifi", "log", "screen", "battery", "bluetooth", "ssh"):
+        require(migrated not in catalog_commands,
+                f"a migrated command must be published by its manifest, not the catalog: {migrated}")
 
     # --- SSH is a session mode, not a second console -----------------------
     require("enum class session_mode" in console_hdr,

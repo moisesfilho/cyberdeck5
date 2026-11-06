@@ -337,7 +337,7 @@ BLE_TYPES_OBJS := test_ble_types/test.o test_ble_types/types.o
 BLE_STATE_OBJS := test_ble_state_machine/test.o test_ble_state_machine/state.o test_ble_state_machine/types.o
 BLE_EVENTS_OBJS := test_ble_event_dispatch/test.o test_ble_event_dispatch/events.o test_ble_event_dispatch/types.o
 BLE_STORE_OBJS := test_ble_store/test.o test_ble_store/store.o test_ble_store/types.o
-BLE_COMMAND_OBJS := test_ble_command_parse/test.o test_ble_command_parse/shell-utils.o
+BLE_COMMAND_OBJS := test_ble_command_parse/test.o test_ble_command_parse/bluetooth-console.o
 WIFI_AUDIT_PERSISTENCE_OBJS := test_wifi_audit_persistence/test.o test_wifi_audit_persistence/persistence.o
 WIFI_AUDIT_SAVE_OBJS := test_wifi_audit_save/test.o test_wifi_audit_save/audit.o test_wifi_audit_save/persistence.o test_wifi_audit_save/clock.o
 SERIAL_NDJSON_OBJS := test_serial_ndjson_dispatch/test.o test_serial_ndjson_dispatch/bridge.o
@@ -2654,11 +2654,11 @@ test_ble_store/types.o: $(BLE_TYPES_SRC) $(BLE_TYPES_HDR) Makefile
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Icontracts -I../../../components/cyberdeck/include -MMD -MP -MF $@.d -c $< -o $@
 
-test_ble_command_parse/test.o: test_ble_command_parse.cpp contracts/cyberdeck_help.h $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h shim/lvgl.h Makefile
+test_ble_command_parse/test.o: test_ble_command_parse.cpp ../../../components/cyberdeck/include/apps/bluetooth/cyberdeck_bluetooth_console.h Makefile
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
 
-test_ble_command_parse/shell-utils.o: $(SHELL_UTILS_SRC) $(SHELL_HELP_HDR) ../../../components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h Makefile
+test_ble_command_parse/bluetooth-console.o: ../../../components/cyberdeck/src/apps/bluetooth/cyberdeck_bluetooth_console.cpp ../../../components/cyberdeck/include/apps/bluetooth/cyberdeck_bluetooth_console.h Makefile
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
 
@@ -2690,10 +2690,8 @@ test_ble_event_dispatch: $(BLE_EVENTS_BIN)
 test_ble_store: $(BLE_STORE_BIN)
 	./$(BLE_STORE_BIN)
 
-# The shell parser is already host-linkable, so this target exercises the real
-# production cyberdeck_parse_command()/cyberdeck_help_text() instead of
-# inspecting the source.  It is RED until CYBERDECK_CMD_BLUETOOTH_SEARCH and
-# CYBERDECK_CMD_BLUETOOTH_PAIRED exist and the catalog gains the bluetooth row.
+# The bluetooth command is declared by its own console application, so this
+# target exercises the real production parser/format layer against a fake port.
 test_ble_command_parse: $(BLE_COMMAND_BIN)
 	./$(BLE_COMMAND_BIN)
 
@@ -3275,6 +3273,8 @@ test: test-build
 	@$(MAKE) --no-print-directory test_ble_background_contract
 	@echo "==> Executando contrato de nomes de bonds BLE"
 	@$(MAKE) --no-print-directory test_ble_bond_name_contract
+	@echo "==> Executando testes das aplicacoes de console (manifests proprios)"
+	@$(MAKE) --no-print-directory test_console_apps
 	# Keep the known IMU contract last so unrelated task tests run first;
 	# it remains a separate, non-masked gate.
 	@echo "==> Executando contrato IMU preexistente isolado (fora do escopo)"
@@ -3283,12 +3283,145 @@ test: test-build
 test_display_memory_contract: test_display_memory_contract.py ../../../components/m5stack_tab5/src/bsp_display.c ../../../components/esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c ../../../components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp
 	$(PYTHON) test_display_memory_contract.py
 
+
+# --- Console command applications -------------------------------------------
+# One manifest per migrated shell command.  Each target links the pure console
+# layer (parsing + reply text) against a fake port, so the observable contract
+# is exercised without ESP-IDF, LVGL or the UI composition.
+CONSOLE_APPS := event_log screen battery bluetooth ssh wifi
+CONSOLE_APP_SRC_DIR := ../../../components/cyberdeck/src/apps
+CONSOLE_APP_HDR_DIR := ../../../components/cyberdeck/include/apps
+
+test_event_log_console_bin: test_event_log_console.cpp $(CONSOLE_APP_SRC_DIR)/event_log/cyberdeck_event_log_console.cpp Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_event_log_console.cpp $(CONSOLE_APP_SRC_DIR)/event_log/cyberdeck_event_log_console.cpp -o $@
+
+test_screen_console_bin: test_screen_console.cpp $(CONSOLE_APP_SRC_DIR)/screen/cyberdeck_screen_console.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_screen_console.cpp $(CONSOLE_APP_SRC_DIR)/screen/cyberdeck_screen_console.cpp ../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp -o $@
+
+test_battery_console_bin: test_battery_console.cpp $(CONSOLE_APP_SRC_DIR)/battery/cyberdeck_battery_console.cpp ../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp ../../../components/cyberdeck/src/platform/sensors/battery_status.cpp $(BATTERY_SOC_SRC) Makefile
+	$(CXX) $(CXXFLAGS) -Icontracts $(INCLUDES) test_battery_console.cpp $(CONSOLE_APP_SRC_DIR)/battery/cyberdeck_battery_console.cpp ../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp ../../../components/cyberdeck/src/platform/sensors/battery_status.cpp $(BATTERY_SOC_SRC) -o $@
+
+test_bluetooth_console_bin: test_bluetooth_console.cpp $(CONSOLE_APP_SRC_DIR)/bluetooth/cyberdeck_bluetooth_console.cpp Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_bluetooth_console.cpp $(CONSOLE_APP_SRC_DIR)/bluetooth/cyberdeck_bluetooth_console.cpp -o $@
+
+test_ssh_console_bin: test_ssh_console.cpp $(CONSOLE_APP_SRC_DIR)/ssh/cyberdeck_ssh_console.cpp $(CONSOLE_APP_SRC_DIR)/shell/cyberdeck_shell_utils.cpp Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_ssh_console.cpp $(CONSOLE_APP_SRC_DIR)/ssh/cyberdeck_ssh_console.cpp $(CONSOLE_APP_SRC_DIR)/shell/cyberdeck_shell_utils.cpp -o $@
+
+test_wifi_console_bin: test_wifi_console.cpp $(CONSOLE_APP_SRC_DIR)/wifi/cyberdeck_wifi_console.cpp Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_wifi_console.cpp $(CONSOLE_APP_SRC_DIR)/wifi/cyberdeck_wifi_console.cpp -o $@
+
+.PHONY: test_event_log_console test_screen_console test_battery_console test_bluetooth_console test_ssh_console test_wifi_console test_console_apps
+test_event_log_console: test_event_log_console_bin
+	@./test_event_log_console_bin
+test_screen_console: test_screen_console_bin
+	@./test_screen_console_bin
+test_battery_console: test_battery_console_bin
+	@./test_battery_console_bin
+test_bluetooth_console: test_bluetooth_console_bin
+	@./test_bluetooth_console_bin
+test_ssh_console: test_ssh_console_bin
+	@./test_ssh_console_bin
+test_wifi_console: test_wifi_console_bin
+	@./test_wifi_console_bin
+
+test_console_apps:
+	@$(MAKE) --no-print-directory test_event_log_console
+	@$(MAKE) --no-print-directory test_screen_console
+	@$(MAKE) --no-print-directory test_battery_console
+	@$(MAKE) --no-print-directory test_bluetooth_console
+	@$(MAKE) --no-print-directory test_ssh_console
+	@$(MAKE) --no-print-directory test_wifi_console
+	@$(MAKE) --no-print-directory test_console_dispatch
+
+test_console_dispatch/test.o: test_console_dispatch.cpp $(CONSOLE_APP_HDR_DIR)/wifi/cyberdeck_wifi_console_app.h Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_console_dispatch/wifi.o: $(CONSOLE_APP_SRC_DIR)/wifi/cyberdeck_wifi_console.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/ssh.o: $(CONSOLE_APP_SRC_DIR)/ssh/cyberdeck_ssh_console.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/bluetooth.o: $(CONSOLE_APP_SRC_DIR)/bluetooth/cyberdeck_bluetooth_console.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/battery.o: $(CONSOLE_APP_SRC_DIR)/battery/cyberdeck_battery_console.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Icontracts $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/battery_protection.o: ../../../components/cyberdeck/src/platform/sensors/cyberdeck_battery_protection.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Icontracts $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/battery_status.o: ../../../components/cyberdeck/src/platform/sensors/battery_status.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Icontracts $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/battery_soc.o: $(BATTERY_SOC_SRC) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Icontracts $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/screen.o: $(CONSOLE_APP_SRC_DIR)/screen/cyberdeck_screen_console.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/event_log.o: $(CONSOLE_APP_SRC_DIR)/event_log/cyberdeck_event_log_console.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/app_runtime.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/resource_catalog.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_resource_catalog.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/sd_package.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_sd_package.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/app_quota.o: ../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_quota.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/shell_utils.o: $(CONSOLE_APP_SRC_DIR)/shell/cyberdeck_shell_utils.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+test_console_dispatch/screen_protection.o: ../../../components/cyberdeck/src/platform/display/cyberdeck_screen_protection.cpp Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+CONSOLE_DISPATCH_OBJS := test_console_dispatch/test.o test_console_dispatch/wifi.o \
+	test_console_dispatch/ssh.o test_console_dispatch/bluetooth.o \
+	test_console_dispatch/battery.o test_console_dispatch/battery_protection.o \
+	test_console_dispatch/battery_status.o test_console_dispatch/battery_soc.o \
+	test_console_dispatch/screen.o test_console_dispatch/event_log.o \
+	test_console_dispatch/app_runtime.o test_console_dispatch/resource_catalog.o \
+	test_console_dispatch/sd_package.o test_console_dispatch/app_quota.o \
+	test_console_dispatch/shell_utils.o test_console_dispatch/screen_protection.o
+
+test_console_dispatch_bin: $(CONSOLE_DISPATCH_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CONSOLE_DISPATCH_OBJS) -o $@
+
+.PHONY: test_console_dispatch
+test_console_dispatch: test_console_dispatch_bin
+	@./test_console_dispatch_bin
+
+BINS += test_console_dispatch_bin
+BINS += test_event_log_console_bin test_screen_console_bin test_battery_console_bin test_bluetooth_console_bin test_ssh_console_bin test_wifi_console_bin
+
 clean:
 	rm -rf test_music_app test_music_duration
 	rm -f test_music_browser_bin
 	rm -rf test_music_codec_i2s_vendor
 	rm -f $(MUSIC_CODEC_I2S_BIN)
-	rm -rf test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff test_expander_broker
+	rm -rf test_console_dispatch test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff test_expander_broker
 	rm -f $(BINS) test_app_runtime_tsan test_screen_off_active_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
 	rm -rf test_keymap test_screenshot_bmp test_orientation
 	rm -rf test_screen_protection test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_guard test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_soc test_battery_view test_battery_json test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_terminal_scrollback test_wifi_survey test_recovery_policy test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_clock_formatter test_terminal_filter test_edit_line test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_line_composer .objects

@@ -26,7 +26,24 @@ def check() -> None:
     assert clean and aggregate
     music_header_visibility = "test_music_header_visibility"
     music_header_visibility_bin = music_header_visibility + "_bin"
-    assert len(bins) == len(set(bins)) == 89
+    # The inventory is derived from the wiring, never pinned: every executable a
+    # `.PHONY` wrapper runs must be cleaned through BINS, and no entry may be
+    # duplicated.  An exact count would have to be rewritten by hand whenever a
+    # target is added, which the project rules forbid.
+    assert len(bins) == len(set(bins))
+    executed = set()
+    for target in model.phony():
+        rule = model.rule_resolved(target)
+        if not rule:
+            continue
+        for line in rule["recipe"]:
+            match = re.search(r"\./(test_[A-Za-z0-9_]+_bin)\b", line)
+            if match:
+                executed.add(match.group(1))
+    assert executed, "the Makefile must expose at least one wrapper executable"
+    clean_recipe = "\n".join(clean["recipe"])
+    missing = [name for name in sorted(executed) if name not in set(bins) and name not in clean_recipe]
+    assert not missing, missing
     assert music_header_visibility_bin in bins
     assert music_header_visibility in model.phony()
     visibility_wrapper = model.rule_resolved(music_header_visibility)

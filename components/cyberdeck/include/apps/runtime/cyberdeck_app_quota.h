@@ -32,7 +32,7 @@ struct quota_usage {
 
 class quota final {
 public:
-    static constexpr std::size_t k_max_applications = 16;
+    static constexpr std::size_t k_max_applications = 20;
 
     bool reserve(std::size_t application, const quota_usage &requested);
     void revoke(std::size_t application);

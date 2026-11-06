@@ -77,7 +77,10 @@ def main() -> int:
     assert "s_wifi_ui_state" in body(ui, "cyberdeck_shell_console::line_view compose_console_line()")
     assert "service_ports::ssh_state" in rendered
     execute = body(session, "void session::execute_line(bool line_already_sent)")
-    assert "CYBERDECK_CMD_WIFI" in execute
+    # The Wi-Fi verb is declared by its own manifest now; the session keeps the
+    # SSH passthrough and the local shell in the same dispatch path.
+    assert "CYBERDECK_CMD_WIFI" not in execute
+    assert "dispatcher.resolve(line)" in execute
     assert "host_.ssh_send_data" in execute
     assert "local_shell().execute" in execute
 

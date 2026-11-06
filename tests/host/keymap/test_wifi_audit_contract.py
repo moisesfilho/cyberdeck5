@@ -19,6 +19,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+CONSOLE = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_console.cpp"
 AUDIT = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit.cpp"
 PERSISTENCE = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit_persistence.cpp"
 PERSISTENCE_HEADER = ROOT / "components/cyberdeck/include/apps/wifi/cyberdeck_wifi_audit_persistence.h"
@@ -911,16 +912,21 @@ def main() -> int:
     # The shell command switch moved to the extracted session; the UI keeps the
     # LVGL timer that drains the completion and renders the ACK.
     session = SESSION.read_text(encoding="utf-8")
-    simplified_flow = "wifi audit save" in session
-    require("wifi audit" in session, "TUI must recognize wifi audit")
+    # The wifi verbs moved to their own console application.
+    console = CONSOLE.read_text(encoding="utf-8")
+    require('verb == "audit"' in console, "the wifi console must recognize wifi audit")
+    require('verb == "audit save"' in console, "the wifi console must recognize wifi audit save")
+    require("CYBERDECK_CMD_WIFI" not in session,
+            "the migrated wifi verb must leave the session switch")
+    simplified_flow = 'verb == "audit save"' in console
     require("s_shell_app.handle_key(" in ui,
             "the UI must route the command switch through the shell application")
     if simplified_flow:
-        require("wifi audit export" not in session,
+        require("wifi audit export" not in console,
                 "simplified flow must retire the old export command")
     else:
-        require("wifi audit export" in session, "legacy TUI must recognize audit export")
-        require("confirmed" in session or "confirm" in session,
+        require("wifi audit export" in console, "legacy TUI must recognize audit export")
+        require("confirmed" in console or "confirm" in console,
                 "legacy export needs explicit confirmation")
     require(PERSISTENCE.exists(), "audit persistence implementation is missing")
     require(PERSISTENCE_HEADER.exists(), "audit persistence public header is missing")
@@ -1513,7 +1519,11 @@ def main() -> int:
     # paths.  The legacy branch keeps its old checks; the approved simplified
     # branch only hands the explicit save request to a bounded worker.
     if simplified_flow:
-        request = block_after(session, "case CYBERDECK_CMD_WIFI_AUDIT_SAVE:")
+        # The save hand-off lives in the wifi console application; the console
+        # still must not wait for persistence or touch the filesystem.
+        body = console
+        start = body.index('verb == "audit save"')
+        request = body[start:start + 400]
         require("cmd.confirmed" not in request,
                 "wifi audit save is explicit without a second confirmation verb")
         require("drain_save(" not in request and "drain_export(" not in request,

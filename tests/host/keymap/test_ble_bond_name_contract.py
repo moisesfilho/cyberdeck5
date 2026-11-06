@@ -12,6 +12,8 @@ BG = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_background.cp
 TYPES = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_types.cpp"
 STORE = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_store.cpp"
 EVENTS = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_event_dispatch.cpp"
+BLUETOOTH_CONSOLE = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_bluetooth_console.cpp"
+BLUETOOTH_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/bluetooth/cyberdeck_bluetooth_console_app.h"
 
 
 def body(source: str, signature: str) -> str:
@@ -113,15 +115,18 @@ def main() -> int:
     assert "kind=" in body(store, "std::string encode_bond")
     assert 'kind_str == "keyboard"' in body(store, "bool decode_bond")
     assert "slot.kind = kind_to_int(record.kind)" in body(mgr, "size_t ble_bonds_copy")
-    assert "item.kind = static_cast<cyberdeck_ble::device_kind>(paired_snapshots[i].kind)" in \
-        body(session, "case CYBERDECK_CMD_BLUETOOTH_PAIRED:")
-
     assert "strlcpy(slot.name, record.name.c_str(), sizeof(slot.name))" in body(mgr, "size_t ble_bonds_copy")
-    # The `bluetooth paired` command switch moved to the extracted session.
-    paired = body(session, "case CYBERDECK_CMD_BLUETOOTH_PAIRED:")
-    assert "item.name = paired_snapshots[i].name" in paired
-    assert "host_.ble_model().set_paired_devices(paired)" in paired
-    assert "host_.ble_model().begin_paired()" in paired
+    # The `bluetooth paired` command now lives in the console application, which
+    # rebuilds the bounded snapshot into the model through its port adapter.
+    console = BLUETOOTH_CONSOLE.read_text(encoding="utf-8")
+    ui_source = UI.read_text(encoding="utf-8")
+    assert "io.open_paired()" in console
+    paired = body(ui_source, "void open_paired() override")
+    assert "item.kind = static_cast<cyberdeck_ble::device_kind>(paired_snapshots[index].kind)" in paired
+    assert "item.name = paired_snapshots[index].name" in paired
+    assert "ble_model().set_paired_devices(paired)" in paired
+    assert "ble_model().begin_paired()" in paired
+    assert "copy_ble_bonds(paired_snapshots, 16)" in paired
     assert "return k_unnamed_placeholder" in body(types, "std::string display_name")
     assert "display_name(d)" in types
     assert "name=" in body(store, "std::string encode_bond")

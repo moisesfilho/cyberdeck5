@@ -8,6 +8,9 @@ ROOT = Path(__file__).resolve().parents[3]
 KCONFIG = ROOT / "components/cyberdeck/Kconfig"
 EVENT_LOG = ROOT / "components/cyberdeck/src/platform/logging/event_log.cpp"
 RECENT_HEADER = ROOT / "components/cyberdeck/include/platform/logging/event_log_recent.h"
+CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/event_log/cyberdeck_event_log_console_app.h"
+CONSOLE = ROOT / "components/cyberdeck/src/apps/event_log/cyberdeck_event_log_console.cpp"
+CONSOLE_HEADER = ROOT / "components/cyberdeck/include/apps/event_log/cyberdeck_event_log_console.h"
 SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
 
 
@@ -21,6 +24,9 @@ def main():
     event_log = EVENT_LOG.read_text(encoding="utf-8")
     recent_header = RECENT_HEADER.read_text(encoding="utf-8")
     session = SESSION.read_text(encoding="utf-8")
+    console = CONSOLE.read_text(encoding="utf-8")
+    console_app = CONSOLE_APP.read_text(encoding="utf-8")
+    console_header = CONSOLE_HEADER.read_text(encoding="utf-8")
     check(re.search(r"config\s+CYBERDECK_LOG_LINES", kconfig),
           "Kconfig must declare CYBERDECK_LOG_LINES")
     check(re.search(r"config\s+CYBERDECK_LOG_LINES[\s\S]*?default\s+20", kconfig),
@@ -35,13 +41,21 @@ def main():
           "the shared maximum-capacity alias must remain structural")
     check("constexpr size_t RECENT_CAPACITY = EVENT_LOG_RECENT_MAX_CAPACITY;" in event_log,
           "event log storage must use the 64-entry production ring")
-    check("log_lines_(CONFIG_CYBERDECK_LOG_LINES)" in session,
-          "session must initialize its override from the configured default")
-    check("host_.recent_events(log_lines_)" in session,
-          "log command must request the session's current recent-line count")
-    check("value > 64U" in session,
-          "session parser must preserve the inclusive upper bound 64")
-    print("PASS: event-log Kconfig default/range and session binding (REQ/AC)")
+    check("CONFIG_CYBERDECK_LOG_LINES" in console_header and
+          "default_window_lines = CONFIG_CYBERDECK_LOG_LINES" in console_header,
+          "the log console must initialize its window from the configured default")
+    check("window_lines = default_window_lines" in console_header,
+          "the session-scoped window must start at the configured default")
+    check("reset_session_state() override { state_ = {}; }" in console_app,
+          "a new console session must restore the configured default")
+    check("io.recent_events(current.window_lines)" in console,
+          "the log command must request the current recent-line count")
+    check("parsed > max_window_lines" in console,
+          "the log console must preserve the inclusive upper bound 64")
+    # The session owns the reset trigger, not the value.
+    check("reset_session_states()" in session,
+          "the new console must reset the session-scoped command state")
+    print("PASS: event-log Kconfig default/range and console binding (REQ/AC)")
     return 0
 
 

@@ -628,17 +628,17 @@ void dispatcher_failure_closed_contract() {
     /* Uma aplicacao que declara um comando legado e reportada como colisao,
      * e o comando legado continua pertencendo ao console. */
     cyberdeck_apps::runtime runtime;
-    command_app shadow{"test.declared", "svc2", {"wifi", "log", "demo"}};
+    command_app shadow{"test.declared", "svc2", {"clear", "pwd", "demo"}};
     check(runtime.register_application(shadow), "the shadowing app registers");
     const cyberdeck_shell_console::dispatcher dispatcher(&runtime);
     std::array<std::string_view, cyberdeck_shell_console::k_max_collisions> reported{};
     const std::size_t count = dispatcher.collisions(reported);
     check(count == 2, "both declared legacy collisions are reported");
-    check(count == 2 && reported[0] == "wifi" && reported[1] == "log",
+    check(count == 2 && reported[0] == "clear" && reported[1] == "pwd",
           "collisions are reported in manifest order");
-    check(dispatcher.resolve("wifi") == cyberdeck_shell_console::dispatch_target::console,
+    check(dispatcher.resolve("clear") == cyberdeck_shell_console::dispatch_target::console,
           "a declared legacy command is still owned by the console");
-    check(dispatcher.resolve("log") == cyberdeck_shell_console::dispatch_target::console,
+    check(dispatcher.resolve("pwd") == cyberdeck_shell_console::dispatch_target::console,
           "a second declared legacy command is still owned by the console");
     check(dispatcher.resolve("demo") == cyberdeck_shell_console::dispatch_target::supervisor,
           "a declared non-legacy command is still routed to the supervisor");
@@ -650,7 +650,7 @@ void dispatcher_failure_closed_contract() {
     static cyberdeck_apps::runtime full;
     for (std::size_t index = 0; index < cyberdeck_apps::k_max_applications; ++index) {
         bulk_id_storage[index] = "test.bulk" + std::to_string(index);
-        bulk[index] = command_app{bulk_id_storage[index], "", {"wifi", "log", "clear", "help"}};
+        bulk[index] = command_app{bulk_id_storage[index], "", {"clear", "help", "pwd", "cd"}};
         check(full.register_application(bulk[index]), "bulk application registers");
     }
     const cyberdeck_shell_console::dispatcher full_dispatcher(&full);
@@ -660,7 +660,7 @@ void dispatcher_failure_closed_contract() {
           "collision reporting stays bounded by the output array");
     check(bounded_count == cyberdeck_apps::k_max_applications * 4,
           "every declared legacy command is reported");
-    check(dispatcher.resolve("wifi") == cyberdeck_shell_console::dispatch_target::console,
+    check(dispatcher.resolve("clear") == cyberdeck_shell_console::dispatch_target::console,
           "a full registry still cannot capture a legacy command");
 }
 
@@ -697,7 +697,7 @@ void bounded_composition_contract() {
 void dispatch_contract() {
     cyberdeck_apps::runtime runtime;
     command_app service{"test.service", "svc", {"svc"}};
-    command_app legacy_shadow{"test.shadow", "wifi", {}};
+    command_app legacy_shadow{"test.shadow", "help", {}};
     command_app demo{"test.demo", "", {"demo"}};
     check(runtime.register_application(service), "service app registers");
     check(runtime.register_application(legacy_shadow), "shadowing app registers");
@@ -718,11 +718,12 @@ void dispatch_contract() {
           "a declared application command is routed to the supervisor");
     check(dispatcher.resolve("svc") == cyberdeck_shell_console::dispatch_target::supervisor,
           "the primary command is routed to the supervisor");
-    check(dispatcher.resolve("wifi") == cyberdeck_shell_console::dispatch_target::console,
+    check(dispatcher.resolve("help") == cyberdeck_shell_console::dispatch_target::console,
           "a legacy command is never captured by the supervisor");
-    for (const char *legacy : {"help", "log", "clear", "screen", "battery", "bluetooth",
-                               "ssh", "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm",
-                               "rmdir"}) {
+    /* `app` is in the catalog but belongs to the supervisor; it is asserted
+     * separately above. */
+    for (const char *legacy : {"clear", "pwd", "cd", "ls", "cat", "touch", "mkdir",
+                               "rm", "rmdir", "poweroff"}) {
         check(dispatcher.resolve(legacy) == cyberdeck_shell_console::dispatch_target::console,
               "every legacy command stays with the console");
     }
@@ -748,14 +749,20 @@ void dispatch_contract() {
     std::array<std::string_view, cyberdeck_shell_console::k_max_collisions> collisions{};
     const std::size_t count = dispatcher.collisions(collisions);
     check(count == 0, "a primary legacy name is not reported as a declared collision");
-    check(dispatcher.resolve("wifi") == cyberdeck_shell_console::dispatch_target::console,
+    check(dispatcher.resolve("help") == cyberdeck_shell_console::dispatch_target::console,
           "a shadowing primary command is still never routed to the supervisor");
 
     /* A reserva vem do catalogo de ajuda, entao nao pode divergir dele. */
     check(cyberdeck_shell_console::is_legacy_command("app"),
           "app is a legacy catalog entry");
-    check(cyberdeck_shell_console::is_legacy_command("bluetooth"),
-          "bluetooth is a legacy catalog entry");
+    check(!cyberdeck_shell_console::is_legacy_command("bluetooth"),
+          "a migrated command is published by its manifest, not the catalog");
+    check(!cyberdeck_shell_console::is_legacy_command("wifi") &&
+              !cyberdeck_shell_console::is_legacy_command("log") &&
+              !cyberdeck_shell_console::is_legacy_command("screen") &&
+              !cyberdeck_shell_console::is_legacy_command("battery") &&
+              !cyberdeck_shell_console::is_legacy_command("ssh"),
+          "every migrated command left the legacy reservation");
     check(!cyberdeck_shell_console::is_legacy_command("demo"),
           "a new command is not legacy until the catalog declares it");
     check(!cyberdeck_shell_console::is_legacy_command(""),

@@ -26,6 +26,8 @@ compiladas, incluindo um cliente SSH interativo. As camadas do cyberdeck5 são
 - Sem sistema de plugins, apps instaláveis, WASM ou desktop
 - Apps compiladas contra manifesto/runtime bounded; loader dinâmico e ELF estão
   fora do escopo
+- `wifi`, `ssh`, `bluetooth`, `battery`, `screen` e `log` são aplicações de
+  comando com manifesto próprio, despachadas pelo supervisor do runtime
 
 ## Requisitos
 

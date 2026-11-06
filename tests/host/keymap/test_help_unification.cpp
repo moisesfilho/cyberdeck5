@@ -196,15 +196,16 @@ void test_catalog_is_complete_and_unique()
 
     const std::vector<help_block> actual_blocks = split_blocks(actual);
     const std::vector<help_block> expected_blocks = split_blocks(expected);
-    CHECK(actual_blocks.size() == 18);
-    CHECK(expected_blocks.size() == 18);
+    CHECK(actual_blocks.size() == 12);
+    CHECK(expected_blocks.size() == 12);
 
     const std::vector<std::string> actual_lines = split_lines(actual);
-    CHECK(actual_lines.size() == 65);
+    CHECK(actual_lines.size() == 38);
 
+    /* The six commands migrated to their own manifests are published as [app]
+     * rows by the supervisor, never by this catalog. */
     static const char *const kCommands[] = {
-        "help", "wifi", "log", "clear", "screen", "battery", "bluetooth", "app",
-        "ssh", "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm", "rmdir", "poweroff",
+        "help", "clear", "app", "pwd", "cd", "ls", "cat", "touch", "mkdir", "rm", "rmdir", "poweroff",
     };
 
     for (std::size_t index = 0; index < actual_blocks.size(); ++index) {

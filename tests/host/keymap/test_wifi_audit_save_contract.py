@@ -16,6 +16,7 @@ SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp"
 SHELL_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+CONSOLE = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_console.cpp"
 SESSION_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_session.h"
 AUDIT = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit.cpp"
 PERSISTENCE = ROOT / "components/cyberdeck/src/apps/wifi/cyberdeck_wifi_audit_persistence.cpp"
@@ -90,19 +91,26 @@ def first_index_any(body: str, tokens: tuple[str, ...]) -> int:
     return min(positions) if positions else -1
 
 
-def check_parser(shell: str, audit: str, header: str) -> None:
-    shell_body = without_comments(function_body(shell, "cyberdeck_cmd_t cyberdeck_parse_command("))
+def check_parser(shell: str, audit: str, header: str, console: str) -> None:
     audit_body = without_comments(function_body(audit, "command_line parse_command("))
-    for body, name in ((shell_body, "shell"), (audit_body, "audit")):
-        require('"wifi audit save"' in body,
-                f"{name} parser must recognize the explicit save command")
-        require('"wifi audit export"' not in body,
-                f"{name} parser must not retain the retired export command")
-        require('"wifi audit"' in body,
-                f"{name} parser must retain the ordinary audit command")
-    require("CYBERDECK_CMD_WIFI_AUDIT_SAVE" in header or
-            "CYBERDECK_CMD_WIFI_AUDIT" in header,
-            "shell enum must expose a distinct save/audit command contract")
+    require('"wifi audit save"' in audit_body,
+            "the audit controller parser must recognize the explicit save command")
+    require('"wifi audit export"' not in audit_body,
+            "the audit controller parser must not retain the retired export command")
+    require('"wifi audit"' in audit_body,
+            "the audit controller parser must retain the ordinary audit command")
+
+    shell_body = without_comments(function_body(shell, "cyberdeck_cmd_t cyberdeck_parse_command("))
+    require("wifi" not in shell_body,
+            "the migrated wifi verb must leave the legacy shell parser")
+
+    console_body = without_comments(console)
+    require('verb == "audit"' in console_body,
+            "the wifi console must retain the ordinary audit command")
+    require('verb == "audit save"' in console_body,
+            "the wifi console must recognize the explicit save command")
+    require('"wifi audit export"' not in console_body,
+            "the wifi console must not resurrect the retired export command")
 
 
 def check_direct_render(audit: str) -> None:
@@ -130,8 +138,10 @@ def check_direct_render(audit: str) -> None:
             "error rendering must expose a status-only error path")
 
 
-def check_standard_flow_has_no_io(session: str) -> None:
-    branch = block_after(session, "case CYBERDECK_CMD_WIFI_AUDIT:")
+def check_standard_flow_has_no_io(console: str) -> None:
+    """The ordinary audit request lives in the wifi console application."""
+    body = without_comments(console)
+    branch = body[body.index('verb == "audit"'):body.index('verb == "audit save"')]
     require_absent(
         branch,
         ("enqueue_export", "enqueue_save", "export_file", "open_exclusive",
@@ -139,25 +149,26 @@ def check_standard_flow_has_no_io(session: str) -> None:
         "ordinary wifi audit must not perform persistence or filesystem I/O")
     require("drain_export" not in branch and "drain_save" not in branch,
             "ordinary wifi audit must not wait for or drain a save completion")
-    require_absent(branch, ("append_output_line", "render_terminal"),
-                   "the audit command must not publish the collecting snapshot; "
-                   "the LVGL timer is the sole state-to-output gate")
-    require("wifi_audit_begin()" in branch,
-            "the audit command must start a versioned audit request through the host port")
+    require("io.audit_begin()" in branch,
+            "the audit command must start a versioned audit request through the port")
+    require("return {};" in branch,
+            "the ordinary audit command must publish nothing; the LVGL timer is the "
+            "sole state-to-output gate")
 
 
-def check_save_flow_is_explicit(session: str) -> None:
-    save_branch = block_after(session, "case CYBERDECK_CMD_WIFI_AUDIT_SAVE:")
-    require(first_index_any(save_branch, ("wifi_audit_save", "enqueue_save",
-                                         "enqueue_export", "save_audit")) >= 0,
-            "wifi audit save must hand off to the explicit save worker")
+def check_save_flow_is_explicit(console: str) -> None:
+    body = without_comments(console)
+    start = body.index('verb == "audit save"')
+    save_branch = body[start:start + 400]
+    require("io.audit_save()" in save_branch,
+            "wifi audit save must hand off to the explicit save worker through the port")
     require("drain_save" not in save_branch and "drain_export" not in save_branch,
             "the command path must not synchronously wait for persistence")
     require_absent(
         save_branch,
         ("open_exclusive", "write_all", "fsync", "rename(", "export_file("),
-        "the UI save command must remain a non-blocking hand-off")
-    require("wifi audit save" in save_branch or "wifi audit saved" in save_branch,
+        "the console save command must remain a non-blocking hand-off")
+    require("wifi audit save requested" in save_branch and "wifi audit save unavailable" in save_branch,
             "save branch must retain the user-visible save command contract")
 
 
@@ -320,6 +331,7 @@ def main() -> int:
     header = SHELL_HEADER.read_text(encoding="utf-8")
     ui = UI.read_text(encoding="utf-8")
     session = SESSION.read_text(encoding="utf-8")
+    console = CONSOLE.read_text(encoding="utf-8")
     audit = AUDIT.read_text(encoding="utf-8")
     persistence = PERSISTENCE.read_text(encoding="utf-8")
     persistence_header = PERSISTENCE_HEADER.read_text(encoding="utf-8")
@@ -330,10 +342,10 @@ def main() -> int:
             "the UI facade must include the extracted shell session")
     require("class session" in SESSION_HEADER.read_text(encoding="utf-8"),
             "the session header must declare the host-testable session seam")
-    check_parser(shell, audit, header)
+    check_parser(shell, audit, header, console)
     check_direct_render(audit)
-    check_standard_flow_has_no_io(session)
-    check_save_flow_is_explicit(session)
+    check_standard_flow_has_no_io(console)
+    check_save_flow_is_explicit(console)
     check_process_wifi_audit_state_gate(ui)
     check_directory_timestamp_and_collision(ui + "\n" + session, audit, persistence)
     check_ack_order(ui, persistence)

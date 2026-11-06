@@ -30,16 +30,10 @@ inline constexpr std::size_t formatted_entry_size(const entry &item)
            kEntrySeparator.size() + item.description.size() + 1 + item.parameters.size();
 }
 
-inline constexpr std::array<entry, 18> kCatalog = {{
+inline constexpr std::array<entry, 12> kCatalog = {{
     {"help", "help", "show this help", ""},
-    {"wifi", "wifi [search|saved|audit|survey]", "manage Wi-Fi, passively survey networks, and explicitly export results", "  search: scan for networks\n  saved: manage saved networks\n  audit: inspect or export Wi-Fi audit results\n  survey: run a passive survey\n"},
-    {"log", "log [lines <1-64>]", "show recent events", "  lines <1-64>: set the number of recent events\n"},
     {"clear", "clear", "clear the terminal", ""},
-    {"screen", "screen [on|off|timeout <0-1440>]", "control screen protection", "  on|off: enable or disable screen protection\n  timeout <0-1440>: set inactivity timeout in minutes; 0 disables it\n"},
-    {"battery", "battery [protection on|off|status]", "show or control battery protection", "  protection on: enable battery protection\n  protection off: disable battery protection\n  protection status: show current protection status\n"},
-    {"bluetooth", "bluetooth [search|paired]", "search for or list paired Bluetooth devices", "  search: find nearby devices\n  paired: list paired devices\n"},
     {"app", "app [list|info|start|stop] [id]", "manage compiled-in applications", "  list: list registered applications\n  info <id>: show application details\n  start <id>: start an application\n  stop <id>: stop an application\n"},
-    {"ssh", "ssh [user@]host[:port]", "start an SSH session", "  [user@]: optional login name\n  host: remote host name or address\n  [:port]: optional port (default 22)\n"},
     {"pwd", "pwd", "print working directory", ""},
     {"cd", "cd [path]", "change working directory", "  [path]: destination (default home directory)\n"},
     {"ls", "ls [-a] [path]", "list directory contents", "  [-a]: include hidden entries\n  [path]: directory to list (default current directory)\n"},

@@ -38,6 +38,14 @@ idf_component_register(
         "src/apps/shell/cyberdeck_local_shell.cpp"
         "src/apps/shell/cyberdeck_vfs_namespace.cpp"
         "src/apps/shell/cyberdeck_cat_worker.cpp"
+        # Console command applications: pure parsing/formatting per command,
+        # host-testable, with the platform side behind a narrow port.
+        "src/apps/event_log/cyberdeck_event_log_console.cpp"
+        "src/apps/screen/cyberdeck_screen_console.cpp"
+        "src/apps/battery/cyberdeck_battery_console.cpp"
+        "src/apps/bluetooth/cyberdeck_bluetooth_console.cpp"
+        "src/apps/ssh/cyberdeck_ssh_console.cpp"
+        "src/apps/wifi/cyberdeck_wifi_console.cpp"
          "src/apps/runtime/cyberdeck_app_runtime.cpp"
          "src/apps/runtime/cyberdeck_resource_catalog.cpp"
          "src/apps/runtime/cyberdeck_sd_package.cpp"

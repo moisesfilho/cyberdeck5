@@ -37,6 +37,8 @@ SHELL_TEST = ROOT / "tests/host/keymap/test_shell_utils.cpp"
 HELP_TEST = ROOT / "tests/host/keymap/test_help_unification.cpp"
 SERIAL_TEST = ROOT / "tests/host/keymap/test_serial_ndjson_dispatch.cpp"
 SCREEN_TEST_FILE = ROOT / "tests/host/keymap/test_screen_protection.cpp"
+SCREEN_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/screen/cyberdeck_screen_console_app.h"
+SCREEN_CONSOLE_TEST = ROOT / "tests/host/keymap/test_screen_console.cpp"
 
 # The screen command is documented by the shared help catalog.  These are the
 # exact approved strings: the usage literal carries the whole subcommand set
@@ -162,129 +164,101 @@ def check_pure_contract(state_source: str, state_header: str, component: str) ->
 
 
 def check_command_parser(shell: str, header: str) -> None:
-    for token in (
-        "CYBERDECK_CMD_SCREEN_ON",
-        "CYBERDECK_CMD_SCREEN_OFF",
-        "CYBERDECK_CMD_SCREEN_TIMEOUT",
-    ):
-        require(token in header, f"shell command enum must expose {token}")
+    """The screen verbs moved to their own application manifest.
+
+    The legacy parser no longer owns them; what must survive is the strict
+    parser boundary (0..1440), the manifest command declaration and the
+    behavioral coverage in the console application test.
+    """
+    console_app = strip_comments(SCREEN_CONSOLE_APP.read_text(encoding="utf-8"))
+    console_test = strip_comments(SCREEN_CONSOLE_TEST.read_text(encoding="utf-8"))
+
+    require('"screen"' in console_app,
+            "the screen console manifest must declare the screen command")
+    require(SCREEN_HELP_USAGE in console_app,
+            "the screen console manifest must publish the approved usage")
+    require("timeout" in console_test and "1440" in console_test,
+            "host console tests must cover the timeout boundaries")
 
     parser = function_body(shell, "cyberdeck_cmd_t cyberdeck_parse_command(")
-    for literal in ('"screen on"', '"screen off"', '"screen timeout"'):
-        require(literal in parser,
-                f"command parser must recognize {literal}")
-    require("CYBERDECK_CMD_SCREEN_ON" in parser and
-            "CYBERDECK_CMD_SCREEN_OFF" in parser and
-            "CYBERDECK_CMD_SCREEN_TIMEOUT" in parser,
-            "command parser must route all screen commands")
-    require("cmd.args" in parser,
-            "screen timeout must forward its operand to the strict parser")
+    for migrated in ("CYBERDECK_CMD_SCREEN_ON", "CYBERDECK_CMD_SCREEN_OFF",
+                     "CYBERDECK_CMD_SCREEN_TIMEOUT"):
+        require(migrated not in parser,
+                f"a migrated command must leave the legacy parser: {migrated}")
 
     help_text = function_body(shell, "std::string cyberdeck_help_text()")
     require("cyberdeck_shell_help::text()" in help_text,
             "help must render the shared catalog instead of a local literal list")
 
-    test_source = strip_comments(SHELL_TEST.read_text(encoding="utf-8"))
-    require("CYBERDECK_CMD_SCREEN_ON" in test_source and
-            "CYBERDECK_CMD_SCREEN_OFF" in test_source and
-            "CYBERDECK_CMD_SCREEN_TIMEOUT" in test_source,
-            "host shell tests must cover all screen command routes")
-    # The rendered help row is asserted by check_shared_help_catalog(), which
-    # matches the whole row ("<usage> - <description>").  The previous check here
-    # required the usage with a closing quote, a form no test source can contain.
-    require(SCREEN_HELP_LINE in test_source,
-            "host shell help contract must include the screen command")
-
 
 def check_shared_help_catalog(help_header: str, help_fixture: str, shell: str,
                               shell_test: str, help_test: str) -> None:
-    """The screen row must live in the one shared catalog, reached by delegation.
+    """The screen row moved from the legacy catalog to the application manifest.
 
-    The adapter used to inline the help rows.  It now delegates to
-    cyberdeck_shell_help::text(), so the screen usage/range literal is only
-    observable in the shared header, in the host fixture, and in the behavioral
-    tests that compare production output byte for byte.  Requiring all four is
-    what keeps the screen command documented after the catalog refactor.
+    The single source of the usage/parameters text is now the console manifest;
+    the legacy catalog must not publish a second copy, and the console test keeps
+    the byte-for-byte behavioral oracle.
     """
+    console_app = strip_comments(SCREEN_CONSOLE_APP.read_text(encoding="utf-8"))
+    console_test = strip_comments(SCREEN_CONSOLE_TEST.read_text(encoding="utf-8"))
+
     rows = catalog_rows(help_header)
     screen_rows = [row for row in rows if re.match(r'\{"screen"', row)]
-    require(len(screen_rows) == 1,
-            "shared help catalog must carry exactly one screen row, "
+    require(len(screen_rows) == 0,
+            "the legacy help catalog must not keep a migrated screen row, "
             f"found {len(screen_rows)}")
-    require(any(SCREEN_CATALOG_ROW.fullmatch(row) for row in screen_rows),
-            f"shared help catalog must contain the approved screen row {screen_rows}")
-    require(help_header.count(SCREEN_HELP_USAGE) == 1,
-            "screen usage/range literal must appear once in the shared catalog")
-    require(help_header.count(SCREEN_HELP_DESCRIPTION) == 1,
-            "screen description must appear once in the shared catalog")
-
-    # The catalog header is the single source: the adapter may only carry the
-    # compile-time description guard, never its own renderable copy.
+    require(console_app.count(SCREEN_HELP_USAGE) == 1,
+            "the screen usage/range literal must appear once in the manifest")
+    require(console_app.count(SCREEN_HELP_DESCRIPTION) == 1,
+            "the screen description must appear once in the manifest")
     require(SCREEN_HELP_USAGE not in shell,
             "shell_utils.cpp must not re-declare the screen help usage literal")
-    require(shell.count(SCREEN_HELP_DESCRIPTION) == 1,
-            "shell_utils.cpp must reference the screen description only in the "
-            "compile-time catalog guard")
-    require('#include "apps/shell/cyberdeck_shell_help.h"' in shell,
-            "shell_utils.cpp must include the shared help catalog header")
+    require(SCREEN_HELP_DESCRIPTION not in shell,
+            "shell_utils.cpp must not keep a renderable copy of the screen row")
+    require("screen timeout" in console_test and "unable to persist" in console_test,
+            "the console test must cover the persistence failure path")
+
     help_text = function_body(shell, "std::string cyberdeck_help_text()")
     require("cyberdeck_shell_help::text()" in help_text,
             "cyberdeck_help_text() must delegate to cyberdeck_shell_help::text()")
     require(help_text.count("return") == 1,
             "cyberdeck_help_text() must only return the shared catalog text")
 
-    # The host fixture is the behavioral oracle: the exact rendered row must be
-    # present once, so the byte-for-byte comparison can detect any drift.
-    require(help_fixture.count(SCREEN_HELP_LINE) == 1,
-            "host help fixture must contain the approved screen row exactly once")
-    require(help_fixture.count(SCREEN_HELP_USAGE) == 1,
-            "screen usage/range literal must appear once in the host help fixture")
-
-    # Both behavioral executables must compare production output against that
-    # fixture; a fixture without them would not protect the rendered catalog.
     for source, label in ((shell_test, "test_shell_utils.cpp"),
                           (help_test, "test_help_unification.cpp")):
         require("kUnifiedHelpText" in source,
                 f"{label} must compare against the shared help fixture")
         require("cyberdeck_help_text()" in source,
                 f"{label} must exercise the production help entry point")
-    require(SCREEN_HELP_LINE in shell_test,
-            "test_shell_utils.cpp must assert the exact screen help row")
 
 
 def check_ui_routing(ui: str, session: str) -> None:
-    # The command switch now lives in the extracted session, reached through
-    # the foreground shell application that owns the console.
+    """The screen branch moved out of the session switch into the manifest app.
+
+    The session must keep routing declared commands to the supervisor, and the
+    application must reach the platform only through its own port.
+    """
     execute = function_body(session, "void session::execute_line(")
-    require("s_shell_app.handle_key(" in ui,
-            "UI must route line submission through the shell application")
-    require("CYBERDECK_CMD_SCREEN_ON" in execute and
-            "CYBERDECK_CMD_SCREEN_OFF" in execute and
-            "CYBERDECK_CMD_SCREEN_TIMEOUT" in execute,
-            "session command switch must route all screen commands")
+    require("dispatcher.resolve(line) == cyberdeck_shell_console::dispatch_target::supervisor"
+            in execute,
+            "the session must route declared application commands to the supervisor")
+    for migrated in ("CYBERDECK_CMD_SCREEN_ON", "CYBERDECK_CMD_SCREEN_OFF",
+                     "CYBERDECK_CMD_SCREEN_TIMEOUT"):
+        require(migrated not in execute,
+                f"the session must not keep the migrated branch {migrated}")
 
-    # The session reaches the screen through the host port; the UI host
-    # implementation is the single place that calls the real adapter.
-    on_case = switch_case(execute, "case CYBERDECK_CMD_SCREEN_ON:")
-    require("host_.screen_turn_on()" in on_case,
-            "screen on must go through the screen port")
-
-    off_case = switch_case(execute, "case CYBERDECK_CMD_SCREEN_OFF:")
-    require("host_.screen_turn_off()" in off_case,
-            "screen off must go through the screen port")
-
-    timeout_case = switch_case(execute, "case CYBERDECK_CMD_SCREEN_TIMEOUT:")
-    require("parse_timeout_minutes" in timeout_case,
-            "UI must validate timeout through the pure strict parser")
-    require("host_.screen_set_timeout_minutes(" in timeout_case,
-            "a valid timeout must go through the screen port")
-    require_before(timeout_case, "parse_timeout_minutes",
-                   "host_.screen_set_timeout_minutes",
-                   "timeout must be parsed before it mutates screen state")
-    require("append_output_line" in timeout_case,
-            "timeout command must report validation/persistence outcome")
-    require("nvs_" not in timeout_case,
-            "UI command handling must not perform NVS I/O directly")
+    console = strip_comments(
+        (ROOT / "components/cyberdeck/src/apps/screen/cyberdeck_screen_console.cpp").read_text(encoding="utf-8"))
+    require("io.turn_on()" in console and "io.turn_off()" in console,
+            "screen on/off must go through the console port")
+    require("parse_timeout_minutes" in console,
+            "the timeout must be validated through the pure strict parser")
+    require("io.set_timeout_minutes(" in console,
+            "a valid timeout must go through the console port")
+    require(console.index("parse_timeout_minutes") < console.index("io.set_timeout_minutes("),
+            "timeout must be parsed before it mutates screen state")
+    require("nvs_" not in console,
+            "console command handling must not perform NVS I/O directly")
 
 
 def check_adapter(screen: str, header: str, ui: str, app: str, component: str) -> None:

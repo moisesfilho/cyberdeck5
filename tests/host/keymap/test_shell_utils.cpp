@@ -458,24 +458,15 @@ void test_encode_ssh_key_modifier_scope_and_bounds()
 
 void test_parse_command_routing()
 {
-    // Standard commands
     cyberdeck_cmd_t cmd = cyberdeck_parse_command("help");
     CHECK(cmd.type == CYBERDECK_CMD_HELP);
 
     cmd = cyberdeck_parse_command("clear");
     CHECK(cmd.type == CYBERDECK_CMD_CLEAR);
 
-    cmd = cyberdeck_parse_command("wifi");
-    CHECK(cmd.type == CYBERDECK_CMD_WIFI);
-
-    cmd = cyberdeck_parse_command("wifi search");
-    CHECK(cmd.type == CYBERDECK_CMD_WIFI_SEARCH);
-
-    cmd = cyberdeck_parse_command("wifi saved");
-    CHECK(cmd.type == CYBERDECK_CMD_WIFI_SAVED);
-
-    cmd = cyberdeck_parse_command("log");
-    CHECK(cmd.type == CYBERDECK_CMD_LOG);
+    cmd = cyberdeck_parse_command("app");
+    CHECK(cmd.type == CYBERDECK_CMD_APP);
+    CHECK(cmd.args.empty());
 
     cmd = cyberdeck_parse_command("app list");
     CHECK(cmd.type == CYBERDECK_CMD_APP);
@@ -483,23 +474,6 @@ void test_parse_command_routing()
 
     cmd = cyberdeck_parse_command("appx");
     CHECK(cmd.type == CYBERDECK_CMD_UNKNOWN);
-
-    // SSH command variants
-    cmd = cyberdeck_parse_command("ssh");
-    CHECK(cmd.type == CYBERDECK_CMD_SSH);
-    CHECK(cmd.args.empty());
-
-    cmd = cyberdeck_parse_command("ssh user@host:22");
-    CHECK(cmd.type == CYBERDECK_CMD_SSH);
-    CHECK_EQ(cmd.args, "user@host:22");
-
-    cmd = cyberdeck_parse_command("   ssh   10.0.0.1   ");
-    CHECK(cmd.type == CYBERDECK_CMD_SSH);
-    CHECK_EQ(cmd.args, "10.0.0.1");
-
-    cmd = cyberdeck_parse_command("ssh\tsomehost");
-    CHECK(cmd.type == CYBERDECK_CMD_SSH);
-    CHECK_EQ(cmd.args, "somehost");
 
     // Empty and unknown commands
     cmd = cyberdeck_parse_command("");
@@ -515,8 +489,11 @@ void test_parse_command_routing()
     CHECK(cmd.type == CYBERDECK_CMD_UNKNOWN);
     CHECK_EQ(cmd.args, "unknown_cmd");
 
-    cmd = cyberdeck_parse_command("sshd");
-    CHECK(cmd.type == CYBERDECK_CMD_UNKNOWN);
+    // The migrated verbs belong to their manifests and never reach this parser.
+    for (const char *migrated : {"wifi", "log", "screen on", "battery protection status",
+                                 "bluetooth search", "ssh"}) {
+        CHECK(cyberdeck_parse_command(migrated).type == CYBERDECK_CMD_UNKNOWN);
+    }
 }
 
 void test_parse_command_whitespace_and_exact_match()
@@ -526,200 +503,39 @@ void test_parse_command_whitespace_and_exact_match()
     CHECK(cyberdeck_parse_command("\thelp").type == CYBERDECK_CMD_HELP);
     CHECK(cyberdeck_parse_command("  help\t").type == CYBERDECK_CMD_HELP);
     CHECK(cyberdeck_parse_command("clear\r\n").type == CYBERDECK_CMD_CLEAR);
-    CHECK(cyberdeck_parse_command("wifi\t ").type == CYBERDECK_CMD_WIFI);
-    CHECK(cyberdeck_parse_command("log\r\n").type == CYBERDECK_CMD_LOG);
+    CHECK(cyberdeck_parse_command("app\r\n").type == CYBERDECK_CMD_APP);
 
     // Match exato: case e sufixos tornam o comando desconhecido.
     CHECK(cyberdeck_parse_command("HELP").type == CYBERDECK_CMD_UNKNOWN);
     CHECK(cyberdeck_parse_command("Help").type == CYBERDECK_CMD_UNKNOWN);
     CHECK(cyberdeck_parse_command("help me").type == CYBERDECK_CMD_UNKNOWN);
     CHECK(cyberdeck_parse_command("clear all").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("wifi on").type == CYBERDECK_CMD_UNKNOWN);
 
     // Leading \r ou \n nao sao espaco/tab de prefixo -> viram UNKNOWN
     CHECK(cyberdeck_parse_command("\nhelp").type == CYBERDECK_CMD_UNKNOWN);
     CHECK(cyberdeck_parse_command("\rhelp").type == CYBERDECK_CMD_UNKNOWN);
 
-    // "ssh" aceita apenas espaco/tab como separador do alvo; "ssh " sem
-    // argumentos e SSH com args vazio (nao UNKNOWN).
-    cyberdeck_cmd_t cmd = cyberdeck_parse_command("ssh ");
-    CHECK(cmd.type == CYBERDECK_CMD_SSH);
-    CHECK(cmd.args.empty());
-
-    cmd = cyberdeck_parse_command("  ssh\t\t");
-    CHECK(cmd.type == CYBERDECK_CMD_SSH);
-    CHECK(cmd.args.empty());
-
-    cmd = cyberdeck_parse_command("ssh\tuser@host:22");
-    CHECK(cmd.type == CYBERDECK_CMD_SSH);
-    CHECK_EQ(cmd.args, "user@host:22");
-
-    // "ssh" colado a outro caractere nao e o verbo ssh (contrato do separador).
-    cmd = cyberdeck_parse_command("ssh:host");
-    CHECK(cmd.type == CYBERDECK_CMD_UNKNOWN);
-    CHECK_EQ(cmd.args, "ssh:host");
-
-    cmd = cyberdeck_parse_command("ssh-host");
-    CHECK(cmd.type == CYBERDECK_CMD_UNKNOWN);
-
     // Args de comando desconhecido preservam a cauda apos trim de bordas.
-    cmd = cyberdeck_parse_command("  foo bar  ");
+    cyberdeck_cmd_t cmd = cyberdeck_parse_command("  foo bar  ");
     CHECK(cmd.type == CYBERDECK_CMD_UNKNOWN);
     CHECK_EQ(cmd.args, "foo bar");
 }
 
-void test_parse_log_lines_forms()
-{
-    cyberdeck_cmd_t cmd = cyberdeck_parse_command("log lines");
-    CHECK(cmd.type == CYBERDECK_CMD_LOG);
-    CHECK_EQ(cmd.args, "lines");
-
-    cmd = cyberdeck_parse_command("log lines 1");
-    CHECK(cmd.type == CYBERDECK_CMD_LOG);
-    CHECK_EQ(cmd.args, "lines 1");
-
-    cmd = cyberdeck_parse_command("log lines 64");
-    CHECK(cmd.type == CYBERDECK_CMD_LOG);
-    CHECK_EQ(cmd.args, "lines 64");
-
-    for (const char *text : {"log lines 0", "log lines 65", "log lines nope",
-                             "log lines 4 extra"}) {
-        cmd = cyberdeck_parse_command(text);
-        CHECK(cmd.type == CYBERDECK_CMD_LOG);
-    }
-}
-
-void test_parse_wifi_audit_save_command()
-{
-    // wifi audit is display-only; persistence is opted into with the separate
-    // save verb and no retired export confirmation syntax.
-    cyberdeck_cmd_t standard = cyberdeck_parse_command("wifi audit");
-    CHECK(standard.type == CYBERDECK_CMD_WIFI_AUDIT);
-    CHECK(!standard.confirmed);
-
-    cyberdeck_cmd_t save = cyberdeck_parse_command("wifi audit save");
-    CHECK(save.type != CYBERDECK_CMD_EMPTY);
-    CHECK(save.type != CYBERDECK_CMD_UNKNOWN);
-    CHECK(save.type != CYBERDECK_CMD_WIFI_AUDIT);
-    CHECK(!save.confirmed);
-
-    CHECK(cyberdeck_parse_command("wifi audit export").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("wifi audit export confirm").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("wifi audit save confirm").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("wifi audit save /sdcard/wifi-audit.txt").type ==
-          CYBERDECK_CMD_UNKNOWN);
-}
-
-void test_parse_screen_commands()
-{
-    cyberdeck_cmd_t on = cyberdeck_parse_command("screen on");
-    CHECK(on.type == CYBERDECK_CMD_SCREEN_ON);
-    CHECK(on.args.empty());
-
-    cyberdeck_cmd_t off = cyberdeck_parse_command(" screen\toff\r\n");
-    CHECK(off.type == CYBERDECK_CMD_SCREEN_OFF);
-    CHECK(off.args.empty());
-
-    cyberdeck_cmd_t timeout = cyberdeck_parse_command("screen timeout 0");
-    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
-    CHECK_EQ(timeout.args, "0");
-
-    timeout = cyberdeck_parse_command("  screen\t timeout \t 1440  ");
-    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
-    CHECK_EQ(timeout.args, "1440");
-
-    // Missing/invalid operands remain routed to the timeout command so the UI
-    // can return one deterministic usage/range error via the pure parser.
-    timeout = cyberdeck_parse_command("screen timeout");
-    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
-    CHECK(timeout.args.empty());
-    timeout = cyberdeck_parse_command("screen timeout -1");
-    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
-    CHECK_EQ(timeout.args, "-1");
-    timeout = cyberdeck_parse_command("screen timeout 1441");
-    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
-    CHECK_EQ(timeout.args, "1441");
-    timeout = cyberdeck_parse_command("screen timeout abc");
-    CHECK(timeout.type == CYBERDECK_CMD_SCREEN_TIMEOUT);
-    CHECK_EQ(timeout.args, "abc");
-
-    CHECK(cyberdeck_parse_command("screen").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("screen on now").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("screen off now").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("screen timeout 1 2").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("Screen on").type == CYBERDECK_CMD_UNKNOWN);
-}
-
-void test_parse_battery_protection_commands()
-{
-    const cyberdeck_cmd_t on = cyberdeck_parse_command("battery protection on");
-    CHECK(on.type == CYBERDECK_CMD_BATTERY_PROTECTION_ON);
-    CHECK(on.args.empty());
-
-    const cyberdeck_cmd_t off = cyberdeck_parse_command("  battery\t protection \t off\r\n");
-    CHECK(off.type == CYBERDECK_CMD_BATTERY_PROTECTION_OFF);
-    CHECK(off.args.empty());
-
-    const cyberdeck_cmd_t status = cyberdeck_parse_command("battery protection status");
-    CHECK(status.type == CYBERDECK_CMD_BATTERY_PROTECTION_STATUS);
-    CHECK(status.args.empty());
-
-    CHECK(cyberdeck_parse_command("battery").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("battery protection").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("battery protection maybe").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("battery protection on now").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("Battery protection on").type == CYBERDECK_CMD_UNKNOWN);
-}
-
-void test_parse_command_ssh_verb_contract()
-{
-    // "ssh" como prefixo exige separador; o verbo sozinho e SSH sem args.
-    CHECK(cyberdeck_parse_command("ssh").type == CYBERDECK_CMD_SSH);
-    CHECK(cyberdeck_parse_command("ssh ").type == CYBERDECK_CMD_SSH);
-    CHECK(cyberdeck_parse_command("ssh\t").type == CYBERDECK_CMD_SSH);
-    CHECK(cyberdeck_parse_command("ssh\r\n").type == CYBERDECK_CMD_SSH);
-    CHECK(cyberdeck_parse_command("ssh  \t ").type == CYBERDECK_CMD_SSH);
-    CHECK(cyberdeck_parse_command("ssh\n").type == CYBERDECK_CMD_SSH);
-
-    // "ssh" com apenas whitespace nao tem args (leva ao usage no fluxo CMD4).
-    CHECK(cyberdeck_parse_command("ssh ").args.empty());
-    CHECK(cyberdeck_parse_command("ssh\t").args.empty());
-    CHECK(cyberdeck_parse_command("ssh  \t ").args.empty());
-    CHECK(cyberdeck_parse_command("ssh\r\n").args.empty());
-
-    // "ssh" colado a pontuacao/nome de comando continua UNKNOWN.
-    CHECK(cyberdeck_parse_command("sshd").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("ssh+extra").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("ssh.").type == CYBERDECK_CMD_UNKNOWN);
-    CHECK(cyberdeck_parse_command("ssh/help").type == CYBERDECK_CMD_UNKNOWN);
-}
-
 void test_parse_command_to_ssh_target_pipeline()
 {
-    // Espelha o fluxo do terminal TUI unificado: shell_command_clicked()
-    // encaminha cmd.args ao parse_ssh_target (CMD4-CMD7 do roteiro manual).
-
-    // CMD4: ssh sem args -> usage (parse_ssh_target rejeita string vazia).
-    {
-        std::string user = "CANARY_U", host = "CANARY_H";
-        int port = -999;
-        cyberdeck_cmd_t cmd = cyberdeck_parse_command("ssh ");
-        CHECK(cmd.type == CYBERDECK_CMD_SSH);
-        CHECK(cmd.args.empty());
-        CHECK(cyberdeck_parse_ssh_target(cmd.args.c_str(), user, host, port) == false);
-        CHECK_EQ(user, "CANARY_U");
-        CHECK_EQ(host, "CANARY_H");
-        CHECK(port == -999);
+    // `ssh` is declared by its manifest, so the legacy parser reports UNKNOWN and
+    // the argument split belongs to the console application.  What must survive
+    // here is the target validator shared by both call sites.
+    for (const char *line : {"ssh", "ssh user@host:22", "  ssh\tmyserver.local:2200  "}) {
+        cyberdeck_cmd_t cmd = cyberdeck_parse_command(line);
+        CHECK(cmd.type == CYBERDECK_CMD_UNKNOWN);
     }
 
     // CMD5: porta invalida -> usage.
     {
         std::string user = "CANARY_U", host = "CANARY_H";
         int port = -999;
-        cyberdeck_cmd_t cmd = cyberdeck_parse_command("ssh host:abc");
-        CHECK(cmd.type == CYBERDECK_CMD_SSH);
-        CHECK_EQ(cmd.args, "host:abc");
-        CHECK(cyberdeck_parse_ssh_target(cmd.args.c_str(), user, host, port) == false);
+        CHECK(cyberdeck_parse_ssh_target("host:abc", user, host, port) == false);
         CHECK_EQ(user, "CANARY_U");
         CHECK_EQ(host, "CANARY_H");
         CHECK(port == -999);
@@ -729,10 +545,7 @@ void test_parse_command_to_ssh_target_pipeline()
     {
         std::string user = "CANARY_U", host = "CANARY_H";
         int port = -999;
-        cyberdeck_cmd_t cmd = cyberdeck_parse_command("ssh user @host");
-        CHECK(cmd.type == CYBERDECK_CMD_SSH);
-        CHECK_EQ(cmd.args, "user @host");
-        CHECK(cyberdeck_parse_ssh_target(cmd.args.c_str(), user, host, port) == false);
+        CHECK(cyberdeck_parse_ssh_target("user @host", user, host, port) == false);
         CHECK_EQ(user, "CANARY_U");
         CHECK_EQ(host, "CANARY_H");
         CHECK(port == -999);
@@ -742,33 +555,10 @@ void test_parse_command_to_ssh_target_pipeline()
     {
         std::string user, host;
         int port = 0;
-        cyberdeck_cmd_t cmd = cyberdeck_parse_command("ssh alice@192.168.1.50:2222");
-        CHECK(cmd.type == CYBERDECK_CMD_SSH);
-        CHECK_EQ(cmd.args, "alice@192.168.1.50:2222");
-        CHECK(cyberdeck_parse_ssh_target(cmd.args.c_str(), user, host, port) == true);
+        CHECK(cyberdeck_parse_ssh_target("alice@192.168.1.50:2222", user, host, port) == true);
         CHECK_EQ(user, "alice");
         CHECK_EQ(host, "192.168.1.50");
         CHECK(port == 2222);
-    }
-
-    // Pipeline com tab como separador do verbo e whitespace nas bordas.
-    {
-        std::string user, host;
-        int port = 0;
-        cyberdeck_cmd_t cmd = cyberdeck_parse_command("  ssh\tmyserver.local:2200  ");
-        CHECK(cmd.type == CYBERDECK_CMD_SSH);
-        CHECK_EQ(cmd.args, "myserver.local:2200");
-        CHECK(cyberdeck_parse_ssh_target(cmd.args.c_str(), user, host, port) == true);
-        CHECK_EQ(user, "root");
-        CHECK_EQ(host, "myserver.local");
-        CHECK(port == 2200);
-    }
-
-    // Pipeline com enum/prefixo: "sshx" nao e verbo ssh; args intactos.
-    {
-        cyberdeck_cmd_t cmd = cyberdeck_parse_command("sshx host");
-        CHECK(cmd.type == CYBERDECK_CMD_UNKNOWN);
-        CHECK_EQ(cmd.args, "sshx host");
     }
 }
 
@@ -789,11 +579,11 @@ void test_help_text_exact_block()
 void test_help_text_structure()
 {
     // Arrange & Act
-    // Estrutura do catalogo unificado no novo formatter: 18 blocos
-    // `<command> [terminal]`, cada um com a linha de tag, a linha
-    // `  <usage> - <description>` e as linhas de parametros opcionais
-    // indentadas; exatamente 65 linhas nao vazias (18 tags + 47 indentadas),
-    // e o texto termina obrigatoriamente em newline.
+    // Estrutura do catalogo unificado: 12 blocos `<command> [terminal]` (as
+    // seis linhas migradas para manifests saem do catalogo), cada um com a linha
+    // de tag, a linha `  <usage> - <description>` e as linhas de parametros
+    // opcionais indentadas; exatamente 38 linhas nao vazias (12 tags + 26
+    // indentadas), e o texto termina obrigatoriamente em newline.
     const std::string text = cyberdeck_help_text();
 
     // Assert
@@ -806,7 +596,7 @@ void test_help_text_structure()
             ++newlines;
         }
     }
-    CHECK(newlines == 65);
+    CHECK(newlines == 38);
 
     // Split por '\n': linhas nao vazias entre quebras. No novo formatter toda
     // linha e ou a tag `<command> [terminal]` do bloco ou uma linha indentada
@@ -830,9 +620,9 @@ void test_help_text_structure()
             line_start = i + 1;
         }
     }
-    CHECK(non_empty_lines == 65);
-    CHECK(tag_lines == 18);
-    CHECK(indented_lines == 47);
+    CHECK(non_empty_lines == 38);
+    CHECK(tag_lines == 12);
+    CHECK(indented_lines == 26);
 }
 
 void test_help_text_commands_present()
@@ -849,14 +639,8 @@ void test_help_text_commands_present()
     };
     const help_row entries[] = {
         {"help", "  help - show this help"},
-        {"wifi", "  wifi [search|saved|audit|survey] - manage Wi-Fi, passively survey networks, and explicitly export results"},
-        {"log", "  log [lines <1-64>] - show recent events"},
         {"clear", "  clear - clear the terminal"},
-        {"screen", "  screen [on|off|timeout <0-1440>] - control screen protection"},
-        {"battery", "  battery [protection on|off|status] - show or control battery protection"},
-        {"bluetooth", "  bluetooth [search|paired] - search for or list paired Bluetooth devices"},
         {"app", "  app [list|info|start|stop] [id] - manage compiled-in applications"},
-        {"ssh", "  ssh [user@]host[:port] - start an SSH session"},
         {"pwd", "  pwd - print working directory"},
         {"cd", "  cd [path] - change working directory"},
         {"ls", "  ls [-a] [path] - list directory contents"},
@@ -872,7 +656,7 @@ void test_help_text_commands_present()
     // esta contagem, uma linha nova no catalogo passaria despercebida porque
     // o teste so procuraria as entradas conhecidas.
     const size_t expected_rows = sizeof(entries) / sizeof(entries[0]);
-    CHECK(expected_rows == 18);
+    CHECK(expected_rows == 12);
 
     // Ordem do catalogo aprovada: as tags `<command> [terminal]` aparecem
     // exatamente nessa sequencia, cada uma abrindo sua propria linha.
@@ -935,11 +719,6 @@ int main()
     test_encode_ssh_key_modifier_scope_and_bounds();
     test_parse_command_routing();
     test_parse_command_whitespace_and_exact_match();
-    test_parse_log_lines_forms();
-    test_parse_wifi_audit_save_command();
-    test_parse_screen_commands();
-    test_parse_battery_protection_commands();
-    test_parse_command_ssh_verb_contract();
     test_parse_command_to_ssh_target_pipeline();
     test_help_text_exact_block();
     test_help_text_structure();

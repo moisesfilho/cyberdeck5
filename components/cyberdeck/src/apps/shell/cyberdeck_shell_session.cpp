@@ -4,7 +4,6 @@
 #include "apps/shell/cyberdeck_shell_help.h"
 
 #include <array>
-#include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,20 +11,7 @@
 #include <string_view>
 #include <vector>
 
-#ifdef ESP_PLATFORM
-#include "sdkconfig.h"
-#else
-#ifndef CONFIG_CYBERDECK_LOG_LINES
-#define CONFIG_CYBERDECK_LOG_LINES 20
-#endif
-#endif
-
-#if CONFIG_CYBERDECK_LOG_LINES < 1 || CONFIG_CYBERDECK_LOG_LINES > 64
-#error "CONFIG_CYBERDECK_LOG_LINES must be in the range 1..64"
-#endif
-
 #include "apps/shell/cyberdeck_shell_utils.h"
-#include "platform/display/cyberdeck_screen_protection.h"
 
 namespace cyberdeck_shell_session {
 namespace {
@@ -91,29 +77,6 @@ bool is_help_request(const std::string &line)
            line.find_first_not_of(" \t", argument_end) == std::string::npos;
 }
 
-bool parse_log_lines_argument(const std::string &argument, std::size_t &lines)
-{
-    const size_t first = argument.find_first_not_of(" \t");
-    if (first == std::string::npos || argument.compare(first, 5, "lines") != 0) return false;
-    const size_t value_start = first + 5;
-    if (value_start == argument.size()) return false;
-    if (argument[value_start] != ' ' && argument[value_start] != '\t') return false;
-
-    const size_t digit_start = argument.find_first_not_of(" \t", value_start);
-    if (digit_start == std::string::npos) return false;
-    std::size_t value = 0;
-    size_t digit = digit_start;
-    for (; digit < argument.size() && argument[digit] >= '0' && argument[digit] <= '9'; ++digit) {
-        value = value * 10U + static_cast<std::size_t>(argument[digit] - '0');
-        if (value > 64U) return false;
-    }
-    if (digit == digit_start || argument.find_first_not_of(" \t", digit) != std::string::npos ||
-        value < 1U) {
-        return false;
-    }
-    lines = value;
-    return true;
-}
 
 std::string help_text(cyberdeck_apps::runtime &runtime)
 {
@@ -204,9 +167,21 @@ std::string app_command_help(cyberdeck_apps::runtime &runtime, std::string_view 
                 result += '\n';
             }
             if (!details.parameters.empty()) {
-                result += "  ";
-                result.append(details.parameters.data(), details.parameters.size());
-                if (result.back() != '\n') result += '\n';
+                /* Indent every line of the explanation block by the same two
+                 * spaces, so a multi-line command keeps the column of the
+                 * legacy row it replaced. */
+                std::string_view block = details.parameters;
+                while (!block.empty()) {
+                    const std::size_t end = block.find('\n');
+                    const std::string_view line = end == std::string_view::npos ? block : block.substr(0, end);
+                    if (!line.empty()) {
+                        result += "  ";
+                        result.append(line.data(), line.size());
+                    }
+                    result += '\n';
+                    if (end == std::string_view::npos) break;
+                    block = block.substr(end + 1);
+                }
             }
         }
         return result;
@@ -216,7 +191,12 @@ std::string app_command_help(cyberdeck_apps::runtime &runtime, std::string_view 
 
 } // namespace
 
-session::session(host &host) : host_(host), log_lines_(CONFIG_CYBERDECK_LOG_LINES) {}
+session::session(host &host) : host_(host)
+{
+    /* A new console restores every session-scoped command setting (the log
+     * window and the survey duration) so nothing leaks from a previous session. */
+    host_.app_runtime().reset_session_states();
+}
 
 void session::sync_editor()
 {
@@ -301,13 +281,6 @@ bool session::begin_wifi_connection(const char *ssid, const char *password)
 void session::execute_line(bool line_already_sent)
 {
     if (poweroff_requested_) { clear_editor(); host_.render(); return; }
-    // Command strings for structural contract compliance
-    static constexpr const char *k_battery_prot_on = "battery protection on";
-    static constexpr const char *k_battery_prot_off = "battery protection off";
-    static constexpr const char *k_battery_prot_status = "battery protection status";
-    (void)k_battery_prot_on;
-    (void)k_battery_prot_off;
-    (void)k_battery_prot_status;
 
     const cyberdeck_session_state state = host_.ssh_phase();
     if (poweroff_confirmation_ && state != cyberdeck_session_state::MENU) {
@@ -469,11 +442,12 @@ void session::execute_line(bool line_already_sent)
         host_.render();
         return;
     }
-    /* The supervisor is consulted only for the tokens it owns: `app` and the
-     * commands declared by a registered application.  A legacy command name
-     * never reaches the runtime, so this recursion cannot capture wifi, log,
-     * screen, bluetooth, ssh or help, and the legacy parser below remains the
-     * single owner of those flows. */
+    /* The supervisor owns `app` and every command declared by a registered
+     * application: `wifi`, `ssh`, `bluetooth`, `battery`, `screen` and `log` are
+     * console applications, so the dispatcher resolves them here and their
+     * reply is rendered without touching the legacy parser.  What still reaches
+     * the parser below is only what the session owns directly (local commands,
+     * `help`, `clear` and the fail-closed unknown path). */
     cyberdeck_apps::runtime &runtime = host_.app_runtime();
     const cyberdeck_shell_console::dispatcher dispatcher(&runtime);
     if (dispatcher.resolve(line) == cyberdeck_shell_console::dispatch_target::supervisor) {
@@ -492,298 +466,6 @@ void session::execute_line(bool line_already_sent)
             host_.reset_ssh_filter();
             host_.discard_ssh_composer();
             break;
-    case CYBERDECK_CMD_SCREEN_ON:
-        host_.screen_turn_on();
-        host_.append_output_line("screen on\n");
-        break;
-    case CYBERDECK_CMD_SCREEN_OFF:
-        host_.screen_turn_off();
-        host_.append_output_line("screen off\n");
-        break;
-    case CYBERDECK_CMD_SCREEN_TIMEOUT: {
-        std::uint16_t minutes = 0;
-        const auto parse_result = cyberdeck_screen_protection::parse_timeout_minutes(
-            cmd.args.c_str(), minutes);
-        if (parse_result != cyberdeck_screen_protection::timeout_parse_result::ok) {
-            host_.append_output_line("screen timeout: expected an integer from 0 to 1440\n");
-            break;
-        }
-        if (host_.screen_set_timeout_minutes(minutes) != ESP_OK) {
-            host_.append_output_line("screen timeout: unable to persist setting\n");
-            break;
-        }
-        if (minutes == 0) {
-            host_.append_output_line("screen timeout disabled (0 minutes)\n");
-        } else {
-            char message[64];
-            snprintf(message, sizeof(message), "screen timeout set to %u minutes\n",
-                     static_cast<unsigned>(minutes));
-            host_.append_output_line(message);
-        }
-        break;
-    }
-    case CYBERDECK_CMD_WIFI: {
-        wifi_status_t st = {};
-        if (host_.wifi_status(&st)) {
-            char out[128]; snprintf(out, sizeof(out), "wifi: %s%s%s\n", host_.wifi_enabled() ? "enabled" : "disabled", st.connected ? " connected " : " disconnected", st.connected ? st.ip : ""); host_.append_output_line(out);
-        } else host_.append_output_line("wifi: unavailable\n");
-        break;
-    }
-    case CYBERDECK_CMD_WIFI_SEARCH: {
-        if (host_.wifi_survey_active()) {
-            host_.append_output_line("wifi survey is active; cancel it before scanning interactively\n");
-            break;
-        }
-        if (!host_.wifi_enabled()) {
-            host_.append_output_line("wifi: disabled\n");
-            break;
-        }
-        cyberdeck_wifi::state_machine &wifi = host_.wifi_model();
-        wifi_state = wifi_ui_state_t::SCANNING;
-        wifi.begin_search();
-        host_.append_output_line("Scanning Wi-Fi networks...\n");
-        host_.wifi_scan_generation() = wifi.active_scan_token();
-        if (!host_.wifi_begin_scan(host_.wifi_scan_generation())) {
-            host_.append_output_line("Failed to start Wi-Fi scan.\n");
-            wifi_state = wifi_ui_state_t::IDLE;
-        }
-        break;
-    }
-    case CYBERDECK_CMD_WIFI_AUDIT: {
-        host_.wifi_audit_begin();
-        break;
-    }
-    case CYBERDECK_CMD_WIFI_AUDIT_SAVE: {
-        const std::string path = host_.build_wifi_audit_save_path();
-        if (!path.empty() && host_.wifi_audit_save(path)) {
-            host_.append_output_line("wifi audit save requested\n");
-        } else {
-            host_.append_output_line("wifi audit save unavailable\n");
-        }
-        break;
-    }
-    case CYBERDECK_CMD_WIFI_SURVEY: {
-        if (!host_.wifi_enabled()) {
-            host_.append_output_line("wifi: disabled\n");
-            break;
-        }
-        if (host_.wifi_survey_start(wifi_survey_duration_seconds_)) {
-            host_.append_output_line("wifi survey started; passive scans may briefly degrade Wi-Fi and SSH\n");
-        } else {
-            host_.append_output_line("wifi survey start refused (another scan/session may be active)\n");
-        }
-        break;
-    }
-    case CYBERDECK_CMD_WIFI_SURVEY_DURATION: {
-        char *end = nullptr;
-        const unsigned long value = std::strtoul(cmd.args.c_str(), &end, 10);
-        if (cmd.args.empty() || end == cmd.args.c_str() || *end != '\0' ||
-            value < cyberdeck_wifi_survey::min_duration_seconds ||
-            value > cyberdeck_wifi_survey::max_duration_seconds) {
-            host_.append_output_line("wifi survey duration: expected 10..120 seconds\n");
-            break;
-        }
-        wifi_survey_duration_seconds_ = static_cast<std::uint32_t>(value);
-        char message[64];
-        std::snprintf(message, sizeof(message), "wifi survey duration set to %lu seconds\n", value);
-        host_.append_output_line(message);
-        break;
-    }
-    case CYBERDECK_CMD_WIFI_SURVEY_CANCEL:
-        host_.append_output_line(host_.wifi_survey_cancel() ?
-            "wifi survey cancelled; late scan results will be discarded\n" : "wifi survey is not active\n");
-        break;
-    case CYBERDECK_CMD_WIFI_SURVEY_EXPORT:
-        host_.append_output_line(host_.wifi_survey_export(false, true) ?
-            "wifi survey export pending; run 'wifi survey export confirm' to save masked identifiers\n" :
-            "wifi survey export unavailable\n");
-        break;
-    case CYBERDECK_CMD_WIFI_SURVEY_EXPORT_UNMASKED:
-        host_.append_output_line(host_.wifi_survey_export(false, false) ?
-            "wifi survey export pending with identifying SSID/BSSID; run 'wifi survey export confirm unmasked' to save\n" :
-            "wifi survey export unavailable\n");
-        break;
-    case CYBERDECK_CMD_WIFI_SURVEY_EXPORT_CONFIRM:
-        host_.append_output_line(host_.wifi_survey_export(true, true) ?
-            "wifi survey export confirmed; SSID and BSSID are masked\n" :
-            "wifi survey export confirmation unavailable or expired\n");
-        break;
-    case CYBERDECK_CMD_WIFI_SURVEY_EXPORT_CONFIRM_UNMASKED:
-        host_.append_output_line(host_.wifi_survey_export(true, false) ?
-            "wifi survey export confirmed with identifying SSID/BSSID\n" :
-            "wifi survey export confirmation unavailable or expired\n");
-        break;
-    case CYBERDECK_CMD_BATTERY_PROTECTION_ON: { // "battery protection on"
-        if (host_.battery_protection_set_enabled(true)) {
-            host_.append_output_line("battery protection enabled\n");
-        } else {
-            host_.append_output_line("battery protection unavailable\n");
-        }
-        break;
-    }
-    case CYBERDECK_CMD_BATTERY_PROTECTION_OFF: { // "battery protection off"
-        if (host_.battery_protection_set_enabled(false)) {
-            host_.append_output_line("battery protection disabled\n");
-        } else {
-            host_.append_output_line("battery protection unavailable\n");
-        }
-        break;
-    }
-    case CYBERDECK_CMD_BATTERY_PROTECTION_STATUS: { // "battery protection status"
-        if (!host_.battery_protection_started()) {
-            host_.append_output_line("battery protection unavailable\n");
-            break;
-        }
-        cyberdeck_battery_protection::snapshot value{};
-        if (!host_.battery_protection_snapshot(&value)) {
-            value.available = false;
-        }
-        char buf[256] = {};
-        cyberdeck_battery_protection::format_status_line(buf, sizeof(buf), value);
-        host_.append_output_line(buf);
-        cyberdeck_battery_protection::hardware_diagnostics diagnostic{};
-        if (!host_.battery_hardware_diagnostics(&diagnostic)) {
-            host_.append_output_line("battery hardware: unavailable\n");
-            break;
-        }
-        const auto age_ms = [&diagnostic](std::int64_t sampled_at_us) -> std::int64_t {
-            return sampled_at_us > 0 && diagnostic.captured_at_us >= sampled_at_us
-                       ? (diagnostic.captured_at_us - sampled_at_us) / 1000
-                       : -1;
-        };
-        char bus_raw[8] = "none";
-        char current_raw[8] = "none";
-        if (diagnostic.ina_available) {
-            std::snprintf(bus_raw, sizeof(bus_raw), "0x%04X", diagnostic.ina_bus_raw);
-            std::snprintf(current_raw, sizeof(current_raw), "0x%04X", diagnostic.ina_current_raw);
-        }
-        // CHG_QC_EN is active-low: P5 LOW asserts QC. This label reports the
-        // latch LEVEL (bit 5 of 0x05) so it cannot contradict expander_raw=05,
-        // while chg_qc_enabled keeps its active-low meaning for the policy.
-        const char *chg_qc_latch = "unavailable";
-        if (diagnostic.expander_available && diagnostic.expander_registers_valid) {
-            chg_qc_latch = (diagnostic.expander_output_latch & 0x20U) != 0 ? "high" : "low";
-        }
-        char hardware[512] = {};
-        std::snprintf(hardware, sizeof(hardware),
-                      "battery hardware: expander=%s origin=0x%02X direction=%s latch=%s hiz=%s P5_P7_input_status=not_sampled CHG_QC_EN_latch=%s CHG_EN_latch=%s CHG_STAT_raw=%s INA226=%s bus_raw=%s current_raw=%s voltage_mv=%ld current_ma=%ld ina_age_ms=%" PRId64 " stat_age_ms=%" PRId64 " snapshot_age_ms=%" PRId64 " latch_is_not_pad_voltage; input_status_outputs_low; sequential_register_sample\n",
-                      !diagnostic.expander_available ? "unavailable" : !diagnostic.expander_registers_valid ? "unavailable" : "available",
-                      diagnostic.expander_register_origin,
-                      diagnostic.expander_registers_valid ? "read" : "unavailable",
-                      diagnostic.expander_registers_valid ? "read" : "unavailable",
-                      diagnostic.expander_registers_valid ? "read" : "unavailable",
-                      chg_qc_latch,
-                      !diagnostic.expander_available ? "unavailable" :
-                      !diagnostic.expander_registers_valid ? "unavailable" : diagnostic.chg_en_enabled ? "high" : "low",
-                      diagnostic.chg_stat_available ? (diagnostic.chg_stat_raw_low ? "low" : "high") : "unavailable",
-                      diagnostic.ina_available ? "available" : diagnostic.ina_error ? "error" : "unavailable",
-                      bus_raw, current_raw,
-                      static_cast<long>(diagnostic.ina_bus_voltage_mv),
-                      static_cast<long>(diagnostic.ina_current_ma),
-                      age_ms(diagnostic.ina_sampled_at_us), age_ms(diagnostic.chg_stat_sampled_at_us),
-                      age_ms(diagnostic.policy_sampled_at_us));
-        if (diagnostic.expander_registers_valid) {
-            char registers[80]{};
-            std::snprintf(registers, sizeof(registers), "expander_raw: 03=%02X 05=%02X 07=%02X\n",
-                          diagnostic.expander_direction, diagnostic.expander_output_latch,
-                          diagnostic.expander_hiz);
-            host_.append_output_line(registers);
-        }
-        host_.append_output_line(hardware);
-        break;
-    }
-    case CYBERDECK_CMD_BLUETOOTH_SEARCH:
-        host_.clear_ble_notice();
-        host_.ble_scan_devices().clear();
-        host_.mark_ble_transient_uncommitted();
-        host_.ble_model().begin_search();
-        host_.submit_ble_actions();
-        host_.append_output_line("Bluetooth search started.\n");
-        break;
-    case CYBERDECK_CMD_BLUETOOTH_PAIRED: {
-        host_.clear_ble_notice();
-        host_.mark_ble_transient_uncommitted();
-        /* Explicit action: re-arm the restored bond list and keep the
-         * background cycle unblocked, so Enter on a listed bond reconnects
-         * (the same path re-arms inside the model on Enter). */
-        ble_bond_snapshot_t paired_snapshots[16]{};
-        const size_t paired_count = host_.copy_ble_bonds(paired_snapshots, 16);
-        if (paired_count != 0) {
-            std::vector<cyberdeck_ble::device> paired;
-            paired.reserve(paired_count);
-            for (size_t i = 0; i < paired_count; ++i) {
-                cyberdeck_ble::device item;
-                item.address = paired_snapshots[i].address;
-                item.addr_type = static_cast<cyberdeck_ble::address_type>(paired_snapshots[i].addr_type);
-                item.name = paired_snapshots[i].name;
-                item.rssi = cyberdeck_ble::k_min_rssi;
-                item.kind = static_cast<cyberdeck_ble::device_kind>(paired_snapshots[i].kind);
-                item.paired = true;
-                item.connectable = true;
-                paired.push_back(item);
-            }
-            host_.ble_model().set_paired_devices(paired);
-        }
-        host_.ble_model().begin_paired();
-        host_.sync_ble_transient();
-        break;
-    }
-    case CYBERDECK_CMD_WIFI_SAVED: {
-        cyberdeck_wifi::state_machine &wifi = host_.wifi_model();
-        wifi.begin_saved();
-        wifi_saved_list_t list;
-        if (!host_.wifi_storage_ready() || !host_.wifi_storage_load_all(&list) || list.count == 0) {
-            host_.append_output_line("No saved Wi-Fi networks.\n");
-            break;
-        }
-        host_.wifi_saved_menu().set_list(list);
-        for (int i = 0; i < list.count; ++i) {
-            wipe_bytes(list.items[i].password, sizeof(list.items[i].password));
-        }
-        wifi_state = wifi_ui_state_t::SAVED_SELECT;
-        break;
-    }
-    case CYBERDECK_CMD_LOG: {
-        if (!cmd.args.empty()) {
-            std::size_t requested_lines = 0;
-            if (cmd.args == "lines") {
-                char message[32];
-                snprintf(message, sizeof(message), "log lines: %u\n",
-                         static_cast<unsigned>(log_lines_));
-                host_.append_output_line(message);
-                break;
-            }
-            if (!parse_log_lines_argument(cmd.args, requested_lines)) {
-                host_.append_output_line("usage: log [lines <1-64>]\n");
-                break;
-            }
-            log_lines_ = requested_lines;
-            char message[32];
-            snprintf(message, sizeof(message), "log lines set to %u\n",
-                     static_cast<unsigned>(log_lines_));
-            host_.append_output_line(message);
-            break;
-        }
-        host_.append_output_line("ultimos eventos:\n");
-        const std::string logged = host_.recent_events(log_lines_);
-        if (!logged.empty()) host_.write_output(logged.data(), logged.size());
-        else host_.append_output_line("(nenhum evento disponivel)\n");
-        break;
-    }
-    case CYBERDECK_CMD_SSH: {
-        std::string user, host_name; int port = 22;
-        if (cmd.args.empty() || !cyberdeck_parse_ssh_target(cmd.args.c_str(), user, host_name, port)) { host_.append_output_line("usage: ssh [user@]host[:port]\n"); break; }
-        host_.reset_ssh_filter();
-        host_.discard_ssh_composer();
-        host_.set_ssh_visible(true);
-        if (host_.ssh_connect(user.c_str(), host_name.c_str(), port) != ESP_OK) {
-            const char *error = "[ERROR] unable to start SSH session";
-            host_.append_output_line(error);
-            host_.append_output_line("\n");
-            host_.log_event('E', "ssh", error);
-        }
-        break;
-    }
     case CYBERDECK_CMD_EMPTY: break;
     default: host_.append_output_line("unknown command; type help\n"); break;
     }

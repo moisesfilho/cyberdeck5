@@ -426,6 +426,99 @@ cyberdeck_apps::manifest music_usage_manifest()
     return item;
 }
 
+cyberdeck_apps::manifest wifi_console_usage_manifest()
+{
+    cyberdeck_apps::manifest item{};
+    item.id = "cyberdeck.wifi.shell";
+    item.name = "Wi-Fi console";
+    item.version = "1.0.0";
+    item.description = "manage Wi-Fi, passively survey networks, and explicitly export results";
+    item.type = cyberdeck_apps::app_type::service;
+    item.commands[0] = "wifi";
+    item.command_count = 1;
+    item.command_help_entries[0] = {
+        "wifi [search|saved|audit|survey]",
+        "search: scan for networks\nsaved: manage saved networks\naudit: inspect or export Wi-Fi audit results\nsurvey: run a passive survey\n"};
+    return item;
+}
+
+cyberdeck_apps::manifest ssh_console_usage_manifest()
+{
+    cyberdeck_apps::manifest item{};
+    item.id = "cyberdeck.ssh.shell";
+    item.name = "SSH console";
+    item.version = "1.0.0";
+    item.description = "start an SSH session";
+    item.type = cyberdeck_apps::app_type::service;
+    item.commands[0] = "ssh";
+    item.command_count = 1;
+    item.command_help_entries[0] = {
+        "ssh [user@]host[:port]",
+        "[user@]: optional login name\nhost: remote host name or address\n[:port]: optional port (default 22)\n"};
+    return item;
+}
+
+cyberdeck_apps::manifest bluetooth_console_usage_manifest()
+{
+    cyberdeck_apps::manifest item{};
+    item.id = "cyberdeck.bluetooth.shell";
+    item.name = "Bluetooth console";
+    item.version = "1.0.0";
+    item.description = "search for or list paired Bluetooth devices";
+    item.type = cyberdeck_apps::app_type::service;
+    item.commands[0] = "bluetooth";
+    item.command_count = 1;
+    item.command_help_entries[0] = {
+        "bluetooth [search|paired]", "search: find nearby devices\npaired: list paired devices\n"};
+    return item;
+}
+
+cyberdeck_apps::manifest battery_console_usage_manifest()
+{
+    cyberdeck_apps::manifest item{};
+    item.id = "cyberdeck.battery.shell";
+    item.name = "Battery console";
+    item.version = "1.0.0";
+    item.description = "show or control battery protection";
+    item.type = cyberdeck_apps::app_type::service;
+    item.commands[0] = "battery";
+    item.command_count = 1;
+    item.command_help_entries[0] = {
+        "battery [protection on|off|status]",
+        "protection on: enable battery protection\nprotection off: disable battery protection\nprotection status: show current protection status\n"};
+    return item;
+}
+
+cyberdeck_apps::manifest screen_console_usage_manifest()
+{
+    cyberdeck_apps::manifest item{};
+    item.id = "cyberdeck.screen.shell";
+    item.name = "Screen console";
+    item.version = "1.0.0";
+    item.description = "control screen protection";
+    item.type = cyberdeck_apps::app_type::service;
+    item.commands[0] = "screen";
+    item.command_count = 1;
+    item.command_help_entries[0] = {
+        "screen [on|off|timeout <0-1440>]",
+        "on|off: enable or disable screen protection\ntimeout <0-1440>: set inactivity timeout in minutes; 0 disables it\n"};
+    return item;
+}
+
+cyberdeck_apps::manifest event_log_console_usage_manifest()
+{
+    cyberdeck_apps::manifest item{};
+    item.id = "cyberdeck.event_log.shell";
+    item.name = "Event log console";
+    item.version = "1.0.0";
+    item.description = "show recent events";
+    item.type = cyberdeck_apps::app_type::service;
+    item.commands[0] = "log";
+    item.command_count = 1;
+    item.command_help_entries[0] = {"log [lines <1-64>]", "lines <1-64>: set the number of recent events\n"};
+    return item;
+}
+
 cyberdeck_apps::manifest commandless_manifest(const char *id, const char *name, const char *description,
                                               cyberdeck_apps::app_type type = cyberdeck_apps::app_type::service)
 {
@@ -671,13 +764,105 @@ int main()
     }
     {
         fake_host h;
+        help_manifest_app wifi_console(wifi_console_usage_manifest());
+        check(h.apps.register_application(wifi_console), "wifi help manifest registers");
         session s(h);
         submit(s, "wifi help");
         check(h.output.find("enabled") == std::string::npos &&
               h.output.find("disabled") == std::string::npos,
               "wifi help does not print Wi-Fi status");
-        check_eq(h.output, "/$ wifi help\n" + cyberdeck_shell_help::command_text("wifi"),
-                 "wifi help prints the wifi help block");
+        const std::string expected =
+            "/$ wifi help\n"
+            "wifi [app]\n"
+            "  Wi-Fi console (cyberdeck.wifi.shell) version 1.0.0\n"
+            "  manage Wi-Fi, passively survey networks, and explicitly export results\n"
+            "  usage: wifi [search|saved|audit|survey]\n"
+            "  search: scan for networks\n"
+            "  saved: manage saved networks\n"
+            "  audit: inspect or export Wi-Fi audit results\n"
+            "  survey: run a passive survey\n";
+        check_eq(h.output, expected, "wifi help prints the migrated manifest block");
+    }
+    {
+        fake_host h;
+        help_manifest_app app(ssh_console_usage_manifest());
+        check(h.apps.register_application(app), "ssh help manifest registers");
+        session s(h);
+        submit(s, "ssh help");
+        const std::string expected =
+            "/$ ssh help\n"
+            "ssh [app]\n"
+            "  SSH console (cyberdeck.ssh.shell) version 1.0.0\n"
+            "  start an SSH session\n"
+            "  usage: ssh [user@]host[:port]\n"
+            "  [user@]: optional login name\n"
+            "  host: remote host name or address\n"
+            "  [:port]: optional port (default 22)\n";
+        check_eq(h.output, expected, "ssh help prints the migrated manifest block");
+    }
+    {
+        fake_host h;
+        help_manifest_app app(bluetooth_console_usage_manifest());
+        check(h.apps.register_application(app), "bluetooth help manifest registers");
+        session s(h);
+        submit(s, "bluetooth help");
+        const std::string expected =
+            "/$ bluetooth help\n"
+            "bluetooth [app]\n"
+            "  Bluetooth console (cyberdeck.bluetooth.shell) version 1.0.0\n"
+            "  search for or list paired Bluetooth devices\n"
+            "  usage: bluetooth [search|paired]\n"
+            "  search: find nearby devices\n"
+            "  paired: list paired devices\n";
+        check_eq(h.output, expected, "bluetooth help prints the migrated manifest block");
+    }
+    {
+        fake_host h;
+        help_manifest_app app(battery_console_usage_manifest());
+        check(h.apps.register_application(app), "battery help manifest registers");
+        session s(h);
+        submit(s, "battery help");
+        const std::string expected =
+            "/$ battery help\n"
+            "battery [app]\n"
+            "  Battery console (cyberdeck.battery.shell) version 1.0.0\n"
+            "  show or control battery protection\n"
+            "  usage: battery [protection on|off|status]\n"
+            "  protection on: enable battery protection\n"
+            "  protection off: disable battery protection\n"
+            "  protection status: show current protection status\n";
+        check_eq(h.output, expected, "battery help prints the migrated manifest block");
+    }
+    {
+        fake_host h;
+        help_manifest_app app(screen_console_usage_manifest());
+        check(h.apps.register_application(app), "screen help manifest registers");
+        session s(h);
+        submit(s, "screen help");
+        const std::string expected =
+            "/$ screen help\n"
+            "screen [app]\n"
+            "  Screen console (cyberdeck.screen.shell) version 1.0.0\n"
+            "  control screen protection\n"
+            "  usage: screen [on|off|timeout <0-1440>]\n"
+            "  on|off: enable or disable screen protection\n"
+            "  timeout <0-1440>: set inactivity timeout in minutes; 0 disables it\n";
+        check_eq(h.output, expected, "screen help prints the migrated manifest block");
+    }
+    {
+        fake_host h;
+        help_manifest_app app(event_log_console_usage_manifest());
+        check(h.apps.register_application(app), "log help manifest registers");
+        session s(h);
+        submit(s, "log help");
+        const std::string expected =
+            "/$ log help\n"
+            "log [app]\n"
+            "  Event log console (cyberdeck.event_log.shell) version 1.0.0\n"
+            "  show recent events\n"
+            "  usage: log [lines <1-64>]\n"
+            "  lines <1-64>: set the number of recent events\n";
+        check_eq(h.output, expected, "log help prints the migrated manifest block");
     }
     {
         fake_host h;
@@ -769,12 +954,12 @@ int main()
             "  Explicit-target connectivity diagnostics\n"
             "  usage: netdiag [status|dns <host>|tcp <host> <port>|https <https-url>|result|cancel]\n"
             "  status: show Wi-Fi interface status\n"
-            "dns <host>: resolve an explicit host\n"
-            "tcp <host> <port>: test a TCP connection\n"
-            "https <https-url>: issue an HTTPS HEAD request\n"
-            "result: report the current operation; cancel: request cancellation\n"
-            "host: 1..253 ASCII letters, digits, dots, or hyphens; port: decimal 1..65535\n"
-            "URL: https, at most 512 bytes; no userinfo, fragment, whitespace, or explicit port in authority\n";
+            "  dns <host>: resolve an explicit host\n"
+            "  tcp <host> <port>: test a TCP connection\n"
+            "  https <https-url>: issue an HTTPS HEAD request\n"
+            "  result: report the current operation; cancel: request cancellation\n"
+            "  host: 1..253 ASCII letters, digits, dots, or hyphens; port: decimal 1..65535\n"
+            "  URL: https, at most 512 bytes; no userinfo, fragment, whitespace, or explicit port in authority\n";
         check_eq(h.output, netdiag_expected,
                  "TEST-HELP-APP-USAGE-NETDIAG: netdiag help renders the full declared block (full golden)");
         for (const char *sub : {"status: show Wi-Fi interface status", "dns <host>", "tcp <host> <port>",
@@ -870,14 +1055,24 @@ int main()
         help_manifest_app editor(editor_usage_manifest());
         help_manifest_app netdiag(netdiag_usage_manifest());
         help_manifest_app music(music_usage_manifest());
+        help_manifest_app wifi_console(wifi_console_usage_manifest());
+        help_manifest_app ssh_console(ssh_console_usage_manifest());
+        help_manifest_app bluetooth_console(bluetooth_console_usage_manifest());
+        help_manifest_app battery_console(battery_console_usage_manifest());
+        help_manifest_app screen_console(screen_console_usage_manifest());
+        help_manifest_app event_log_console(event_log_console_usage_manifest());
         cyberdeck_apps::application *const registered[] = {
-            &event_log, &shell_app, &wifi,     &serial, &ssh,   &screenshot, &bluetooth,
-            &time_sync, &demo,      &editor,   &netdiag, &music};
+            &event_log,         &shell_app,        &wifi,
+            &serial,            &ssh,              &screenshot,
+            &bluetooth,         &time_sync,        &demo,
+            &editor,            &netdiag,          &music,
+            &wifi_console,      &ssh_console,      &bluetooth_console,
+            &battery_console,   &screen_console,   &event_log_console};
         for (cyberdeck_apps::application *app : registered)
             check(h.apps.register_application(*app),
                   "TEST-HELP-APP-INVENTORY: inventory application registers");
-        check(h.apps.size() == 12,
-              "TEST-HELP-APP-INVENTORY: registers all 12 compiled-in applications");
+        check(h.apps.size() == 18,
+              "TEST-HELP-APP-INVENTORY: registers all 18 compiled-in applications");
 
         std::size_t command_bearing = 0;
         std::size_t commandless_services = 0;
@@ -900,10 +1095,14 @@ int main()
                 ++commandless_services;
             }
         }
-        check(command_bearing == 4,
-              "TEST-HELP-APP-INVENTORY: exactly 4 applications are command-bearing");
-        check(bearing_ids == std::vector<std::string>{"cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag", "cyberdeck.music"},
-              "TEST-HELP-APP-INVENTORY: command-bearing apps are demo, editor, netdiag and music in registration order");
+        check(command_bearing == 10,
+              "TEST-HELP-APP-INVENTORY: exactly 10 applications are command-bearing");
+        check(bearing_ids == std::vector<std::string>{"cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag",
+                                                      "cyberdeck.music", "cyberdeck.wifi.shell",
+                                                      "cyberdeck.ssh.shell", "cyberdeck.bluetooth.shell",
+                                                      "cyberdeck.battery.shell", "cyberdeck.screen.shell",
+                                                      "cyberdeck.event_log.shell"},
+              "TEST-HELP-APP-INVENTORY: command-bearing apps follow the registration order");
         check(commandless_services == 7,
               "TEST-HELP-APP-INVENTORY: exactly 7 services declare no shell command");
         check(console_owners == 1,
@@ -920,9 +1119,21 @@ int main()
             "netdiag [app]\n"
             "  start compiled application\n"
             "music [app]\n"
+            "  start compiled application\n"
+            "wifi [app]\n"
+            "  start compiled application\n"
+            "ssh [app]\n"
+            "  start compiled application\n"
+            "bluetooth [app]\n"
+            "  start compiled application\n"
+            "battery [app]\n"
+            "  start compiled application\n"
+            "screen [app]\n"
+            "  start compiled application\n"
+            "log [app]\n"
             "  start compiled application\n";
         check_eq(h.output, inventory_expected,
-                  "TEST-HELP-APP-INVENTORY: general help appends exactly the 4 command-bearing rows once, in order");
+                  "TEST-HELP-APP-INVENTORY: general help appends every declared command once, in order");
         for (const char *service_id : {"cyberdeck.event_log", "cyberdeck.wifi", "cyberdeck.serial",
                                        "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth",
                                        "cyberdeck.time_sync"})

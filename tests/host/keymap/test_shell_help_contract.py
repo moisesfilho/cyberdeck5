@@ -39,6 +39,12 @@ SHELL_APP = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_app.cpp"
 DEMO_APP = ROOT / "components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp"
 EDITOR_APP = ROOT / "components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp"
 NETDIAG_APP = ROOT / "components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp"
+WIFI_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/wifi/cyberdeck_wifi_console_app.h"
+SSH_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/ssh/cyberdeck_ssh_console_app.h"
+BLUETOOTH_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/bluetooth/cyberdeck_bluetooth_console_app.h"
+BATTERY_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/battery/cyberdeck_battery_console_app.h"
+SCREEN_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/screen/cyberdeck_screen_console_app.h"
+EVENT_LOG_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/event_log/cyberdeck_event_log_console_app.h"
 HELP_TEST = ROOT / "tests/host/keymap/test_shell_help.cpp"
 MAKEFILE = ROOT / "tests/host/keymap/Makefile"
 TRACEABILITY = ROOT / "tests/host/keymap/help_traceability.md"
@@ -100,6 +106,28 @@ MUSIC_USAGE = (
     ("music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
       "MP3 playback from SD; volume is capped at 50\n"),
 )
+WIFI_CONSOLE_USAGE = (
+    ("wifi [search|saved|audit|survey]",
+     "search: scan for networks\nsaved: manage saved networks\naudit: inspect or export Wi-Fi audit results\nsurvey: run a passive survey\n"),
+)
+SSH_CONSOLE_USAGE = (
+    ("ssh [user@]host[:port]",
+     "[user@]: optional login name\nhost: remote host name or address\n[:port]: optional port (default 22)\n"),
+)
+BLUETOOTH_CONSOLE_USAGE = (
+    ("bluetooth [search|paired]", "search: find nearby devices\npaired: list paired devices\n"),
+)
+BATTERY_CONSOLE_USAGE = (
+    ("battery [protection on|off|status]",
+     "protection on: enable battery protection\nprotection off: disable battery protection\nprotection status: show current protection status\n"),
+)
+SCREEN_CONSOLE_USAGE = (
+    ("screen [on|off|timeout <0-1440>]",
+     "on|off: enable or disable screen protection\ntimeout <0-1440>: set inactivity timeout in minutes; 0 disables it\n"),
+)
+EVENT_LOG_CONSOLE_USAGE = (
+    ("log [lines <1-64>]", "lines <1-64>: set the number of recent events\n"),
+)
 DEMO_USAGE = (
     ("demo", "arguments are not declared; extra arguments are currently ignored\n"),
 )
@@ -153,9 +181,39 @@ EXPECTED_APPS = (
      "id": "cyberdeck.music", "name": "Music", "description": "Foreground local MP3 player",
      "type": "foreground", "commands": ("music",), "command": "", "usage": MUSIC_USAGE,
      "owns_console": False, "commands_require_active_foreground": True},
+    {"symbol": "&cyberdeck_wifi_console_app::global_application()", "source": "wifi_console",
+     "id": "cyberdeck.wifi.shell", "name": "Wi-Fi console",
+     "description": "manage Wi-Fi, passively survey networks, and explicitly export results",
+     "type": "service", "commands": ("wifi",), "command": "", "usage": WIFI_CONSOLE_USAGE,
+     "owns_console": False},
+    {"symbol": "&cyberdeck_ssh_console_app::global_application()", "source": "ssh_console",
+     "id": "cyberdeck.ssh.shell", "name": "SSH console",
+     "description": "start an SSH session",
+     "type": "service", "commands": ("ssh",), "command": "", "usage": SSH_CONSOLE_USAGE,
+     "owns_console": False},
+    {"symbol": "&cyberdeck_bluetooth_console_app::global_application()", "source": "bluetooth_console",
+     "id": "cyberdeck.bluetooth.shell", "name": "Bluetooth console",
+     "description": "search for or list paired Bluetooth devices",
+     "type": "service", "commands": ("bluetooth",), "command": "", "usage": BLUETOOTH_CONSOLE_USAGE,
+     "owns_console": False},
+    {"symbol": "&cyberdeck_battery_console_app::global_application()", "source": "battery_console",
+     "id": "cyberdeck.battery.shell", "name": "Battery console",
+     "description": "show or control battery protection",
+     "type": "service", "commands": ("battery",), "command": "", "usage": BATTERY_CONSOLE_USAGE,
+     "owns_console": False},
+    {"symbol": "&cyberdeck_screen_console_app::global_application()", "source": "screen_console",
+     "id": "cyberdeck.screen.shell", "name": "Screen console",
+     "description": "control screen protection",
+     "type": "service", "commands": ("screen",), "command": "", "usage": SCREEN_CONSOLE_USAGE,
+     "owns_console": False},
+    {"symbol": "&cyberdeck_event_log_console_app::global_application()", "source": "event_log_console",
+     "id": "cyberdeck.event_log.shell", "name": "Event log console",
+     "description": "show recent events",
+     "type": "service", "commands": ("log",), "command": "", "usage": EVENT_LOG_CONSOLE_USAGE,
+     "owns_console": False},
 )
 
-COMMAND_BEARING_COUNT = 4
+COMMAND_BEARING_COUNT = 10
 COMMANDLESS_SERVICE_COUNT = 7
 CONSOLE_OWNER_COUNT = 1
 
@@ -163,6 +221,12 @@ FIXTURE_USAGE_FUNCTIONS = {
     "editor": "editor_usage_manifest",
     "netdiag": "netdiag_usage_manifest",
     "music": "music_usage_manifest",
+    "wifi_console": "wifi_console_usage_manifest",
+    "ssh_console": "ssh_console_usage_manifest",
+    "bluetooth_console": "bluetooth_console_usage_manifest",
+    "battery_console": "battery_console_usage_manifest",
+    "screen_console": "screen_console_usage_manifest",
+    "event_log_console": "event_log_console_usage_manifest",
 }
 
 # Scenario identifiers of this contract, mapped in help_traceability.md.
@@ -379,8 +443,12 @@ def _normalise_type(token):
     return token.split("::")[-1].strip()
 
 
-def _literal_manifest(source, marker="k_manifest"):
-    """Parse a positional `manifest` aggregate into a comparable mapping."""
+def _literal_manifest(source, marker="k_manifest{"):
+    """Parse a positional `manifest` aggregate into a comparable mapping.
+
+    The marker includes the opening brace: `get_manifest()` returns the object,
+    so a bare `k_manifest` marker would match that call and parse one field.
+    """
     fields = _manifest_fields(_brace_body(source, marker))
     if len(fields) < len(MANIFEST_FIELDS) - 2 or len(fields) > len(MANIFEST_FIELDS):
         raise ContractError(f"{marker!r} has {len(fields)} fields, expected 19 to 21")
@@ -872,6 +940,12 @@ def main() -> int:
         "editor": EDITOR_APP.read_text(encoding="utf-8"),
         "netdiag": NETDIAG_APP.read_text(encoding="utf-8"),
         "music": (ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp").read_text(encoding="utf-8"),
+        "wifi_console": WIFI_CONSOLE_APP.read_text(encoding="utf-8"),
+        "ssh_console": SSH_CONSOLE_APP.read_text(encoding="utf-8"),
+        "bluetooth_console": BLUETOOTH_CONSOLE_APP.read_text(encoding="utf-8"),
+        "battery_console": BATTERY_CONSOLE_APP.read_text(encoding="utf-8"),
+        "screen_console": SCREEN_CONSOLE_APP.read_text(encoding="utf-8"),
+        "event_log_console": EVENT_LOG_CONSOLE_APP.read_text(encoding="utf-8"),
     }
 
     try:
@@ -994,7 +1068,9 @@ def main() -> int:
         fixture_symbols = _registration_symbols(help_test, "application *const registered[]")
         require(len(fixture_symbols) == len(EXPECTED_APPS),
                 f"the fixture inventory must register {len(EXPECTED_APPS)} applications")
-        require(fixture_symbols[-COMMAND_BEARING_COUNT:] == ("&demo", "&editor", "&netdiag", "&music"),
+        require(fixture_symbols[-COMMAND_BEARING_COUNT:] ==
+                ("&demo", "&editor", "&netdiag", "&music", "&wifi_console", "&ssh_console",
+                 "&bluetooth_console", "&battery_console", "&screen_console", "&event_log_console"),
                 "the fixture inventory must register the command-bearing apps in production order")
         for app in EXPECTED_APPS:
             if app["source"] not in FIXTURE_USAGE_FUNCTIONS:

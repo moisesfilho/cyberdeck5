@@ -106,54 +106,52 @@ def main() -> int:
     # explanation fields.  This keeps a stale executable/fixture from being
     # mistaken for a passing help contract after a rebuild.
     require("kCatalog" in shell_help and
-            re.search(r"std::array\s*<\s*entry\s*,\s*18\s*>\s+kCatalog", shell_help) is not None,
-            "production help header must retain the 18-entry ordered catalog")
-    require(
-        '{"wifi", "wifi [search|saved|audit|survey]",'
-        ' "manage Wi-Fi, passively survey networks, and explicitly export results",'
-        ' "  search: scan for networks\\n'
-        '  saved: manage saved networks\\n'
-        '  audit: inspect or export Wi-Fi audit results\\n'
-        '  survey: run a passive survey\\n"}' in shell_help,
-        "production help catalog must include the approved Wi-Fi survey syntax, "
-        "description and parameter lines")
-    wifi_tag_fixture = '"wifi [terminal]\\n"'
-    wifi_usage_fixture = ('"  wifi [search|saved|audit|survey] - manage Wi-Fi, passively '
-                          'survey networks, and explicitly export results\\n"')
-    require(wifi_tag_fixture in help_fixture and wifi_usage_fixture in help_fixture and
-            help_fixture.index(wifi_usage_fixture) > help_fixture.index(wifi_tag_fixture),
-            "host help fixture must include the approved Wi-Fi survey row")
-    require(
-        '{"battery", "battery [protection on|off|status]",'
-        ' "show or control battery protection",'
-        ' "  protection on: enable battery protection\\n'
-        '  protection off: disable battery protection\\n'
-        '  protection status: show current protection status\\n"}' in shell_help,
-        "production help catalog must contain the approved battery protection row")
-    battery_tag_fixture = '"battery [terminal]\\n"'
-    battery_usage_fixture = ('"  battery [protection on|off|status] - show or control '
-                             'battery protection\\n"')
-    require(battery_tag_fixture in help_fixture and battery_usage_fixture in help_fixture and
-            help_fixture.index(battery_usage_fixture) > help_fixture.index(battery_tag_fixture),
-            "host help fixture must contain the approved battery protection row")
-    require(
-        '{"bluetooth", "bluetooth [search|paired]",'
-        ' "search for or list paired Bluetooth devices",'
-        ' "  search: find nearby devices\\n'
-        '  paired: list paired devices\\n"}' in shell_help,
-        "production help catalog must contain the approved bluetooth row")
-    bluetooth_tag_fixture = '"bluetooth [terminal]\\n"'
-    bluetooth_usage_fixture = ('"  bluetooth [search|paired] - search for or list paired '
-                               'Bluetooth devices\\n"')
-    require(bluetooth_tag_fixture in help_fixture and bluetooth_usage_fixture in help_fixture and
-            help_fixture.index(bluetooth_usage_fixture) > help_fixture.index(bluetooth_tag_fixture),
-            "host help fixture must contain the approved bluetooth row")
+            re.search(r"std::array\s*<\s*entry\s*,\s*12\s*>\s+kCatalog", shell_help) is not None,
+            "production help header must retain the 12-entry ordered catalog")
+    # The six migrated commands are published by their own manifests, so the
+    # legacy catalog must not keep a second copy of any of those rows and the
+    # host fixture must not mirror them either.
+    migrated_rows = (
+        ('{"wifi", "wifi [search|saved|audit|survey]",', "wifi [terminal]\\n"),
+        ('{"log", "log [lines <1-64>]",', "log [terminal]\\n"),
+        ('{"screen", "screen [on|off|timeout <0-1440>]",', "screen [terminal]\\n"),
+        ('{"battery", "battery [protection on|off|status]",', "battery [terminal]\\n"),
+        ('{"bluetooth", "bluetooth [search|paired]",', "bluetooth [terminal]\\n"),
+        ('{"ssh", "ssh [user@]host[:port]",', "ssh [terminal]\\n"),
+    )
+    for row_prefix, tag in migrated_rows:
+        require(row_prefix not in shell_help,
+                f"the legacy catalog must not keep a migrated row: {row_prefix}")
+        require(tag not in help_fixture,
+                f"the host help fixture must not mirror a migrated row: {tag}")
+
+    # Each migrated row lives exactly once in its console manifest.
+    console_manifests = {
+        "manage Wi-Fi, passively survey networks, and explicitly export results":
+            ROOT / "components/cyberdeck/include/apps/wifi/cyberdeck_wifi_console_app.h",
+        "show recent events": ROOT / "components/cyberdeck/include/apps/event_log/cyberdeck_event_log_console_app.h",
+        "control screen protection": ROOT / "components/cyberdeck/include/apps/screen/cyberdeck_screen_console_app.h",
+        "show or control battery protection":
+            ROOT / "components/cyberdeck/include/apps/battery/cyberdeck_battery_console_app.h",
+        "search for or list paired Bluetooth devices":
+            ROOT / "components/cyberdeck/include/apps/bluetooth/cyberdeck_bluetooth_console_app.h",
+        "start an SSH session": ROOT / "components/cyberdeck/include/apps/ssh/cyberdeck_ssh_console_app.h",
+    }
+    for description, path in console_manifests.items():
+        manifest = strip_comments(path.read_text(encoding="utf-8"))
+        require(manifest.count(description) == 1,
+                f"{path.name} must carry '{description}' exactly once")
+        require(shell_help.count(description) == 0,
+                f"the legacy catalog must not duplicate '{description}'")
 
     # The canonical catalog is owned by cyberdeck_shell_help.h and exposed
     # through cyberdeck_shell_utils.cpp.  Each description is present exactly
     # once in the adapter contract, and none of the phrases is repeated as a
     # private help list in the local shell or UI.
+    migrated_descriptions = set(console_manifests)
     for description in CATALOG_DESCRIPTIONS:
+        if description in migrated_descriptions:
+            continue
         require(
             shell_source.count(description) == 1,
             f"shell_utils.cpp must contain '{description}' exactly once in the canonical catalog",

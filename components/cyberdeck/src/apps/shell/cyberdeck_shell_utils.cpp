@@ -2,7 +2,7 @@
 #include "apps/shell/cyberdeck_shell_utils.h"
 #include "lvgl.h"
 
-#include <cstdlib>
+
 #include <cstring>
 
 bool cyberdeck_parse_ssh_target(const char *target, std::string &user, std::string &host, int &port)
@@ -247,129 +247,25 @@ cyberdeck_cmd_t cyberdeck_parse_command(const char *input)
 
     std::string command(input);
     // Trim trailing spaces/newlines
-    while (!command.empty() && (command.back() == ' ' || command.back() == '\t' || command.back() == '\r' || command.back() == '\n')) {
+    while (!command.empty() && (command.back() == ' ' || command.back() == '\t' ||
+                                command.back() == '\r' || command.back() == '\n')) {
         command.pop_back();
     }
 
-    /* The screen verb accepts the same horizontal separators as the other
-     * shell verbs; keep the normalized spelling local to this command. */
-    std::string screen_command;
-    screen_command.reserve(command.size());
-    bool separator = false;
-    for (char value : command) {
-        if (value == '\t' || value == '\v' || value == '\f') {
-            value = ' ';
-        }
-        if (value == ' ') {
-            if (!separator) {
-                screen_command.push_back(' ');
-            }
-            separator = true;
-        } else {
-            screen_command.push_back(value);
-            separator = false;
-        }
-    }
-
-    /* Same normalization for battery protection verb. */
-    std::string battery_command;
-    battery_command.reserve(command.size());
-    separator = false;
-    for (char value : command) {
-        if (value == '\t' || value == '\v' || value == '\f') {
-            value = ' ';
-        }
-        if (value == ' ') {
-            if (!separator) {
-                battery_command.push_back(' ');
-            }
-            separator = true;
-        } else {
-            battery_command.push_back(value);
-            separator = false;
-        }
-    }
-
+    /* The migrated commands (wifi, log, screen, battery, bluetooth, ssh) are
+     * declared by their own manifests and never reach this parser: the console
+     * dispatcher resolves them to the supervisor first.  What remains here is
+     * the surface the session still owns directly. */
     if (command == "help") {
         cmd.type = CYBERDECK_CMD_HELP;
     } else if (command == "clear") {
         cmd.type = CYBERDECK_CMD_CLEAR;
-    } else if (command == "wifi") {
-        cmd.type = CYBERDECK_CMD_WIFI;
-    } else if (command == "wifi search") {
-        cmd.type = CYBERDECK_CMD_WIFI_SEARCH;
-    } else if (command == "wifi saved") {
-        cmd.type = CYBERDECK_CMD_WIFI_SAVED;
-    } else if (command == "wifi audit") {
-        cmd.type = CYBERDECK_CMD_WIFI_AUDIT;
-    } else if (command == "wifi audit save") {
-        cmd.type = CYBERDECK_CMD_WIFI_AUDIT_SAVE;
-    } else if (command == "wifi survey") {
-        cmd.type = CYBERDECK_CMD_WIFI_SURVEY;
-    } else if (command == "wifi survey cancel") {
-        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_CANCEL;
-    } else if (command == "wifi survey export") {
-        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_EXPORT;
-    } else if (command == "wifi survey export unmasked") {
-        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_EXPORT_UNMASKED;
-    } else if (command == "wifi survey export confirm") {
-        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_EXPORT_CONFIRM;
-    } else if (command == "wifi survey export confirm unmasked") {
-        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_EXPORT_CONFIRM_UNMASKED;
-    } else if (command.rfind("wifi survey duration ", 0) == 0) {
-        cmd.type = CYBERDECK_CMD_WIFI_SURVEY_DURATION;
-        cmd.args = command.substr(sizeof("wifi survey duration ") - 1);
-    } else if (command == "log") {
-        cmd.type = CYBERDECK_CMD_LOG;
-    } else if (command.rfind("log", 0) == 0 &&
-               (command[3] == ' ' || command[3] == '\t')) {
-        cmd.type = CYBERDECK_CMD_LOG;
-        const size_t first = command.find_first_not_of(" \t", 3);
-        if (first != std::string::npos) cmd.args = command.substr(first);
-    } else if (command == "screen on" || screen_command == "screen on") {
-        cmd.type = CYBERDECK_CMD_SCREEN_ON;
-    } else if (command == "screen off" || screen_command == "screen off") {
-        cmd.type = CYBERDECK_CMD_SCREEN_OFF;
-    } else if (command == "screen timeout" ||
-               screen_command == "screen timeout" ||
-               (screen_command.rfind("screen timeout", 0) == 0 &&
-                screen_command.size() > 14 &&
-                screen_command[14] == ' ')) {
-        cmd.type = CYBERDECK_CMD_SCREEN_TIMEOUT;
-        const size_t first = screen_command.find_first_not_of(" \t", 14);
-        if (first != std::string::npos) {
-            const size_t last = screen_command.find_last_not_of(" \t");
-            const std::string args = screen_command.substr(first, last - first + 1);
-            if (args.find_first_of(" \t\r\n") == std::string::npos) {
-                cmd.args = args;
-            } else {
-                cmd.type = CYBERDECK_CMD_UNKNOWN;
-            }
-        }
-    } else if (command == "battery protection on" || battery_command == "battery protection on") {
-        cmd.type = CYBERDECK_CMD_BATTERY_PROTECTION_ON;
-    } else if (command == "battery protection off" || battery_command == "battery protection off") {
-        cmd.type = CYBERDECK_CMD_BATTERY_PROTECTION_OFF;
-    } else if (command == "battery protection status" || battery_command == "battery protection status") {
-        cmd.type = CYBERDECK_CMD_BATTERY_PROTECTION_STATUS;
-    } else if (command == "bluetooth search") {
-        cmd.type = CYBERDECK_CMD_BLUETOOTH_SEARCH;
-    } else if (command == "bluetooth paired") {
-        cmd.type = CYBERDECK_CMD_BLUETOOTH_PAIRED;
     } else if (command == "app" || (command.rfind("app", 0) == 0 &&
                                     (command[3] == ' ' || command[3] == '\t'))) {
         cmd.type = CYBERDECK_CMD_APP;
         if (command.size() > 3) {
             const size_t first = command.find_first_not_of(" \t", 3);
             if (first != std::string::npos) cmd.args = command.substr(first);
-        }
-    } else if (command.rfind("ssh", 0) == 0 && (command.size() == 3 || command[3] == ' ' || command[3] == '\t')) {
-        cmd.type = CYBERDECK_CMD_SSH;
-        if (command.size() > 3) {
-            const size_t first = command.find_first_not_of(" \t", 3);
-            if (first != std::string::npos) {
-                cmd.args = command.substr(first);
-            }
         }
     } else {
         cmd.type = CYBERDECK_CMD_UNKNOWN;
@@ -384,27 +280,30 @@ namespace {
 // The runtime catalog is owned by the pure header.  These compile-time
 // checks keep the public shell adapter's approved descriptions visible and
 // fail the build if the shared table drifts, without creating a second
-// renderable help list in this translation unit.
+// renderable help list in this translation unit.  Lookup is by command name on
+// purpose: the catalog is the migration frontier, so its size and the position
+// of a given row must not be pinned here.
+constexpr bool has_description(std::string_view command, std::string_view description)
+{
+    for (const cyberdeck_shell_help::entry &item : cyberdeck_shell_help::kCatalog)
+        if (item.command == command) return item.description == description;
+    return false;
+}
+
 constexpr bool help_catalog_descriptions_match_contract()
 {
-    const auto &catalog = cyberdeck_shell_help::kCatalog;
-    return catalog[0].description == "show this help" &&
-            catalog[1].description == "manage Wi-Fi, passively survey networks, and explicitly export results" &&
-           catalog[2].description == "show recent events" &&
-           catalog[3].description == "clear the terminal" &&
-           catalog[4].description == "control screen protection" &&
-           catalog[5].description == "show or control battery protection" &&
-           catalog[6].description == "search for or list paired Bluetooth devices" &&
-           catalog[7].description == "manage compiled-in applications" &&
-           catalog[8].description == "start an SSH session" &&
-           catalog[9].description == "print working directory" &&
-           catalog[10].description == "change working directory" &&
-           catalog[11].description == "list directory contents" &&
-           catalog[12].description == "print a regular file" &&
-           catalog[13].description == "create an empty file" &&
-           catalog[14].description == "create a directory" &&
-           catalog[15].description == "remove a file or directory" &&
-           catalog[16].description == "remove an empty directory";
+    return has_description("help", "show this help") &&
+           has_description("clear", "clear the terminal") &&
+           has_description("app", "manage compiled-in applications") &&
+           has_description("pwd", "print working directory") &&
+           has_description("cd", "change working directory") &&
+           has_description("ls", "list directory contents") &&
+           has_description("cat", "print a regular file") &&
+           has_description("touch", "create an empty file") &&
+           has_description("mkdir", "create a directory") &&
+           has_description("rm", "remove a file or directory") &&
+           has_description("rmdir", "remove an empty directory") &&
+           has_description("poweroff", "power off this device after exact y confirmation");
 }
 
 static_assert(help_catalog_descriptions_match_contract(),

@@ -429,6 +429,20 @@ operações de save confinadas usadas pelo editor e `logger` bounded; as fachada
 revalidam grants. O contrato de saída deve continuar compatível com o shell e
 com SSH antes de padronizar replies para command apps.
 
+Os comandos `wifi`, `ssh`, `bluetooth`, `battery`, `screen` e `log` são
+aplicações de comando compiladas (`cyberdeck.wifi.shell`, `.ssh.shell`,
+`.bluetooth.shell`, `.battery.shell`, `.screen.shell`, `.event_log.shell`).
+Cada manifesto declara um comando raiz, recursos e `command_help_entries`, sem
+dependência do serviço homônimo e sem `owns_console`; `execute()` funciona mesmo
+com o serviço parado ou falho. A camada pura (`cyberdeck_*_console.{h,cpp}`)
+não inclui LVGL/ESP-IDF/`session::host`: menus, pickers, modos SSH, composer,
+filtro e ownership de entrada continuam na composição de UI, atrás de uma porta
+estreita por aplicação. `wifi` e `log` guardam configuração por sessão
+(duração do survey, janela de eventos) restaurada por
+`runtime::reset_session_states()` quando um novo console é criado. Os seis
+comandos saíram do catálogo legado de help e do switch do parser; `help` publica
+suas linhas como `[app]`.
+
 O `cyberdeck.editor` é uma command app foreground compilada. Seu modelo não
 inclui LVGL, VFS ou descritores: recebe somente a fachada SDK de storage, com
 leitura, temporário, `flush_or_fsync` e `rename_atomic`, todos confinados ao
@@ -556,14 +570,14 @@ comandos e callbacks GAP. Usa NimBLE VHCI (`CONFIG_BT_NIMBLE_ENABLED=y`,
 
 ### Integracao Shell e UI
 
-- `cyberdeck_shell_utils.{h,cpp}`: roteia exatamente `bluetooth search` e
-  `bluetooth paired` para `CYBERDECK_CMD_BLUETOOTH_SEARCH` e
-  `CYBERDECK_CMD_BLUETOOTH_PAIRED`; o verbo nu e operando extra sao
-  `CYBERDECK_CMD_UNKNOWN`.
-- `cyberdeck_shell_help.h`: catalogo legado com 18 entradas `[terminal]`;
+- `apps/bluetooth/cyberdeck_bluetooth_console.{h,cpp}`: o app de console
+  `cyberdeck.bluetooth.shell` aceita exatamente `search` e `paired`; qualquer
+  outra forma mantem `unknown command; type help`. A porta (`start_search`,
+  `open_paired`) executa a mesma mutacao de UI que o switch antigo fazia.
+- `cyberdeck_shell_help.h`: catalogo legado com 12 entradas `[terminal]`;
   `help` acrescenta, ao final, comandos unicos dos manifests de apps registrados
-  como `[app]`. A linha legada `bluetooth [search|paired]` e a 7a entrada,
-  entre `battery` e `app`; os comandos dinamicos nao alteram essa ordem.
+  como `[app]`. A linha `bluetooth [search|paired]` agora vem do manifesto do
+  console, nao do catalogo legado.
 - `cyberdeck_ui.cpp`: roteia `Up`/`Down`/`Enter`/`Escape` conforme o predicado
   `cyberdeck_ble::state_machine::owns_input()`, consome acoes
   derivadas e as encaminha ao `ble_mgr` via fila, processa eventos BLE em

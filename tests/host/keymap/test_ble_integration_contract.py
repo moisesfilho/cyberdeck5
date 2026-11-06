@@ -46,6 +46,8 @@ SHELL_UTILS = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.
 SHELL_HELP = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+BLUETOOTH_CONSOLE = ROOT / "components/cyberdeck/src/apps/bluetooth/cyberdeck_bluetooth_console.cpp"
+BLUETOOTH_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/bluetooth/cyberdeck_bluetooth_console_app.h"
 UI_HDR = ROOT / "components/cyberdeck/include/platform/display/cyberdeck_ui.h"
 SERIAL = ROOT / "components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp"
 SERIAL_TEST = ROOT / "tests/host/keymap/test_serial_ndjson_dispatch.cpp"
@@ -318,42 +320,53 @@ def check_no_bluedroid(report: Report, sources: dict[str, str]) -> None:
 
 
 def check_shell_routing(report: Report) -> None:
-    """REQ-BLE-002: `bluetooth search` / `bluetooth paired` are real commands."""
+    """REQ-BLE-002: `bluetooth search` / `bluetooth paired` are real commands.
+
+    The command is declared by the bluetooth console manifest; the legacy shell
+    parser and catalog must not keep a second owner.
+    """
+    console_app = strip_comments(report.read(BLUETOOTH_CONSOLE_APP))
+    console = strip_comments(report.read(BLUETOOTH_CONSOLE))
+    report.require('{"bluetooth"}' in console_app,
+                   "the bluetooth console manifest must declare the bluetooth command")
+    report.require("bluetooth [search|paired]" in console_app,
+                   "the manifest must document the bluetooth subcommands")
+
     header = strip_comments(report.read(SHELL_UTILS_HDR))
     for token in ("CYBERDECK_CMD_BLUETOOTH_SEARCH", "CYBERDECK_CMD_BLUETOOTH_PAIRED"):
-        report.require(token in header, f"shell command enum must expose {token}")
+        report.require(token not in header,
+                       f"the migrated command must leave the shell enum: {token}")
 
     shell = strip_comments(report.read(SHELL_UTILS))
     parser = function_body(shell, "cyberdeck_cmd_t cyberdeck_parse_command(", report)
-    for literal in ('"bluetooth search"', '"bluetooth paired"'):
-        report.require(literal in parser,
-                       f"command parser must recognize {literal}")
-    for token in ("CYBERDECK_CMD_BLUETOOTH_SEARCH", "CYBERDECK_CMD_BLUETOOTH_PAIRED"):
-        report.require(token in parser, f"command parser must route {token}")
+    report.require("bluetooth" not in (parser or ""),
+                   "the migrated bluetooth verb must leave the legacy parser")
 
-    # No third subcommand: the bare verb and any extra operand stay unknown.
-    bluetooth_literals = set(re.findall(r'"(bluetooth[^"]*)"', parser))
-    report.require(
-        bluetooth_literals == {"bluetooth search", "bluetooth paired"},
-        "the shell must expose exactly the two approved bluetooth subcommands, "
-        f"found {sorted(bluetooth_literals)}",
-    )
+    # No third subcommand: the console compares the verb to exactly these two
+    # literals, and any other shape keeps the legacy unknown message.
+    accepted_verbs = set(re.findall(r'verb == "([^"]*)"', console))
+    report.require(accepted_verbs == {"search", "paired"},
+                   "the console must expose exactly the two approved bluetooth subcommands, "
+                   f"found {sorted(accepted_verbs)}")
+    for verb in ("search", "paired"):
+        report.require(f'verb == "{verb}"' in console,
+                       f"the console must handle bluetooth {verb}")
+    report.require("Bluetooth search started." in console,
+                   "the console must keep the approved search acknowledgement")
 
     catalog = strip_comments(report.read(SHELL_HELP))
-    report.require('"bluetooth"' in catalog,
-                   "the shared help catalog must own the bluetooth row")
-    report.require("bluetooth [search|paired]" in catalog,
-                   "the shared help catalog must document the bluetooth subcommands")
+    report.require('"bluetooth"' not in catalog,
+                   "the migrated bluetooth row must leave the shared help catalog")
     entries = re.findall(r'\{"bluetooth"[^\n]*\}', catalog)
-    report.require(len(entries) == 1,
-                   "the bluetooth help row must exist exactly once in the catalog")
-    report.require(re.search(r"std::array\s*<\s*entry\s*,\s*18\s*>\s+kCatalog", catalog)
-                    is not None,
-                    "the shared help catalog must contain 17 entries")
+    report.require(len(entries) == 0,
+                   "the shared help catalog must not duplicate the bluetooth row")
+    report.require(re.search(r"std::array\s*<\s*entry\s*,\s*12\s*>\s+kCatalog", catalog)
+                   is not None,
+                   "the shared help catalog must contain the 12 remaining entries")
 
     fixture = strip_comments(report.read(HELP_FIXTURE))
-    report.require("bluetooth [search|paired]" in fixture,
-                   "the host help fixture must contain the approved bluetooth row")
+    report.require("bluetooth [search|paired]" not in fixture,
+                   "the host help fixture must not mirror the migrated bluetooth row")
 
 
 def check_ui_routing(report: Report) -> None:
@@ -392,8 +405,10 @@ def check_ui_routing(report: Report) -> None:
         report.require("ble.owns_input()" in handle_key or "owns_input()" in handle_key,
                        "BLE key routing must consult model ownership at dispatch time")
     for token in ("CYBERDECK_CMD_BLUETOOTH_SEARCH", "CYBERDECK_CMD_BLUETOOTH_PAIRED"):
-        report.require(token in session,
-                       f"the shell session must route {token} to the BLE feature")
+        report.require(token not in session,
+                       f"the migrated command must leave the session switch: {token}")
+    report.require('verb == "search"' in strip_comments(report.read(BLUETOOTH_CONSOLE)),
+                   "the console must route the search verb to the BLE feature")
 
     # The key path: the four approved keys must reach the BLE model.  Reusing the
     # existing Wi-Fi style key enum is fine, but the BLE branch must exist.

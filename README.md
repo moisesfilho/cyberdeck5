@@ -25,6 +25,8 @@ command apps, including an interactive SSH client. The cyberdeck5 layers are
 - Ponte manual USB Serial-JTAG NDJSON com CLI host (`tools/cyberdeck_cli.py`)
 - Runtime inicial de aplicações compiladas, com `app list`, `app info`,
   `app start` e `app stop`
+- `wifi`, `ssh`, `bluetooth`, `battery`, `screen` and `log` are command
+  applications with their own manifest, dispatched by the runtime supervisor
 - Compiled apps use a bounded manifest/runtime contract; dynamic loaders and
   ELF execution are out of scope
 

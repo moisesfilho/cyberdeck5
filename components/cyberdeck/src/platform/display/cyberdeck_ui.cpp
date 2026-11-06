@@ -4,9 +4,15 @@
 #include "apps/bluetooth/cyberdeck_ble_state_machine.h"
 #include "apps/bluetooth/cyberdeck_ble_types.h"
 #include "apps/editor/cyberdeck_editor_app.h"
+#include "apps/battery/cyberdeck_battery_console_app.h"
+#include "apps/bluetooth/cyberdeck_bluetooth_console_app.h"
+#include "apps/event_log/cyberdeck_event_log_console_app.h"
 #include "apps/music/cyberdeck_music_app.h"
 #include "apps/music/cyberdeck_music_manager.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
+#include "apps/screen/cyberdeck_screen_console_app.h"
+#include "apps/ssh/cyberdeck_ssh_console_app.h"
+#include "apps/wifi/cyberdeck_wifi_console_app.h"
 #include "apps/shell/cyberdeck_cat_worker.h"
 #include "apps/shell/cyberdeck_edit_line.h"
 #include "apps/shell/cyberdeck_history.h"
@@ -2601,6 +2607,173 @@ extern "C" esp_err_t cyberdeck_ui_term_dump(char *buffer, size_t capacity, size_
     return ESP_OK;
 }
 
+/* ---------------------------------------------------------------------- */
+/* Console command adapters                                                */
+/*                                                                         */
+/* Each migrated shell command owns a manifest and reaches the platform    */
+/* through one narrow port.  These adapters are the only place that knows  */
+/* both sides: they keep the exact UI-side mutation the legacy switch used */
+/* to perform, while the application owns parsing and the reply text.      */
+/* ---------------------------------------------------------------------- */
+
+namespace {
+
+void wipe_saved_passwords(wifi_saved_list_t &list) {
+    for (int index = 0; index < list.count; ++index) {
+        volatile char *bytes = list.items[index].password;
+        for (std::size_t offset = 0; offset < sizeof(list.items[index].password); ++offset)
+            bytes[offset] = 0;
+    }
+}
+
+struct wifi_console_adapter final : cyberdeck_wifi_console::port {
+    status current_status() override {
+        status result{};
+        wifi_status_t snapshot = {};
+        if (!s_shell_session_host.wifi_status(&snapshot)) return result;
+        result.available = true;
+        result.enabled = s_shell_session_host.wifi_enabled();
+        result.connected = snapshot.connected;
+        if (snapshot.connected) {
+            std::strncpy(result.ip, snapshot.ip, sizeof(result.ip) - 1);
+            result.ip[sizeof(result.ip) - 1] = '\0';
+        }
+        return result;
+    }
+
+    search_outcome begin_search() override {
+        if (s_wifi_survey.active()) return search_outcome::survey_active;
+        if (!s_shell_session_host.wifi_enabled()) return search_outcome::disabled;
+        s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::SCANNING;
+        s_wifi_model.begin_search();
+        s_wifi_scan_generation = s_wifi_model.active_scan_token();
+        if (!s_shell_session_host.wifi_begin_scan(s_wifi_scan_generation)) {
+            s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::IDLE;
+            return search_outcome::scan_failed;
+        }
+        return search_outcome::started;
+    }
+
+    saved_outcome open_saved() override {
+        s_wifi_model.begin_saved();
+        wifi_saved_list_t list;
+        if (!s_shell_session_host.wifi_storage_ready() || !s_shell_session_host.wifi_storage_load_all(&list) ||
+            list.count == 0) {
+            wipe_saved_passwords(list);
+            return saved_outcome::empty;
+        }
+        s_wifi_saved_menu.set_list(list);
+        wipe_saved_passwords(list);
+        s_wifi_ui_state = cyberdeck_shell_session::wifi_ui_state_t::SAVED_SELECT;
+        return saved_outcome::opened;
+    }
+
+    void audit_begin() override { s_shell_session_host.wifi_audit_begin(); }
+
+    save_outcome audit_save() override {
+        const std::string path = s_shell_session_host.build_wifi_audit_save_path();
+        if (path.empty() || !s_shell_session_host.wifi_audit_save(path)) return save_outcome::unavailable;
+        return save_outcome::requested;
+    }
+
+    survey_start_outcome survey_start(std::uint32_t duration_seconds) override {
+        if (!s_shell_session_host.wifi_enabled()) return survey_start_outcome::disabled;
+        return s_shell_session_host.wifi_survey_start(duration_seconds) ? survey_start_outcome::started
+                                                                       : survey_start_outcome::refused;
+    }
+
+    survey_action_outcome survey_cancel() override {
+        return s_shell_session_host.wifi_survey_cancel() ? survey_action_outcome::applied
+                                                         : survey_action_outcome::unavailable;
+    }
+
+    survey_action_outcome survey_export(bool confirm, bool masked) override {
+        return s_shell_session_host.wifi_survey_export(confirm, masked) ? survey_action_outcome::applied
+                                                                        : survey_action_outcome::unavailable;
+    }
+};
+
+struct ssh_console_adapter final : cyberdeck_ssh_console::port {
+    bool begin_session(const char *user, const char *host, int port) override {
+        s_shell_session_host.reset_ssh_filter();
+        s_shell_session_host.discard_ssh_composer();
+        s_shell_session_host.set_ssh_visible(true);
+        return s_shell_session_host.ssh_connect(user, host, port) == ESP_OK;
+    }
+    void log_error(const char *message) override { s_shell_session_host.log_event('E', "ssh", message); }
+};
+
+struct bluetooth_console_adapter final : cyberdeck_bluetooth_console::port {
+    void start_search() override {
+        s_shell_session_host.clear_ble_notice();
+        s_shell_session_host.ble_scan_devices().clear();
+        s_shell_session_host.mark_ble_transient_uncommitted();
+        s_shell_session_host.ble_model().begin_search();
+        s_shell_session_host.submit_ble_actions();
+    }
+
+    void open_paired() override {
+        s_shell_session_host.clear_ble_notice();
+        s_shell_session_host.mark_ble_transient_uncommitted();
+        /* Explicit action: re-arm the restored bond list and keep the
+         * background cycle unblocked, so Enter on a listed bond reconnects. */
+        ble_bond_snapshot_t paired_snapshots[16]{};
+        const std::size_t paired_count = s_shell_session_host.copy_ble_bonds(paired_snapshots, 16);
+        if (paired_count != 0) {
+            std::vector<cyberdeck_ble::device> paired;
+            paired.reserve(paired_count);
+            for (std::size_t index = 0; index < paired_count; ++index) {
+                cyberdeck_ble::device item;
+                item.address = paired_snapshots[index].address;
+                item.addr_type = static_cast<cyberdeck_ble::address_type>(paired_snapshots[index].addr_type);
+                item.name = paired_snapshots[index].name;
+                item.rssi = cyberdeck_ble::k_min_rssi;
+                item.kind = static_cast<cyberdeck_ble::device_kind>(paired_snapshots[index].kind);
+                item.paired = true;
+                item.connectable = true;
+                paired.push_back(item);
+            }
+            s_shell_session_host.ble_model().set_paired_devices(paired);
+        }
+        s_shell_session_host.ble_model().begin_paired();
+        s_shell_session_host.sync_ble_transient();
+    }
+};
+
+struct battery_console_adapter final : cyberdeck_battery_console::port {
+    bool protection_started() override { return s_shell_session_host.battery_protection_started(); }
+    bool set_protection(bool enabled) override {
+        return s_shell_session_host.battery_protection_set_enabled(enabled);
+    }
+    bool snapshot(cyberdeck_battery_protection::snapshot &out) override {
+        return s_shell_session_host.battery_protection_snapshot(&out);
+    }
+    bool hardware_diagnostics(cyberdeck_battery_protection::hardware_diagnostics &out) override {
+        return s_shell_session_host.battery_hardware_diagnostics(&out);
+    }
+};
+
+struct screen_console_adapter final : cyberdeck_screen_console::port {
+    void turn_on() override { s_shell_session_host.screen_turn_on(); }
+    void turn_off() override { s_shell_session_host.screen_turn_off(); }
+    bool set_timeout_minutes(std::uint16_t minutes) override {
+        return s_shell_session_host.screen_set_timeout_minutes(minutes) == ESP_OK;
+    }
+};
+
+struct event_log_console_adapter final : cyberdeck_event_log_console::port {
+    std::string recent_events(std::size_t count) override { return s_shell_session_host.recent_events(count); }
+};
+
+wifi_console_adapter s_wifi_console_adapter;
+ssh_console_adapter s_ssh_console_adapter;
+bluetooth_console_adapter s_bluetooth_console_adapter;
+battery_console_adapter s_battery_console_adapter;
+screen_console_adapter s_screen_console_adapter;
+event_log_console_adapter s_event_log_console_adapter;
+
+} // namespace
+
 extern "C" esp_err_t cyberdeck_ui_init(void) {
     if (s_ui_ready)
         return ESP_OK;
@@ -2608,6 +2781,14 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
      * compose a prompt or dispatch a key.  The console itself is created by
      * the supervisor's start hook, so the shell owns its own lifecycle. */
     s_shell_app.attach_console(s_shell_session_host);
+    /* Console command applications borrow the same UI-owned services through
+     * their own narrow ports; nothing else about their lifecycle is shared. */
+    cyberdeck_wifi_console_app::global_application().attach(s_wifi_console_adapter);
+    cyberdeck_ssh_console_app::global_application().attach(s_ssh_console_adapter);
+    cyberdeck_bluetooth_console_app::global_application().attach(s_bluetooth_console_adapter);
+    cyberdeck_battery_console_app::global_application().attach(s_battery_console_adapter);
+    cyberdeck_screen_console_app::global_application().attach(s_screen_console_adapter);
+    cyberdeck_event_log_console_app::global_application().attach(s_event_log_console_adapter);
     if (!s_keyboard_dispatch.start(on_keyboard_event, nullptr))
         return ESP_ERR_NO_MEM;
     s_wifi_state_queue = xQueueCreate(1, sizeof(wifi_state_update));

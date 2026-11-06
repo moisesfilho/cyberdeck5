@@ -15,7 +15,6 @@
 #include "apps/shell/cyberdeck_ssh_line_composer.h"
 #include "apps/wifi/cyberdeck_wifi_menu.h"
 #include "apps/wifi/cyberdeck_wifi_state_machine.h"
-#include "apps/wifi/cyberdeck_wifi_survey.h"
 #include "apps/wifi/wifi_mgr.h"
 #include "apps/wifi/wifi_storage.h"
 #include "platform/sensors/battery_protection.h"
@@ -216,10 +215,8 @@ private:
     std::string ble_auth_input_;
     std::uint64_t wifi_connection_token_ = 0;
     std::uint64_t wifi_model_connection_token_ = 0;
-    std::size_t log_lines_;
     bool poweroff_confirmation_ = false;
     bool poweroff_requested_ = false;
-    std::uint32_t wifi_survey_duration_seconds_ = cyberdeck_wifi_survey::default_duration_seconds;
 };
 
 } // namespace cyberdeck_shell_session

@@ -24,6 +24,9 @@ READER_SOURCE = SENSOR_DIR / "ina226_reader.cpp"
 READER_HEADER = INCLUDE_SENSOR_DIR / "ina226_reader.h"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
+BATTERY_CONSOLE = ROOT / "components/cyberdeck/src/apps/battery/cyberdeck_battery_console.cpp"
+BATTERY_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/battery/cyberdeck_battery_console_app.h"
+BATTERY_CONSOLE_TEST = ROOT / "tests/host/keymap/test_battery_console.cpp"
 SHELL = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_utils.cpp"
 SHELL_HEADER = ROOT / "components/cyberdeck/include/apps/shell/cyberdeck_shell_utils.h"
 SERIAL = ROOT / "components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp"
@@ -461,17 +464,34 @@ def check_ui_shell_and_serial(failures: list[str]) -> None:
         require_all(failures, forbidden not in ui,
                     f"UI battery refresh must not perform {forbidden} directly")
 
+    # The battery verbs moved to their own console application: the manifest
+    # declares the command and the application owns parsing and formatting.
+    battery_console = strip_comments(read(BATTERY_CONSOLE, failures))
+    battery_console_app = strip_comments(read(BATTERY_CONSOLE_APP, failures))
+    battery_console_test = strip_comments(read(BATTERY_CONSOLE_TEST, failures))
+    require_all(failures, '"cyberdeck.battery.shell"' in battery_console_app,
+                "the battery console must own a manifest")
+    require_all(failures, '{"battery"}' in battery_console_app,
+                "the battery console manifest must declare the battery command")
+    for verb in ('"on"', '"off"', '"status"'):
+        require_all(failures, verb in battery_console,
+                    f"the battery console must handle the {verb} verb")
+    require_all(failures, "format_status_line" in battery_console,
+                "the battery console must reuse the production status formatter")
+    for evidence in ("expander_raw:", "latch_is_not_pad_voltage",
+                     "sequential_register_sample", "ina_age_ms="):
+        require_all(failures, evidence in battery_console,
+                    f"status must expose cached read-only evidence: {evidence}")
+    require_all(failures, "battery protection enabled" in battery_console_test and
+                "battery protection unavailable" in battery_console_test,
+                "the console test must pin the exact legacy replies")
+
     parser = function_body(shell, "cyberdeck_cmd_t cyberdeck_parse_command(")
     require_all(failures, parser is not None,
                 "shell parser seam is missing")
     if parser is not None:
-        for command in ('"battery protection on"', '"battery protection off"',
-                        '"battery protection status"'):
-            require_all(failures, command in parser,
-                        f"shell parser must route {command}")
-        require_all(failures, re.search(r"battery[^;]{0,180}protection",
-                                        shell_header, re.IGNORECASE) is not None,
-                    "shell public contract must expose battery protection command")
+        require_all(failures, "battery" not in parser,
+                    "the migrated battery verb must leave the legacy parser")
 
     # The command switch moved to the extracted session, reached through the
     # foreground shell application that owns the console.
@@ -487,10 +507,10 @@ def check_ui_shell_and_serial(failures: list[str]) -> None:
     if execute is not None:
         for command in ("battery protection on", "battery protection off",
                          "battery protection status"):
-            require_all(failures, command in execute,
-                        f"session dispatch must expose {command}")
-        require_all(failures, "battery_protection" in execute,
-                    "battery commands must call the protection adapter")
+            require_all(failures, command not in execute,
+                        f"the migrated command must leave the session switch: {command}")
+        require_all(failures, "battery_protection" not in execute,
+                    "the session must not reach the battery adapter after migration")
         require_all(failures, "i2c_" not in execute and "nvs_" not in execute,
                     "command dispatch must not perform I2C/NVS directly")
 
@@ -588,7 +608,7 @@ def check_traceability(failures: list[str]) -> None:
                 "ina226_reader_get_raw_diagnostics" in diag and
                 "esp_io_expander_set_" not in diag and "write_chg_enable" not in diag,
                 "read-only diagnostics must read 03/05/07 (never 0x0F or 0x13) and write nothing")
-    status_text = SESSION.read_text(encoding="utf-8")
+    status_text = BATTERY_CONSOLE.read_text(encoding="utf-8")
     require_all(failures, "battery hardware:" in status_text and
                 "CHG_QC_EN_latch=" in status_text and "bus_raw[" in status_text and
                 'ina_age_ms=%" PRId64' in status_text and

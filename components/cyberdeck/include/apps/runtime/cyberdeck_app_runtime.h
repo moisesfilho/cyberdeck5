@@ -16,7 +16,7 @@
 
 namespace cyberdeck_apps {
 
-constexpr std::size_t k_max_applications = 16;
+constexpr std::size_t k_max_applications = 20;
 constexpr std::size_t k_max_dependencies = 4;
 constexpr std::size_t k_max_resources = 8;
 constexpr std::size_t k_max_capabilities = 8;
@@ -128,6 +128,10 @@ public:
     virtual bool teardown() { return stop(); }
     virtual bool running() const = 0;
     virtual result execute(std::string_view command, std::string_view args) = 0;
+    /* Session-scoped configuration (for example a shell window size) is reset
+     * when a new console is created so it never leaks into the next session.
+     * Stateless applications keep the no-op default. */
+    virtual void reset_session_state() {}
     void set_logger(logger *value) { logger_ = value; }
     logger *app_logger() const { return logger_; }
     void set_sd_io(cyberdeck_sd_io::coordinator *value) { sd_io_ = value; }
@@ -161,6 +165,9 @@ public:
     void set_command_dispatch_ready(bool ready) {
         command_dispatch_ready_.store(ready, std::memory_order_release);
     }
+    /* Clears session-scoped configuration on every registered application.  The
+     * console composition calls this when it creates a new session. */
+    void reset_session_states();
     void set_logger(logger *value);
     void set_sd_io(cyberdeck_sd_io::coordinator *value);
     logger *app_logger() const { return logger_; }

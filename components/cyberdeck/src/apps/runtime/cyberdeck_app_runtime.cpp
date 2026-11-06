@@ -774,6 +774,11 @@ result runtime::execute_line(std::string_view line) {
     return {};
 }
 
+void runtime::reset_session_states() {
+    for (std::size_t i = 0; i < count_; ++i)
+        applications_[i]->reset_session_state();
+}
+
 runtime &global_runtime() {
     static runtime instance;
     return instance;

@@ -1,20 +1,26 @@
 #include "apps/system/cyberdeck_system_apps.h"
 
 #include "apps/bluetooth/ble_mgr.h"
+#include "apps/battery/cyberdeck_battery_console_app.h"
+#include "apps/bluetooth/cyberdeck_bluetooth_console_app.h"
 #include "apps/demo/cyberdeck_demo_app.h"
 #include "apps/editor/cyberdeck_editor_app.h"
+#include "apps/event_log/cyberdeck_event_log_console_app.h"
 #include "apps/network/cyberdeck_netdiag_app.h"
 #include "apps/music/cyberdeck_music_app.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/runtime/cyberdeck_resource_catalog.h"
 #include "apps/runtime/cyberdeck_sd_package.h"
+#include "apps/screen/cyberdeck_screen_console_app.h"
 #include "apps/screenshot/screenshot_server.h"
 #include "apps/serial/cyberdeck_serial_bridge.h"
 #include "apps/shell/cyberdeck_shell_app.h"
+#include "apps/ssh/cyberdeck_ssh_console_app.h"
 #include "apps/ssh/ssh_client.h"
 #include "apps/system/cyberdeck_recovery.h"
 #include "apps/system/cyberdeck_service_ports.h"
 #include "apps/system/cyberdeck_time_sync.h"
+#include "apps/wifi/cyberdeck_wifi_console_app.h"
 #include "apps/wifi/wifi_mgr.h"
 #include "platform/logging/event_log.h"
 
@@ -260,6 +266,9 @@ service_application s_time_sync{
                   cyberdeck_apps::app_type::background, {"network", "clock"}, 16384, 1),
     start_time_sync, stop_time_sync, true};
 
+/* The six console applications keep one manifest per migrated shell command.
+ * They own no console, declare no dependency on the service they talk to and
+ * stay dispatchable even when that service is stopped or failed. */
 cyberdeck_apps::application *const k_apps[] = {
     &s_event_log,
     &cyberdeck_shell_app::global_application(),
@@ -273,6 +282,12 @@ cyberdeck_apps::application *const k_apps[] = {
     &cyberdeck_editor::global_application(),
     &cyberdeck_netdiag::global_application(),
     &cyberdeck_music::global_application(),
+    &cyberdeck_wifi_console_app::global_application(),
+    &cyberdeck_ssh_console_app::global_application(),
+    &cyberdeck_bluetooth_console_app::global_application(),
+    &cyberdeck_battery_console_app::global_application(),
+    &cyberdeck_screen_console_app::global_application(),
+    &cyberdeck_event_log_console_app::global_application(),
 };
 
 bool s_registered = false;
@@ -322,7 +337,9 @@ extern "C" esp_err_t cyberdeck_system_apps_start(void) {
     if (!all_started) {
         for (const char *id : {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial",
                                "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth", "cyberdeck.time_sync",
-                               "cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag", "cyberdeck.music"}) {
+                               "cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag", "cyberdeck.music",
+                               "cyberdeck.wifi.shell", "cyberdeck.ssh.shell", "cyberdeck.bluetooth.shell",
+                               "cyberdeck.battery.shell", "cyberdeck.screen.shell", "cyberdeck.event_log.shell"}) {
             if (runtime.state(id) == cyberdeck_apps::app_state::failed) {
                 cyberdeck_recovery::record_app_error(id, runtime.failure_reason(id).data());
                 ESP_LOGW(TAG, "system app failed: %s (%.*s)", id, static_cast<int>(runtime.failure_reason(id).size()),
