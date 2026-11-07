@@ -334,7 +334,10 @@ envia o PCM para ele em vez do codec da placa; se o stream USB não puder ser
 aberto, o player volta ao speaker, sem regressão de reprodução. O volume do player (0-50) é aplicado ao fone: pela Feature Unit do dispositivo
 quando houver suporte, ou por atenuação do PCM nos demais casos, de modo que o
 controle sempre tenha efeito audível. O fluxo é cadenciado pelo relógio
-isócrono com escritas bloqueantes limitadas.
+isócrono com escritas bloqueantes limitadas. A remoção do fone é detectada
+mesmo em pausa (o barramento é consultado periodicamente, porque a biblioteca
+host só anuncia remoção a cliente com dispositivo aberto) e, se o fone for
+retirado durante a reprodução, o próximo frame vai para o speaker.
 
 O servidor é parado automaticamente quando o Wi-Fi perde o endereço IP.
 

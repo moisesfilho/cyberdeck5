@@ -6,7 +6,13 @@ dependencies:
   lvgl/lvgl: ">=9.6.0,<10.0.0"
   espressif/esp_hosted: "3.0.10"
   espressif/esp_wifi_remote: "^1.6.4"
-  espressif/usb_host_uac: "1.5.0"
+  espressif/usb_host_uac:
+    version: "1.5.0"
+    # Local copy of the class driver: its uac_host_device_open() error path
+    # dereferenced a NULL interface (and used a freed one) when a device left the
+    # bus, which rebooted the Tab5. Managed components are generated, so the fix
+    # has to live in the workspace.
+    override_path: "../components/usb_host_uac"
   espressif/cjson: "^1.7.19"
   david-cermak/libssh: "*"
   # Replace libssh's transitive espressif/sock_utils dependency with the

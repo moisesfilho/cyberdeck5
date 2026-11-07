@@ -31,9 +31,21 @@ A reprodução usa `uac_host_device_start`/`uac_host_device_write` com stream PC
 16-bit estéreo. Como o decodificador roda mais rápido que o relógio isócrono, a
 escrita bloqueia com deadline limitado (backpressure) — sem isso o player
 abortava em `codec_write` após menos de um segundo. A rota é automática:
-dispositivo USB pronto → USB; falha ao abrir o stream → speaker. O volume do player é aplicado no fone (Feature Unit ou atenuação digital).
-dispositivo. Aceite físico: o usuário confirmou áudio contínuo no fone. UAC 2.0
-continua não suportado (o snapshot expõe `audio_spec` para diagnóstico).
+dispositivo USB pronto → USB; falha ao abrir o stream → speaker. O volume do
+player (0-50) é aplicado no fone pela Feature Unit ou por atenuação digital do
+PCM. Aceite físico: o usuário confirmou áudio contínuo no fone e volume
+funcionando. UAC 2.0 continua não suportado (o snapshot expõe `audio_spec` para
+diagnóstico).
+
+Remoção do fone: como a biblioteca USB Host só anuncia `DEV_GONE` a cliente com
+dispositivo aberto, o worker consulta `usb_host_device_addr_list_fill` a cada
+50 ms, fecha o stream e publica `waiting`; `playback_start` repete a checagem
+antes de abrir. O close exigido pelo driver roda no worker, fora do callback. Se
+o fone sair durante a reprodução, o frame seguinte vai para o speaker. O driver
+`espressif/usb_host_uac` 1.5.0 passou a ser resolvido por `override_path` para
+`components/usb_host_uac/`, que corrige o desreferenciamento nulo do caminho de
+erro de `uac_host_device_open` (abrir um endereço já ausente causava panic e
+reboot).
 
 ## REQ-MUSIC-UI-01..04 — surface responsiva e comandos
 

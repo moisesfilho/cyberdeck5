@@ -423,8 +423,27 @@ de falhar, o que cadencia a reprodução. A rota é escolhida por
 `cyberdeck_audio_output`: com dispositivo USB pronto o PCM vai para a USB-A;
 se o stream não abrir, o player volta ao codec da placa. O volume do player
 chega ao fone pela Feature Unit quando houver suporte e, caso contrário, por
-atenuação do PCM. A USB-C física continua ligada à Serial-JTAG; para um fone USB-C é
-necessário adaptador na USB-A Host.
+atenuação do PCM.
+
+Remoção do fone: a biblioteca USB Host só entrega
+`USB_HOST_CLIENT_EVENT_DEV_GONE` a um cliente que mantém o dispositivo aberto,
+então um player em pausa (sem stream UAC) nunca é avisado. O worker do serviço
+consulta `usb_host_device_addr_list_fill` a cada ciclo de 50 ms, fecha o stream e
+publica `waiting` quando o endereço desaparece; `playback_start` repete a
+verificação antes de abrir. O close exigido pelo driver de classe roda no worker
+e nunca dentro do callback, porque o driver mantém a interface na lista até o
+dono fechá-la. Se o fone for retirado durante a reprodução,
+`cyberdeck_audio_output` trata a escrita falha como perda de rota e entrega o
+mesmo frame ao codec.
+
+`espressif/usb_host_uac` 1.5.0 resolve por `override_path` para
+`components/usb_host_uac/`, uma cópia local: o rótulo `fail:` de
+`uac_host_device_open` liberava o ring buffer depois de apagar a interface, o que
+dereferenciava NULL quando a abertura falhava antes da interface existir (o
+dispositivo já havia saído do barramento) e causava panic/reboot. A cópia local
+libera o ring buffer antes e somente com a interface viva. A USB-C física
+continua ligada à Serial-JTAG; para um fone USB-C é necessário adaptador na
+USB-A Host.
 
 ## Ponte manual USB Serial-JTAG NDJSON
 

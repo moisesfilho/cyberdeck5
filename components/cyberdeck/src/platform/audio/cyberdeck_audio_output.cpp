@@ -127,7 +127,11 @@ bool install_usb_output(const usb_output_hooks &hooks) {
     return true;
 }
 
-bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume, route_timing *timing) {
+namespace {
+/* allow_usb exists so a failed USB stream can re-enter the route selection
+ * without trying the same dead sink again. */
+bool start_route(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume, bool allow_usb,
+                 route_timing *timing) {
     if (timing != nullptr)
         *timing = {};
     if (rate < 8000 || rate > 48000 || (channels != 1 && channels != 2) || volume > 50)
@@ -163,7 +167,7 @@ bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume, route
         return true;
     }
     stop();
-    if (usb_usable() && usb_hooks.start(rate, channels)) {
+    if (allow_usb && usb_usable() && usb_hooks.start(rate, channels)) {
         /* The device owns clocking; the player volume is applied through the
          * Feature Unit when the headset supports it. */
         if (!usb_hooks.set_volume(volume)) {
@@ -214,6 +218,11 @@ bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume, route
     }
     return true;
 }
+} // namespace
+
+bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume, route_timing *timing) {
+    return start_route(rate, channels, volume, true, timing);
+}
 
 bool write(const std::int16_t *samples, std::size_t count, write_timing *timing) {
     if (timing != nullptr)
@@ -230,7 +239,22 @@ bool write(const std::int16_t *samples, std::size_t count, write_timing *timing)
             const auto ended = monotonic_us();
             timing->backend_us = ended >= backend_started ? ended - backend_started : 0;
         }
-        return result;
+        if (result)
+            return true;
+        /* The headset left the bus mid-stream. Release it and re-route this same
+         * frame to the speaker instead of failing the write and aborting the
+         * player on a hot-unplug. */
+        const std::uint32_t rate = active_rate;
+        const std::uint8_t channels = active_channels;
+        const std::uint8_t volume = active_volume;
+        usb_hooks.stop();
+        usb_active = false;
+        opened = false;
+        active_rate = 0;
+        active_channels = 0;
+        if (rate == 0 || !start_route(rate, channels, volume, false, nullptr))
+            return false;
+        return write(samples, count, timing);
     }
     if (codec == nullptr)
         return false;

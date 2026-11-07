@@ -399,6 +399,28 @@ int main() {
         cyberdeck_audio_output::stop();
         CHECK(sink.stops == 1);
 
+        /* Hot-unplug mid-stream: the sink refuses the frame, so the output must
+         * release it and deliver that same frame to the speaker instead of
+         * failing the write and aborting the player. */
+        CHECK(cyberdeck_audio_output::start(44100, 2, 20));
+        CHECK(sink.starts == 2);
+        sink.fail_write = true;
+        const int opens_before_unplug = probe.opens;
+        const int writes_before_unplug = probe.writes;
+        const int stops_before_unplug = sink.stops;
+        const int usb_writes_before_unplug = sink.writes;
+        CHECK(cyberdeck_audio_output::write(&sample, 1));
+        CHECK(sink.writes == usb_writes_before_unplug + 1);
+        CHECK(sink.stops == stops_before_unplug + 1);
+        CHECK(probe.opens == opens_before_unplug + 1); /* speaker opened now */
+        CHECK(probe.writes == writes_before_unplug + 1); /* frame delivered */
+        /* Further frames stay on the speaker: the dead sink is not retried. */
+        CHECK(cyberdeck_audio_output::write(&sample, 1));
+        CHECK(sink.writes == usb_writes_before_unplug + 1);
+        CHECK(probe.writes == writes_before_unplug + 2);
+        cyberdeck_audio_output::stop();
+        sink.fail_write = false;
+
         /* A failing volume call must surface as a start() failure rather than
          * silently playing at the previous level. */
         sink.fail_volume = true;

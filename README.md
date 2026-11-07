@@ -363,7 +363,10 @@ started the player falls back to the speaker, so playback never regresses.
 The player volume (0-50) is applied to the headset: through its Feature Unit
 when the device supports it, or by attenuating the PCM otherwise, so the
 control always has an audible effect. The stream is paced to the isochronous
-clock by bounded blocking writes.
+clock by bounded blocking writes. Unplugging the headset is detected even while
+paused (the bus is polled because the host library only reports a removal to a
+client that has a device open) and a headset pulled mid-playback hands the next
+frame to the speaker.
 
 The server stops automatically when the Wi-Fi address is lost.
 

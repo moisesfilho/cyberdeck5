@@ -42,8 +42,20 @@ constexpr std::uint32_t k_playback_buffer_bytes = 16384;
 constexpr std::uint32_t k_playback_write_timeout_ms = 20;
 constexpr std::uint32_t k_playback_write_wait_ms = 200;
 constexpr std::size_t k_playback_max_samples = 2304;
+constexpr std::uint32_t k_playback_lock_ms = 1000;
+constexpr std::uint8_t k_address_list_max = 8;
 
-enum class event_kind : std::uint8_t { tx_connected, disconnected, device_new, device_gone, stop };
+/* playback_lost is raised by the class driver when the opened stream goes
+ * away; the close it requires must happen on the worker, never inside the
+ * driver's callback. */
+enum class event_kind : std::uint8_t {
+    tx_connected,
+    disconnected,
+    device_new,
+    device_gone,
+    playback_lost,
+    stop
+};
 struct host_event {
     event_kind kind;
     std::uint8_t address;
@@ -95,8 +107,12 @@ state s_status = state::stopped;
 std::uint32_t s_error_code = 0;
 snapshot s_snapshot{};
 
-/* Playback is driven by the player worker task; start/stop serialise with
- * s_playback_mutex and write only reads the handle. */
+/* Address whose facts are published, or 0 when none. Written only by the
+ * worker task, which owns the USB host queries. */
+std::uint8_t s_present_address = 0;
+
+/* Playback is driven by the player worker task; start/stop/write serialise on
+ * s_playback_mutex so the worker can retire a stream that lost its device. */
 SemaphoreHandle_t s_playback_mutex = nullptr;
 uac_host_device_handle_t s_playback_handle = nullptr;
 std::uint32_t s_playback_rate = 0;
@@ -153,6 +169,26 @@ void clear_device_facts() {
     s_stream = stream_state{};
 }
 
+/* The host library reports DEV_GONE only to clients that have a device open, so
+ * a paused player (no UAC stream) never learns that the headset left the bus:
+ * the published snapshot would keep advertising a ready device and the next
+ * play would ask the class driver to open an address that no longer exists,
+ * which aborted the firmware. Ask the bus directly instead. */
+bool address_present(std::uint8_t address) {
+    if (address == 0) return false;
+    std::uint8_t addresses[k_address_list_max] = {};
+    int count = 0;
+    const esp_err_t result = usb_host_device_addr_list_fill(static_cast<int>(sizeof(addresses)), addresses, &count);
+    if (result != ESP_OK) {
+        /* Cannot prove absence: keep the current view instead of flapping. */
+        ESP_LOGW(k_tag, "address list unavailable: %s", esp_err_to_name(result));
+        return true;
+    }
+    for (int index = 0; index < count && index < static_cast<int>(sizeof(addresses)); ++index)
+        if (addresses[index] == address) return true;
+    return false;
+}
+
 bool format_supports(const snapshot &value, std::uint32_t sample_rate, std::uint8_t channels) {
     for (std::size_t index = 0; index < value.format_count; ++index) {
         const audio_format &format = value.formats[index];
@@ -163,8 +199,14 @@ bool format_supports(const snapshot &value, std::uint32_t sample_rate, std::uint
     return false;
 }
 
+bool enqueue(const host_event &item);
+
 void playback_device_event(uac_host_device_handle_t, const uac_host_device_event_t event, void *) {
-    if (event == UAC_HOST_DRIVER_EVENT_DISCONNECTED) s_playback_handle = nullptr;
+    if (event != UAC_HOST_DRIVER_EVENT_DISCONNECTED) return;
+    /* The driver leaves the interface in its list until the owner closes it,
+     * and closing from this callback would recurse into the driver. Hand the
+     * close to the worker, then the next open starts from clean state. */
+    (void)enqueue(host_event{event_kind::playback_lost, 0, 0});
 }
 
 void copy_ascii(char *out, std::size_t capacity, const wchar_t *in, std::size_t source_capacity) {
@@ -294,6 +336,7 @@ void handle_new_device(std::uint8_t address) {
         set_status(state::error, ESP_ERR_NOT_FOUND);
         return;
     }
+    s_present_address = address;
     mutate([&facts]() {
         s_descriptors = facts;
         /* Keep the class-driver facts only while they belong to this device. */
@@ -387,20 +430,32 @@ bool inspect_device(const host_event &event) {
     return true;
 }
 
+void forget_device();
+void playback_stop();
+
 void worker_task(void *) {
     while (true) {
         /* Pump the passive client first; its events are what prove a device is
          * physically present. */
         if (s_client != nullptr) (void)usb_host_client_handle_events(s_client, 0);
+        /* Nobody reports a removal to a client that has nothing open, so the
+         * bus is polled: a paused player must not keep a stale "ready" device. */
+        if (s_present_address != 0 && !address_present(s_present_address)) {
+            ESP_LOGI(k_tag, "device addr=%u left the bus", s_present_address);
+            forget_device();
+        }
         host_event event{};
         if (xQueueReceive(s_events, &event, k_worker_poll_ticks) != pdTRUE) continue;
         if (event.kind == event_kind::stop) break;
+        if (event.kind == event_kind::playback_lost) {
+            /* The class driver keeps the interface until its owner closes it;
+             * doing that here (not in the callback) keeps the next open clean. */
+            playback_stop();
+            forget_device();
+            continue;
+        }
         if (event.kind == event_kind::disconnected || event.kind == event_kind::device_gone) {
-            mutate([]() {
-                clear_device_facts();
-                s_status = state::waiting;
-                s_error_code = 0;
-            });
+            forget_device();
             continue;
         }
         if (event.kind == event_kind::device_new) {
@@ -429,12 +484,15 @@ bool playback_available() {
 
 bool playback_start(std::uint32_t sample_rate, std::uint8_t channels) {
     if (s_playback_mutex == nullptr) s_playback_mutex = xSemaphoreCreateMutex();
-    if (s_playback_mutex == nullptr || xSemaphoreTake(s_playback_mutex, pdMS_TO_TICKS(500)) != pdTRUE) return false;
+    if (s_playback_mutex == nullptr || xSemaphoreTake(s_playback_mutex, pdMS_TO_TICKS(k_playback_lock_ms)) != pdTRUE)
+        return false;
     bool started = false;
     if (s_playback_handle == nullptr) {
         snapshot value{};
+        /* The snapshot can lag the bus by one poll; opening an address that is
+         * already gone is what the class driver could not survive. */
         if (get_snapshot(value) && value.status == state::ready &&
-            format_supports(value, sample_rate, channels)) {
+            format_supports(value, sample_rate, channels) && address_present(value.address)) {
             const uac_host_device_config_t config{
                 .addr = value.address,
                 .iface_num = value.interface_number,
@@ -493,45 +551,67 @@ bool playback_set_volume(std::uint8_t volume) {
 }
 
 bool playback_write(const std::int16_t *samples, std::size_t sample_count) {
-    if (s_playback_handle == nullptr || samples == nullptr || sample_count == 0 ||
-        sample_count > k_playback_max_samples)
+    if (samples == nullptr || sample_count == 0 || sample_count > k_playback_max_samples) return false;
+    if (s_playback_mutex == nullptr || xSemaphoreTake(s_playback_mutex, pdMS_TO_TICKS(k_playback_lock_ms)) != pdTRUE)
         return false;
-    const std::uint32_t bytes = static_cast<std::uint32_t>(sample_count * sizeof(std::int16_t));
-    auto *payload = reinterpret_cast<std::uint8_t *>(const_cast<std::int16_t *>(samples));
-    if (!s_device_volume && s_playback_gain_q15 < 32767) {
-        for (std::size_t index = 0; index < sample_count; ++index) {
-            const std::int32_t scaled =
-                (static_cast<std::int32_t>(samples[index]) * static_cast<std::int32_t>(s_playback_gain_q15)) >> 15;
-            s_scaled_samples[index] = static_cast<std::int16_t>(scaled);
+    bool written_stream = false;
+    if (s_playback_handle != nullptr) {
+        const std::uint32_t bytes = static_cast<std::uint32_t>(sample_count * sizeof(std::int16_t));
+        auto *payload = reinterpret_cast<std::uint8_t *>(const_cast<std::int16_t *>(samples));
+        if (!s_device_volume && s_playback_gain_q15 < 32767) {
+            for (std::size_t index = 0; index < sample_count; ++index) {
+                const std::int32_t scaled =
+                    (static_cast<std::int32_t>(samples[index]) * static_cast<std::int32_t>(s_playback_gain_q15)) >> 15;
+                s_scaled_samples[index] = static_cast<std::int16_t>(scaled);
+            }
+            payload = reinterpret_cast<std::uint8_t *>(s_scaled_samples);
         }
-        payload = reinterpret_cast<std::uint8_t *>(s_scaled_samples);
+        /* The decoder runs far faster than the isochronous clock, so the driver
+         * ring buffer fills and write() reports a busy timeout. Blocking here is
+         * what paces playback to the device; returning that as a failure made the
+         * player abort after under a second of audio. */
+        const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(k_playback_write_wait_ms);
+        while (s_playback_handle != nullptr) {
+            const esp_err_t result = uac_host_device_write(s_playback_handle, payload, bytes,
+                                                          pdMS_TO_TICKS(k_playback_write_timeout_ms));
+            if (result == ESP_OK) {
+                written_stream = true;
+                break;
+            }
+            if (result != ESP_ERR_TIMEOUT && result != ESP_FAIL) break;
+            if (static_cast<std::int32_t>(xTaskGetTickCount() - deadline) >= 0) break;
+            vTaskDelay(1);
+        }
+        xSemaphoreGive(s_playback_mutex);
+        return written_stream;
     }
-    /* The decoder runs far faster than the isochronous clock, so the driver
-     * ring buffer fills and write() reports a busy timeout. Blocking here is
-     * what paces playback to the device; returning that as a failure made the
-     * player abort after under a second of audio. */
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(k_playback_write_wait_ms);
-    while (s_playback_handle != nullptr) {
-        const esp_err_t result = uac_host_device_write(s_playback_handle, payload, bytes,
-                                                      pdMS_TO_TICKS(k_playback_write_timeout_ms));
-        if (result == ESP_OK) return true;
-        if (result != ESP_ERR_TIMEOUT && result != ESP_FAIL) return false;
-        if (static_cast<std::int32_t>(xTaskGetTickCount() - deadline) >= 0) return false;
-        vTaskDelay(1);
-    }
+    xSemaphoreGive(s_playback_mutex);
     return false;
 }
 
 void playback_stop() {
-    if (s_playback_mutex == nullptr || xSemaphoreTake(s_playback_mutex, pdMS_TO_TICKS(500)) != pdTRUE) return;
+    if (s_playback_mutex == nullptr ||
+        xSemaphoreTake(s_playback_mutex, pdMS_TO_TICKS(k_playback_lock_ms)) != pdTRUE)
+        return;
     if (s_playback_handle != nullptr) {
         (void)uac_host_device_stop(s_playback_handle);
         (void)uac_host_device_close(s_playback_handle);
         s_playback_handle = nullptr;
-        ESP_LOGI(k_tag, "playback stream stopped");    }
+        ESP_LOGI(k_tag, "playback stream stopped");
+    }
     s_playback_rate = 0;
     s_playback_channels = 0;
     xSemaphoreGive(s_playback_mutex);
+}
+
+void forget_device() {
+    playback_stop();
+    s_present_address = 0;
+    mutate([]() {
+        clear_device_facts();
+        s_status = state::waiting;
+        s_error_code = 0;
+    });
 }
 
 void install_output_hooks() {
