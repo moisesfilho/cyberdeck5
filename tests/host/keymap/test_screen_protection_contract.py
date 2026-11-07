@@ -364,10 +364,15 @@ def check_serial_transitive_path(serial: str) -> None:
             "ui.type must inject text and submit with Enter transitively")
     require("inject_text(" in segmented,
             "segmented injection must delegate to the bounded text injector")
-    require("cyberdeck_keyboard_input" in text,
-            "text injection must reach cyberdeck_keyboard_input")
-    require("cyberdeck_keyboard_input" in enter and "LV_KEY_ENTER" in enter,
-            "ui.type must submit through the physical-keyboard Enter seam")
+    confirmed = function_body(serial, "bool inject_confirmed(")
+    require("cyberdeck_keyboard_submit_reporting" in confirmed,
+            "serial injection must reach the physical-keyboard seam with reporting")
+    require("cyberdeck_keyboard_wait_delivered" in confirmed,
+            "serial injection must confirm consumption before the next event")
+    require("inject_confirmed(" in text,
+            "text injection must use the confirmed delivery helper")
+    require("inject_confirmed(" in enter,
+            "Enter injection must use the confirmed delivery helper")
     require("screen_off_turn_off" not in strip_comments(serial) and
             "screen_off_set_timeout_minutes" not in strip_comments(serial),
             "screen state-changing commands must flow through ui.type, not a serial-only side channel")

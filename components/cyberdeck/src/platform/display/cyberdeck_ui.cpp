@@ -3051,7 +3051,20 @@ extern "C" void cyberdeck_ui_deinit(void) {
 
 extern "C" void cyberdeck_keyboard_input(const char *text, size_t length, uint8_t modifier, uint32_t special_key) {
     if (cyberdeck_poweroff_pending()) return;
-    s_keyboard_dispatch.submit(text, length, modifier, special_key);
+    (void)s_keyboard_dispatch.submit(text, length, modifier, special_key);
+}
+
+extern "C" bool cyberdeck_keyboard_wait_delivered(uint32_t timeout_ms) {
+    return s_keyboard_dispatch.wait_delivered(timeout_ms);
+}
+
+extern "C" bool cyberdeck_keyboard_submit_reporting(const char *text, size_t length, uint8_t modifier,
+                                                    uint32_t special_key) {
+    if (cyberdeck_poweroff_pending()) return false;
+    /* Um evento anterior pode ter expirado na espera e ainda sinalizar depois;
+     * descartar o residuo evita que a espera do proximo retorne cedo. */
+    (void)s_keyboard_dispatch.wait_delivered(0);
+    return s_keyboard_dispatch.submit(text, length, modifier, special_key, true);
 }
 
 extern "C" bool cyberdeck_ui_poweroff_freeze(uint32_t timeout_ms) {

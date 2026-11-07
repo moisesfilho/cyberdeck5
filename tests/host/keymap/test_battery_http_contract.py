@@ -7,7 +7,9 @@ covered by the linked test_battery_json.cpp; this companion proves the parts
 that only source inspection can prove:
 
   * the route is registered from a table in start_server() with
-    max_uri_handlers raised to 4 and a stop-on-failure rollback;
+    max_uri_handlers raised to seven (four telemetry routes plus the three
+    /control routes owned by test_control_http_contract.py) and a
+    stop-on-failure rollback;
   * the handler keeps the same guards as the existing endpoints (405 for
     non-GET, 403 through is_local_peer, 503 when the request mutex is busy);
   * the handler is defined after stop_server(), outside the block
@@ -98,13 +100,14 @@ def function_body(source: str, name: str) -> str:
 def check_route_and_rollback(server: str) -> None:
     """REQ-BAT-HTTP-01: table registration, four handlers, fail-closed stop."""
     start = function_body(server, "static esp_err_t start_server")
-    require(re.search(r"max_uri_handlers\s*=\s*4\s*;", start) is not None,
-            "start_server must raise max_uri_handlers to 4")
+    require(re.search(r"max_uri_handlers\s*=\s*7\s*;", start) is not None,
+            "start_server must reserve seven handlers (four telemetry + three /control)")
     routes = re.findall(r"\.uri\s*=\s*\"([^\"]+)\"", start)
-    require(routes == ["/screenshot", "/events.txt", "/battery", "/usb/audio"],
-            f"the registration table must include the four local telemetry routes, found {routes}")
-    require(len(re.findall(r"\{\s*\.uri\s*=", start)) == 4,
-            "the registration table must hold exactly four entries")
+    require(routes == ["/screenshot", "/events.txt", "/battery", "/usb/audio",
+                       "/control/challenge", "/control/type", "/control/terminal"],
+            f"the registration table must keep the four telemetry routes and add /control, found {routes}")
+    require(len(re.findall(r"\{\s*\.uri\s*=", start)) == 7,
+            "the registration table must hold exactly seven entries")
     for handler in ("screenshot_handler", "events_handler", "battery_handler", "usb_audio_handler"):
         require(re.search(rf"\.handler\s*=\s*{handler}", start) is not None,
                 f"the registration table must wire {handler}")

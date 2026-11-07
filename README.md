@@ -357,6 +357,20 @@ adapter is required to attach a USB-C headset.
 curl --fail http://DEVICE_IP/usb/audio
 ```
 
+`POST /control/type` injects text plus Enter into the active UI, exactly like
+`ui.type` on the USB bridge, so commands can be sent while `idf.py monitor`
+keeps the serial port. The channel is authenticated with its own HMAC-SHA256
+key (NVS, provisioned once over USB via `control.key`; the OTA key is never
+reused) and a single-use nonce per request. HTTP provides no confidentiality:
+use it only on a trusted LAN. A command is accepted into a bounded queue and
+applied by a dedicated task, never inside the HTTP handler.
+
+```bash
+python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision
+python3 tools/cyberdeck_http_cli.py --host DEVICE_IP type "help"
+python3 tools/cyberdeck_http_cli.py --host DEVICE_IP terminal
+```
+
 When a UAC 1.0 playback device is present and ready, the player routes its PCM
 to that device instead of the on-board codec; if the USB stream cannot be
 started the player falls back to the speaker, so playback never regresses.

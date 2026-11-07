@@ -46,6 +46,7 @@ NEWLY_ALLOWLISTED = frozenset({
     "components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp",
     "components/cyberdeck/src/platform/display/cyberdeck_lvgl_dispatch.cpp",
     "components/cyberdeck/src/platform/sensors/cyberdeck_expander_device.cpp",
+    "components/cyberdeck/src/apps/control/cyberdeck_control_server.cpp",
 })
 
 # The reviewed allowlist as a whole.  The counterfactual fixtures below build
@@ -77,6 +78,7 @@ REQUIRED_COVERED = frozenset({
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns_adapter.cpp",
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp_adapter.cpp",
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_https_adapter.cpp",
+    "components/cyberdeck/src/apps/control/cyberdeck_control_protocol.cpp",
 })
 
 

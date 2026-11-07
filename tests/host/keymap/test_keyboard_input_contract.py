@@ -38,7 +38,7 @@ def require(condition: bool, message: str) -> None:
 def main() -> int:
     ui = UI.read_text(encoding="utf-8")
     dispatch = DISPATCH.read_text(encoding="utf-8")
-    submit = function_body(dispatch, "void dispatcher::submit(")
+    submit = function_body(dispatch, "bool dispatcher::submit(")
     process = function_body(dispatch, "void process_async(")
     discard = function_body(dispatch, "void discard_from_queue(")
 
@@ -70,6 +70,15 @@ def main() -> int:
             "producer must serialize enqueue and async rollback")
     require("discard_from_queue(pending)" in submit,
             "async scheduling failure must remove the queued snapshot")
+    require("report && s_done == nullptr" in submit,
+            "a reporting submission must fail closed without the completion semaphore")
+    require("pending->report && s_done != nullptr" in process,
+            "the consumer must signal only events submitted with report")
+    require("xSemaphoreCreateBinary()" in dispatch,
+            "the completion signal must be a binary semaphore")
+    wait = function_body(dispatch, "bool dispatcher::wait_delivered(")
+    require("xSemaphoreTake(s_done, pdMS_TO_TICKS(timeout_ms))" in wait,
+            "wait_delivered must bound the wait on the completion semaphore")
     require("xQueueReceive(s_queue" in discard and
             "pending_count < k_queue_capacity" in discard and
             "if (pending[i] == rejected) continue" in discard,
@@ -81,10 +90,22 @@ def main() -> int:
     require("bsp_display_lock" not in process and "bsp_display_unlock" not in process,
             "async consumer must not take a nested display lock")
 
-    producer = function_body(ui, "extern \"C\" void cyberdeck_keyboard_input(")
+    producer = function_body(ui, "extern \"C\" bool cyberdeck_keyboard_submit_reporting(")
     require("s_keyboard_dispatch.submit" in producer and
             "execute_line" not in producer and "render_terminal" not in producer,
             "public physical input must only submit a snapshot")
+    wrapper = function_body(ui, "extern \"C\" void cyberdeck_keyboard_input(")
+    require("s_keyboard_dispatch.submit" in wrapper and
+            "cyberdeck_poweroff_pending()" in wrapper,
+            "the void keyboard entry point must keep the poweroff guard")
+    delivery = function_body(ui, "extern \"C\" bool cyberdeck_keyboard_wait_delivered(")
+    require("s_keyboard_dispatch.wait_delivered" in delivery,
+            "the UI must expose the bounded consumption wait")
+    reporting = function_body(ui, "extern \"C\" bool cyberdeck_keyboard_submit_reporting(")
+    require("wait_delivered(0)" in reporting,
+            "a reporting submission must drain a stale completion signal")
+    require("special_key, true" in reporting,
+            "a reporting submission must request consumption reporting")
     consumer = function_body(ui, "void on_keyboard_event(")
     require("local_key(special_key)" in consumer,
             "special keys must remain routed through the UI local_key facade")

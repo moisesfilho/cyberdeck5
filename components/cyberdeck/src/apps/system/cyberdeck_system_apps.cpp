@@ -259,10 +259,11 @@ service_application s_ssh{make_manifest("cyberdeck.ssh", "SSH service", "Asynchr
                                         k_ssh_task_stack_bytes, k_ssh_event_queue_depth),
                           start_ssh, stop_ssh, true};
 service_application s_screenshot{make_manifest("cyberdeck.screenshot", "Screenshot service",
-                                               "Local-network screenshot HTTP endpoint",
+                                               "Local-network telemetry and control HTTP endpoints",
                                                {"cyberdeck.event_log", "cyberdeck.wifi"}, {"display", "network"}, 1000,
                                                cyberdeck_apps::app_type::service, {"display", "network"},
-                                               k_screenshot_task_stack_bytes, k_screenshot_control_queue_depth),
+                                               k_screenshot_task_stack_bytes, k_screenshot_control_queue_depth,
+                                               {}, "1.1.0"),
                                   start_screenshot, stop_screenshot, true};
 /* The runtime models shared buses (display/network/ble/serial/...) but not the
  * USB host controller, so this service declares no resource and grants none;

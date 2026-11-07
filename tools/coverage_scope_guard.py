@@ -21,6 +21,10 @@ ALLOWLIST = {
         "BSP/SD-card storage adapter",
     "components/cyberdeck/src/apps/screenshot/screenshot_server.cpp":
         "ESP HTTP server/LVGL adapter",
+    "components/cyberdeck/src/apps/control/cyberdeck_control_server.cpp":
+        "ESP HTTP server/NVS/FreeRTOS/LVGL command adapter; the pure protocol "
+        "(nonce/HMAC/message/plan) is covered by test_control_protocol and the "
+        "wiring by test_control_http_contract.py plus Tab5 validation",
     "components/cyberdeck/src/apps/ota/cyberdeck_ota.cpp":
         "ESP HTTP server/OTA/NVS/FreeRTOS adapter; structural OTA contract and Tab5 tests",
     "components/cyberdeck/src/apps/ssh/ssh_client.cpp":
@@ -72,6 +76,7 @@ FORBIDDEN_ALLOWLIST = {
 # Keep them explicitly required so a lost test target cannot be hidden by a
 # coincidental change to source discovery or allowlisting.
 REQUIRED_COVERED = {
+    "components/cyberdeck/src/apps/control/cyberdeck_control_protocol.cpp",
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp",
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_controller.cpp",
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_dns_adapter.cpp",

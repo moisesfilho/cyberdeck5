@@ -112,6 +112,8 @@ idf_component_register(
         "src/apps/wifi/wifi_storage.cpp"
         "src/apps/screenshot/screenshot_bmp.cpp"
         "src/apps/screenshot/screenshot_server.cpp"
+        "src/apps/control/cyberdeck_control_protocol.cpp"
+        "src/apps/control/cyberdeck_control_server.cpp"
         "src/apps/serial/cyberdeck_serial_bridge.cpp"
         "src/apps/bluetooth/cyberdeck_ble_types.cpp"
         "src/apps/bluetooth/cyberdeck_ble_state_machine.cpp"

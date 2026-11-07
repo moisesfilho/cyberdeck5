@@ -282,14 +282,18 @@ def check_serial_ui_compatibility(serial: str) -> None:
     text_injector = without_comments(function_body(serial, "void inject_text_segmented("))
     enter_injector = without_comments(function_body(serial, "void inject_enter("))
     text_helper = without_comments(function_body(serial, "void inject_text("))
+    confirmed = without_comments(function_body(serial, "bool inject_confirmed("))
 
     require("inject_text_segmented" in executor and "inject_enter" in executor,
             "serial UI text must use segmented text injection and submit with Enter")
     require("inject_text(" in text_injector,
             "segmented serial text must delegate to the bounded text injector")
-    require("cyberdeck_keyboard_input" in text_helper and
-            "cyberdeck_keyboard_input" in enter_injector,
-            "serial text and Enter injection must reach cyberdeck_keyboard_input transitively")
+    require("cyberdeck_keyboard_submit_reporting" in confirmed and
+            "cyberdeck_keyboard_wait_delivered" in confirmed,
+            "serial injection must reach the keyboard seam and confirm consumption")
+    require("inject_confirmed(" in text_helper and
+            "inject_confirmed(" in enter_injector,
+            "serial text and Enter injection must use the confirmed delivery helper")
     require("wifi audit export" not in without_comments(serial),
             "serial bridge must not reintroduce the retired export command")
 

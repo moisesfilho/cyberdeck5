@@ -156,7 +156,7 @@ EXPECTED_APPS = (
      "name": "SSH service", "description": "Asynchronous SSH client service",
      "type": "background", "commands": (), "command": "", "usage": (), "owns_console": False},
     {"symbol": "&s_screenshot", "source": "system", "id": "cyberdeck.screenshot",
-     "name": "Screenshot service", "description": "Local-network screenshot HTTP endpoint",
+     "name": "Screenshot service", "description": "Local-network telemetry and control HTTP endpoints",
      "type": "service", "commands": (), "command": "", "usage": (), "owns_console": False},
     {"symbol": "&s_usb_audio_host", "source": "system", "id": "cyberdeck.usb_audio",
      "name": "USB audio host", "description": "Generic USB Audio Class playback device discovery",

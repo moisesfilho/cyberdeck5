@@ -75,6 +75,16 @@ uma proposta de tornar o SD opcional.
   controle de interação/visibilidade, não autenticação do acesso USB ou da
   bridge. Portanto acesso à porta equivale a capacidade operacional elevada;
   não tratar o USB como console de observação apenas.
+- **Lan de comandos (posterior, 07/11/2026):** as rotas `/control/challenge`,
+  `/control/type` e `/control/terminal` na porta 80 aceitam texto e o injetam na
+  UI com o mesmo alcance de `ui.type`. Diferente das rotas de leitura, elas
+  exigem HMAC-SHA256 com chave dedicada em NVS (`ctl_auth/key`, provisionada
+  apenas por USB via `control.key`), nonce de uso único de 60 s e corpo limitado
+  a 1024 bytes; a chave OTA não é reutilizada. O HMAC autentica quem possui o
+  segredo, não a pessoa, e HTTP continua sem TLS: um peer que observe o tráfego
+  não forja comandos, mas vê o texto e a resposta do terminal. O filtro de peer
+  local segue sendo o mesmo. A injeção roda em task própria, nunca no handler
+  HTTP, e é recusada com a proteção de tela ativa (`409 screen_off`).
 - **SD e dados externos:** confinamento de paths, `O_NOFOLLOW` onde aplicado,
   validações de tamanho e leases reduzem traversal, corrupção acidental e
   certas entradas malformadas. Não protegem confidencialidade de um cartão

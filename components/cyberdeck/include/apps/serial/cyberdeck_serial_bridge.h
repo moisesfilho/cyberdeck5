@@ -33,6 +33,11 @@
  *     No host POSIX, renameat pode substituir o destino atomicamente; no
  *     ESP/FATFS, um destino existente e rejeitado (io_error) porque o VFS nao
  *     garante replace atomico, e rename nunca e seguido por unlink do destino.
+ *   - control.key: devolve a chave HMAC dedicada do canal HTTP de comandos
+ *     (rotas /control/...), provisionada no NVS e gerada no primeiro boot. E
+ *     exclusivo da ponte USB: nunca e exposta pela LAN, pelo terminal, pelo log
+ *     ou pela captura de tela. A bridge nao envia comandos ao canal HTTP; ela
+ *     apenas entrega a chave para o provisionamento local do cliente.
  */
 
 /*
@@ -58,8 +63,7 @@
  *
  * Continuam disponiveis com a tela apagada (nao tocam a arvore ativa):
  * ping, sys.info, sys.safe_mode.clear, ui.echo, wifi.status, wifi.scan,
- * events.read e fs.write, alem dos dois comandos de saida da protecao:
- *   - screen.status -> {"ok":true,"off":<bool>}  (`screen_off_is_active()`)
+ * events.read e fs.write, alem dos dois comandos de saida da protecao: *   - screen.status -> {"ok":true,"off":<bool>}  (`screen_off_is_active()`)
  *   - screen.wake   -> {"ok":true,"woke":<bool>} (`screen_off_turn_on()` so
  *     quando a tela estava apagada; `woke` indica que houve religamento)
  * Ambos leem `screen_off_is_active()` e, no wake, executam

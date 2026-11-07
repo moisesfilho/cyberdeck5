@@ -71,9 +71,10 @@ static void test_callbacks_are_scheduled_and_fifo()
     cyberdeck_keyboard_dispatch::dispatcher dispatcher;
     assert(dispatcher.start(receive, &capture));
 
-    dispatcher.submit("one", 3, 1, 0);
-    dispatcher.submit("two", 3, 2, 0);
-    dispatcher.submit(nullptr, 0, 3, 7);
+    assert(dispatcher.submit("one", 3, 1, 0));
+    assert(dispatcher.submit("two", 3, 2, 0));
+    assert(dispatcher.submit(nullptr, 0, 3, 7));
+    assert(!dispatcher.submit(nullptr, 0, 0, 0));
 
     assert(capture.events.empty());
     assert(lv_shim_pending_async_calls() == 3);
@@ -97,8 +98,10 @@ static void test_bounded_overflow_drops_without_duplicate_delivery()
     capture capture;
     cyberdeck_keyboard_dispatch::dispatcher dispatcher;
     assert(dispatcher.start(receive, &capture));
-    for (std::uint32_t key = 1; key <= 9; ++key)
-        dispatcher.submit(nullptr, 0, 0, key);
+    for (std::uint32_t key = 1; key <= 8; ++key)
+        assert(dispatcher.submit(nullptr, 0, 0, key));
+    /* Fila cheia: o produtor precisa saber que o evento NAO entrou. */
+    assert(!dispatcher.submit(nullptr, 0, 0, 9));
 
     assert(capture.events.empty());
     assert(lv_shim_pending_async_calls() == 8);
@@ -110,15 +113,43 @@ static void test_bounded_overflow_drops_without_duplicate_delivery()
     dispatcher.stop();
 }
 
+static void test_reported_submission_confirms_consumption()
+{
+    reset_host();
+    capture capture;
+    cyberdeck_keyboard_dispatch::dispatcher dispatcher;
+    assert(dispatcher.start(receive, &capture));
+    assert(dispatcher.submit("one", 3, 0, 0, true));
+    assert(dispatcher.submit("two", 3, 0, 0, false));
+    drain_async();
+    assert(capture.events.size() == 2);
+    /* O shim host nao bloqueia: a espera apenas comprova o encaminhamento. */
+    assert(dispatcher.wait_delivered(0));
+    dispatcher.stop();
+}
+
+static void test_reporting_submission_requires_started_dispatcher()
+{
+    reset_host();
+    capture capture;
+    cyberdeck_keyboard_dispatch::dispatcher dispatcher;
+    /* Sem start() nao existe semaforo de conclusao: falha fechado. */
+    assert(!dispatcher.submit("one", 3, 0, 0, true));
+    assert(dispatcher.start(receive, &capture));
+    assert(dispatcher.submit("one", 3, 0, 0, true));
+    drain_async();
+    dispatcher.stop();
+}
+
 static void test_schedule_failure_rolls_back_only_rejected_event()
 {
     reset_host();
     capture capture;
     cyberdeck_keyboard_dispatch::dispatcher dispatcher;
     assert(dispatcher.start(receive, &capture));
-    dispatcher.submit(nullptr, 0, 0, 11);
+    assert(dispatcher.submit(nullptr, 0, 0, 11));
     lv_shim_set_next_async_result(LV_RESULT_INVALID);
-    dispatcher.submit(nullptr, 0, 0, 12);
+    assert(!dispatcher.submit(nullptr, 0, 0, 12));
 
     assert(lv_shim_pending_async_calls() == 1);
     assert(lv_shim_wake_count() == 1);
@@ -363,6 +394,8 @@ int main()
 {
     test_callbacks_are_scheduled_and_fifo();
     test_bounded_overflow_drops_without_duplicate_delivery();
+    test_reported_submission_confirms_consumption();
+    test_reporting_submission_requires_started_dispatcher();
     test_schedule_failure_rolls_back_only_rejected_event();
     test_stop_releases_pending_events_once();
     test_invalidation_discards_old_generation_and_delivers_new_once();

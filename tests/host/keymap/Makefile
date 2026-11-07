@@ -231,7 +231,7 @@ BLE_STATE_BIN := test_ble_state_machine_bin
 BLE_EVENTS_BIN := test_ble_event_dispatch_bin
 BLE_STORE_BIN := test_ble_store_bin
 BLE_COMMAND_BIN := test_ble_command_parse_bin
-BINS := test_shell_help_bin test_shell_app_bin test_keymap_bin test_shell_utils_bin test_history_bin test_keyboard_event_bin test_event_log_recent_bin test_event_log_shim test_wifi_indicator_state_bin test_wifi_icon_layout_bin test_wifi_menu_bin test_wifi_state_machine_bin test_clock_formatter_bin test_screen_protection_bin test_terminal_filter_bin test_terminal_scrollback_bin test_edit_line_bin test_editor_model_bin test_net_coordinator_bin test_ssh_line_composer_bin test_screenshot_bmp_bin test_wifi_event_dispatch_bin test_wifi_persistence_queue_bin test_wifi_persistence_coordination_bin test_local_shell_bin test_save_sidecar_recovery test_cat_multiline_bin test_help_unification_bin test_orientation_bin $(WIFI_AUDIT_BIN) test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_guard_bin test_screen_off_active_bin test_serial_screen_dump_bin test_serial_ui_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session_bin test_app_runtime_bin test_runtime_sdk_bin test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app_bin test_window_manager_bin test_recovery_policy_bin test_recovery_runtime_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
+BINS := test_shell_help_bin test_shell_app_bin test_keymap_bin test_shell_utils_bin test_history_bin test_keyboard_event_bin test_event_log_recent_bin test_event_log_shim test_wifi_indicator_state_bin test_wifi_icon_layout_bin test_wifi_menu_bin test_wifi_state_machine_bin test_clock_formatter_bin test_screen_protection_bin test_terminal_filter_bin test_terminal_scrollback_bin test_edit_line_bin test_editor_model_bin test_net_coordinator_bin test_ssh_line_composer_bin test_screenshot_bmp_bin test_control_protocol_bin test_wifi_event_dispatch_bin test_wifi_persistence_queue_bin test_wifi_persistence_coordination_bin test_local_shell_bin test_save_sidecar_recovery test_cat_multiline_bin test_help_unification_bin test_orientation_bin $(WIFI_AUDIT_BIN) test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_guard_bin test_screen_off_active_bin test_serial_screen_dump_bin test_serial_ui_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session_bin test_app_runtime_bin test_runtime_sdk_bin test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app_bin test_window_manager_bin test_recovery_policy_bin test_recovery_runtime_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
 SAVE_SIDECAR_BIN := test_save_sidecar_recovery_bin
 WIFI_SURVEY_EXPORT_BIN := test_wifi_survey_export_controller_bin
 NETDIAG_CONTROLLER_BIN := test_netdiag_controller_bin
@@ -649,7 +649,7 @@ test_time_sync: test_time_sync_bin
 test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9_CAPABILITIES_TEST) Makefile
 	$(PYTHON) test_phase9_capabilities_contract.py
 
-.PHONY: all test verify clean test_shell_help test_shell_help_contract test_screenshot_lifecycle_contract test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_battery_soc test_battery_soc_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
+.PHONY: all test verify clean test_shell_help test_shell_help_contract test_screenshot_lifecycle_contract test_control_protocol test_control_http_contract test_control_cli test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_battery_soc test_battery_soc_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
 
 .PHONY: test_wifi_survey test_wifi_survey_integration_contract test_wifi_survey_export_controller test_wifi_survey_export_result_contract
 .PHONY: test_recovery_policy test_phase10_contract test_event_projection_contract test_save_sidecar_recovery
@@ -1930,6 +1930,25 @@ test_screenshot_bmp_bin: $(SCREENSHOT_BMP_OBJS) Makefile
 test_screenshot_bmp: test_screenshot_bmp_bin
 	@./test_screenshot_bmp_bin
 
+CONTROL_PROTOCOL_OBJS := test_control_protocol/test.o test_control_protocol/protocol.o
+CONTROL_PROTOCOL_HDR := ../../../components/cyberdeck/include/apps/control/cyberdeck_control_protocol.h
+CONTROL_PROTOCOL_SRC := ../../../components/cyberdeck/src/apps/control/cyberdeck_control_protocol.cpp
+
+test_control_protocol/test.o: test_control_protocol.cpp $(CONTROL_PROTOCOL_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_control_protocol/protocol.o: $(CONTROL_PROTOCOL_SRC) $(CONTROL_PROTOCOL_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_control_protocol_bin: $(CONTROL_PROTOCOL_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CONTROL_PROTOCOL_OBJS) -o $@
+
+.PHONY: test_control_protocol
+test_control_protocol: test_control_protocol_bin
+	@./test_control_protocol_bin
+
 # Host test for the confined /sdcard local shell.  Include the production
 # header directly: a duplicate test-only ABI here can make the test compile
 # while linking a different class layout/API than the implementation.
@@ -2216,6 +2235,26 @@ test_ota_contract: test_ota_contract.py ../../../partitions.csv ../../../sdkconf
 	$(PYTHON) test_ota_contract.py
 test_battery_http_contract: $(BATTERY_JSON_CONTRACT) ../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp ../../../components/cyberdeck/include/platform/sensors/battery_protection.h ../../../components/cyberdeck/src/platform/sensors/battery_protection.cpp $(BATTERY_JSON_HDR) $(BATTERY_JSON_SRC) ../../../components/cyberdeck/CMakeLists.txt ../../../code-map.md ../../../docs/ARCHITECTURE.md ../../../docs/ARCHITECTURE.pt-BR.md ../../../README.md ../../../README.pt-BR.md Makefile
 	$(PYTHON) $(BATTERY_JSON_CONTRACT)
+
+# Canal HTTP de comandos: contrato estrutural das rotas, autenticacao dedicada,
+# fila bounded e ausencia de execucao na task HTTP. Le a producao; nao abre
+# porta, socket ou dispositivo.
+test_control_http_contract: test_control_http_contract.py \
+		../../../components/cyberdeck/src/apps/control/cyberdeck_control_server.cpp \
+		../../../components/cyberdeck/include/apps/control/cyberdeck_control_server.h \
+		$(CONTROL_PROTOCOL_SRC) $(CONTROL_PROTOCOL_HDR) \
+		../../../components/cyberdeck/include/platform/net/cyberdeck_local_peer.h \
+		../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp \
+		../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp \
+		../../../components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h \
+		../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp \
+		../../../components/cyberdeck/CMakeLists.txt ../../../tools/coverage_scope_guard.py \
+		../../../tools/cyberdeck_http_cli.py ../../../code-map.md Makefile
+	$(PYTHON) test_control_http_contract.py
+
+# Cliente host: autenticacao, limites e recusa de sobrescrever a chave.
+test_control_cli: test_control_cli.py ../../../tools/cyberdeck_http_cli.py
+	$(PYTHON) test_control_cli.py
 
 # Structural companion for expander-B, NVS, UI timer/snapshot, shell and
 # ui.type.  It reads production source and fails closed when the feature is
@@ -3182,6 +3221,12 @@ test: test-build
 	@./test_ssh_line_composer_bin
 	@echo "==> Executando testes da API de geracao de BMP 24-bit"
 	@./test_screenshot_bmp_bin
+	@echo "==> Executando protocolo puro do canal HTTP de comandos (nonce/HMAC)"
+	@$(MAKE) --no-print-directory test_control_protocol
+	@echo "==> Executando contrato estrutural do canal HTTP de comandos"
+	@$(MAKE) --no-print-directory test_control_http_contract
+	@echo "==> Executando testes do cliente HTTP de comandos"
+	@$(MAKE) --no-print-directory test_control_cli
 	@echo "==> Executando contrato do shell local seguro"
 	@./test_local_shell_bin
 	@echo "==> Executando contrato de unificacao do help"
@@ -3460,6 +3505,6 @@ clean:
 	rm -f $(MUSIC_CODEC_I2S_BIN)
 	rm -rf test_console_dispatch test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff test_expander_broker
 	rm -f $(BINS) test_app_runtime_tsan test_screen_off_active_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
-	rm -rf test_keymap test_screenshot_bmp test_orientation
+	rm -rf test_keymap test_screenshot_bmp test_orientation test_control_protocol
 	rm -rf test_screen_protection test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_guard test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_soc test_battery_view test_battery_json test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_terminal_scrollback test_wifi_survey test_recovery_policy test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_clock_formatter test_terminal_filter test_edit_line test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_line_composer .objects
 	rm -f $(LEGACY_TEST_ARTIFACTS)

@@ -329,6 +329,20 @@ porta Host, use adaptador USB-A macho para USB-C fêmea.
 curl --fail http://IP_DO_DISPOSITIVO/usb/audio
 ```
 
+`POST /control/type` injeta texto mais Enter na UI ativa, exatamente como
+`ui.type` da ponte USB, permitindo enviar comandos enquanto o `idf.py monitor`
+mantém a porta serial. O canal é autenticado com chave HMAC-SHA256 própria
+(NVS, provisionada uma vez por USB via `control.key`; a chave OTA nunca é
+reutilizada) e nonce de uso único por requisição. HTTP não oferece
+confidencialidade: use apenas em LAN confiável. O comando entra em uma fila
+bounded e é aplicado por uma task dedicada, nunca dentro do handler HTTP.
+
+```bash
+python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision
+python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO type "help"
+python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO terminal
+```
+
 Quando um dispositivo UAC 1.0 de reprodução está presente e pronto, o player
 envia o PCM para ele em vez do codec da placa; se o stream USB não puder ser
 aberto, o player volta ao speaker, sem regressão de reprodução. O volume do player (0-50) é aplicado ao fone: pela Feature Unit do dispositivo

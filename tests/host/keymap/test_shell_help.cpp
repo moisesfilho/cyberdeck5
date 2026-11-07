@@ -1045,7 +1045,9 @@ int main()
             commandless_manifest("cyberdeck.ssh", "SSH service", "Asynchronous SSH client service",
                                  cyberdeck_apps::app_type::background));
         help_manifest_app screenshot(commandless_manifest(
-            "cyberdeck.screenshot", "Screenshot service", "Local-network screenshot HTTP endpoint"));
+            "cyberdeck.screenshot", "Screenshot service",
+            "Local-network telemetry and control HTTP endpoints", cyberdeck_apps::app_type::service,
+            "1.1.0"));
         help_manifest_app usb_audio(commandless_manifest(
             "cyberdeck.usb_audio", "USB audio host", "Generic USB Audio Class playback device discovery"));
         help_manifest_app bluetooth(

@@ -192,6 +192,26 @@ leitura antes de concluir qualquer coisa sobre o estado da tela.
 | SC8 | Após SC7: `screen.status` e `ui.dump` | `off=false` e dump retorna a árvore real (não apenas a sobreposição) |  |  |
 | SC9 | `sys.info` antes/depois de SC3..SC7 | Uptime crescente, sem reboot/panic |  |  |
 
+### 4.5. Chave do canal HTTP de comandos (`control.key`)
+
+`control.key` devolve a chave HMAC dedicada das rotas `/control/*` (porta 80),
+lida do NVS `ctl_auth/key`. Uso previsto: provisionamento único no computador
+antes de abrir o monitor, com `python3 tools/cyberdeck_http_cli.py --port
+/dev/ttyACM0 provision`. O arquivo resultante
+(`~/.config/cyberdeck5/control.key`) deve ficar em 0600 e nunca ser
+commitado, colado em log ou exposto pela LAN: a ponte é o único caminho para a
+chave, e `ota.key` continua independente.
+
+| ID | Acao | Resultado esperado | Pass/Fail | Obs |
+|----|------|--------------------|-----------|-----|
+| CK1 | Sem `control.key` no PC: `provision` | Cria `~/.config/cyberdeck5/control.key` com 64 hex e 0600 |  |  |
+| CK2 | Repetir `provision` | Recusa sobrescrever; arquivo intacto |  |  |
+| CK3 | `screen off` e depois `control.key` | `ok:true` (a chave não depende da árvore de UI) |  |  |
+| CK4 | `sys.info` após CK1..CK3 | Uptime contínuo, sem reboot/panic |  |  |
+
+O roteiro completo do canal (autenticação, injeção, proteção de tela e
+recuperação de Wi-Fi) está em `http-control-validation.pt-BR.md`.
+
 ## 5. `term.dump`: snapshot textual do terminal
 
 `term.dump` nao recebe argumentos de comando. A requisicao NDJSON e

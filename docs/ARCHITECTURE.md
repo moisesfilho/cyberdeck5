@@ -423,6 +423,9 @@ curl --fail --output screenshot.bmp http://DEVICE_IP/screenshot
 | `/events.txt` | GET | `text/plain; charset=utf-8` | projeção textual bounded de `events.log` em chunks de 1024 bytes |
 | `/battery` | GET | `application/json` com `Cache-Control: no-store` | snapshot de política em cache (`battery_protection_get_cached_policy_snapshot`) e timestamp (`battery_protection_get_cached_policy_sampled_at_us`) |
 | `/usb/audio` | GET | `application/json` com `Cache-Control: no-store` | snapshot bounded do serviço opcional UAC 1.0 na USB-A Host; estado, identidade e formatos PCM |
+| `/control/challenge` | GET | `application/json` com `Cache-Control: no-store` | nonce de uso único (16 bytes aleatórios, 32 hex) válido por 60 s |
+| `/control/type` | POST | `202 Accepted` com `{"accepted":true,"bytes":N,"lines":N}` | texto UTF-8 limitado, autenticado e enfileirado para a task de injeção |
+| `/control/terminal` | GET | `application/json` com `Cache-Control: no-store` | snapshot textual bounded (`cyberdeck_ui_term_dump`, 2048 bytes) |
 
 Todos os endpoints aceitam apenas clientes da rede privada/local, respondem 405
 a métodos diferentes de `GET` e 503 quando o mutex de requisição está ocupado.
@@ -435,6 +438,42 @@ um JSON de ordem fixa (`schema`=1, `state`, `charge`, `available`,
 snapshot indisponível publica `state`/`charge` como `unavailable`. Os handlers
 são registrados por tabela com rollback: se um registro falhar, o servidor é
 parado (`httpd_stop`) em vez de ficar parcialmente exposto.
+
+### Canal HTTP de comandos
+
+As rotas `/control/*` também vivem na porta 80 e existem para validar o
+dispositivo com o `idf.py monitor` aberto: em vez de usar a ponte USB para
+injetar teclas, o operador envia o comando pela LAN. O canal reproduz o efeito
+de `ui.type` (texto + Enter na UI ativa), portanto alcança shell local, SSH,
+apps e diálogos exatamente como a entrada manual.
+
+A autenticação é dedicada e não reutiliza a chave OTA. A chave HMAC-SHA256 de 32
+bytes fica no NVS (`ctl_auth/key`), é gerada com `esp_fill_random` no primeiro
+boot e só pode ser lida pela ponte USB (`control.key`); nenhuma rota HTTP a
+expõe e ela nunca é logada. Cada requisição usa um nonce de uso único obtido em
+`GET /control/challenge` e envia `X-CTL-Nonce` e `X-CTL-MAC`, onde o MAC cobre
+`<nonce>\n<METHOD>\n<uri>\n<sha256(body)>`. O nonce é consumido apenas depois de
+o MAC conferir; um MAC inválido não queima o desafio do operador, mas uma
+requisição autenticada sempre o consome (sem replay). O handler responde
+`202 Accepted` quando o trabalho entra na fila bounded de 4 comandos e **não**
+injeta nada na task HTTP: uma task própria (`ctl_input`) aplica o texto em
+segmentos de 30 ms. A proteção de tela recusa a injeção (`409 screen_off`) em
+vez de perder a primeira tecla no wake.
+
+O corpo de `/control/type` é limitado a 1024 bytes UTF-8 e 32 linhas, com CRLF
+normalizado para LF; `NUL` e UTF-8 inválido são recusados. `GET
+/control/terminal` exige a mesma autenticação e devolve até 2048 bytes do
+terminal com `truncated`. O snapshot é compartilhado: ele reflete o terminal
+inteiro (shell, SSH, apps e teclado físico), não apenas a última requisição.
+HTTP não oferece confidencialidade — o HMAC autentica a origem lógica, não cifra
+o texto — e o filtro de peer local não identifica o usuário. Use o canal apenas
+em LAN confiável.
+
+```bash
+python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision
+python3 tools/cyberdeck_http_cli.py --host DEVICE_IP type "help"
+python3 tools/cyberdeck_http_cli.py --host DEVICE_IP terminal
+```
 
 `cyberdeck.usb_audio` is an optional runtime service. The BSP enables USB Host
 on the USB-A port, and `usb_host_uac` 1.5.0 discovers UAC transmit interfaces

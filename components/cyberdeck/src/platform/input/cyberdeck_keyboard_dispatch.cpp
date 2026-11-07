@@ -19,6 +19,7 @@ struct event {
     std::uint8_t modifier;
     std::uint32_t special_key;
     std::uint64_t generation;
+    bool report;
     char text[];
 };
 
@@ -31,6 +32,7 @@ struct callback_ticket {
 
 QueueHandle_t s_queue = nullptr;
 SemaphoreHandle_t s_mutex = nullptr;
+SemaphoreHandle_t s_done = nullptr;
 callback_ticket s_tickets[k_queue_capacity]{};
 callback s_handler = nullptr;
 void *s_context = nullptr;
@@ -120,6 +122,9 @@ void process_async(void *user_data)
         handler(pending->text, pending->length, pending->modifier,
                 pending->special_key, context);
     }
+    /* Confirmacao de consumo: vale tambem para evento stale descartado, para o
+     * esperador nao bloquear o budget inteiro. */
+    if (pending->report && s_done != nullptr) (void)xSemaphoreGive(s_done);
     free(pending);
 }
 
@@ -169,6 +174,11 @@ bool dispatcher::start(callback handler, void *context)
     if (handler == nullptr) return false;
     if (s_mutex == nullptr) s_mutex = xSemaphoreCreateMutex();
     if (s_mutex == nullptr || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) return false;
+    if (s_done == nullptr) s_done = xSemaphoreCreateBinary();
+    if (s_done == nullptr) {
+        xSemaphoreGive(s_mutex);
+        return false;
+    }
     s_queue = xQueueCreate(k_queue_capacity, sizeof(event *));
     if (s_queue == nullptr) {
         xSemaphoreGive(s_mutex);
@@ -232,26 +242,28 @@ void dispatcher::stop()
     context_ = nullptr;
 }
 
-void dispatcher::submit(const char *text, std::size_t length, std::uint8_t modifier,
-                        std::uint32_t special_key)
+bool dispatcher::submit(const char *text, std::size_t length, std::uint8_t modifier,
+                        std::uint32_t special_key, bool report)
 {
-    if ((text == nullptr || length == 0) && special_key == 0) return;
+    if ((text == nullptr || length == 0) && special_key == 0) return false;
+    if (report && s_done == nullptr) return false;
     event *pending = static_cast<event *>(std::malloc(sizeof(event) + length + 1));
-    if (pending == nullptr) return;
+    if (pending == nullptr) return false;
     pending->length = text != nullptr ? length : 0;
     pending->modifier = modifier;
     pending->special_key = special_key;
+    pending->report = report;
     if (pending->length != 0) std::memcpy(pending->text, text, pending->length);
     pending->text[pending->length] = '\0';
 
     if (s_mutex == nullptr || xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         free(pending);
-        return;
+        return false;
     }
     if (s_queue == nullptr || s_generation_exhausted) {
         xSemaphoreGive(s_mutex);
         free(pending);
-        return;
+        return false;
     }
     pending->generation = s_generation;
     callback_ticket *ticket = reserve_ticket();
@@ -259,7 +271,7 @@ void dispatcher::submit(const char *text, std::size_t length, std::uint8_t modif
         release_ticket(ticket);
         xSemaphoreGive(s_mutex);
         free(pending);
-        return;
+        return false;
     }
     ticket->pending = pending;
     static_assert(sizeof(std::uintptr_t) <= sizeof(void *),
@@ -272,12 +284,20 @@ void dispatcher::submit(const char *text, std::size_t length, std::uint8_t modif
         discard_from_queue(pending);
         release_ticket(ticket);
         free(pending);
-    } else {
-        // lv_async_call queues the callback but does not wake the port task.
-        // Wake it explicitly so the configured timer period remains unchanged.
-        (void)lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr);
+        xSemaphoreGive(s_mutex);
+        return false;
     }
+    // lv_async_call queues the callback but does not wake the port task.
+    // Wake it explicitly so the configured timer period remains unchanged.
+    (void)lvgl_port_task_wake(LVGL_PORT_EVENT_USER, nullptr);
     xSemaphoreGive(s_mutex);
+    return true;
+}
+
+bool dispatcher::wait_delivered(std::uint32_t timeout_ms)
+{
+    if (s_done == nullptr) return false;
+    return xSemaphoreTake(s_done, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }
 
 } // namespace cyberdeck_keyboard_dispatch

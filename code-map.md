@@ -568,6 +568,78 @@ Os alvos excluídos `test_event_log_shim`, `test_cat_worker_runtime` e
 artefatos `_bin` de state machine, event dispatch e store, além dos dois
 contratos, sem duplicar os cenários no agregado.
 
+## Canal HTTP de comandos (LAN)
+
+`components/cyberdeck/include/apps/control/cyberdeck_control_protocol.{h,cpp}` é
+a camada pura (sem ESP-IDF/FreeRTOS/LVGL): nonce de uso único com TTL de 60 s,
+hex canônico, comparação em tempo constante, construção/verificação da mensagem
+`<nonce>\n<METHOD>\n<uri>\n<sha256(body)>`, validação UTF-8, normalização
+CRLF→LF, plano de injeção (limite 1024 bytes e 32 linhas), escaping JSON e
+mapeamento erro→status HTTP. `verify()` consome o nonce somente depois de o MAC
+conferir, então um MAC inválido não queima o desafio do operador, mas uma
+requisição autenticada sempre o consome (sem replay). As primitivas de digest e
+MAC são injetadas: produção usa mbedtls; o teste host usa uma implementação
+própria validada contra vetores NIST/RFC 4231, sem duplicar cripto de produção.
+
+`components/cyberdeck/include/apps/control/cyberdeck_control_server.{h,cpp}` é
+o adaptador de dispositivo: carrega/gera a chave dedicada em NVS
+(`ctl_auth/key`, `esp_fill_random`), mantém a fila bounded de 4 comandos e a
+task `ctl_input`, implementa os handlers `/control/challenge`,
+`/control/type` e `/control/terminal` e expõe `serial_key()` **somente** para a
+ponte USB (`control.key`). O handler HTTP autentica e enfileira; nunca injeta
+teclado, nunca adquire o display lock e nunca executa shell. A task aplica o
+texto em segmentos de 30 ms via `cyberdeck_keyboard_input` (mesma entrada de
+`ui.type`) e recusa a injeção com a proteção de tela ativa. O terminal vem de
+`cyberdeck_ui_term_dump` (2048 bytes, `truncated`) e o JSON é enviado em chunks
+para não alocar um buffer grande na task HTTP.
+
+`components/cyberdeck/include/platform/net/cyberdeck_local_peer.h` (header-only)
+centraliza a allowlist de peer local (loopback, 10/8, 172.16/12, 192.168/16,
+169.254/16, ULA e link-local IPv6, IPv4 mapeado) usada pelos handlers novos.
+`screenshot_server.cpp` registra as três rotas na porta 80
+(`max_uri_handlers = 7`, rollback por `httpd_stop`) e delega o ciclo de vida ao
+serviço `cyberdeck.screenshot` (manifesto 1.1.0).
+
+| Arquivo | Símbolos/contrato | Papel |
+| --- | --- | --- |
+| `components/cyberdeck/include/apps/control/cyberdeck_control_protocol.h`, `src/apps/control/cyberdeck_control_protocol.cpp` | `k_key_bytes`, `k_max_text_bytes`, `k_max_lines`, `k_nonce_ttl_us`, `nonce_store`, `verify`, `build_message`, `hex_*`, `constant_time_equal`, `valid_utf8`, `plan_text`, `json_escape`, `format_terminal_json`, `error_code`, `http_status` | Protocolo puro do canal; nenhuma dependência de plataforma |
+| `components/cyberdeck/include/apps/control/cyberdeck_control_server.h`, `src/apps/control/cyberdeck_control_server.cpp` | `start`, `stop`, `ready`, `serial_key`, `challenge_handler`, `type_handler`, `terminal_handler`, `k_input_queue_depth`, `k_terminal_max_bytes` | Chave NVS, fila/task de injeção e handlers HTTP |
+| `components/cyberdeck/include/platform/net/cyberdeck_local_peer.h` | `ipv4_local`, `socket_is_local_peer` | Allowlist de peer local compartilhada |
+| `tools/cyberdeck_http_cli.py` | `provision`, `read_key`, `write_key`, `signed_headers`, `session.challenge/type/terminal` | Cliente host: provisionamento USB, `type`, `terminal`, `status` |
+| `tests/host/keymap/test_control_protocol.cpp` | TEST-CONTROL-PROTOCOL | Comportamento: vetores cripto, nonce/replay/expiração, MAC/corpo/URI/método, UTF-8, plano de texto, JSON |
+| `tests/host/keymap/test_control_http_contract.py` | TEST-CONTROL-HTTP | Contrato estrutural: rotas, guards, fila, ausência de execução no handler, chave só por USB, wiring/CMake/cobertura/docs |
+| `tests/host/keymap/test_control_cli.py` | TEST-CONTROL-CLI | Assinatura do cliente, limites, regras do arquivo de chave |
+
+Operação: provisione uma vez com o monitor fechado
+(`python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision`), abra o
+`idf.py monitor` e use `type`/`terminal` pela LAN. O `202 Accepted` significa
+apenas despacho enfileirado; o efeito deve ser confirmado com `terminal` (ou
+visualmente). Roteiro manual em
+`tests/manual/http-control-validation.pt-BR.md`. HTTP não oferece
+confidencialidade — o HMAC autentica a origem lógica, não cifra o texto — e o
+filtro de peer não identifica o usuário; usar apenas em LAN confiável.
+
+Entrega confirmada: no LVGL 9.6 cada `lv_async_call` vira um timer próprio e
+submissões concorrentes podem inverter texto e Enter, concatenando comandos
+(`lspwd`). Por isso `dispatcher::submit` aceita `report`, `process_async` sinaliza
+um semáforo binário depois de o handler rodar e `wait_delivered(timeout)`
+confirma o consumo. O worker HTTP (`inject_event`) e a injeção da ponte
+(`inject_confirmed` em `cyberdeck_serial_bridge.cpp`) submetem com
+`cyberdeck_keyboard_submit_reporting` e esperam cada evento antes do próximo; um
+timeout aborta o trabalho sem reenviar (reenviar duplicaria o comando). Com isso
+a fila de 4 comandos aplica um comando por vez e uma rajada além da fila recebe
+`429 busy` em vez de corromper a linha.
+
+Rastreabilidade:
+
+| Requisito | Aceite | Teste |
+| --- | --- | --- |
+| REQ-CTL-HTTP-01 (rotas/métodos/peer/rollback) | AC-CTL-HTTP-03 | `test_control_http_contract.py` + validação no Tab5 |
+| REQ-CTL-HTTP-02 (chave dedicada por USB, sem reuso da OTA) | AC-CTL-HTTP-03 | `test_control_http_contract.py`, `test_control_cli.py` |
+| REQ-CTL-HTTP-03 (nonce/digest/MAC/uso único) | AC-CTL-HTTP-01 | `test_control_protocol.cpp`, `test_control_cli.py` |
+| REQ-CTL-HTTP-04 (fila bounded, injeção na task, tela apagada) | AC-CTL-HTTP-03 | `test_control_http_contract.py` + validação no Tab5 |
+| REQ-CTL-HTTP-05 (snapshot bounded e read-only) | AC-CTL-HTTP-01 | `test_control_protocol.cpp` (`format_terminal_json`) + `test_control_http_contract.py` |
+
 ## OTA via Wi-Fi
 
 `partitions.csv` e `sdkconfig.defaults` reservam `otadata` e os slots

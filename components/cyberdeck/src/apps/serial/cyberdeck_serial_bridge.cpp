@@ -24,6 +24,7 @@
 
 #ifdef ESP_PLATFORM
 #include "apps/ota/cyberdeck_ota.h"
+#include "apps/control/cyberdeck_control_server.h"
 #include "apps/music/cyberdeck_music_app.h"
 #include "platform/logging/event_log.h"
 #include "platform/storage/cyberdeck_sd_io_coordinator.h"
@@ -713,7 +714,7 @@ bool parse_ndjson_line(const char *data, std::size_t len, request &out, dispatch
                                           "ui.type",    "ui.dump",     "term.dump", "screen.shot", "screen.dump", "sys.info",
                                            "wifi.status", "wifi.scan",  "events.read", "fs.write", "sys.safe_mode.clear",
                                              "screen.status", "screen.wake", "music.diagnostics", "music.trace",
-                                              "music.status", "music.scan", "ui.escape", "ota.key"};
+                                              "music.status", "music.scan", "ui.escape", "ota.key", "control.key"};
     bool known = false;
     for (const char *k : k_known) {
         if (out.type == k) {
@@ -1526,6 +1527,23 @@ dispatch_result err_result(const request &req, dispatch_error err, const std::st
 /* ---- injecao de teclado (fila bounded de 8; drena no tick do LVGL) ---- */
 constexpr int k_clear_backspaces = 64;
 constexpr std::uint32_t k_inject_delay_ms = 30;
+/* O LVGL 9.6 agenda cada lv_async_call em um timer proprio: submissoes
+ * concorrentes podem inverter texto e Enter e concatenar comandos. Cada evento
+ * e confirmado antes do proximo, com reenvio bounded so da admissao. */
+constexpr unsigned k_inject_attempts = 40;
+constexpr std::uint32_t k_inject_retry_ms = 10;
+constexpr std::uint32_t k_inject_wait_ms = 2000;
+
+bool inject_confirmed(const char *text, std::size_t length, std::uint32_t special_key)
+{
+    for (unsigned attempt = 0; attempt < k_inject_attempts; ++attempt) {
+        if (cyberdeck_keyboard_submit_reporting(text, length, 0, special_key)) {
+            return cyberdeck_keyboard_wait_delivered(k_inject_wait_ms);
+        }
+        vTaskDelay(pdMS_TO_TICKS(k_inject_retry_ms));
+    }
+    return false;
+}
 
 std::string truncate_left_utf8_local(const std::string &s, std::size_t limit)
 {
@@ -1545,25 +1563,25 @@ void inject_text(const char *text, std::size_t len)
     if (text == nullptr || len == 0) {
         return;
     }
-    cyberdeck_keyboard_input(text, len, 0, 0);
+    (void)inject_confirmed(text, len, 0);
     vTaskDelay(pdMS_TO_TICKS(k_inject_delay_ms));
 }
 
 void inject_enter()
 {
-    cyberdeck_keyboard_input(nullptr, 0, 0, LV_KEY_ENTER);
+    (void)inject_confirmed(nullptr, 0, LV_KEY_ENTER);
     vTaskDelay(pdMS_TO_TICKS(k_inject_delay_ms));
 }
 
 void inject_escape()
 {
-    cyberdeck_keyboard_input(nullptr, 0, 0, LV_KEY_ESC);
+    (void)inject_confirmed(nullptr, 0, LV_KEY_ESC);
     vTaskDelay(pdMS_TO_TICKS(k_inject_delay_ms));
 }
 
 void inject_backspace()
 {
-    cyberdeck_keyboard_input(nullptr, 0, 0, LV_KEY_BACKSPACE);
+    (void)inject_confirmed(nullptr, 0, LV_KEY_BACKSPACE);
     vTaskDelay(pdMS_TO_TICKS(k_inject_delay_ms));
 }
 
@@ -2244,6 +2262,20 @@ device_result device_exec(const request &req, const std::vector<json_field> &fie
         d.result = cyberdeck_recovery::clear_safe_mode() == ESP_OK
                        ? ok_result(req, "{\"cleared\":true}")
                        : err_result(req, dispatch_error::internal, "recovery indisponivel");
+        return d;
+    }
+    if (req.type == "control.key") {
+        d.handled = true;
+        char secret[cyberdeck_control::k_serial_key_chars]{};
+        if (cyberdeck_control::serial_key(secret, sizeof(secret)) != ESP_OK) {
+            d.result = err_result(req, dispatch_error::internal, "control key unavailable");
+        } else {
+            std::string body = "{\"key\":\"";
+            body += secret;
+            body += "\"}";
+            d.result = ok_result(req, body);
+        }
+        std::memset(secret, 0, sizeof(secret));
         return d;
     }
     if (req.type == "ota.key") {

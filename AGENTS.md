@@ -197,6 +197,28 @@ automatico em toda falha. Para validar pela primeira vez, teste cancelamento,
 upload interrompido, hash incorreto, confirmacao, modo silencioso, perda de
 energia e rollback controlado, registrando build, imagem, boot e efeito.
 
+### Comandos pela LAN (/control)
+
+Para validar pela LAN sem ocupar a USB Serial-JTAG (o `idf.py monitor` pode
+ficar aberto), use o canal autenticado `/control/*` na porta 80. Provisione a
+chave dedicada **uma vez**, com o monitor fechado, e depois trabalhe pela rede:
+
+```bash
+python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision
+python3 tools/cyberdeck_http_cli.py --host <IP-DO-TAB5> type "help"
+python3 tools/cyberdeck_http_cli.py --host <IP-DO-TAB5> terminal
+```
+
+A chave fica em `~/.config/cyberdeck5/control.key` (0600), é **independente da
+chave OTA** e nunca deve ser impressa, commitada ou anexada a logs. O comando
+`control.key` da ponte USB é o único caminho para lê-la. `type` tem o mesmo
+alcance de `ui.type` (shell local, SSH, apps e diálogos) e responde
+`202 Accepted` apenas para o despacho enfileirado — confirme o efeito com
+`terminal` (ou visualmente) e use o monitor para panic/reboot. HTTP não oferece
+confidencialidade nem identifica o usuário; use apenas em LAN confiável. Não
+execute comandos destrutivos como prova. Roteiro completo em
+`tests/manual/http-control-validation.pt-BR.md`.
+
 - Ordem padrão: implementação -> testes focados -> validação no dispositivo
   conectado (quando segura e autorizada) -> revisão final ampla. Faça o flash do
   firmware compilado somente como parte da validação aprovada, não para substituir

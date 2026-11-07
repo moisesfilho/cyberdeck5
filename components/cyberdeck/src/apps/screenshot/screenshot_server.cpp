@@ -1,4 +1,5 @@
 #include "apps/screenshot/screenshot_server.h"
+#include "apps/control/cyberdeck_control_server.h"
 #include "apps/screenshot/screenshot_bmp.h"
 #include "platform/logging/event_log.h"
 #include "platform/sensors/battery_protection.h"
@@ -211,7 +212,7 @@ static esp_err_t start_server(void)
     if (s_server != NULL) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 4;
+    config.max_uri_handlers = 7;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
     if (httpd_start(&s_server, &config) != ESP_OK) {
@@ -223,6 +224,13 @@ static esp_err_t start_server(void)
         {.uri = "/events.txt", .method = HTTP_GET, .handler = events_handler, .user_ctx = NULL},
         {.uri = "/battery", .method = HTTP_GET, .handler = battery_handler, .user_ctx = NULL},
         {.uri = "/usb/audio", .method = HTTP_GET, .handler = usb_audio_handler, .user_ctx = NULL},
+        /* Canal de comandos autenticado: nao executa nada na task HTTP. */
+        {.uri = "/control/challenge", .method = HTTP_GET,
+         .handler = cyberdeck_control::challenge_handler, .user_ctx = NULL},
+        {.uri = "/control/type", .method = HTTP_POST,
+         .handler = cyberdeck_control::type_handler, .user_ctx = NULL},
+        {.uri = "/control/terminal", .method = HTTP_GET,
+         .handler = cyberdeck_control::terminal_handler, .user_ctx = NULL},
     };
     for (const httpd_uri_t &uri : uris) {
         if (httpd_register_uri_handler(s_server, &uri) == ESP_OK) continue;
@@ -367,6 +375,11 @@ esp_err_t screenshot_server_start(void)
 {
     const esp_err_t init_result = screenshot_server_init();
     if (init_result != ESP_OK) return init_result;
+    /* O canal de comandos e opcional: sem chave/NVS as rotas respondem
+     * not_ready, mas a telemetria da LAN continua funcionando. */
+    const esp_err_t control_result = cyberdeck_control::start();
+    if (control_result != ESP_OK)
+        ESP_LOGW(TAG, "LAN control channel unavailable: %s", esp_err_to_name(control_result));
     if (s_task.load(std::memory_order_acquire) != NULL) return ESP_OK;
     s_stop_requested.store(false, std::memory_order_release);
     TaskHandle_t task = NULL;
@@ -390,18 +403,25 @@ esp_err_t screenshot_server_stop(uint32_t timeout_ms)
 {
     if (s_stop_failed.load(std::memory_order_acquire)) return ESP_FAIL;
     if (s_quarantined) return ESP_ERR_INVALID_STATE;
-    if (s_task.load(std::memory_order_acquire) == NULL) return ESP_OK;
+    /* O canal de comandos para antes do HTTP: a fila de injecao e drenada sem
+     * entregar entrada residual enquanto a UI/servidor sao desmontados. Cada
+     * etapa recebe metade do orcamento para o total ficar dentro do timeout. */
+    const uint32_t control_budget = timeout_ms / 2;
+    const esp_err_t control_result = cyberdeck_control::stop(control_budget);
+    if (s_task.load(std::memory_order_acquire) == NULL)
+        return control_result == ESP_OK ? ESP_OK : control_result;
     s_stop_requested.store(true, std::memory_order_release);
     control_item stop = {.kind = control_kind::stop, .status = {}, .enabled = false};
     /* A full queue is still safe: stop_requested makes the task terminate on
      * its next bounded snapshot receive.  The queue is only a wake-up path. */
     (void)xQueueSend(s_control_queue, &stop, 0);
-    if (xSemaphoreTake(s_quiesced, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+    if (xSemaphoreTake(s_quiesced, pdMS_TO_TICKS(timeout_ms - control_budget)) != pdTRUE) {
         /* Never delete a task which may still own HTTPD, the queue or mutex. */
         s_quarantined = true;
         return ESP_ERR_TIMEOUT;
     }
-    return s_stop_failed.load(std::memory_order_acquire) ? ESP_FAIL : ESP_OK;
+    if (s_stop_failed.load(std::memory_order_acquire)) return ESP_FAIL;
+    return control_result;
 }
 
 esp_err_t screenshot_server_set_display_port(screenshot_capture_fn capture,
