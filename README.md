@@ -347,6 +347,24 @@ and never takes the display lock.
 curl --fail http://DEVICE_IP/battery
 ```
 
+`GET /usb/audio` reports bounded USB Audio Class discovery on the USB-A Host
+port, including VID/PID and PCM formats when found. The initial implementation
+uses the generic UAC 1.0 driver without a vendor filter. The Tab5 USB-C
+connector remains dedicated to USB Serial-JTAG; a USB-A male to USB-C female
+adapter is required to attach a USB-C headset.
+
+```bash
+curl --fail http://DEVICE_IP/usb/audio
+```
+
+When a UAC 1.0 playback device is present and ready, the player routes its PCM
+to that device instead of the on-board codec; if the USB stream cannot be
+started the player falls back to the speaker, so playback never regresses.
+The player volume (0-50) is applied to the headset: through its Feature Unit
+when the device supports it, or by attenuating the PCM otherwise, so the
+control always has an audible effect. The stream is paced to the isochronous
+clock by bounded blocking writes.
+
 The server stops automatically when the Wi-Fi address is lost.
 
 ## Serial bridge (USB Serial-JTAG NDJSON)

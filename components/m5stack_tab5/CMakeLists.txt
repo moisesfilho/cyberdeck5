@@ -7,9 +7,10 @@ set(SRC
     src/bsp_io_expander.c
     src/bsp_sensors.c
     src/bsp_storage.c
+    src/bsp_usb.c
 )
 
-set(REQ esp_driver_gpio esp_driver_i2c esp_driver_i2s fatfs vfs esp_driver_sdspi esp_driver_sdmmc esp_codec_dev)
+set(REQ esp_driver_gpio esp_driver_i2c esp_driver_i2s fatfs vfs esp_driver_sdspi esp_driver_sdmmc esp_codec_dev usb)
 set(PRIV_REQ esp_lcd esp_driver_ledc esp_io_expander_pi4ioe5v6408)
 
 # bsp_feature_en.cpp is C++ so expander-B transactions can hold the same

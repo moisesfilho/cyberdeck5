@@ -132,7 +132,7 @@ DEMO_USAGE = (
     ("demo", "arguments are not declared; extra arguments are currently ignored\n"),
 )
 
-# Compiled-in inventory, in registration order (REQ-HELP-05): 7 commandless
+# Compiled-in inventory, in registration order (REQ-HELP-05): 9 commandless
 # services, the console-owning shell, and 4 command-bearing applications.
 # `symbol` is the registered expression in `k_apps`; `source` selects where the
 # manifest is declared.  `command` is the manifest's `command` field: the
@@ -157,6 +157,9 @@ EXPECTED_APPS = (
      "type": "background", "commands": (), "command": "", "usage": (), "owns_console": False},
     {"symbol": "&s_screenshot", "source": "system", "id": "cyberdeck.screenshot",
      "name": "Screenshot service", "description": "Local-network screenshot HTTP endpoint",
+     "type": "service", "commands": (), "command": "", "usage": (), "owns_console": False},
+    {"symbol": "&s_usb_audio_host", "source": "system", "id": "cyberdeck.usb_audio",
+     "name": "USB audio host", "description": "Generic USB Audio Class playback device discovery",
      "type": "service", "commands": (), "command": "", "usage": (), "owns_console": False},
     {"symbol": "&s_bluetooth", "source": "system", "id": "cyberdeck.bluetooth",
      "name": "Bluetooth service", "description": "ESP-Hosted BLE manager",
@@ -217,7 +220,7 @@ EXPECTED_APPS = (
 )
 
 COMMAND_BEARING_COUNT = 10
-COMMANDLESS_SERVICE_COUNT = 8
+COMMANDLESS_SERVICE_COUNT = 9
 CONSOLE_OWNER_COUNT = 1
 
 FIXTURE_USAGE_FUNCTIONS = {
@@ -1006,7 +1009,7 @@ def main() -> int:
         require(len(command_bearing) == COMMAND_BEARING_COUNT,
                 "exactly 4 compiled-in applications must declare a command")
         require(len(commandless) == COMMANDLESS_SERVICE_COUNT,
-                 "exactly 8 compiled-in services must declare no command")
+                 "exactly 9 compiled-in services must declare no command")
         require(len(console_owners) == CONSOLE_OWNER_COUNT,
                 "exactly 1 compiled-in application must own the console")
 

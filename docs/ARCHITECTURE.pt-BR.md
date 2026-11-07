@@ -390,6 +390,7 @@ curl --fail --output screenshot.bmp http://IP_DO_DISPOSITIVO/screenshot
 | `/screenshot` | GET | `image/bmp` 24-bit bottom-up | frame RGB565 da porta de display, serializado pelo mutex de requisição |
 | `/events.txt` | GET | `text/plain; charset=utf-8` | projeção textual bounded de `events.log` em chunks de 1024 bytes |
 | `/battery` | GET | `application/json` com `Cache-Control: no-store` | snapshot de política em cache (`battery_protection_get_cached_policy_snapshot`) e timestamp (`battery_protection_get_cached_policy_sampled_at_us`) |
+| `/usb/audio` | GET | `application/json` com `Cache-Control: no-store` | snapshot bounded do serviço opcional UAC 1.0 na USB-A Host; estado, identidade e formatos PCM |
 
 Todos os endpoints aceitam apenas clientes da rede privada/local, respondem 405
 a métodos diferentes de `GET` e 503 quando o mutex de requisição está ocupado.
@@ -402,6 +403,28 @@ um JSON de ordem fixa (`schema`=1, `state`, `charge`, `available`,
 snapshot indisponível publica `state`/`charge` como `unavailable`. Os handlers
 são registrados por tabela com rollback: se um registro falhar, o servidor é
 parado (`httpd_stop`) em vez de ficar parcialmente exposto.
+
+`cyberdeck.usb_audio` é serviço opcional do runtime. O BSP habilita o USB Host
+na porta USB-A, e `usb_host_uac` 1.5.0 detecta interfaces de transmissão UAC
+sem filtro por VID/PID; consultas de descritores ocorrem no worker do serviço.
+Um cliente USB passivo registra presença de dispositivo e lê os descritores
+(bcdUSB, VID/PID, bcdADC e direção dos endpoints isócronos), o que distingue
+"nada no barramento" de "enumerou mas não é UAC 1.0 de reprodução". O snapshot
+limita formatos e strings, e o handler LAN somente o serializa.
+`CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1024` é obrigatório: com o padrão de
+256 bytes o descritor de configuração de um headset falha em
+`CHECK_SHORT_CONFIG_DESC` e o dispositivo nunca chega ao driver de classe.
+
+A reprodução usa o driver de classe quando o dispositivo está `ready`:
+`uac_host_device_start` abre o stream PCM 16-bit estéreo na taxa da faixa e
+`uac_host_device_write` alimenta o ring buffer. Como o decodificador roda mais
+rápido que o relógio isócrono, a escrita bloqueia com deadline limitado em vez
+de falhar, o que cadencia a reprodução. A rota é escolhida por
+`cyberdeck_audio_output`: com dispositivo USB pronto o PCM vai para a USB-A;
+se o stream não abrir, o player volta ao codec da placa. O volume do player
+chega ao fone pela Feature Unit quando houver suporte e, caso contrário, por
+atenuação do PCM. A USB-C física continua ligada à Serial-JTAG; para um fone USB-C é
+necessário adaptador na USB-A Host.
 
 ## Ponte manual USB Serial-JTAG NDJSON
 

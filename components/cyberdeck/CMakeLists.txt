@@ -67,6 +67,8 @@ idf_component_register(
          "src/apps/music/cyberdeck_music_app.cpp"
          "src/apps/music/cyberdeck_music_manager.cpp"
          "src/platform/audio/cyberdeck_audio_output.cpp"
+         "src/platform/usb/cyberdeck_usb_audio_host.cpp"
+         "src/platform/usb/cyberdeck_usb_audio_json.cpp"
         "src/apps/editor/cyberdeck_editor_app.cpp"
            "src/apps/network/cyberdeck_netdiag_app.cpp"
             "src/apps/network/cyberdeck_netdiag_controller.cpp"
@@ -140,7 +142,9 @@ idf_component_register(
         esp_driver_i2c
         esp_driver_usb_serial_jtag
         esp_app_format
-        esp_timer
+         esp_timer
+         usb
+         usb_host_uac
         esp_system
         freertos
         sensor_hub

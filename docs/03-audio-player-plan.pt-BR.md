@@ -12,6 +12,29 @@ podem ser finalizados, mas a validação física permanece pending e a tarefa n�
 pode ser declarada concluída. O aceite acústico de speaker/jack requer autorização
 explícita separada.
 
+## Saída USB genérica — descoberta e reprodução
+
+O Tab5 conecta a USB-C à Serial-JTAG e a USB-A ao USB Host; o fone deve usar a
+USB-A por adaptador USB-A macho → USB-C fêmea. Foi adicionado o serviço opcional
+`cyberdeck.usb_audio`, baseado em `espressif/usb_host_uac` 1.5.0, sem filtro por
+VID/PID. Ele publica em `GET /usb/audio` um snapshot bounded da interface UAC de
+transmissão, strings de identificação e formatos PCM, e distingue ausência de
+dispositivo de dispositivo enumerado que não é UAC 1.0.
+
+Fone validado no hardware: "Kuba Auri" (VID 0x3302 / PID 0x8902), USB 2.0,
+UAC 1.0, Audio Control + 2 streams de playback, formatos estéreo 24-bit e 16-bit
+de 44,1 a 96 kHz. `CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` foi elevado para
+1024 porque o descritor de configuração excede os 256 bytes padrão e a
+enumeração falhava em `CHECK_SHORT_CONFIG_DESC`.
+
+A reprodução usa `uac_host_device_start`/`uac_host_device_write` com stream PCM
+16-bit estéreo. Como o decodificador roda mais rápido que o relógio isócrono, a
+escrita bloqueia com deadline limitado (backpressure) — sem isso o player
+abortava em `codec_write` após menos de um segundo. A rota é automática:
+dispositivo USB pronto → USB; falha ao abrir o stream → speaker. O volume do player é aplicado no fone (Feature Unit ou atenuação digital).
+dispositivo. Aceite físico: o usuário confirmou áudio contínuo no fone. UAC 2.0
+continua não suportado (o snapshot expõe `audio_spec` para diagnóstico).
+
 ## REQ-MUSIC-UI-01..04 — surface responsiva e comandos
 
 - A surface nativa ocupa a tela disponível em portrait/landscape, usa somente a

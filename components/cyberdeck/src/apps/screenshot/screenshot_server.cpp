@@ -3,6 +3,7 @@
 #include "platform/logging/event_log.h"
 #include "platform/sensors/battery_protection.h"
 #include "platform/sensors/cyberdeck_battery_json.h"
+#include "platform/usb/cyberdeck_usb_audio_host.h"
 
 #include <errno.h>
 #include <netinet/in.h>
@@ -203,13 +204,14 @@ static esp_err_t events_handler(httpd_req_t *req)
 
 /* Defined after stop_server(); declared here for the registration table. */
 static esp_err_t battery_handler(httpd_req_t *req);
+static esp_err_t usb_audio_handler(httpd_req_t *req);
 
 static esp_err_t start_server(void)
 {
     if (s_server != NULL) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 3;
+    config.max_uri_handlers = 4;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
     if (httpd_start(&s_server, &config) != ESP_OK) {
@@ -220,6 +222,7 @@ static esp_err_t start_server(void)
         {.uri = "/screenshot", .method = HTTP_GET, .handler = screenshot_handler, .user_ctx = NULL},
         {.uri = "/events.txt", .method = HTTP_GET, .handler = events_handler, .user_ctx = NULL},
         {.uri = "/battery", .method = HTTP_GET, .handler = battery_handler, .user_ctx = NULL},
+        {.uri = "/usb/audio", .method = HTTP_GET, .handler = usb_audio_handler, .user_ctx = NULL},
     };
     for (const httpd_uri_t &uri : uris) {
         if (httpd_register_uri_handler(s_server, &uri) == ESP_OK) continue;
@@ -275,6 +278,40 @@ static esp_err_t battery_handler(httpd_req_t *req)
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");
         result = httpd_resp_send(req, body, length);
+    }
+    xSemaphoreGive(s_request_mutex);
+    return result;
+}
+
+static esp_err_t usb_audio_handler(httpd_req_t *req)
+{
+    if (req->method != HTTP_GET) {
+        send_error(req, HTTPD_405_METHOD_NOT_ALLOWED, "GET required");
+        return ESP_OK;
+    }
+    if (!is_local_peer(req)) {
+        send_error(req, HTTPD_403_FORBIDDEN, "local network only");
+        return ESP_OK;
+    }
+    if (s_request_mutex == NULL || xSemaphoreTake(s_request_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        send_service_unavailable(req, "another request is in progress");
+        return ESP_OK;
+    }
+
+    cyberdeck_usb_audio_host::snapshot value{};
+    char body[1536];
+    esp_err_t result = ESP_OK;
+    if (!cyberdeck_usb_audio_host::get_snapshot(value)) {
+        send_service_unavailable(req, "USB audio snapshot unavailable");
+    } else {
+        const int length = cyberdeck_usb_audio_host::format_json(body, sizeof(body), value);
+        if (length <= 0) {
+            send_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "USB audio telemetry unavailable");
+        } else {
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+            result = httpd_resp_send(req, body, length);
+        }
     }
     xSemaphoreGive(s_request_mutex);
     return result;

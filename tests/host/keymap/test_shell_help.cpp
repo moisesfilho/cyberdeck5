@@ -4,8 +4,8 @@
 // commands; syntax rejection; general help flags; poweroff isolation; normal
 // dispatch preservation; and — REQ-HELP-05 — the usage-metadata contract:
 // `edit help`, `demo help`, `netdiag help` and `music help` must reveal every usage format
-// and subcommand the application declares, the compiled-in inventory (12 apps:
-// 4 command-bearing, 7 commandless services, shell excluded) must be filtered
+// and subcommand the application declares, the compiled-in inventory (20 apps:
+// 10 command-bearing, 9 commandless services and the shell) must be filtered
 // correctly, aliases/collisions resolve without shadowing, and help never
 // starts or executes an application.
 //
@@ -1024,7 +1024,7 @@ int main()
     }
 
     /* --- TEST-HELP-APP-INVENTORY: the compiled-in inventory mirrors the
-     * production k_apps registration — 12 applications = 7 commandless
+     * production k_apps registration — 20 applications = 9 commandless
      * services + the console-owning shell (excluded from app commands) +
      * 4 command-bearing apps (demo, editor, netdiag, music), in registration order. */
     {
@@ -1046,6 +1046,8 @@ int main()
                                  cyberdeck_apps::app_type::background));
         help_manifest_app screenshot(commandless_manifest(
             "cyberdeck.screenshot", "Screenshot service", "Local-network screenshot HTTP endpoint"));
+        help_manifest_app usb_audio(commandless_manifest(
+            "cyberdeck.usb_audio", "USB audio host", "Generic USB Audio Class playback device discovery"));
         help_manifest_app bluetooth(
             commandless_manifest("cyberdeck.bluetooth", "Bluetooth service", "ESP-Hosted BLE manager",
                                  cyberdeck_apps::app_type::background));
@@ -1067,7 +1069,7 @@ int main()
         help_manifest_app event_log_console(event_log_console_usage_manifest());
         cyberdeck_apps::application *const registered[] = {
             &event_log,         &shell_app,        &wifi,
-            &serial,            &ssh,              &screenshot,
+            &serial,            &ssh,              &screenshot,       &usb_audio,
             &bluetooth,         &time_sync,        &ota,             &demo,
             &editor,            &netdiag,          &music,
             &wifi_console,      &ssh_console,      &bluetooth_console,
@@ -1075,8 +1077,8 @@ int main()
         for (cyberdeck_apps::application *app : registered)
             check(h.apps.register_application(*app),
                   "TEST-HELP-APP-INVENTORY: inventory application registers");
-        check(h.apps.size() == 19,
-               "TEST-HELP-APP-INVENTORY: registers all 19 compiled-in applications");
+        check(h.apps.size() == 20,
+               "TEST-HELP-APP-INVENTORY: registers all 20 compiled-in applications");
 
         std::size_t command_bearing = 0;
         std::size_t commandless_services = 0;
@@ -1107,8 +1109,8 @@ int main()
                                                       "cyberdeck.battery.shell", "cyberdeck.screen.shell",
                                                       "cyberdeck.event_log.shell"},
               "TEST-HELP-APP-INVENTORY: command-bearing apps follow the registration order");
-        check(commandless_services == 8,
-               "TEST-HELP-APP-INVENTORY: exactly 8 services declare no shell command");
+        check(commandless_services == 9,
+               "TEST-HELP-APP-INVENTORY: exactly 9 services declare no shell command");
         check(console_owners == 1,
               "TEST-HELP-APP-INVENTORY: the shell is the single console owner excluded from app commands");
 
@@ -1139,7 +1141,7 @@ int main()
         check_eq(h.output, inventory_expected,
                   "TEST-HELP-APP-INVENTORY: general help appends every declared command once, in order");
         for (const char *service_id : {"cyberdeck.event_log", "cyberdeck.wifi", "cyberdeck.serial",
-                                       "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth",
+                                       "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.usb_audio", "cyberdeck.bluetooth",
                                         "cyberdeck.time_sync", "cyberdeck.ota"})
             check(h.output.find(service_id) == std::string::npos,
                   "TEST-HELP-APP-INVENTORY: a commandless service never appears in help");

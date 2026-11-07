@@ -87,3 +87,9 @@ CONFIG_ESP_HOSTED_HOST_FEAT_BT=y
 # like it is trying to pair again.  Must match the real teardown of the
 # keyboard: the peer stores the same keys at pairing time.
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
+
+# A UAC headset exposes Audio Control + several Audio Streaming alternate
+# settings (and often HID), so its configuration descriptor exceeds the 256
+# byte default; enumeration failed with CHECK_SHORT_CONFIG_DESC and the
+# device never reached the class driver.
+CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1024

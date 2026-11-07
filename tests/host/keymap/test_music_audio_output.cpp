@@ -79,6 +79,43 @@ bool contains_after(const std::vector<std::string> &calls, std::size_t from, con
     for (std::size_t i = from; i < calls.size(); ++i) if (calls[i] == expected) return true;
     return false;
 }
+
+/* USB sink probe: mirrors the hook contract without any USB/ESP dependency. */
+struct usb_probe {
+    bool available = true;
+    bool fail_start = false;
+    bool fail_write = false;
+    bool fail_volume = false;
+    int starts = 0;
+    int writes = 0;
+    int stops = 0;
+    int volumes = 0;
+    std::uint32_t rate = 0;
+    std::uint8_t channels = 0;
+    std::uint8_t volume = 0;
+};
+usb_probe *usb = nullptr;
+
+bool usb_available() { return usb != nullptr && usb->available; }
+bool usb_start(std::uint32_t rate, std::uint8_t channels) {
+    if (usb == nullptr) return false;
+    usb->rate = rate;
+    usb->channels = channels;
+    ++usb->starts;
+    return !usb->fail_start;
+}
+bool usb_set_volume(std::uint8_t volume) {
+    if (usb == nullptr) return false;
+    usb->volume = volume;
+    ++usb->volumes;
+    return !usb->fail_volume;
+}
+bool usb_write(const std::int16_t *, std::size_t) {
+    if (usb == nullptr) return false;
+    ++usb->writes;
+    return !usb->fail_write;
+}
+void usb_stop() { if (usb != nullptr) ++usb->stops; }
 }
 
 TickType_t xTaskGetTickCount() { return now; }
@@ -325,6 +362,70 @@ int main() {
     CHECK(cyberdeck_audio_output::start(48000, 2, 24));
     CHECK(count_calls("volume:") == volumes_before_sync + 1);
     CHECK(cyberdeck_audio_output::write(&sample, 1));
+
+    /* --- USB sink routing: when a USB device reports availability it takes
+     * precedence, the speaker codec is never opened, and a failed USB start
+     * falls back to the speaker so playback is not lost. */
+    {
+        cyberdeck_audio_output::stop();
+        usb_probe sink;
+        usb = &sink;
+        CHECK(cyberdeck_audio_output::install_usb_output({usb_available, usb_start, usb_set_volume, usb_write, usb_stop}));
+        const int opens_before_usb = probe.opens;
+        const int writes_before_usb = probe.writes;
+        CHECK(cyberdeck_audio_output::start(44100, 2, 20));
+        CHECK(sink.starts == 1);
+        CHECK(sink.rate == 44100);
+        CHECK(sink.channels == 2);
+        /* The player volume must reach the USB sink instead of being ignored. */
+        CHECK(sink.volumes == 1);
+        CHECK(sink.volume == 20);
+        CHECK(probe.opens == opens_before_usb); /* speaker codec untouched */
+        CHECK(cyberdeck_audio_output::write(&sample, 1));
+        CHECK(sink.writes == 1);
+        CHECK(probe.writes == writes_before_usb);
+        /* A second identical start() is free: no new stream, no codec traffic. */
+        CHECK(cyberdeck_audio_output::start(44100, 2, 20));
+        CHECK(sink.starts == 1);
+        CHECK(sink.volumes == 1);
+        /* A new volume on the same stream is forwarded without reopening it. */
+        CHECK(cyberdeck_audio_output::start(44100, 2, 32));
+        CHECK(sink.starts == 1);
+        CHECK(sink.volumes == 2);
+        CHECK(sink.volume == 32);
+        CHECK(cyberdeck_audio_output::set_volume(25));
+        CHECK(sink.volumes == 3);
+        CHECK(sink.volume == 25);
+        cyberdeck_audio_output::stop();
+        CHECK(sink.stops == 1);
+
+        /* A failing volume call must surface as a start() failure rather than
+         * silently playing at the previous level. */
+        sink.fail_volume = true;
+        cyberdeck_audio_output::stop();
+        const int stops_before_volume_fault = sink.stops;
+        CHECK(!cyberdeck_audio_output::start(44100, 2, 30));
+        CHECK(sink.stops == stops_before_volume_fault + 1);
+        sink.fail_volume = false;
+
+        /* USB present but refusing to start: fall back to the speaker. */
+        sink.fail_start = true;
+        const int opens_before_fallback = probe.opens;
+        const int starts_before_fallback = sink.starts;
+        CHECK(cyberdeck_audio_output::start(44100, 2, 20));
+        CHECK(sink.starts == starts_before_fallback + 1);
+        CHECK(probe.opens == opens_before_fallback + 1);
+        cyberdeck_audio_output::stop();
+
+        /* Uninstalling the hooks restores speaker-only behaviour. */
+        sink.fail_start = false;
+        CHECK(cyberdeck_audio_output::install_usb_output({}));
+        const int starts_before_removal = sink.starts;
+        CHECK(cyberdeck_audio_output::start(44100, 2, 20));
+        CHECK(sink.starts == starts_before_removal);
+        cyberdeck_audio_output::stop();
+        usb = nullptr;
+    }
 
     std::cout << checks - failures << '/' << checks << " checks passed\n";
     return failures == 0 ? 0 : 1;

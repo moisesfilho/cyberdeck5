@@ -319,6 +319,23 @@ amostra o sensor I2C e nunca adquire o lock do display.
 curl --fail http://IP_DO_DISPOSITIVO/battery
 ```
 
+`GET /usb/audio` informa o estado da descoberta USB Audio Class na porta USB-A
+Host, incluindo VID/PID e formatos PCM bounded quando encontrados. A
+implementação usa o driver UAC 1.0 genérico, sem filtro por fabricante. A USB-C
+do Tab5 permanece destinada à USB Serial-JTAG. Para conectar um fone USB-C à
+porta Host, use adaptador USB-A macho para USB-C fêmea.
+
+```bash
+curl --fail http://IP_DO_DISPOSITIVO/usb/audio
+```
+
+Quando um dispositivo UAC 1.0 de reprodução está presente e pronto, o player
+envia o PCM para ele em vez do codec da placa; se o stream USB não puder ser
+aberto, o player volta ao speaker, sem regressão de reprodução. O volume do player (0-50) é aplicado ao fone: pela Feature Unit do dispositivo
+quando houver suporte, ou por atenuação do PCM nos demais casos, de modo que o
+controle sempre tenha efeito audível. O fluxo é cadenciado pelo relógio
+isócrono com escritas bloqueantes limitadas.
+
 O servidor é parado automaticamente quando o Wi-Fi perde o endereço IP.
 
 ## Ponte serial (USB Serial-JTAG NDJSON)

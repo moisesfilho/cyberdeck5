@@ -66,6 +66,13 @@ bool default_set_amplifier(void *, bool enabled) {
 backend active_backend{nullptr,       default_initialize,          default_mute,
                        default_open,  default_set_volume,          default_write,
                        default_close, default_headphone_connected, default_set_amplifier};
+usb_output_hooks usb_hooks{};
+bool usb_active = false;
+
+bool usb_usable() {
+    return usb_hooks.available != nullptr && usb_hooks.start != nullptr && usb_hooks.set_volume != nullptr &&
+           usb_hooks.write != nullptr && usb_hooks.stop != nullptr && usb_hooks.available();
+}
 
 bool update_route(bool force = false, bool *attempted = nullptr, std::uint64_t *elapsed_us = nullptr) {
     if (!opened)
@@ -113,11 +120,26 @@ bool install_backend(const backend &device) {
     return true;
 }
 
+bool install_usb_output(const usb_output_hooks &hooks) {
+    if (opened)
+        return false;
+    usb_hooks = hooks;
+    return true;
+}
+
 bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume, route_timing *timing) {
     if (timing != nullptr)
         *timing = {};
     if (rate < 8000 || rate > 48000 || (channels != 1 && channels != 2) || volume > 50)
         return false;
+    if (usb_active && opened && active_rate == rate && active_channels == channels) {
+        if (volume == active_volume)
+            return true;
+        if (!usb_hooks.set_volume(volume))
+            return false;
+        active_volume = volume;
+        return true;
+    }
     if (codec != nullptr && opened && active_rate == rate && active_channels == channels) {
         /* Callers re-enter start() once per audio frame: keep this path free of
          * codec I2C traffic (volume write + jack probe) unless something really
@@ -141,6 +163,23 @@ bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume, route
         return true;
     }
     stop();
+    if (usb_usable() && usb_hooks.start(rate, channels)) {
+        /* The device owns clocking; the player volume is applied through the
+         * Feature Unit when the headset supports it. */
+        if (!usb_hooks.set_volume(volume)) {
+            usb_hooks.stop();
+            usb_active = false;
+            opened = false;
+            return false;
+        }
+        usb_active = true;
+        opened = true;
+        active_rate = rate;
+        active_channels = channels;
+        active_volume = volume;
+        return true;
+    }
+    usb_active = false;
     if (amplifier || route_fault)
         return false;
     if (codec == nullptr)
@@ -179,7 +218,21 @@ bool start(std::uint32_t rate, std::uint8_t channels, std::uint8_t volume, route
 bool write(const std::int16_t *samples, std::size_t count, write_timing *timing) {
     if (timing != nullptr)
         *timing = {};
-    if (codec == nullptr || !opened)
+    if (!opened)
+        return false;
+    if (usb_active) {
+        if (samples == nullptr || count == 0 || count > 2304)
+            return false;
+        const auto backend_started = timing != nullptr ? monotonic_us() : 0;
+        const bool result = usb_hooks.write(samples, count);
+        if (timing != nullptr) {
+            timing->backend_attempted = true;
+            const auto ended = monotonic_us();
+            timing->backend_us = ended >= backend_started ? ended - backend_started : 0;
+        }
+        return result;
+    }
+    if (codec == nullptr)
         return false;
     bool route_attempted = false;
     std::uint64_t route_elapsed_us = 0;
@@ -206,7 +259,17 @@ void set_clock_for_test(clock_us_fn clock) { test_clock = clock; }
 #endif
 
 bool set_volume(std::uint8_t volume) {
-    if (codec == nullptr || !opened || route_fault || volume > 50)
+    if (!opened || route_fault || volume > 50)
+        return false;
+    if (usb_active) {
+        if (volume == active_volume)
+            return true;
+        if (!usb_hooks.set_volume(volume))
+            return false;
+        active_volume = volume;
+        return true;
+    }
+    if (codec == nullptr)
         return false;
     if (!active_backend.set_volume(active_backend.context, codec, volume))
         return false;
@@ -215,6 +278,14 @@ bool set_volume(std::uint8_t volume) {
 }
 
 void stop() {
+    if (usb_active) {
+        usb_hooks.stop();
+        usb_active = false;
+        opened = false;
+        active_rate = 0;
+        active_channels = 0;
+        active_volume = 0;
+    }
     if (codec != nullptr)
         (void)active_backend.mute(active_backend.context, codec, true);
     if (amplifier || route_fault) {

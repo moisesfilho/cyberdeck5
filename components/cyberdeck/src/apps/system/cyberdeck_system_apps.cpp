@@ -24,6 +24,7 @@
 #include "apps/wifi/cyberdeck_wifi_console_app.h"
 #include "apps/wifi/wifi_mgr.h"
 #include "platform/logging/event_log.h"
+#include "platform/usb/cyberdeck_usb_audio_host.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -114,6 +115,12 @@ bool start_bluetooth() {
 }
 bool stop_bluetooth() {
     return ble_mgr_stop() == ESP_OK;
+}
+bool start_usb_audio_host() {
+    return cyberdeck_usb_audio_host::start();
+}
+bool stop_usb_audio_host() {
+    return cyberdeck_usb_audio_host::stop(2000);
 }
 bool start_time_sync() {
     return cyberdeck_time_sync_start() == ESP_OK;
@@ -256,7 +263,14 @@ service_application s_screenshot{make_manifest("cyberdeck.screenshot", "Screensh
                                                {"cyberdeck.event_log", "cyberdeck.wifi"}, {"display", "network"}, 1000,
                                                cyberdeck_apps::app_type::service, {"display", "network"},
                                                k_screenshot_task_stack_bytes, k_screenshot_control_queue_depth),
-                                 start_screenshot, stop_screenshot, true};
+                                  start_screenshot, stop_screenshot, true};
+/* The runtime models shared buses (display/network/ble/serial/...) but not the
+ * USB host controller, so this service declares no resource and grants none;
+ * inventing a name would make register_application() reject the manifest. */
+service_application s_usb_audio_host{
+    make_manifest("cyberdeck.usb_audio", "USB audio host", "Generic USB Audio Class playback device discovery",
+                  {"cyberdeck.event_log"}, {}, 4000, cyberdeck_apps::app_type::service, {}, 8192, 8),
+    start_usb_audio_host, stop_usb_audio_host, true};
 service_application s_bluetooth{make_manifest("cyberdeck.bluetooth", "Bluetooth service", "ESP-Hosted BLE manager",
                                                {"cyberdeck.event_log"}, {"ble"}, 1000,
                                                cyberdeck_apps::app_type::background, {"ble"},
@@ -284,6 +298,7 @@ cyberdeck_apps::application *const k_apps[] = {
     &s_serial,
     &s_ssh,
     &s_screenshot,
+    &s_usb_audio_host,
     &s_bluetooth,
     &s_time_sync,
     &s_ota,
@@ -347,6 +362,7 @@ extern "C" esp_err_t cyberdeck_system_apps_start(void) {
         for (const char *id : {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial",
                                "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth", "cyberdeck.time_sync",
                                 "cyberdeck.ota", "cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag", "cyberdeck.music",
+                                "cyberdeck.usb_audio",
                                "cyberdeck.wifi.shell", "cyberdeck.ssh.shell", "cyberdeck.bluetooth.shell",
                                "cyberdeck.battery.shell", "cyberdeck.screen.shell", "cyberdeck.event_log.shell"}) {
             if (runtime.state(id) == cyberdeck_apps::app_state::failed) {

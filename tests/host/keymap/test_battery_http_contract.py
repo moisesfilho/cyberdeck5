@@ -7,7 +7,7 @@ covered by the linked test_battery_json.cpp; this companion proves the parts
 that only source inspection can prove:
 
   * the route is registered from a table in start_server() with
-    max_uri_handlers raised to 3 and a stop-on-failure rollback;
+    max_uri_handlers raised to 4 and a stop-on-failure rollback;
   * the handler keeps the same guards as the existing endpoints (405 for
     non-GET, 403 through is_local_peer, 503 when the request mutex is busy);
   * the handler is defined after stop_server(), outside the block
@@ -96,16 +96,16 @@ def function_body(source: str, name: str) -> str:
 
 
 def check_route_and_rollback(server: str) -> None:
-    """REQ-BAT-HTTP-01: table registration, three handlers, fail-closed stop."""
+    """REQ-BAT-HTTP-01: table registration, four handlers, fail-closed stop."""
     start = function_body(server, "static esp_err_t start_server")
-    require(re.search(r"max_uri_handlers\s*=\s*3\s*;", start) is not None,
-            "start_server must raise max_uri_handlers to 3")
+    require(re.search(r"max_uri_handlers\s*=\s*4\s*;", start) is not None,
+            "start_server must raise max_uri_handlers to 4")
     routes = re.findall(r"\.uri\s*=\s*\"([^\"]+)\"", start)
-    require(routes == ["/screenshot", "/events.txt", "/battery"],
-            f"the registration table must be exactly screenshot/events/battery, found {routes}")
-    require(len(re.findall(r"\{\s*\.uri\s*=", start)) == 3,
-            "the registration table must hold exactly three entries")
-    for handler in ("screenshot_handler", "events_handler", "battery_handler"):
+    require(routes == ["/screenshot", "/events.txt", "/battery", "/usb/audio"],
+            f"the registration table must include the four local telemetry routes, found {routes}")
+    require(len(re.findall(r"\{\s*\.uri\s*=", start)) == 4,
+            "the registration table must hold exactly four entries")
+    for handler in ("screenshot_handler", "events_handler", "battery_handler", "usb_audio_handler"):
         require(re.search(rf"\.handler\s*=\s*{handler}", start) is not None,
                 f"the registration table must wire {handler}")
     require(re.search(r"for\s*\([^)]*httpd_uri_t", start) is not None,
@@ -226,7 +226,7 @@ def check_response_contract(server: str) -> None:
 
 
 def check_other_routes_unchanged(server: str) -> None:
-    """REQ-BAT-HTTP-05: /screenshot and /events.txt stay as they are."""
+    """REQ-BAT-HTTP-05: existing screenshot/events routes stay unchanged."""
     screenshot = function_body(server, "static esp_err_t screenshot_handler")
     require("is_local_peer(req)" in screenshot and "HTTPD_405_METHOD_NOT_ALLOWED" in screenshot,
             "/screenshot guards must remain")

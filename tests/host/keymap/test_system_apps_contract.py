@@ -11,9 +11,100 @@ SSH = ROOT / "components/cyberdeck/src/apps/ssh/ssh_client.cpp"
 APP_MAIN = ROOT / "main/app_main.cpp"
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 RUNTIME = ROOT / "components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h"
+RUNTIME_SOURCE = ROOT / "components/cyberdeck/src/apps/runtime/cyberdeck_app_runtime.cpp"
+QUOTA_HEADER = ROOT / "components/cyberdeck/include/apps/runtime/cyberdeck_app_quota.h"
 PORTS = ROOT / "components/cyberdeck/src/apps/system/cyberdeck_service_ports.cpp"
 PORTS_HEADER = ROOT / "components/cyberdeck/include/apps/system/cyberdeck_service_ports.h"
 CMAX = ROOT / "components/cyberdeck/CMakeLists.txt"
+
+MANIFEST_CALL = "make_manifest("
+RESOURCE_ARGUMENT = 4
+CAPABILITY_ARGUMENT = 7
+
+
+def manifest_arguments(source):
+    """Split every make_manifest(...) call into its top-level arguments."""
+    calls = []
+    search_from = 0
+    while True:
+        start = source.find(MANIFEST_CALL, search_from)
+        if start < 0:
+            return calls
+        position = start + len(MANIFEST_CALL)
+        depth = 1
+        current = []
+        arguments = []
+        while position < len(source) and depth:
+            character = source[position]
+            if character in "({[":
+                depth += 1
+            elif character in ")}]":
+                depth -= 1
+                if depth == 0:
+                    break
+            if character == "," and depth == 1:
+                arguments.append("".join(current))
+                current = []
+            else:
+                current.append(character)
+            position += 1
+        arguments.append("".join(current))
+        calls.append(arguments)
+        search_from = position
+
+
+def known_resources(source):
+    """Read the runtime's resource vocabulary from resource_name()."""
+    body = re.search(
+        r"const char \*resource_name\(resource value\)\s*\{(?P<body>.*?)\n\}", source, re.S)
+    if body is None:
+        return set()
+    return set(re.findall(r'return "(?P<name>[a-z_]+)";', body.group("body")))
+
+
+def declared_resources(arguments):
+    return set(re.findall(r'"(?P<name>[^"]*)"', arguments))
+
+
+def check_manifest_vocabulary(apps_source, runtime_source, quota_source, failures):
+    """Every declared resource/grant must exist in the runtime vocabulary.
+
+    register_application() rejects a manifest whose resource name is unknown and
+    app_main() asserts on that failure, so an invented name aborts at boot and
+    the bootloader rolls the update back.
+    """
+    vocabulary = known_resources(runtime_source)
+    if not vocabulary:
+        failures.append("could not read the runtime resource vocabulary")
+        return
+    calls = manifest_arguments(apps_source)
+    if len(calls) < 10:
+        failures.append(f"expected to parse every make_manifest() call, found {len(calls)}")
+    checked = 0
+    for arguments in calls:
+        for index in (RESOURCE_ARGUMENT, CAPABILITY_ARGUMENT):
+            if index >= len(arguments):
+                continue
+            for name in declared_resources(arguments[index]):
+                checked += 1
+                if name not in vocabulary:
+                    failures.append(
+                        f"manifest declares unknown resource {name!r}; "
+                        f"runtime vocabulary is {sorted(vocabulary)}")
+    if checked == 0:
+        failures.append("no manifest resource declaration was inspected")
+
+    capacity = re.search(r"k_max_applications\s*=\s*(\d+)\s*;", quota_source)
+    registered = re.search(r"application \*const k_apps\[\]\s*=\s*\{(?P<body>.*?)\n\};",
+                           apps_source, re.S)
+    if capacity is None or registered is None:
+        failures.append("could not read the runtime application capacity")
+        return
+    entries = [entry for entry in registered.group("body").split(",") if entry.strip()]
+    if len(entries) > int(capacity.group(1)):
+        failures.append(
+            f"k_apps registers {len(entries)} applications but k_max_applications is "
+            f"{capacity.group(1)}; registration would fail and abort at boot")
 
 
 def main() -> int:
@@ -22,6 +113,8 @@ def main() -> int:
     app_main = APP_MAIN.read_text(encoding="utf-8")
     ui = UI.read_text(encoding="utf-8")
     runtime = RUNTIME.read_text(encoding="utf-8")
+    runtime_source = RUNTIME_SOURCE.read_text(encoding="utf-8")
+    quota_header = QUOTA_HEADER.read_text(encoding="utf-8")
     ports = PORTS.read_text(encoding="utf-8")
     ports_header = PORTS_HEADER.read_text(encoding="utf-8")
     cmake = CMAX.read_text(encoding="utf-8")
@@ -115,13 +208,14 @@ def main() -> int:
     if bluetooth_manifest is None or bluetooth_manifest.group("idempotent") != "false":
         failures.append("BLE startup must remain fail-closed after a partial NimBLE init failure")
 
+    check_manifest_vocabulary(apps, runtime_source, quota_header, failures)
+
     if failures:
         for failure in failures:
             print(f"FAIL: {failure}")
         return 1
     print("PASS: system apps contract")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

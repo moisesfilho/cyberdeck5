@@ -442,6 +442,7 @@ test_netdiag_tcp_adapter/adapter.o: $(NETDIAG_TCP_ADAPTER_SRC) $(NETDIAG_TCP_ADA
 %.o.d: ;
 -include $(MAKE_DEPFILES)
 BINS += $(SD_PACKAGE_BIN) $(RESOURCE_CATALOG_BIN)
+BINS += test_usb_audio_host_bin
 
 # Tier-A per-translation-unit migrations from REQ-MIG-59. Keep each compile
 # command's baseline flags/includes and the original source/link order.
@@ -648,6 +649,7 @@ test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9
 .PHONY: test_recovery_policy test_phase10_contract test_event_projection_contract test_save_sidecar_recovery
 .PHONY: test_terminal_scrollback test_lat03_contract test_lat04_contract
 .PHONY: test_display_lock_contract
+.PHONY: test_usb_audio_host test_usb_audio_host_contract
 .PHONY: test_editor_save_contract
 
 .PHONY: test_sd_io_coordinator
@@ -1836,6 +1838,15 @@ test_system_apps_contract: test_system_apps_contract.py ../../../components/cybe
 
 test_screenshot_lifecycle_contract: test_screenshot_lifecycle_contract.py ../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp ../../../components/cyberdeck/include/apps/screenshot/screenshot_server.h ../../../components/cyberdeck/src/apps/wifi/wifi_mgr.cpp ../../../components/cyberdeck/include/apps/wifi/wifi_mgr.h ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp
 	$(PYTHON) test_screenshot_lifecycle_contract.py
+
+test_usb_audio_host: test_usb_audio_host_bin
+	@./test_usb_audio_host_bin
+
+test_usb_audio_host_bin: test_usb_audio_host.cpp ../../../components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_json.cpp ../../../components/cyberdeck/include/platform/usb/cyberdeck_usb_audio_host.h Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_usb_audio_host.cpp ../../../components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_json.cpp -o $@
+
+test_usb_audio_host_contract: test_usb_audio_host_contract.py ../../../components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_host.cpp ../../../components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_json.cpp ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp ../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp ../../../main/idf_component.yml ../../../components/m5stack_tab5/CMakeLists.txt
+	$(PYTHON) test_usb_audio_host_contract.py
 
 test_serial_lifecycle_contract: test_serial_lifecycle_contract.py ../../../components/cyberdeck/src/apps/serial/cyberdeck_serial_bridge.cpp ../../../components/cyberdeck/include/apps/serial/cyberdeck_serial_bridge.h ../../../components/cyberdeck/src/apps/system/cyberdeck_service_ports.cpp ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp Makefile
 	$(PYTHON) test_serial_lifecycle_contract.py
@@ -3143,6 +3154,8 @@ test: test-build
 	@echo "==> Executando contrato dos system apps"
 	@$(MAKE) --no-print-directory test_system_apps_contract
 	@$(MAKE) --no-print-directory test_screenshot_lifecycle_contract
+	@$(MAKE) --no-print-directory test_usb_audio_host
+	@$(MAKE) --no-print-directory test_usb_audio_host_contract
 	@$(MAKE) --no-print-directory test_ota_script
 	@$(MAKE) --no-print-directory test_ota_contract
 	@$(MAKE) --no-print-directory test_serial_lifecycle_contract
