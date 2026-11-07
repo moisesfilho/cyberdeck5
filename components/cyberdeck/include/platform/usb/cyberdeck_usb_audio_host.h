@@ -1,5 +1,7 @@
 #pragma once
 
+#include "platform/audio/cyberdeck_audio_presence.h"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -44,5 +46,18 @@ bool stop(std::uint32_t timeout_ms);
 bool get_snapshot(snapshot &out);
 int format_json(char *buffer, std::size_t capacity, const snapshot &value);
 const char *state_name(state value);
+
+/* Playback-capable device on the USB-A port, as last published by the worker.
+ * A UAC headset plugged into the port counts even when its formats are not
+ * usable (UAC 2.0, unsupported rate): the player pauses either way. Peripherals
+ * that are not audio playback devices count as absent, and `unknown` is never
+ * treated as absence. */
+cyberdeck_audio_presence::presence playback_presence();
+
+/* Authority for "the sink of the open stream is still there": false as soon as
+ * the class driver reports the stream disconnected or the published view no
+ * longer offers a ready device. Used to decide whether a failed write may fall
+ * back to the board codec. */
+bool playback_device_present();
 
 } // namespace cyberdeck_usb_audio_host

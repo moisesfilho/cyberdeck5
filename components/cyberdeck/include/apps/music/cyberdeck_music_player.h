@@ -3,6 +3,7 @@
 #include "apps/music/cyberdeck_music_model.h"
 #include "apps/music/cyberdeck_music_trace.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
+#include "platform/audio/cyberdeck_audio_presence.h"
 #include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
 #include <cstdint>
@@ -88,6 +89,13 @@ class player final : public player_interface {
     impl *impl_ = nullptr;
 };
 player &global_player();
+
+/* Headset presence probe used by the playback worker to pause when a headset is
+ * inserted or removed on the USB-A UAC port or the 3.5 mm jack. Firmware
+ * installs a device probe by default; host tests inject a deterministic one.
+ * Install it before start(); nullptr disables the detection. */
+using audio_presence_probe = cyberdeck_audio_presence::sample (*)(void *context);
+void set_audio_presence_probe(audio_presence_probe probe, void *context);
 }
 
 extern "C" bool cyberdeck_music_poweroff_quiesce(std::uint32_t timeout_ms);

@@ -432,9 +432,26 @@ consulta `usb_host_device_addr_list_fill` a cada ciclo de 50 ms, fecha o stream 
 publica `waiting` quando o endereço desaparece; `playback_start` repete a
 verificação antes de abrir. O close exigido pelo driver de classe roda no worker
 e nunca dentro do callback, porque o driver mantém a interface na lista até o
-dono fechá-la. Se o fone for retirado durante a reprodução,
-`cyberdeck_audio_output` trata a escrita falha como perda de rota e entrega o
-mesmo frame ao codec.
+dono fechá-la.
+
+Inserir ou remover um fone — USB-A (UAC de reprodução) ou P2/3,5 mm — durante a
+reprodução **pausa** a faixa. O player amostra as duas fontes no worker e, ao
+confirmar a mudança, usa o mesmo caminho da pausa manual: fecha a saída, publica
+`paused` e preserva faixa/posição; a retomada é explícita e reelege a rota. O
+detector puro `cyberdeck_audio_presence::watch` exige duas leituras consecutivas
+iguais (`unknown` nunca equivale a ausente, então uma falha de I2C não pausa) e a
+referência é tomada no início da reprodução, de modo que um fone já conectado não
+interrompe a faixa. O pino do jack vem de `bsp_headphone_detect_state()`
+(`PRESENT/ABSENT/UNKNOWN`) e a presença USB de
+`cyberdeck_usb_audio_host::playback_presence()`; a sonda de dispositivo no player
+tem cache de 200 ms porque o jack é lido por I2C.
+
+Para não vazar áudio para outra saída, uma escrita USB que falha só cai no codec
+quando o dispositivo comprovadamente continua no barramento: o callback do
+driver levanta a flag atômica `s_playback_lost`, o hook
+`usb_output_hooks::device_present` a consulta e `write_timing::route_lost` pede a
+pausa em vez do fallback. Sem esse hook, ou com o dispositivo presente, o
+comportamento anterior (entregar o frame ao speaker) permanece.
 
 `espressif/usb_host_uac` 1.5.0 resolve por `override_path` para
 `components/usb_host_uac/`, uma cópia local: o rótulo `fail:` de

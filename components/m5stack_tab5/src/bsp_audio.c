@@ -204,26 +204,38 @@ esp_codec_dev_handle_t bsp_audio_codec_microphone_init(void)
     return esp_codec_dev_new(&codec_dev_cfg);
 }
 
-bool bsp_headphone_is_connected(void)
+bsp_headphone_state_t bsp_headphone_detect_state(void)
 {
     esp_io_expander_handle_t exp0 = bsp_io_expander_init();
     if (exp0 == NULL) {
-        return false;
+        return BSP_HEADPHONE_UNKNOWN;
     }
 
     static bool s_configured = false;
     if (!s_configured) {
         /* Configura o pino 7 como entrada High-Z com pull-up no exp0 */
-        esp_io_expander_set_dir(exp0, BSP_HEADPHONE_DET, IO_EXPANDER_INPUT);
-        esp_io_expander_set_output_mode(exp0, BSP_HEADPHONE_DET, IO_EXPANDER_OUTPUT_MODE_OPEN_DRAIN);
-        esp_io_expander_set_pullupdown(exp0, BSP_HEADPHONE_DET, IO_EXPANDER_PULL_UP);
-        s_configured = true;
+        const bool configured =
+            esp_io_expander_set_dir(exp0, BSP_HEADPHONE_DET, IO_EXPANDER_INPUT) == ESP_OK &&
+            esp_io_expander_set_output_mode(exp0, BSP_HEADPHONE_DET, IO_EXPANDER_OUTPUT_MODE_OPEN_DRAIN) == ESP_OK &&
+            esp_io_expander_set_pullupdown(exp0, BSP_HEADPHONE_DET, IO_EXPANDER_PULL_UP) == ESP_OK;
+        /* Only a fully configured pin may be trusted; a later read retries. */
+        s_configured = configured;
+    }
+    if (!s_configured) {
+        return BSP_HEADPHONE_UNKNOWN;
     }
 
     uint32_t lvl0 = 0;
-    if (esp_io_expander_get_level(exp0, BSP_HEADPHONE_DET, &lvl0) == ESP_OK) {
-        return (lvl0 & BSP_HEADPHONE_DET) != 0;
+    if (esp_io_expander_get_level(exp0, BSP_HEADPHONE_DET, &lvl0) != ESP_OK) {
+        return BSP_HEADPHONE_UNKNOWN;
     }
 
-    return false;
+    return (lvl0 & BSP_HEADPHONE_DET) != 0 ? BSP_HEADPHONE_PRESENT : BSP_HEADPHONE_ABSENT;
+}
+
+bool bsp_headphone_is_connected(void)
+{
+    /* Boolean contract for the audio route: only a proven insertion disables the
+     * speaker amplifier, so an unreadable pin keeps the speaker audible. */
+    return bsp_headphone_detect_state() == BSP_HEADPHONE_PRESENT;
 }

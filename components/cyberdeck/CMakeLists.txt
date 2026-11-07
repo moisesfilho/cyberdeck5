@@ -67,6 +67,7 @@ idf_component_register(
          "src/apps/music/cyberdeck_music_app.cpp"
          "src/apps/music/cyberdeck_music_manager.cpp"
          "src/platform/audio/cyberdeck_audio_output.cpp"
+         "src/platform/audio/cyberdeck_audio_presence.cpp"
          "src/platform/usb/cyberdeck_usb_audio_host.cpp"
          "src/platform/usb/cyberdeck_usb_audio_json.cpp"
         "src/apps/editor/cyberdeck_editor_app.cpp"

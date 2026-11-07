@@ -83,6 +83,7 @@ bool contains_after(const std::vector<std::string> &calls, std::size_t from, con
 /* USB sink probe: mirrors the hook contract without any USB/ESP dependency. */
 struct usb_probe {
     bool available = true;
+    bool present = true;
     bool fail_start = false;
     bool fail_write = false;
     bool fail_volume = false;
@@ -116,6 +117,9 @@ bool usb_write(const std::int16_t *, std::size_t) {
     return !usb->fail_write;
 }
 void usb_stop() { if (usb != nullptr) ++usb->stops; }
+/* Presence of the sink that owns the open stream, as reported by the USB
+ * service: false means the headset left the bus. */
+bool usb_present() { return usb != nullptr && usb->present; }
 }
 
 TickType_t xTaskGetTickCount() { return now; }
@@ -446,6 +450,79 @@ int main() {
         CHECK(cyberdeck_audio_output::start(44100, 2, 20));
         CHECK(sink.starts == starts_before_removal);
         cyberdeck_audio_output::stop();
+        usb = nullptr;
+    }
+
+    /* --- A headset that leaves the bus pauses the player instead of leaking the
+     * frame to the speaker. The decision uses the sink's own disconnect signal
+     * (device_present), not the write error: a transient failure with the device
+     * still present keeps the historical fallback. */
+    {
+        cyberdeck_audio_output::stop();
+        usb_probe sink;
+        usb = &sink;
+        CHECK(cyberdeck_audio_output::install_usb_output(
+            {usb_available, usb_start, usb_set_volume, usb_write, usb_stop, usb_present}));
+        CHECK(cyberdeck_audio_output::start(44100, 2, 20));
+        CHECK(sink.starts == 1);
+        const int codec_writes_before_glitch = probe.writes;
+
+        /* Transient write failure with the device still on the bus: the frame is
+         * replayed on the speaker, exactly as it did before this change. */
+        sink.fail_write = true;
+        cyberdeck_audio_output::write_timing transient{};
+        CHECK(cyberdeck_audio_output::write(&sample, 1, &transient));
+        CHECK(!transient.route_lost);
+        CHECK(probe.writes == codec_writes_before_glitch + 1);
+        cyberdeck_audio_output::stop();
+
+        /* Device gone: the frame is NOT replayed and the route is released. */
+        CHECK(cyberdeck_audio_output::start(44100, 2, 20));
+        CHECK(sink.starts == 2);
+        sink.fail_write = true;
+        sink.present = false;
+        const int stops_before_lost = sink.stops;
+        const int codec_writes_before_lost = probe.writes;
+        const int codec_opens_before_lost = probe.opens;
+        cyberdeck_audio_output::write_timing lost{};
+        CHECK(!cyberdeck_audio_output::write(&sample, 1, &lost));
+        CHECK(lost.route_lost);
+        CHECK(lost.backend_attempted);
+        CHECK(sink.stops == stops_before_lost + 1);      /* stream released */
+        CHECK(probe.writes == codec_writes_before_lost); /* no speaker leak */
+        CHECK(probe.opens == codec_opens_before_lost);   /* no fallback open */
+        /* The route is closed: further frames do nothing until start(), so the
+         * player pauses instead of continuing on a different output. */
+        cyberdeck_audio_output::write_timing after_lost{};
+        CHECK(!cyberdeck_audio_output::write(&sample, 1, &after_lost));
+        CHECK(!after_lost.route_lost && !after_lost.backend_attempted);
+        CHECK(probe.writes == codec_writes_before_lost);
+        /* Resuming is explicit and picks the output that exists then. */
+        sink.fail_write = false;
+        sink.present = true;
+        sink.available = false; /* headset unplugged: the codec route is next */
+        CHECK(cyberdeck_audio_output::start(44100, 2, 20));
+        CHECK(probe.opens == codec_opens_before_lost + 1);
+        CHECK(cyberdeck_audio_output::write(&sample, 1));
+        CHECK(probe.writes == codec_writes_before_lost + 1);
+        cyberdeck_audio_output::stop();
+
+        /* The hooks without the presence probe keep the historical fallback:
+         * route_lost must not be reported when nobody can prove the removal. */
+        CHECK(cyberdeck_audio_output::install_usb_output({}));
+        sink.available = true;
+        CHECK(cyberdeck_audio_output::install_usb_output(
+            {usb_available, usb_start, usb_set_volume, usb_write, usb_stop}));
+        CHECK(cyberdeck_audio_output::start(44100, 2, 20));
+        sink.present = false;
+        sink.fail_write = true;
+        cyberdeck_audio_output::write_timing legacy{};
+        CHECK(cyberdeck_audio_output::write(&sample, 1, &legacy));
+        CHECK(!legacy.route_lost);
+        cyberdeck_audio_output::stop();
+        sink.fail_write = false;
+        sink.present = true;
+        CHECK(cyberdeck_audio_output::install_usb_output({}));
         usb = nullptr;
     }
 

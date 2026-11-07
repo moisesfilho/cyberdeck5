@@ -23,7 +23,7 @@ namespace {
 constexpr char k_tag[] = "music";
 constexpr cyberdeck_apps::manifest k_manifest{"cyberdeck.music",
                                               "Music",
-                                              "1.0.0",
+                                              "1.0.1",
                                               "Foreground local MP3 player",
                                               "",
                                               {"cyberdeck.event_log"},

@@ -463,9 +463,27 @@ paused player (no UAC stream) is never told. The service worker polls
 publishes `waiting` once the address disappears; `playback_start` repeats the
 check before opening. The close the class driver requires runs on the worker and
 never inside the callback, because the driver keeps the interface listed until
-its owner closes it. If the headset is pulled mid-playback,
-`cyberdeck_audio_output` treats the failed write as a lost route and delivers the
-same frame to the codec.
+its owner closes it.
+
+Inserting or removing a headset - USB-A (UAC playback) or the 3.5 mm jack -
+while a track plays **pauses** it. The player samples both sources on its worker
+and, once the change is confirmed, takes the manual-pause path: it closes the
+output, publishes `paused` and keeps track/position; resuming is explicit and
+re-elects the route. The pure `cyberdeck_audio_presence::watch` requires two
+consecutive equal readings (`unknown` is never absence, so a failed I2C read does
+not pause) and the reference is taken at playback start, so a headset that was
+already connected does not interrupt the track. The jack state comes from
+`bsp_headphone_detect_state()` (`PRESENT/ABSENT/UNKNOWN`) and the USB presence
+from `cyberdeck_usb_audio_host::playback_presence()`; the player's device probe
+caches its reading for 200 ms because the jack is behind an I2C expander.
+
+To keep audio from leaking to another output, a failed USB write only falls back
+to the codec when the device provably stays on the bus: the driver callback
+raises the atomic `s_playback_lost` flag, the
+`usb_output_hooks::device_present` hook reads it and
+`write_timing::route_lost` asks for a pause instead of the fallback. Without that
+hook, or with the device still present, the previous behaviour (deliver the frame
+to the speaker) remains.
 
 `espressif/usb_host_uac` 1.5.0 resolves through `override_path` to
 `components/usb_host_uac/`, a local copy: the `fail:` label of

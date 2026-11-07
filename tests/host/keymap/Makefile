@@ -240,7 +240,7 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_SOC_BIN) $(BATTERY_VIEW_BIN) $(BATTERY_JSON_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN) test_music_header_visibility_bin
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_SOC_BIN) $(BATTERY_VIEW_BIN) $(BATTERY_JSON_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN) test_music_header_visibility_bin $(MUSIC_PRESENCE_BIN)
 
 MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
 MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
@@ -249,6 +249,10 @@ MUSIC_MODEL_BIN := test_music_model_bin
 MUSIC_AUDIO_TEST := test_music_audio_output.cpp
 MUSIC_AUDIO_SRC := ../../../components/cyberdeck/src/platform/audio/cyberdeck_audio_output.cpp
 MUSIC_AUDIO_HDR := ../../../components/cyberdeck/include/platform/audio/cyberdeck_audio_output.h
+MUSIC_PRESENCE_TEST := test_music_presence.cpp
+MUSIC_PRESENCE_SRC := ../../../components/cyberdeck/src/platform/audio/cyberdeck_audio_presence.cpp
+MUSIC_PRESENCE_HDR := ../../../components/cyberdeck/include/platform/audio/cyberdeck_audio_presence.h
+MUSIC_PRESENCE_BIN := test_music_presence_bin
 MUSIC_AUDIO_SHIMS := music_runtime_shim/bsp/m5stack_tab5.h \
 	music_runtime_shim/esp_codec_dev.h \
 	music_runtime_shim/freertos/FreeRTOS.h \
@@ -303,6 +307,7 @@ MUSIC_PLAYER_SOURCES := ../../../components/cyberdeck/src/apps/music/cyberdeck_m
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_diagnostics.cpp \
 	$(MUSIC_TRACE_SRC) \
 	$(MUSIC_DURATION_SRC) \
+	$(MUSIC_PRESENCE_SRC) \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
 	$(MUSIC_METADATA_SRC) \
 	../../../components/cyberdeck/src/apps/runtime/cyberdeck_app_storage.cpp \
@@ -2883,6 +2888,13 @@ $(MUSIC_MODEL_BIN): $(MUSIC_MODEL_TEST) $(MUSIC_MODEL_SRC) $(MUSIC_MODEL_HDR) mu
 test_music_audio_output: test_music_audio_output_bin
 	@./test_music_audio_output_bin
 
+.PHONY: test_music_presence
+test_music_presence: $(MUSIC_PRESENCE_BIN)
+	@./$(MUSIC_PRESENCE_BIN)
+
+$(MUSIC_PRESENCE_BIN): $(MUSIC_PRESENCE_TEST) $(MUSIC_PRESENCE_SRC) $(MUSIC_PRESENCE_HDR) music_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(MUSIC_PRESENCE_TEST) $(MUSIC_PRESENCE_SRC) -o $@
+
 .PHONY: test_music_codec_i2s_vendor test_music_codec_i2s_vendor_acceptance
 test_music_codec_i2s_vendor: $(MUSIC_CODEC_I2S_BIN)
 	@./$(MUSIC_CODEC_I2S_BIN)
@@ -3017,6 +3029,7 @@ test: test-build
 	@$(MAKE) --no-print-directory test_music_duration
 	@$(MAKE) --no-print-directory test_music_model
 	@$(MAKE) --no-print-directory test_music_audio_output
+	@$(MAKE) --no-print-directory test_music_presence
 	@$(MAKE) --no-print-directory test_music_app
 	@$(MAKE) --no-print-directory test_music_manager
 	@$(MAKE) --no-print-directory test_music_player

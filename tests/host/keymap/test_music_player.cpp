@@ -87,6 +87,37 @@ bool fail_secure_open = false;
 bool fail_player_read = false;
 bool fail_player_close = false;
 
+/* Headset presence injected into the real player: 0 = unknown, 1 = present,
+ * 2 = absent. The probe runs on the player worker, so the values are atomic. */
+std::atomic<int> presence_usb{2};
+std::atomic<int> presence_jack{2};
+std::atomic<unsigned> audio_stop_count{0};
+bool audio_route_lost = false;
+
+cyberdeck_audio_presence::presence to_presence(int value) {
+    switch (value) {
+    case 1:
+        return cyberdeck_audio_presence::presence::present;
+    case 2:
+        return cyberdeck_audio_presence::presence::absent;
+    default:
+        break;
+    }
+    return cyberdeck_audio_presence::presence::unknown;
+}
+
+cyberdeck_audio_presence::sample fake_presence(void *) {
+    cyberdeck_audio_presence::sample value{};
+    value.usb = to_presence(presence_usb.load(std::memory_order_acquire));
+    value.jack = to_presence(presence_jack.load(std::memory_order_acquire));
+    return value;
+}
+
+void set_presence(int usb, int jack) {
+    presence_usb.store(usb, std::memory_order_release);
+    presence_jack.store(jack, std::memory_order_release);
+}
+
 bool write_valid_silent_mp3(const std::string &path) {
     constexpr std::size_t frame_bytes = 417;
     constexpr unsigned frame_count = 24;
@@ -494,10 +525,14 @@ bool write(const std::int16_t *samples, std::size_t count, write_timing *timing)
         release_write = false;
         write_waiting = false;
     }
-    return !fail_audio_write;
+    if (!fail_audio_write) return true;
+    /* Mirrors a sink that left the bus: the output reports a lost route instead
+     * of pretending the track failed. */
+    if (timing != nullptr && audio_route_lost) timing->route_lost = true;
+    return false;
 }
 bool set_volume(std::uint8_t) { return false; }
-void stop() {}
+void stop() { audio_stop_count.fetch_add(1, std::memory_order_acq_rel); }
 }
 
 int main() {
@@ -848,14 +883,15 @@ int main() {
     const auto queued_before_next = diag.generations_queued;
     CHECK(subject.seek(500));
     CHECK(subject.resume());
-    CHECK(wait_until([&] {
-        cyberdeck_music::snapshot state{};
-        return subject.status(state) && state.state == cyberdeck_music::playback_state::playing &&
-               state.selected == 1;
-    }, std::chrono::seconds(2)));
+    /* Assert the observation that satisfied the wait instead of re-reading: the
+     * host decodes an unpaced track almost instantly, so a second read can catch
+     * the next auto-advance and flake under load. */
     cyberdeck_music::snapshot completed{};
-    CHECK(subject.status(completed) && completed.state == cyberdeck_music::playback_state::playing &&
-          completed.selected == 1);
+    CHECK(wait_until([&] {
+        return subject.status(completed) && completed.state == cyberdeck_music::playback_state::playing &&
+               completed.selected == 1;
+    }, std::chrono::seconds(2)));
+    CHECK(completed.state == cyberdeck_music::playback_state::playing && completed.selected == 1);
     CHECK(audio_write_count > 1);
     CHECK(storage.active_leases() == 1);
     fail_secure_open = true;
@@ -1517,6 +1553,153 @@ int main() {
     CHECK(!subject.trace_snapshot(0, 16, unavailable_page));
     cyberdeck_music::player::set_trace_lifecycle_test_hook(nullptr, nullptr);
     CHECK(subject.start(&storage, access));
+
+    /* --- REQ-MUSIC-HEADSET: inserting or removing a USB-A UAC headset or a
+     * 3.5 mm jack headset pauses a track that is playing. The reference is
+     * taken at playback start (a headset already connected changes nothing) and
+     * the pause needs two consecutive equal readings, so a contact glitch does
+     * not stop the music. */
+    {
+        cyberdeck_music::set_audio_presence_probe(fake_presence, nullptr);
+        CHECK(copy_fixture_to(fixture_path));
+        set_presence(2, 2); /* nothing plugged in */
+        {
+            std::lock_guard<std::mutex> lock(audio_mutex);
+            gate_each_write = true;
+            write_gate_count = 0;
+            write_waiting = false;
+            release_write = false;
+        }
+        const auto gate_count = [] {
+            std::lock_guard<std::mutex> lock(audio_mutex);
+            return write_gate_count;
+        };
+        const auto wait_for_gate = [&](unsigned observed) {
+            std::unique_lock<std::mutex> lock(audio_mutex);
+            return audio_changed.wait_for(lock, std::chrono::seconds(2),
+                                          [&observed] { return write_gate_count > observed; });
+        };
+        const auto release_one_write = [] {
+            {
+                std::lock_guard<std::mutex> lock(audio_mutex);
+                release_write = true;
+            }
+            audio_changed.notify_all();
+        };
+        const auto wait_for_state = [&](cyberdeck_music::playback_state expected) {
+            return wait_until([&] {
+                cyberdeck_music::snapshot state{};
+                return subject.status(state) && state.state == expected;
+            }, std::chrono::seconds(3));
+        };
+
+        CHECK(subject.play("/stream.mp3"));
+        CHECK(wait_for_gate(0));
+        cyberdeck_music::snapshot playing{};
+        CHECK(subject.status(playing));
+        CHECK(playing.state == cyberdeck_music::playback_state::playing);
+        const unsigned stops_before_pause = audio_stop_count.load(std::memory_order_acquire);
+
+        /* Jack inserted: the first reading is only a candidate. */
+        set_presence(2, 1);
+        release_one_write();
+        CHECK(wait_for_gate(1));
+        cyberdeck_music::snapshot after_first_sample{};
+        CHECK(subject.status(after_first_sample));
+        CHECK(after_first_sample.state == cyberdeck_music::playback_state::playing);
+        CHECK(audio_stop_count.load(std::memory_order_acquire) == stops_before_pause);
+
+        /* Second equal reading confirms it and the player pauses. */
+        release_one_write();
+        CHECK(wait_for_state(cyberdeck_music::playback_state::paused));
+        cyberdeck_music::snapshot paused{};
+        CHECK(subject.status(paused));
+        CHECK(paused.state == cyberdeck_music::playback_state::paused);
+        CHECK(paused.failure_stage == cyberdeck_music::error_stage::none);
+        CHECK(audio_stop_count.load(std::memory_order_acquire) == stops_before_pause + 1);
+        /* The position is preserved: pausing is not a track restart. */
+        CHECK(paused.position_ms >= after_first_sample.position_ms);
+        CHECK(paused.position_ms < after_first_sample.position_ms + 1000);
+        CHECK(std::string_view(paused.current.path.data()) == "/stream.mp3");
+        cyberdeck_music::diagnostics_snapshot pause_diagnostics{};
+        CHECK(subject.diagnostics_snapshot(pause_diagnostics));
+        CHECK(pause_diagnostics.pause_count >= 1);
+        CHECK(pause_diagnostics.failures == 0);
+
+        /* Changes made while paused are absorbed: resuming must not pause again
+         * because of them. */
+        set_presence(2, 2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        CHECK(subject.status(paused));
+        CHECK(paused.state == cyberdeck_music::playback_state::paused);
+        CHECK(subject.resume());
+        const unsigned gate_before_resume = gate_count();
+        release_one_write();
+        CHECK(wait_for_gate(gate_before_resume));
+        cyberdeck_music::snapshot resumed{};
+        CHECK(subject.status(resumed));
+        CHECK(resumed.state == cyberdeck_music::playback_state::playing);
+        CHECK(resumed.failure_stage == cyberdeck_music::error_stage::none);
+
+        /* The reported defect: a USB headset plugged in while the speaker plays
+         * used to keep the audio on the speaker with no pause at all. */
+        const unsigned stops_before_usb_insert = audio_stop_count.load(std::memory_order_acquire);
+        set_presence(1, 2);
+        const unsigned gate_before_usb_insert = gate_count();
+        release_one_write();
+        CHECK(wait_for_gate(gate_before_usb_insert));
+        cyberdeck_music::snapshot usb_candidate{};
+        CHECK(subject.status(usb_candidate));
+        CHECK(usb_candidate.state == cyberdeck_music::playback_state::playing);
+        release_one_write();
+        CHECK(wait_for_state(cyberdeck_music::playback_state::paused));
+        cyberdeck_music::snapshot usb_paused{};
+        CHECK(subject.status(usb_paused));
+        CHECK(usb_paused.state == cyberdeck_music::playback_state::paused);
+        CHECK(usb_paused.failure_stage == cyberdeck_music::error_stage::none);
+        CHECK(audio_stop_count.load(std::memory_order_acquire) == stops_before_usb_insert + 1);
+        CHECK(std::string_view(usb_paused.current.path.data()) == "/stream.mp3");
+        /* Headset unplugged while paused: absorbed, so the resume plays again. */
+        set_presence(2, 2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        CHECK(subject.resume());
+        const unsigned gate_before_second_resume = gate_count();
+        release_one_write();
+        CHECK(wait_for_gate(gate_before_second_resume));
+        cyberdeck_music::snapshot second_resume{};
+        CHECK(subject.status(second_resume));
+        CHECK(second_resume.state == cyberdeck_music::playback_state::playing);
+        CHECK(second_resume.failure_stage == cyberdeck_music::error_stage::none);
+
+        /* USB headset removed mid-stream: the output reports a lost route and
+         * the player pauses instead of failing the track or switching output. */
+        const unsigned stops_before_lost = audio_stop_count.load(std::memory_order_acquire);
+        {
+            std::lock_guard<std::mutex> lock(audio_mutex);
+            fail_audio_write = true;
+            audio_route_lost = true;
+        }
+        release_one_write();
+        CHECK(wait_for_state(cyberdeck_music::playback_state::paused));
+        cyberdeck_music::snapshot lost{};
+        CHECK(subject.status(lost));
+        CHECK(lost.state == cyberdeck_music::playback_state::paused);
+        CHECK(lost.failure_stage == cyberdeck_music::error_stage::none);
+        CHECK(audio_stop_count.load(std::memory_order_acquire) == stops_before_lost + 1);
+        cyberdeck_music::diagnostics_snapshot lost_diagnostics{};
+        CHECK(subject.diagnostics_snapshot(lost_diagnostics));
+        CHECK(lost_diagnostics.failures == 0);
+        {
+            std::lock_guard<std::mutex> lock(audio_mutex);
+            fail_audio_write = false;
+            audio_route_lost = false;
+            gate_each_write = false;
+            release_write = true;
+        }
+        audio_changed.notify_all();
+        cyberdeck_music::set_audio_presence_probe(nullptr, nullptr);
+    }
+
     CHECK(stop_releases_once());
     CHECK(subject.stop(0));
     CHECK(!subject.running());

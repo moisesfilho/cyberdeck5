@@ -10,6 +10,10 @@ struct write_timing {
     route_timing route{};
     bool backend_attempted = false;
     std::uint64_t backend_us = 0;
+    /* Set when the USB sink left the bus during this write. The frame was NOT
+     * handed to another output, so the caller must treat it as a lost route
+     * (pause) instead of a track failure or a silent speaker fallback. */
+    bool route_lost = false;
 };
 struct backend {
     void *context;
@@ -32,6 +36,11 @@ struct usb_output_hooks {
     bool (*set_volume)(std::uint8_t volume);
     bool (*write)(const std::int16_t *samples, std::size_t sample_count);
     void (*stop)();
+    /* Optional: physical presence of the sink that owns the open stream. When
+     * it reports false after a failed write, the frame is not replayed on the
+     * board codec (the route was lost and the player pauses). A null hook keeps
+     * the historical speaker fallback. */
+    bool (*device_present)() = nullptr;
 };
 
 bool install_backend(const backend &device);

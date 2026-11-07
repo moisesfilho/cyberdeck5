@@ -414,7 +414,7 @@ cyberdeck_apps::manifest music_usage_manifest()
     cyberdeck_apps::manifest item{};
     item.id = "cyberdeck.music";
     item.name = "Music";
-    item.version = "1.0.0";
+    item.version = "1.0.1";
     item.description = "Foreground local MP3 player";
     item.type = cyberdeck_apps::app_type::foreground;
     item.commands[0] = "music";
@@ -985,7 +985,7 @@ int main()
         const std::string expected =
             "/$ music help\n"
             "music [app]\n"
-            "  Music (cyberdeck.music) version 1.0.0\n"
+            "  Music (cyberdeck.music) version 1.0.1\n"
             "  Foreground local MP3 player\n"
             "  usage: music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status\n"
             "  MP3 playback from SD; volume is capped at 50\n";

@@ -241,6 +241,22 @@ bool write(const std::int16_t *samples, std::size_t count, write_timing *timing)
         }
         if (result)
             return true;
+        /* A headset unplugged mid-stream pauses playback; it must not leak this
+         * frame (or the following ones) to the board codec. The decision uses
+         * the driver's own disconnect notification, not the write error alone:
+         * a transient failure with the device still on the bus keeps the
+         * historical speaker fallback below. */
+        if (usb_hooks.device_present != nullptr && !usb_hooks.device_present()) {
+            usb_hooks.stop();
+            usb_active = false;
+            opened = false;
+            active_rate = 0;
+            active_channels = 0;
+            active_volume = 0;
+            if (timing != nullptr)
+                timing->route_lost = true;
+            return false;
+        }
         /* The headset left the bus mid-stream. Release it and re-route this same
          * frame to the speaker instead of failing the write and aborting the
          * player on a hot-unplug. */

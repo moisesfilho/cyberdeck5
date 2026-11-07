@@ -40,12 +40,74 @@ diagnóstico).
 Remoção do fone: como a biblioteca USB Host só anuncia `DEV_GONE` a cliente com
 dispositivo aberto, o worker consulta `usb_host_device_addr_list_fill` a cada
 50 ms, fecha o stream e publica `waiting`; `playback_start` repete a checagem
-antes de abrir. O close exigido pelo driver roda no worker, fora do callback. Se
-o fone sair durante a reprodução, o frame seguinte vai para o speaker. O driver
+antes de abrir. O close exigido pelo driver roda no worker, fora do callback. O driver
 `espressif/usb_host_uac` 1.5.0 passou a ser resolvido por `override_path` para
 `components/usb_host_uac/`, que corrige o desreferenciamento nulo do caminho de
 erro de `uac_host_device_open` (abrir um endereço já ausente causava panic e
 reboot).
+
+## REQ-MUSIC-HEADSET-PAUSE — inserir/remover fone pausa a música
+
+Comportamento aprovado pelo usuário depois de um teste físico que mostrou que
+plugar um fone USB durante a reprodução no speaker **não** trocava a saída (o
+`start_route` reentrante reutiliza o codec já aberto e não reavalia
+`usb_usable()`), e que remover o fone durante a reprodução entregava o frame
+seguinte ao speaker.
+
+- Inserir **ou** remover fone USB-A (UAC de reprodução) ou P2/3,5 mm enquanto o
+  player está `playing` publica `paused`: a música não muda de saída sozinha e
+  não passa a tocar no speaker. A pausa usa o mesmo caminho da pausa manual
+  (fecha a saída, publica `paused`, preserva faixa/posição/seleção) e é contada
+  em `diagnostics.pause_count`.
+- A retomada é sempre explícita. Em Play/P o player reelege a rota: USB pronto,
+  senão codec da placa (P2 quando conectado). Nada é retomado automaticamente ao
+  reconectar o fone.
+- A referência é tomada no início da reprodução: fone já conectado não pausa a
+  faixa. Mudanças ocorridas enquanto `paused`/`stopped` são absorvidas e não
+  geram pausa na retomada.
+- Detector puro `cyberdeck_audio_presence::watch`
+  (`components/cyberdeck/{include/platform/audio/cyberdeck_audio_presence.h,
+  src/platform/audio/cyberdeck_audio_presence.cpp}`): duas amostras consecutivas
+  iguais para confirmar uma mudança (contato intermitente do P2 não interrompe o
+  áudio) e `unknown` nunca equivale a "ausente" — leitura que falha não pausa.
+  As duas fontes são avaliadas na mesma amostra, então trocar de fone não é
+  mascarado por curto-circuito.
+- Portas de presença: `bsp_headphone_detect_state()` devolve
+  `BSP_HEADPHONE_PRESENT/ABSENT/UNKNOWN` e só marca o pino como configurado
+  quando as três chamadas de configuração do expander funcionam;
+  `bsp_headphone_is_connected()` continua sendo o contrato booleano da rota
+  (pino ilegível mantém o amplificador). No USB,
+  `cyberdeck_usb_audio_host::playback_presence()` deriva a presença do snapshot
+  publicado (fone de reprodução mesmo sem formatos utilizáveis; teclado e
+  armazenamento não contam; `stopped/starting/error` = desconhecido).
+- A sonda de dispositivo no player
+  (`device_presence`, somente `ESP_PLATFORM`) faz cache de 200 ms porque o pino
+  P2 exige I2C; o worker amostra a cada iteração, então a latência típica é de
+  uma a duas amostras após a mudança física.
+- Sem vazamento para outra saída: `cyberdeck_audio_output` ganhou o hook opcional
+  `usb_output_hooks::device_present` e `write_timing::route_lost`. Quando o
+  driver já sinalizou `DISCONNECTED` (flag atômica `s_playback_lost` no serviço
+  USB), o frame falho **não** é reenviado ao codec: a rota é liberada e o player
+  pausa (`reason=output_removed`). Falha transitória de escrita com o dispositivo
+  presente, ou hooks sem `device_present`, mantêm o fallback histórico para o
+  speaker.
+- Cobertura host: `test_music_presence` (detector puro), `test_music_audio_output`
+  (rota perdida vs. fallback histórico, sem escrita no codec) e
+  `test_music_player` (pausa por jack com escrita gated, absorção em pausa,
+  retomada e rota perdida sem `error`). Mapeamento em
+  `tests/host/keymap/music_traceability.md` (TEST-MUSIC-HEADSET-01..04).
+- Aceite físico pendente: o roteiro manual ganhou o cenário de inserção/remoção
+  de USB e P2 durante a reprodução, incluindo a confirmação de que não há áudio
+  em outra saída antes de Play/P.
+- Aceite físico **reportado pelo usuário em 07/11/2026** (fw `1.14.1`, slot
+  `ota_0`, binário SHA-256
+  `7125226c9ab2d27dbc370f5ecd19d2300eef55d43b4023573f39c73fbdf66b2d`): ciclos
+  com fone USB-A e P2 executados com o comportamento esperado (pausa ao inserir,
+  pausa ao remover e retomada por Play/P); sem reboot no mesmo boot (uptime
+  502 → 1815 s). A captura de `music.status`, `pause_count` e do log `reason=`
+  não foi feita nessa rodada, e não houve verificação auditiva independente —
+  esses pontos e o caso negativo de USB não áudio continuam abertos. Registro em
+  `tests/manual/music-player-validation.pt-BR.md` (seção 7).
 
 ## REQ-MUSIC-UI-01..04 — surface responsiva e comandos
 

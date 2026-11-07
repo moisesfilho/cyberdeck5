@@ -249,6 +249,7 @@ a rodada atual e não autoriza nenhum desses passos.
   I2S para `8 x 512`, ~85 ms; o usuário já confirmou em fw `9bfd6410` que os
   cortes pararam);
 - verificar inserção/remoção de fone e rota pelo jack de 3,5 mm;
+- verificar a pausa automática ao inserir/remover fone USB-A e P2 (seção 7);
 - testar pause/resume/seek/volume/stop e observar status/progresso;
 - confirmar amplificador desligado quando ocioso, sem ruído persistente;
 - observar aquecimento/consumo anormal, coexistência com Wi-Fi/BLE e stop;
@@ -425,6 +426,72 @@ seek; resta apenas o aceite visual (áudio/barra) no dispositivo.
 **Falha do cenário:** `state: error`, `error_stage: decode`, posição que não
 avança depois do seek, `discard_ms > 5000`, reboot ou ausência de resposta
 NDJSON. Registre o alvo, as amostras e o log e não repita automaticamente.
+
+## 7. Pausa automática ao inserir/remover fone (USB-A e P2)
+
+Cenário de playback; exige a autorização explícita da seção 4, boot normal
+comprovado (seção 1) e uma faixa em `/musica`. Cobre
+`REQ-MUSIC-HEADSET-PAUSE`: a música **pausa** quando um fone de ouvido é
+inserido **ou** removido, no fone USB-A (UAC) e no jack P2 (3,5 mm). Nenhuma
+troca de saída acontece sozinha e nenhum áudio vai para outra saída antes de um
+Play/P explícito.
+
+Uma ação por vez; entre elas consulte `music.status` e `sys.info`. Qualquer
+reboot, panic, WDT, `state: error` inesperado ou perda de resposta da ponte
+encerra o cenário — não repetir automaticamente.
+
+1. Com o player aberto e **sem** fone conectado, inicie a faixa pelo controle
+   autorizado e confirme `playing` com o áudio no speaker integrado.
+2. Conecte o fone **P2** com a música tocando. Esperado em até ~1 s:
+   `state: paused`, áudio silencioso, posição congelada, `failure_stage` ausente,
+   log serial com `playback paused reason=audio_route_change` (`jack=present`) e
+   `sys.info` com uptime monotônico. Não deve haver áudio no fone nem no speaker.
+3. Aperte Play/P: a faixa retoma **no fone P2**, a partir da posição pausada
+   (compare `position_ms` antes/depois).
+4. Remova o fone P2 durante a reprodução: esperado `paused` novamente
+   (transição `jack=absent`) e silêncio total — inclusive sem migração para o
+   speaker.
+5. Repita o ciclo com o fone **USB-A** (adaptador USB-A macho → USB-C fêmea):
+   a) insira o USB com a música tocando no speaker → `paused`, sem áudio no fone
+   antes do Play; `GET /usb/audio` deve mostrar o dispositivo `ready`. b) Play/P →
+   retoma no fone USB. c) Remova o USB durante a reprodução → `paused`, sem
+   áudio no speaker e sem `state: error`; uptime contínuo e sem reboot (o caso de
+   retirada durante o play já teve reboot no passado — ver `usb-audio-host`).
+6. Confirme os casos negativos: (i) deixe o fone conectado antes de iniciar a
+   faixa — o Play/P deve tocar direto, sem pausa imediata; (ii) pause
+   manualmente, conecte/remova o fone com a música pausada e retome com Play/P —
+   não deve haver pausa nova; (iii) conecte um pendrive ou teclado USB (não
+   áudio) durante a reprodução — não deve pausar.
+7. Registre versão/hash, slot, IP, horários, os snapshots de `music.status`,
+   `music.diagnostics` (`pause_count`, `failures=0`) e o trecho de log com os
+   `reason=`. Sem esse registro o cenário continua `manual_validation: pending`.
+
+### Aceite físico registrado — 2026-11-07
+
+Aceite **reportado pelo usuário**, não observado de forma independente: nesta
+rodada não houve captura de `music.status`, de `music.diagnostics.pause_count`
+nem do log `reason=...`, e não havia cabo na USB-C (a ponte Serial-JTAG exige o
+cabo). O relato é: ciclos de inserção/remoção executados com o fone **USB-A** e
+com o fone **P2 (3,5 mm)**, com o comportamento esperado ("tudo funcionou
+corretamente"), inclusive pausa ao inserir, pausa ao remover e retomada por
+Play/P.
+
+Evidência de imagem e de estabilidade (observável pela LAN):
+
+- Imagem `1.14.1`, slot `ota_0` (`4325376`), `running_valid=true`, enviada por
+  OTA `--silent`; binário `build/cyberdeck5.bin` com SHA-256
+  `7125226c9ab2d27dbc370f5ecd19d2300eef55d43b4023573f39c73fbdf66b2d`
+  (2.728.704 bytes, `0x29a300`).
+- Série LAN de 1 s coletada na janela imediatamente anterior ao teste manual:
+  372 amostras, uptime **83 → 502 s** monotônico, **0 falhas** de leitura;
+  `/usb/audio` permaneceu `waiting` (nenhum fone no barramento nessa janela).
+- Mesmo boot depois do teste: uptime **1815 s** em `14:02:49`, sem reboot entre a
+  ativação da OTA e o fim do teste; `/usb/audio` voltou a `waiting` com o fone
+  removido.
+
+Permanecem não cobertos por esta rodada: verificação auditiva independente,
+leitura de `music.status`/logs durante as transições, o caso negativo de
+pendrive/teclado USB e o aceite acústico geral do player/speaker.
 
 ## Snapshot de diagnóstico (read-only)
 

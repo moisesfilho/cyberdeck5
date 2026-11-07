@@ -336,8 +336,18 @@ quando houver suporte, ou por atenuação do PCM nos demais casos, de modo que o
 controle sempre tenha efeito audível. O fluxo é cadenciado pelo relógio
 isócrono com escritas bloqueantes limitadas. A remoção do fone é detectada
 mesmo em pausa (o barramento é consultado periodicamente, porque a biblioteca
-host só anuncia remoção a cliente com dispositivo aberto) e, se o fone for
-retirado durante a reprodução, o próximo frame vai para o speaker.
+host só anuncia remoção a cliente com dispositivo aberto).
+
+Inserir ou remover um fone — USB-A ou P2 (3,5 mm) — durante a reprodução
+**pausa** a música; ela não troca de saída sozinha nem continua no speaker. O
+estado motivo fica no log (`playback paused reason=audio_route_change|
+output_removed`) e a retomada é sempre explícita: ao apertar Play/P o player
+escolhe a saída disponível naquele momento (USB pronto, senão codec da placa,
+com P2 quando conectado). Um fone já conectado quando a faixa começa não pausa
+nada, e mudanças feitas com a música pausada são absorvidas sem pausar de novo.
+A detecção exige duas leituras consecutivas iguais, então um contato
+intermitente do P2 não interrompe o áudio; uma leitura que falha (expander I2C)
+conta como desconhecida, nunca como "sem fone".
 
 O servidor é parado automaticamente quando o Wi-Fi perde o endereço IP.
 

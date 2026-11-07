@@ -365,8 +365,18 @@ when the device supports it, or by attenuating the PCM otherwise, so the
 control always has an audible effect. The stream is paced to the isochronous
 clock by bounded blocking writes. Unplugging the headset is detected even while
 paused (the bus is polled because the host library only reports a removal to a
-client that has a device open) and a headset pulled mid-playback hands the next
-frame to the speaker.
+client that has a device open).
+
+Inserting or removing a headset - USB-A or the 3.5 mm jack - while a track is
+playing **pauses** it: playback never switches output by itself and never
+continues on the speaker. The log records why
+(`playback paused reason=audio_route_change|output_removed`) and resuming is
+always explicit: pressing Play/P picks whatever output exists then (ready USB,
+otherwise the board codec, with the jack when connected). A headset already
+plugged when the track starts does not pause anything, and changes made while
+paused are absorbed instead of pausing again. Detection requires two consecutive
+equal readings, so intermittent jack contact does not interrupt audio, and a
+failed read (I2C expander) counts as unknown, never as "no headset".
 
 The server stops automatically when the Wi-Fi address is lost.
 

@@ -198,9 +198,31 @@ esp_codec_dev_handle_t bsp_audio_codec_speaker_init(void);
 esp_codec_dev_handle_t bsp_audio_codec_microphone_init(void);
 
 /**
+ * @brief Headphone jack presence, with an explicit unknown state
+ *
+ * A failed expander initialization or read is reported as UNKNOWN instead of
+ * "no headphone", so a caller that watches the jack cannot mistake an I2C error
+ * for a headset being unplugged.
+ */
+typedef enum {
+    BSP_HEADPHONE_UNKNOWN = 0,
+    BSP_HEADPHONE_ABSENT,
+    BSP_HEADPHONE_PRESENT,
+} bsp_headphone_state_t;
+
+/**
+ * @brief Read the 3.5 mm jack detect pin
+ *
+ * @return BSP_HEADPHONE_PRESENT/ABSENT when the pin was read, BSP_HEADPHONE_UNKNOWN
+ *         when the expander is unavailable
+ */
+bsp_headphone_state_t bsp_headphone_detect_state(void);
+
+/**
  * @brief Check if headphones are plugged into the 3.5mm jack
  *
- * @return true if headphones are connected, false otherwise
+ * @return true if headphones are connected, false otherwise (also when the pin
+ *         cannot be read, which keeps the speaker amplifier enabled)
  */
 bool bsp_headphone_is_connected(void);
 

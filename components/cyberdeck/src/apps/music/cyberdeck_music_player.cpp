@@ -5,13 +5,16 @@
 #include "apps/runtime/cyberdeck_app_storage.h"
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "platform/audio/cyberdeck_audio_output.h"
+#include "platform/audio/cyberdeck_audio_presence.h"
 #define MINIMP3_IMPLEMENTATION
 #include "third_party/minimp3/minimp3.h"
 
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #ifdef ESP_PLATFORM
+#include "bsp/m5stack_tab5.h"
 #include "esp_timer.h"
+#include "platform/usb/cyberdeck_usb_audio_host.h"
 #else
 extern "C" std::int64_t esp_timer_get_time(void);
 #endif
@@ -58,6 +61,48 @@ constexpr unsigned k_max_empty_frames = 64;
  * an estimate, so the extra audio is dropped instead of played.  A wrong entry
  * can therefore never mute more than five seconds. */
 constexpr std::uint32_t k_max_seek_discard_ms = 5000;
+#ifdef ESP_PLATFORM
+/* The 3.5 mm detect pin is read through an I2C expander; the worker asks far
+ * more often than a headset can be plugged, so the device probe caches it. */
+constexpr std::uint64_t k_presence_interval_us = 200000;
+
+cyberdeck_audio_presence::presence to_presence(bsp_headphone_state_t value) {
+    switch (value) {
+    case BSP_HEADPHONE_PRESENT:
+        return cyberdeck_audio_presence::presence::present;
+    case BSP_HEADPHONE_ABSENT:
+        return cyberdeck_audio_presence::presence::absent;
+    case BSP_HEADPHONE_UNKNOWN:
+        break;
+    }
+    return cyberdeck_audio_presence::presence::unknown;
+}
+
+cyberdeck_audio_presence::sample device_presence(void *) {
+    static std::uint64_t last_us = 0;
+    static cyberdeck_audio_presence::sample cached{};
+    const std::uint64_t now = static_cast<std::uint64_t>(esp_timer_get_time());
+    if (last_us != 0 && now >= last_us && now - last_us < k_presence_interval_us)
+        return cached;
+    last_us = now;
+    cached.usb = cyberdeck_usb_audio_host::playback_presence();
+    cached.jack = to_presence(bsp_headphone_detect_state());
+    return cached;
+}
+#endif
+
+audio_presence_probe g_presence_probe =
+#ifdef ESP_PLATFORM
+    &device_presence;
+#else
+    nullptr;
+#endif
+void *g_presence_context = nullptr;
+
+cyberdeck_audio_presence::sample sample_presence() {
+    if (g_presence_probe == nullptr) return {};
+    return g_presence_probe(g_presence_context);
+}
 enum class request_kind : std::uint8_t { play, stop };
 struct request {
     request_kind kind;
@@ -111,7 +156,24 @@ const char *failure_stage_name(error_stage stage) {
     }
     return "unknown";
 }
+
+const char *presence_name(cyberdeck_audio_presence::presence value) {
+    switch (value) {
+    case cyberdeck_audio_presence::presence::present:
+        return "present";
+    case cyberdeck_audio_presence::presence::absent:
+        return "absent";
+    case cyberdeck_audio_presence::presence::unknown:
+        break;
+    }
+    return "unknown";
+}
 } // namespace
+
+void set_audio_presence_probe(audio_presence_probe probe, void *context) {
+    g_presence_probe = probe;
+    g_presence_context = context;
+}
 
 #if defined(CYBERDECK_MUSIC_TRACE_TESTING)
 void player::set_trace_lifecycle_test_hook(trace_lifecycle_test_hook hook, void *context) {
@@ -391,8 +453,22 @@ struct player::impl {
             }
             std::uint64_t pause_started_us = 0;
             bool pause_active = false;
+            /* A headset plugged in (or removed) while a track plays pauses it.
+             * The reference is taken at playback start, so a headset that was
+             * already connected does not pause a fresh play, and changes made
+             * while paused are absorbed here instead of pausing on resume. */
+            cyberdeck_audio_presence::watch route_watch{};
+            route_watch.reset(sample_presence());
             while (req.generation == playback_generation.load(std::memory_order_acquire) &&
                    !shutting_down.load(std::memory_order_acquire)) {
+                const cyberdeck_audio_presence::sample route_sample = sample_presence();
+                if (route_watch.update(route_sample) && !paused.load(std::memory_order_acquire)) {
+                    paused.store(true, std::memory_order_release);
+                    ESP_LOGI(k_tag,
+                             "playback paused reason=audio_route_change usb=%s jack=%s generation=%lu",
+                             presence_name(route_sample.usb), presence_name(route_sample.jack),
+                             static_cast<unsigned long>(req.generation));
+                }
                 if (paused.load(std::memory_order_acquire)) {
                     if (!pause_active) {
                         pause_started_us = static_cast<std::uint64_t>(esp_timer_get_time());
@@ -597,6 +673,16 @@ struct player::impl {
                                                  worker_stats.backend_write_time_us,
                                                  worker_stats.backend_write_max_us, 0, write_timing.backend_us);
                 if (!written) {
+                    if (write_timing.route_lost) {
+                        /* The USB headset left the bus mid-frame. The frame was
+                         * deliberately not replayed on another output, and this
+                         * is not a track failure: pause and let the user resume
+                         * on whatever output exists then. */
+                        paused.store(true, std::memory_order_release);
+                        ESP_LOGI(k_tag, "playback paused reason=output_removed generation=%lu",
+                                 static_cast<unsigned long>(req.generation));
+                        continue;
+                    }
                     failed = true;
                     failure = error_stage::codec_write;
                     break;

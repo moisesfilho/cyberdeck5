@@ -13,6 +13,7 @@
 #include "usb/usb_host.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
@@ -111,6 +112,12 @@ snapshot s_snapshot{};
  * worker task, which owns the USB host queries. */
 std::uint8_t s_present_address = 0;
 
+/* Raised by the class-driver callback the moment the open stream reports
+ * DISCONNECTED, so a failed write can tell "the headset left" (pause) from a
+ * transient write error (keep the speaker fallback) without querying the USB
+ * host library from the player's task. Cleared when a stream is opened again. */
+std::atomic<bool> s_playback_lost{false};
+
 /* Playback is driven by the player worker task; start/stop/write serialise on
  * s_playback_mutex so the worker can retire a stream that lost its device. */
 SemaphoreHandle_t s_playback_mutex = nullptr;
@@ -203,6 +210,9 @@ bool enqueue(const host_event &item);
 
 void playback_device_event(uac_host_device_handle_t, const uac_host_device_event_t event, void *) {
     if (event != UAC_HOST_DRIVER_EVENT_DISCONNECTED) return;
+    /* Recorded here (atomic, no USB call) so the playback task can classify a
+     * failed write immediately instead of guessing from the error code. */
+    s_playback_lost.store(true, std::memory_order_release);
     /* The driver leaves the interface in its list until the owner closes it,
      * and closing from this callback would recurse into the driver. Hand the
      * close to the worker, then the next open starts from clean state. */
@@ -516,6 +526,8 @@ bool playback_start(std::uint32_t sample_rate, std::uint8_t channels) {
                     s_playback_rate = sample_rate;
                     s_playback_channels = channels;
                     s_device_volume = false;
+                    /* A fresh stream is the new authority for presence. */
+                    s_playback_lost.store(false, std::memory_order_release);
                     started = true;
                     ESP_LOGI(k_tag, "playback stream started rate=%lu channels=%u",
                              static_cast<unsigned long>(sample_rate), channels);
@@ -601,6 +613,8 @@ void playback_stop() {
     }
     s_playback_rate = 0;
     s_playback_channels = 0;
+    /* A stream we closed on purpose is not a lost device. */
+    s_playback_lost.store(false, std::memory_order_release);
     xSemaphoreGive(s_playback_mutex);
 }
 
@@ -616,7 +630,7 @@ void forget_device() {
 
 void install_output_hooks() {
     const cyberdeck_audio_output::usb_output_hooks hooks{playback_available, playback_start, playback_set_volume,
-                                                         playback_write, playback_stop};
+                                                         playback_write, playback_stop, playback_device_present};
     if (!cyberdeck_audio_output::install_usb_output(hooks))
         ESP_LOGW(k_tag, "audio output already open; USB route not installed");
 }
@@ -737,6 +751,27 @@ bool get_snapshot(snapshot &out) {
     out = s_snapshot;
     xSemaphoreGive(s_state_mutex);
     return true;
+}
+
+cyberdeck_audio_presence::presence playback_presence() {
+    snapshot value{};
+    if (!get_snapshot(value)) return cyberdeck_audio_presence::presence::unknown;
+    /* Transient or failed views prove nothing: an unreadable port is never
+     * reported as absence, otherwise playback would pause on a query error. */
+    if (value.status == state::stopped || value.status == state::starting || value.status == state::error)
+        return cyberdeck_audio_presence::presence::unknown;
+    if (value.address == 0) return cyberdeck_audio_presence::presence::absent;
+    if (value.audio_control || value.playback_streams != 0)
+        return cyberdeck_audio_presence::presence::present;
+    /* Enumerated, but not an audio playback device (keyboard, storage...). */
+    return cyberdeck_audio_presence::presence::absent;
+}
+
+bool playback_device_present() {
+    if (s_playback_lost.load(std::memory_order_acquire)) return false;
+    snapshot value{};
+    if (!get_snapshot(value)) return true; /* cannot prove absence: keep fallback */
+    return value.status == state::ready;
 }
 
 } // namespace cyberdeck_usb_audio_host

@@ -1932,6 +1932,11 @@ destrói recursos potencialmente usados.
   amplificador do speaker conforme detecção do jack; o jack recebe saída do
   codec. A tabela `backend` é seam aditiva e instalável antes da primeira
   inicialização, permitindo exercitar codec/roteamento com callbacks determinísticos.
+  A presença de fone para a pausa automática tem porta própria:
+  `bsp_headphone_detect_state()` converte o pino do expander em
+  `PRESENT/ABSENT/UNKNOWN` (as três chamadas de configuração precisam funcionar
+  antes de confiar na leitura) e `bsp_headphone_is_connected()` mantém o contrato
+  booleano da rota, com pino ilegível preservando o amplificador.
   Falha ao desligar o amplificador mantém estado de rota em falha, força retry e
   bloqueia start/write até a rota segura ser confirmada.
   `start(rate, channels, volume)` é idempotente porque o player o chama a cada
@@ -1997,7 +2002,12 @@ destrói recursos potencialmente usados.
    codec injetável, incluindo o burst de 100 `start()` idênticos (0 escrita de
    volume e 0 leitura de jack), a reaplicação de volume apenas quando muda, a
    troca de jack durante o play aplicada uma vez por janela de 500 ms e a falha
-   de amplificador fail-closed no caminho reentrante; o timing de escrita usa
+   de amplificador fail-closed no caminho reentrante; o mesmo alvo cobre a rota
+   perdida do fone USB (`write_timing::route_lost` sem escrita no codec) contra o
+   fallback histórico quando o dispositivo continua presente ou o hook
+   `device_present` não é instalado. `test_music_presence.cpp` executa o detector
+   puro de presença (janela de confirmação, `unknown` que não pausa, referência
+   inicial, as duas fontes na mesma amostra). O timing de escrita usa
    clock host controlável para separar somente route check efetivamente tentado
    e backend write real. Player publica ambas as séries por geração e o serializer
    NDJSON as acrescenta sem remover os campos `write_*` antigos
@@ -2754,9 +2764,11 @@ de report map, notificações ou injeção de teclas.
 | `components/cyberdeck/include/platform/display/cyberdeck_display_port.h`, `components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp` | `cyberdeck_display_capture`, `cyberdeck_display_release` | Adapter exclusivo de LVGL/BSP da porta de display do Screenshot; delega o snapshot a `cyberdeck_lvgl_dispatch::run` (lock/despacho pertencem ao dispatcher), copia o frame bounded e libera recursos. Nao adquire display lock proprio. |
 | `components/cyberdeck/src/apps/screenshot/screenshot_bmp.cpp` | geracao de BMP | Converte framebuffer RGB565 em BMP 24-bit bottom-up com stride/padding. |
 | `components/cyberdeck/include/platform/usb/cyberdeck_usb_audio_host.h`, `components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_host.cpp` | `start`, `stop`, `get_snapshot`, `snapshot`, `audio_format`, `probe_descriptors`, `address_present`, `forget_device`, `playback_start`, `playback_write`, `playback_stop` | Serviço opcional `cyberdeck.usb_audio`: inicializa o BSP USB Host da USB-A e o `usb_host_uac` (cópia local) ; cliente USB passivo observa presença de dispositivo e lê descritores (bcdUSB, VID/PID, bcdADC, direção dos endpoints isócronos), enquanto o driver de classe fornece strings e formatos. Snapshot composto bounded (8 formatos, strings de 48 bytes). O worker consulta `usb_host_device_addr_list_fill` a cada ciclo porque a remoção não é anunciada a cliente sem handle aberto; ao perder o endereço ele fecha o stream e publica `waiting`. A reprodução abre stream PCM 16-bit e escreve com backpressure limitado (o decoder roda mais rápido que o relógio isócrono); escrita, abertura e fechamento são serializados por mutex. |
-| `components/cyberdeck/src/platform/audio/cyberdeck_audio_output.cpp` | `install_usb_output`, `usb_output_hooks`, `start`, `write`, `stop` | Rota de saída com hooks injetáveis: dispositivo USB pronto assume a reprodução; se o stream não abrir, cai para o codec da placa. O volume do player (0-50) é aplicado ao fone: Feature Unit via
-`uac_host_device_set_volume` quando suportada, senão atenuação Q15 do PCM. |
+| `components/cyberdeck/include/platform/audio/cyberdeck_audio_presence.h`, `components/cyberdeck/src/platform/audio/cyberdeck_audio_presence.cpp` | `presence`, `sample`, `watch::reset`, `watch::update`, `k_confirm_samples`, `confirmed_usb`, `confirmed_jack` | Detector puro (sem ESP-IDF/LVGL) da presença de fone USB-A e P2: `unknown/absent/present`, `unknown` nunca equivale a ausente (leitura que falha não pausa), duas amostras consecutivas iguais confirmam uma mudança (contato intermitente do P2 não interrompe o áudio), `reset()` adota a leitura atual como referência sem reportar transição e as duas fontes são avaliadas na mesma amostra. Testado por `test_music_presence`. |
+| `components/cyberdeck/src/platform/audio/cyberdeck_audio_output.cpp` | `install_usb_output`, `usb_output_hooks`, `start`, `write`, `stop`, `write_timing::route_lost`, `device_present` | Rota de saída com hooks injetáveis: dispositivo USB pronto assume a reprodução; se o stream não abrir, cai para o codec da placa. O volume do player (0-50) é aplicado ao fone: Feature Unit via
+`uac_host_device_set_volume` quando suportada, senão atenuação Q15 do PCM. Quando o hook opcional `device_present` informa que o fone deixou o barramento, o frame falho **não** é reenviado ao codec: a rota é liberada e `write_timing::route_lost` pede a pausa do player. Sem o hook ou com o dispositivo presente, mantém o fallback histórico para o speaker. |
 | `components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_json.cpp` | `state_name`, `format_json` | Serializador JSON puro, sem alocação, com escaping de strings e falha fechada se o buffer for insuficiente; usado por `/usb/audio` e teste host. |
+| `components/cyberdeck/include/platform/usb/cyberdeck_usb_audio_host.h` (presença), `components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp` (`device_presence`, `set_audio_presence_probe`) | `playback_presence`, `playback_device_present`, `s_playback_lost`, `audio_presence_probe`, `route_watch` | Presença para a pausa automática: `playback_presence()` deriva presença do snapshot publicado (fone UAC de reprodução conta mesmo sem formatos utilizáveis; teclado/armazenamento não contam; `stopped/starting/error` = `unknown`). `playback_device_present()` combina a flag atômica `s_playback_lost` (levantada pelo callback do driver em `DISCONNECTED`) com `status == ready`, sem chamar a USB Host library na task do player. A sonda de dispositivo no player faz cache de 200 ms (o pino P2 é I2C) e o worker do player amostra a cada iteração, pausando em `reason=audio_route_change` / `reason=output_removed`. Testes host injetam a sonda via `set_audio_presence_probe`. |
 | `components/m5stack_tab5/src/bsp_usb.c` | `bsp_usb_host_start`, `bsp_usb_host_stop`, `usb_lib_task` | BSP vendored do USB Host: alimenta a porta USB-A, instala/desinstala o driver e drena eventos até `ALL_FREE`; `ESP_ERR_TIMEOUT` de janela ociosa não é fatal; rollback de instalação e espera bounded no encerramento. |
 | `main/idf_component.yml`, `sdkconfig.defaults`, `components/usb_host_uac/` | `espressif/usb_host_uac`, `CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` | Dependência UAC fixada em 1.5.0 e resolvida por `override_path` para a cópia local (correção do caminho de erro de `uac_host_device_open`); limite de 1024 bytes para o descritor de configuração (o padrão de 256 falha `CHECK_SHORT_CONFIG_DESC` em headsets). |
 | `tests/host/keymap/test_usb_audio_host.cpp`, `test_usb_audio_host_contract.py` | formatter e wiring USB/UAC | Testa escaping, payload e limites do serializador; contrato estrutural fixa dependência local, USB-A, lifecycle opcional, descoberta TX sem identidade fixa, endpoint LAN baseado em cache, detecção de remoção sem stream aberto, fechamento do handle fora do callback e correção do caminho de erro do driver. |

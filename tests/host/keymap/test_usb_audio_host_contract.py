@@ -90,6 +90,18 @@ def main() -> int:
         "playback_stop();" in host,
         # A hot-unplug mid-stream must not abort the player.
         "audio output falls back after a lost USB stream": "start_route(rate, channels, volume, false, nullptr)" in audio,
+        # Inserting or removing a headset pauses playback: presence comes from
+        # the published snapshot (never from an unreadable port) and a failed
+        # write is classified with the driver's own disconnect notification
+        # instead of the write error alone.
+        "presence is derived from the published view": "playback_presence()" in host and
+        "state::stopped || value.status == state::starting || value.status == state::error" in host,
+        "presence counts UAC headsets only": "value.audio_control || value.playback_streams != 0" in host,
+        "disconnect notification is recorded atomically": "s_playback_lost.store(true" in host and
+        "s_playback_lost.store(false" in host,
+        "presence hook is installed for the audio route": "playback_device_present}" in host,
+        "lost route is distinguishable from a write error": "route_lost = true" in audio and
+        "usb_hooks.device_present()" in audio,
     }
     checks.update(check_local_driver(driver, manifest))
 
