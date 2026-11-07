@@ -1,6 +1,7 @@
 #include "apps/music/cyberdeck_music_app.h"
 #include "apps/music/cyberdeck_music_metadata.h"
 #include "apps/music/cyberdeck_music_player.h"
+#include "apps/music/cyberdeck_music_scan_batch.h"
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "esp_log.h"
 
@@ -23,7 +24,7 @@ namespace {
 constexpr char k_tag[] = "music";
 constexpr cyberdeck_apps::manifest k_manifest{"cyberdeck.music",
                                               "Music",
-                                              "1.0.1",
+                                              "1.0.2",
                                               "Foreground local MP3 player",
                                               "",
                                               {"cyberdeck.event_log"},
@@ -423,6 +424,11 @@ bool application::scan_directory_sync(std::string_view path) {
     std::unique_ptr<track> candidate(new (std::nothrow) track{});
     if (!candidate)
         return false;
+    /* One bounded page of names is allocated per scan, not per directory: the
+     * scan task only owns 6144 bytes of stack. */
+    std::unique_ptr<scan_name_page> page(new (std::nothrow) scan_name_page{});
+    if (!page)
+        return false;
     std::size_t count = 0;
     bool truncated = false;
     bool scan_ok = true;
@@ -430,39 +436,61 @@ bool application::scan_directory_sync(std::string_view path) {
     walk = [&](std::string_view directory, std::size_t depth) {
         if (depth > 8 || scan_cancel_.load(std::memory_order_acquire) || !app_grant().valid())
             return false;
+        /* The directory is read once per page of names instead of once per
+         * child. A page that overflowed is followed by another pass with the
+         * last processed name as watermark, so memory stays bounded while the
+         * visiting order remains strictly ascending. The page is shared by the
+         * whole scan, so descending into a subdirectory invalidates it and the
+         * parent refills it from its own watermark when it resumes. */
+        bool page_overflowed = false;
+        bool page_ready = false;
+        std::size_t slot = 0;
         std::string last_name;
         for (;;) {
-            DIR *dir = cyberdeck_local_shell_opendir("/sdcard", "/", directory);
-            if (dir == nullptr)
-                return false;
-            std::string next_name;
-            bool read_failed = false;
-            for (;;) {
-                errno = 0;
-                dirent *entry = readdir(dir);
-                if (entry == nullptr) {
-                    read_failed = errno != 0;
-                    break;
-                }
-                if (scan_cancel_.load(std::memory_order_acquire) || !app_grant().valid()) {
-                    (void)closedir(dir);
+            if (!page_ready) {
+                page->clear();
+                page_overflowed = false;
+                DIR *dir = cyberdeck_local_shell_opendir("/sdcard", "/", directory);
+                if (dir == nullptr)
                     return false;
+                bool read_failed = false;
+                for (;;) {
+                    errno = 0;
+                    dirent *entry = readdir(dir);
+                    if (entry == nullptr) {
+                        read_failed = errno != 0;
+                        break;
+                    }
+                    if (scan_cancel_.load(std::memory_order_acquire) || !app_grant().valid()) {
+                        (void)closedir(dir);
+                        return false;
+                    }
+                    const std::string_view name(entry->d_name);
+                    if (name.empty() || name == "." || name == ".." || name.size() > k_scan_name_bytes)
+                        continue;
+                    if (!last_name.empty() && name <= std::string_view(last_name))
+                        continue;
+                    if (!page->offer(name))
+                        page_overflowed = true;
                 }
-                const std::string_view name(entry->d_name);
-                if (name.empty() || name == "." || name == ".." || name.size() > 128 || name <= last_name)
-                    continue;
-                if (next_name.empty() || name < next_name)
-                    next_name.assign(name);
+                const int close_result = closedir(dir);
+                if (read_failed || close_result != 0)
+                    return false;
+                page_ready = true;
+                slot = 0;
             }
-            const int close_result = closedir(dir);
-            if (read_failed || close_result != 0)
-                return false;
-            if (next_name.empty())
-                break;
-            last_name = next_name;
+            if (slot >= page->size()) {
+                if (!page_overflowed)
+                    break;
+                page_ready = false;
+                continue;
+            }
             if (scan_cancel_.load(std::memory_order_acquire))
                 return false;
-            const std::string child = (directory == "/" ? "" : std::string(directory)) + "/" + next_name;
+            const std::string next_name(page->at(slot));
+            const std::string child = (directory == "/" ? std::string{} : std::string(directory)) + "/" + next_name;
+            last_name = next_name;
+            ++slot;
             if (child.size() > k_max_path_bytes)
                 continue;
             if (is_mp3_path(child)) {
@@ -501,6 +529,7 @@ bool application::scan_directory_sync(std::string_view path) {
                 if (child_dir != nullptr) {
                     if (closedir(child_dir) != 0)
                         return false;
+                    page_ready = false;
                     if (!walk(child, depth + 1))
                         return false;
                     if (truncated)

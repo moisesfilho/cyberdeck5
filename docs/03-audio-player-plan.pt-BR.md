@@ -1052,3 +1052,71 @@ foi verificada diretamente; agora a última imagem efetivamente gravada foi
 confirmada como `fw_version=3` e pelo hash acima. Isto valida build, flash e boot
 da imagem; não é nova observação independente do cenário playback/Esc nem fecha
 os demais gates físicos do player.
+
+### Latência ao reabrir o player e varrer a fila — 2026-11-07
+
+Relato do usuário: abrir o app `music`, reproduzir uma faixa, fechar, reabrir e
+pedir reprodução de novo demorou para o áudio começar. A análise estática
+separou a sequência em etapas mensuráveis: abertura da surface pelo timer de
+250 ms da UI, scan recursivo da fila, admissão do pedido de play, abertura do
+arquivo, probe de duração, metadados, primeiro frame decodificado, abertura da
+rota/codec ou stream USB e primeira escrita PCM.
+
+Nenhuma dessas etapas foi medida no dispositivo para este relato; a investigação
+e a validação física continuam pendentes. O que foi corrigido é o custo de
+enumeração da fila, que roda a cada `music` sem argumentos: o seletor anterior
+relia o diretório inteiro uma vez por filho (e abria o diretório outra vez para
+cada nome), então o custo crescia de forma quadrática e cada reabertura refazia
+todo esse trabalho antes de a fila ficar disponível para play.
+
+Mudança (fw `1.14.2`, app `cyberdeck.music` `1.0.2`):
+`include/apps/music/cyberdeck_music_scan_batch.h::scan_name_page` mantém um page
+bounded de 64 nomes de até 128 bytes, alocado no heap uma vez por scan
+(nunca na stack de 6144 B da task `music_scan`). Cada passagem guarda os menores
+nomes do diretório e só repete a leitura com o último nome processado como marca
+d'água quando a página transbordou; um nome deslocado é sempre maior que o novo
+máximo da página, então a próxima passagem o oferece de novo. Descer em um
+subdiretório invalida a página compartilhada e o pai recarrega a partir da
+própria marca d'água. Ordem de visita, conjunto truncado (64 menores paths),
+limite de profundidade 8, `secure-open`, leitura de metadados, cancelamento,
+lease de SD, tratamento de erro de `readdir`/`closedir` e publicação
+tudo-ou-nada permanecem iguais.
+
+Custo esperado: um `opendir` por página de nomes em vez de um por filho (mais um
+por subdiretório visitado). `test_music_app.cpp` mede as aberturas reais do seam
+de produção: 9 filhos com 2 subdiretórios abrem no máximo 3 vezes (antes 9), 65
+filhos abrem exatamente 2 vezes e uma árvore de 71 filhos com subdiretório após
+a quebra de página abre 2 vezes no diretório e 2 no subdiretório, mantendo os 64
+menores paths e o status truncado.
+
+Instrumentação disponível para medir o restante no dispositivo, sem mudar
+schema: `music.scan` (`queue.duration_ms`, `stack_high_water_bytes`),
+`music.diagnostics` (contadores e tempos de read/decode/codec-start/write,
+checagens de rota) e os logs `playback file opened`, `playback duration`,
+`playback codec_start begin/complete` e `playback first_pcm_write complete`, que
+dão a ordem temporal das etapas anteriores ao som audível. A primeira escrita PCM
+não prova som audível; o aceite acústico continua separado.
+
+Validação: suíte host agregada (`make -C tests/host/keymap clean test`) verde com
+418/418 checks em `test_music_app`, incluindo unidade da página, contagem de
+`opendir` e o cenário multi-página com subdiretório; `idf.py build` ESP-IDF 6.1
+verde (`0x29a4e0`, 35% livre).
+
+Medição no Tab5 (2026-11-07, fw `1.14.2`, SHA-256
+`ed3b3df3f78883ef2fbbeda444773d52136af5733b5d588cb271226ab874940d`, 14 faixas,
+três ciclos no mesmo boot): `queue.duration_ms` 254/258/356 ms;
+digitar `music` → player respondendo 815/848/64 ms; → scan pronto 819/851/410
+ms; surface pronta 83/87/425 ms; tap em `Play / Pause` → estado `playing`
+90–91 ms; → 500 ms de PCM 562–564 ms. `music.diagnostics` sem falhas,
+`codec_start` máximo 12,4–12,6 ms e `write` máximo ~29,9 ms; stack da task de
+scan com 2612 B livres; uptime monotônico e log SD sem panic/WDT. Detalhes e
+limites em `tests/manual/music-player-validation.pt-BR.md` seção 4.5.
+
+O que resta sem explicação causal é a comparação "antes/depois" no dispositivo
+(exigiria gravar a imagem anterior) e o tempo até o som **audível**. Com os
+números atuais, a espera percebida ao reabrir é compatível com
+scan (~0,3 s) + tick de 250 ms da UI + abertura do app, não com o codec
+(~12 ms) nem com a primeira escrita (~30 ms). Se o usuário ainda perceber
+demora, o próximo passo é medir scan por arquivo (metadados/secure-open) e
+avaliar um cache de listagem com invalidação explícita, que não foi feito aqui
+por risco de servir fila velha.

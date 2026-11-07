@@ -284,6 +284,7 @@ MUSIC_APP_SOURCES := \
 
 MUSIC_APP_HDRS := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_app.h \
 	../../../components/cyberdeck/include/apps/music/cyberdeck_music_browser.h \
+	../../../components/cyberdeck/include/apps/music/cyberdeck_music_scan_batch.h \
 	../../../components/cyberdeck/include/platform/display/cyberdeck_music_command_input.h \
 	../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h \
 	$(MUSIC_METADATA_HDR) \

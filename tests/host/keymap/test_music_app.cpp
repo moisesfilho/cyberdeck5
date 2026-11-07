@@ -1,4 +1,5 @@
 #include "apps/music/cyberdeck_music_app.h"
+#include "apps/music/cyberdeck_music_scan_batch.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/shell/cyberdeck_local_shell.h"
 #include "freertos/task.h"
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -50,6 +52,17 @@ std::mutex browser_stop_mutex;
 std::condition_variable browser_stop_changed;
 bool browser_stop_started = false;
 bool browser_stop_returned = false;
+std::mutex opendir_mutex;
+std::map<std::string, int> opendir_counts;
+void reset_opendir_counts() {
+    std::lock_guard<std::mutex> lock(opendir_mutex);
+    opendir_counts.clear();
+}
+int opendir_count(std::string_view path) {
+    std::lock_guard<std::mutex> lock(opendir_mutex);
+    const auto found = opendir_counts.find(std::string(path));
+    return found == opendir_counts.end() ? 0 : found->second;
+}
 struct command_app_probe {
     cyberdeck_music::application *app;
     int dispatches = 0;
@@ -309,6 +322,10 @@ std::string id3_title_tag(std::string_view title, std::string_view artist = {}) 
 DIR *music_test_secure_opendir(const char *root, const char *cwd, std::string_view path) {
     if (root == nullptr || std::string_view(root) != "/sdcard" || cwd == nullptr || std::string_view(cwd) != "/")
         return nullptr;
+    {
+        std::lock_guard<std::mutex> lock(opendir_mutex);
+        ++opendir_counts[std::string(path)];
+    }
     return cyberdeck_local_shell_opendir(scan_root.c_str(), cwd, path);
 }
 
@@ -356,6 +373,43 @@ int main() {
     if (created_root == nullptr)
         return 1;
     scan_root = created_root;
+
+    /* The queue scan keeps one bounded, sorted page of child names per
+     * directory pass. This replaced a selector that re-read the whole
+     * directory for every child, which is what made a large queue scan
+     * quadratic and reopening the player feel slow. */
+    {
+        cyberdeck_music::scan_name_page page;
+        page.clear();
+        CHECK(page.size() == 0);
+        CHECK(page.offer("m.mp3"));
+        CHECK(page.offer("a.mp3"));
+        CHECK(page.offer("m.mp3")); /* duplicate is ignored */
+        CHECK(page.size() == 2 && page.at(0) == "a.mp3" && page.at(1) == "m.mp3");
+        /* A name wider than the per-entry limit is filtered by the scan before
+         * it reaches the page, so it must not signal an overflow. */
+        CHECK(page.offer(std::string(cyberdeck_music::k_scan_name_bytes + 1, 'x')));
+        CHECK(page.size() == 2);
+
+        cyberdeck_music::scan_name_page full;
+        full.clear();
+        for (std::size_t index = 0; index < cyberdeck_music::k_scan_name_page; ++index) {
+            char name[16]{};
+            std::snprintf(name, sizeof(name), "n-%03zu", index);
+            CHECK(full.offer(name));
+        }
+        CHECK(full.size() == cyberdeck_music::k_scan_name_page);
+        /* Larger than every entry: reported so the caller reads the directory
+         * again after consuming the page. */
+        CHECK(!full.offer("n-999"));
+        CHECK(full.size() == cyberdeck_music::k_scan_name_page);
+        /* A smaller late name displaces the current largest and still reports
+         * the overflow: the displaced name is larger than the new page maximum,
+         * so the next pass with that maximum as watermark offers it again. */
+        CHECK(!full.offer("n-000a"));
+        CHECK(full.size() == cyberdeck_music::k_scan_name_page && full.at(0) == "n-000" && full.at(1) == "n-000a" &&
+              full.at(full.size() - 1) == "n-062");
+    }
 
     fake_player player;
     const cyberdeck_music::browser_scan_ops browser_ops{nullptr,
@@ -618,6 +672,7 @@ int main() {
     write_file(fs::path(scan_root) / "outside.mp3", "outside");
     fs::create_symlink(fs::path(scan_root) / "outside.mp3", music_dir / "link.mp3");
 
+    reset_opendir_counts();
     result = music.execute("music", "queue /music");
     CHECK(result.status == cyberdeck_apps::result_status::handled);
     CHECK(wait_until(
@@ -626,6 +681,11 @@ int main() {
             return current.output.find("queue: scan complete") != std::string::npos;
         },
         std::chrono::seconds(2)));
+    /* One page per directory pass, plus one refresh whenever a subdirectory was
+     * visited and overwrote the shared page. This fixture has nine children and
+     * two subdirectories, so three opens; the old selector opened /music once
+     * per child (nine times) regardless of the tree shape. */
+    CHECK(opendir_count("/music") <= 3);
     CHECK(player.queue_updates == 4 && player.queue_count == 4);
     CHECK(player.last_queue.size() == 4);
     CHECK(std::string_view(player.last_queue[0].path.data()) == "/music/Beta.MP3");
@@ -738,6 +798,7 @@ int main() {
         scan_open_entered = false;
         release_scan_open = false;
     }
+    reset_opendir_counts();
     CHECK(music.execute("music", "queue /music").status == cyberdeck_apps::result_status::handled);
     {
         std::unique_lock<std::mutex> lock(scan_gate_mutex);
@@ -752,6 +813,9 @@ int main() {
                    current.output.find("queue: truncated at 64 tracks") != std::string::npos;
         },
         std::chrono::seconds(2)));
+    /* 65 children need exactly two directory passes (64 + 1), independent of
+     * the order the filesystem returns them in. */
+    CHECK(opendir_count("/music") == 2);
     CHECK(player.queue_updates == 8 && player.queue_count == 64);
     CHECK(music.execute("music", "list").output.find("root-track.mp3") == std::string::npos);
     player.state.state = cyberdeck_music::playback_state::playing;
@@ -1160,6 +1224,36 @@ int main() {
     CHECK(player.pauses == pauses_before_browser_toggle + 1);
     CHECK(!music.browser_play_selected(actionable_browser.count));
     CHECK(!music.browser_toggle_selected(0));
+
+    /* Multi-page queue scan: a directory with more children than one name page
+     * is read again only after the current page is consumed, and a
+     * subdirectory found after the page break is still visited in place. The
+     * retained 64 tracks are the lexicographically smallest paths. */
+    const fs::path pages_dir = fs::path(scan_root) / "music-pages";
+    fs::create_directories(pages_dir / "mid");
+    for (int index = 0; index < 70; ++index) {
+        char name[32]{};
+        std::snprintf(name, sizeof(name), "m%02d.mp3", index);
+        write_file(pages_dir / name, "x");
+    }
+    write_file(pages_dir / "mid" / "k.mp3", "x");
+    reset_opendir_counts();
+    CHECK(music.execute("music", "queue /music-pages").status == cyberdeck_apps::result_status::handled);
+    CHECK(wait_until(
+        [&] {
+            const auto current = music.execute("music", "status").output;
+            return current.find("queue: scan complete") != std::string::npos &&
+                   current.find("queue: truncated at 64 tracks") != std::string::npos;
+        },
+        std::chrono::seconds(2)));
+    /* 71 children: two passes over the directory, one probe plus one recursive
+     * open for the subdirectory. */
+    CHECK(opendir_count("/music-pages") == 2);
+    CHECK(opendir_count("/music-pages/mid") == 2);
+    CHECK(player.last_queue.size() == 64);
+    CHECK(std::string_view(player.last_queue.front().path.data()) == "/music-pages/m00.mp3");
+    CHECK(std::string_view(player.last_queue[63].path.data()) == "/music-pages/m63.mp3");
+    CHECK(music.execute("music", "status").output.find("queue: 64 tracks") != std::string::npos);
 
     CHECK(runtime.stop_application("cyberdeck.music"));
     CHECK(runtime.stop_all());

@@ -21,6 +21,39 @@ DMA underrun or causality; no functional fix was made and root cause remains
 unconfirmed. Tester/device validation remains pending only for the separate full
 acceptance gates, not for this reported targeted scenario.
 
+## Bounded directory name page for the queue scan (cycle 11)
+
+`REQ-PLAYER-SCAN-PAGE-01`: the recursive queue scan must enumerate each
+directory with a bounded number of `opendir` calls that does not grow with the
+number of children, keep the lexicographic visiting order, the 64-track
+truncation and all error/cancel/publication semantics, and keep the enumeration
+memory bounded and out of the 6144-byte scan task stack.
+
+The previous selector re-read the whole directory once per child (O(n²)
+`readdir` work plus one `opendir` per child), which is the dominant cost of the
+queue scan that runs every time `music` reopens. It now keeps one
+`scan_name_page` (64 names x 128 bytes, heap, allocated once per scan) of the
+smallest names seen in a pass and repeats the pass with the last processed name
+as watermark only when the page overflowed. Descending into a subdirectory
+invalidates the shared page, so the parent refills from its own watermark.
+
+| Scenario | Coverage / evidence | Result or limitation |
+| --- | --- | --- |
+| TEST-MUSIC-SCAN-PAGE | Page keeps names sorted/deduplicated, ignores oversize names without signalling overflow, reports overflow both for a name larger than every entry and for one that displaces the current maximum | `test_music_app.cpp` unit checks on the real `scan_name_page`; PASS |
+| TEST-MUSIC-SCAN-PAGE-OPEN | `test_music_app.cpp` counts real secure-`opendir` calls: a 9-child directory with two subdirectories opens at most 3 times (was 9), 65 children open exactly twice, and a 71-child directory with a subdirectory after the page break opens twice for the directory and twice for the subdirectory | PASS; counts are host POSIX execution of the production scan TU |
+| TEST-MUSIC-SCAN-PAGE-ORDER | The 71-child fixture retains the 64 lexicographically smallest paths (`m00.mp3`..`m63.mp3`), reports `queue: truncated at 64 tracks` and still visits the subdirectory found after the page break | PASS in `test_music_app.cpp`; visiting order and truncation set match the previous lexicographic selection |
+| TEST-MUSIC-SCAN-PAGE-STRUCT | The scan uses one parent `opendir` site per page, one child probe site, refills only after a subdirectory and keeps the page on the heap | `test_music_scan_stack_contract.py` structural guard in the aggregate `test`; structural only |
+
+Device measurement (2026-11-07, fw `1.14.2`, SHA-256
+`ed3b3df3f78883ef2fbbeda444773d52136af5733b5d588cb271226ab874940d`, 14 tracks,
+three cycles in one boot): `queue.duration_ms` 254/258/356 ms, tap on
+`Play / Pause` to `playing` state 90–91 ms, tap to 500 ms of PCM 562–564 ms,
+scan task stack high-water 2612 B, `music.diagnostics` with zero failures,
+monotonic uptime and no panic/WDT in the SD log. The earlier selector was not
+measured on device (that would require flashing the previous image), so the
+opendir reduction is proven by the host counts above, not by the device delta.
+First PCM is not audible-sound proof; speaker acceptance remains separate.
+
 ## Per-generation output submetrics (cycle 7)
 
 ## Bounded worker trace for stutter investigation (cycle 10)

@@ -17,6 +17,7 @@ MUSIC = COMPONENT / "src/apps/music"
 metadata_source = (MUSIC / "cyberdeck_music_metadata.cpp").read_text(encoding="utf-8")
 metadata_header = (COMPONENT / "include/apps/music/cyberdeck_music_metadata.h").read_text(encoding="utf-8")
 app_source = (MUSIC / "cyberdeck_music_app.cpp").read_text(encoding="utf-8")
+scan_batch_header = (COMPONENT / "include/apps/music/cyberdeck_music_scan_batch.h").read_text(encoding="utf-8")
 browser_source = (MUSIC / "cyberdeck_music_browser.cpp").read_text(encoding="utf-8")
 model_header = (COMPONENT / "include/apps/music/cyberdeck_music_model.h").read_text(encoding="utf-8")
 ui_source = (COMPONENT / "src/platform/display/cyberdeck_ui.cpp").read_text(encoding="utf-8")
@@ -78,6 +79,30 @@ checks = {
         and "*largest = *candidate;" in walk_body,
     "scan task stack budget stays at the approved 6144 bytes":
         '"music_scan", 6144' in app_source,
+    "queue scan opens each directory once per bounded page instead of once per child":
+        walk_body.count("DIR *dir = cyberdeck_local_shell_opendir") == 1
+        and walk_body.count("DIR *child_dir = cyberdeck_local_shell_opendir") == 1
+        and "page->offer(name)" in walk_body
+        and "page_overflowed" in walk_body
+        and "last_name" in walk_body,
+    "recursive descent invalidates the shared page and refills it from the watermark":
+        "page_ready = false;\n                    if (!walk(child, depth + 1))" in walk_body
+        and walk_body.count("page->clear();") == 1
+        and walk_body.count("page_ready = true;") == 1,
+    "name page is bounded and allocated once on the heap before walk":
+        re.search(r"inline constexpr std::size_t k_scan_name_page = \d+;", scan_batch_header) is not None
+        and re.search(r"std::array<std::array<char, k_scan_name_bytes \+ 1>, k_scan_name_page>", scan_batch_header)
+        is not None
+        and re.search(
+            r"std::unique_ptr<scan_name_page> page\(new \(std::nothrow\) scan_name_page\{\}\)", scan_sync
+        )
+        is not None
+        and scan_sync.index("std::unique_ptr<scan_name_page> page") < walk_start
+        and "if (!page)\n        return false;" in scan_sync,
+    "an overflowing page reports back so the caller reads the directory again":
+        "return fits;" in scan_batch_header
+        and "if (index >= k_scan_name_page)" in scan_batch_header
+        and re.search(r"std::size_t last = fits \? count_ : k_scan_name_page - 1;", scan_batch_header) is not None,
     "browser staging uses bounded heap allocation with RAII":
         "browser_snapshot_allocation_size(k_browser_entry_limit, allocation_size)" in scan_browser_sync
         and re.search(r"std::unique_ptr\s*<\s*browser_snapshot", scan_browser_sync) is not None

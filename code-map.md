@@ -1689,8 +1689,15 @@ destrói recursos potencialmente usados.
     A enumeração e os waits continuam fora da UI. REQ-PLAYER-01 acrescenta scan
      recursivo lexicográfico de `/musica` (root=0, profundidade máxima 8), secure
      opendir/open e máximo 64 com status truncado. Para manter memória de enumeração
-     bounded independentemente da quantidade de entradas de um diretório, seleciona
-     cada próximo nome lexicográfico por uma nova leitura do diretório; cada
+     bounded independentemente da quantidade de entradas de um diretório, o scan usa
+     `include/apps/music/cyberdeck_music_scan_batch.h::scan_name_page` (64 nomes de até
+     128 bytes, heap, uma alocação por scan): cada passagem guarda os menores nomes do
+     diretório e só repete a leitura com o último nome processado como marca d'água
+     quando a página transbordou. Cada diretório é aberto uma vez por página em vez de
+     uma vez por filho (antes o seletor relia o diretório inteiro para cada nome),
+     mantendo a mesma ordem lexicográfica e o mesmo conjunto truncado. Descer em um
+     subdiretório invalida a página compartilhada e o pai a recarrega a partir da
+     própria marca d'água. Cada
      `readdir` distingue EOF de erro via errno e qualquer erro/close failure aborta
      antes da publicação. Fila e seleção antigas são limpas
      ao admitir o scan. Pelo REQ-PLAYER-01 aprovado, `music` sem argumentos

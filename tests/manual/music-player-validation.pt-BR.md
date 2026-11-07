@@ -332,6 +332,76 @@ autorizado, confirmar
 não volta, `close failed` persistente ou ausência de novo scan após reabrir.
 Registre a captura e não repita automaticamente.
 
+### 4.5. Latência de reabertura até o áudio — 2026-11-07
+
+Cenário de playback; exige a autorização explícita da seção 4 e boot normal
+comprovado. Objetivo: separar o tempo até o som da demora percebida na
+sequência abrir → tocar → fechar → reabrir → tocar, e comparar a primeira com a
+segunda reprodução no **mesmo boot**.
+
+1. Uma única sessão serial (monitor ou CLI), sem `ui.type` depois que o player
+   estiver em foreground. Registre `sys.info` e o instante do pedido de abertura.
+2. Abra o player, aguarde `queue_scanning=false` e consulte `music.scan`:
+   registre `queue.completed`, `queue.duration_ms`, `queue.stack_high_water_bytes`
+   e o mesmo par para `browser`.
+3. Inicie a faixa pelo controle autorizado. No log serial, anote os instantes de
+   `playback worker started`, `playback file opened`, `playback duration`,
+   `playback codec_start begin/complete` e `playback first_pcm_write complete`
+   para a mesma `generation`.
+4. Feche com Escape, confirme o prompt e reabra. Repita a consulta de
+   `music.scan` e o ciclo de reprodução, anotando os mesmos instantes.
+5. Repita o ciclo completo pelo menos três vezes, sempre com a mesma faixa e a
+   mesma saída (speaker, P2 ou USB-A), sem comandos rápidos em sequência.
+
+Critérios e registro:
+
+- `queue.duration_ms` deve cair frente ao comportamento anterior no mesmo cartão:
+  a enumeração deixou de abrir o diretório uma vez por filho e passou a abrir uma
+  vez por página de 64 nomes (`scan_name_page`); registre os valores absolutos,
+  não uma impressão.
+- Compare `first_pcm_write complete` menos `worker started` entre a primeira e a
+  segunda reprodução; diferencie scan, abertura/ID3, probe de duração e
+  codec-start nessa diferença.
+- `first_pcm_write` não prova som audível; anote separadamente quando o áudio foi
+  ouvido.
+- A sequência não pode produzir reboot, WDT, perda de resposta NDJSON, safe mode
+  ou `error_stage`. Qualquer uma encerra o cenário sem repetição automática.
+
+**Falha do cenário:** regressão de latência sem explicação pela telemetria,
+diferença inexplicada entre as reproduções, ou qualquer reboot/timeout. Anexe o
+CSV/registro com porta, versão/hash e horários.
+
+#### Registro 2026-11-07 — fw `1.14.2`
+
+Imagem `build/cyberdeck5.bin` SHA-256
+`ed3b3df3f78883ef2fbbeda444773d52136af5733b5d588cb271226ab874940d`
+(`0x29a4e0`, 35% livre), gravada por USB em `/dev/ttyACM0` (slot `factory`,
+`0x20000`) com `idf.py flash` e hash verificado por esptool. Boot normal:
+`sys.info` reportou `fw_version=1.14.2`, `safe_mode=false`,
+`interrupted_boots=0`; uptime monotônico de `00:24:51` a `00:28:05` durante
+todo o ensaio. Nenhum `panic`/`Guru`/`WDT`/`assert` nas 23.137 linhas do log SD
+lido com `events.read`.
+
+Três ciclos completos no mesmo boot, biblioteca de 14 faixas, saída padrão,
+todos fechados com Escape e prompt `/$ ` confirmado por `term.dump`:
+
+| Ciclo | `queue.duration_ms` | digitar→player (ms) | digitar→scan pronto (ms) | surface (ms) | tap→`playing` (ms) | tap→500 ms de PCM (ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 (abertura) | 254 | 815 | 819 | 83 | 91 | 562 |
+| 2 (reabrir) | 258 | 848 | 851 | 87 | 90 | 563 |
+| 3 (reabrir) | 356 | 64 | 410 | 425 | 91 | 564 |
+
+`music.diagnostics` nos três ciclos: `failures=0`, `pause_count=0`,
+`codec_start_calls` 65/65/64 com máximo 12,4–12,6 ms, `write_max_us` ~29,9 ms.
+`music.scan` manteve `stack_high_water_bytes=2612` na task de scan (6144 B).
+
+Limites desta evidência: o tempo "digitar→player" inclui as idas e voltas
+NDJSON e o tick de 250 ms que cria a surface, e o primeiro ciclo inclui a
+abertura inicial; a coluna de PCM prova fluxo de amostras, **não** som audível.
+A comparação com o seletor antigo não foi feita no dispositivo (exigiria gravar
+a imagem anterior); a redução de aberturas de diretório é comprovada nos testes
+host. Nenhum reboot, timeout, `error_stage` ou queda de uptime foi observado.
+
 ## 5. Duração da faixa e barra de progresso — REQ-MUSIC-06
 
 Cenário de playback; exige a mesma autorização explícita da seção 4 e um boot
