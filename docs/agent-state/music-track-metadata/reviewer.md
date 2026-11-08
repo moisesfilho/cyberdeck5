@@ -1,8 +1,8 @@
 # reviewer - music-track-metadata
 
 - Role: reviewer
-- Updated: 2026-11-08 00:12 -03
-- Code state: `develop` HEAD `ff47b9a31c8d8a1fdb5746c60013619cf75c7481`; immutable final-gate snapshot `0e0e7e54a58bfa844493e7f3e9f56ecdc37bccc979fbfeb91bab0476d85d9763`; tracked diff SHA-256 `76dd091f9126a352012f3387d280874338152c12bd65d9eb094458d23ab66605`; 28 status entries, status digest `a139ace2a7c2a309ac87c74c7eb7dd6a51dd08855d2c3ee0fd8f50f9e51af944`.
+- Updated: 2026-11-08 03:42 UTC
+- Code state: final reviewed commit `develop` / `origin/develop` HEAD `4db0042f38fb8c51557718b86d20b5056ffca9f1`; parent task commit `467f283`. CI run `42442709407` is for this exact HEAD. Local full gates were run on pre-commit snapshot `0e0e7e54a58bfa844493e7f3e9f56ecdc37bccc979fbfeb91bab0476d85d9763` (tracked diff SHA-256 `76dd091f9126a352012f3387d280874338152c12bd65d9eb094458d23ab66605`, status digest `a139ace2a7c2a309ac87c74c7eb7dd6a51dd08855d2c3ee0fd8f50f9e51af944`). Commit `4db0042` changes only `tests/host/keymap/test_music_metadata_io.cpp` plus task notes; coder/tester recorded 205/205 with default and custom `TMPDIR`, and CI reran the full host aggregate/coverage on HEAD.
 
 ## Dispatch objective
 
@@ -28,13 +28,13 @@ All checks ran in detached worktree `/tmp/opencode/music-track-metadata-final-76
 - Focused `test_coverage_scope_guard.py`, `test_usb_audio_host_contract.py`, `test_music_id3_contract.py`, `test_music_metadata_contract.py` -> PASS.
 - After CI-style ESP-Hosted staging: `idf.py build` -> PASS, ESP-IDF 6.1 / ESP32-P4, image 0x29d110, 35% partition free; existing Kconfig deprecation/range notices and libssh `kill` linker warning only. `tools/poweroff_link_guard.py --map build/cyberdeck5.map` -> PASS.
 - `git diff --check` -> PASS.
-- Remote `.github/workflows/quality-gate.yml` has not run for this dirty snapshot; no run exists to verify. Per developer workflow, pending configured CI prevents final approval. No commit/push made by reviewer; user authorization is recorded for developer to publish.
+- Remote `.github/workflows/quality-gate.yml`: `gh run view 42442709407 --json databaseId,status,conclusion,headSha,headBranch,workflowName,createdAt,updatedAt,jobs` -> `completed/success`, `headSha=4db0042f38fb8c51557718b86d20b5056ffca9f1`, branch `develop`; all steps successful, including install, format, lint/security, host aggregate/coverage, TSAN, ESP-IDF setup, staging, strict LVGL map verification, and firmware build. Run completed 2026-11-08 03:40:10 UTC. `git ls-remote origin refs/heads/develop` matched HEAD; task commits `467f283` and `4db0042` are pushed. No reviewer commit/push.
 
 ## Findings
 
 - `components/cyberdeck/src/apps/music/cyberdeck_music_metadata.cpp:29-38,101-107 | residual risk | all-zero padding validation can issue up to 5,350 bounded `pread`s at the 1 MiB ceiling with 196-byte window | derived from constants; no observed failure, but `TEST-MUSIC-META-PHYS-SCAN-COST` remains unmeasured`.
 - `docs/03-audio-player-plan.pt-BR.md:1190-1200 | informational limitation | physical success and acceptance are user-reported, not independently observed; scan-cost and other unreported cases remain pending | explicit report and current documentation; not a blocker to code approval because user accepted the feature and no adverse result reported`.
-- `CI | pending gate | remote Quality Gate has not been triggered/concluded on a commit | dirty snapshot has complete local green gates; authorized commit/push and remote result still required before `review_approved``.
+- Blockers: `[]`. No confirmed defect or unresolved critical risk. The narrow authorized coverage exception and corrected documentation passed local tests and exact-HEAD CI.
 
 ## Decisions and assumptions
 
@@ -44,8 +44,9 @@ All checks ran in detached worktree `/tmp/opencode/music-track-metadata-final-76
 ## Pending and risks
 
 - No source/test blocker found. Residual worst-case SD read cost is unmeasured, with no reported functional failure.
-- Developer should publish only intended files using the explicit user authorization, then follow the remote Quality Gate to a conclusive result on that commit. Any change from this reviewed snapshot makes affected evidence stale.
-- Final result remains `review_incomplete` solely because remote CI is pending; local gates are green.
+- Residual risk: padding validation may issue up to ~5,350 bounded `pread`s in the all-padding 1 MiB worst case; no failure reported, but physical scan-cost measurement remains pending. Earlier `events.read` size-mismatch diagnostic remains unexplained and was not evidence of feature failure.
+- Human device acceptance remains user-reported on fw 1.15.2, not independently observed. No additional physical claim is made.
+- Final result: `review_approved`; all applicable local gates pass and remote Quality Gate is conclusively green on the pushed current HEAD.
 
 ## References
 
