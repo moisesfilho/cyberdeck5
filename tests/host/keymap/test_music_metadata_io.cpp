@@ -373,9 +373,15 @@ std::string small_tag() {
 
 /* --- file helpers ----------------------------------------------------------- */
 
+/* The fixture only needs a writable base: TMPDIR when the harness sets it,
+ * otherwise the standard /tmp. No CI-specific directory is required here. */
+const char *temp_dir_base() {
+    const char *tmpdir = std::getenv("TMPDIR");
+    return (tmpdir != nullptr && tmpdir[0] != '\0') ? tmpdir : "/tmp";
+}
+
 std::string make_temp_dir() {
-    std::array<char, 64> pattern{};
-    std::snprintf(pattern.data(), pattern.size(), "/tmp/opencode/music-metadata-io-XXXXXX");
+    std::string pattern = std::string(temp_dir_base()) + "/music-metadata-io-XXXXXX";
     char *created = ::mkdtemp(pattern.data());
     return created != nullptr ? std::string(created) : std::string();
 }
