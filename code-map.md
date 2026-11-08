@@ -542,7 +542,11 @@ cat, BLE, display, known hosts e poweroff) usam objetos e depfiles próprios
 de TUs/flags e ordem de link à fixture imutável
 `tests/host/keymap/incremental_final_baseline.json` extraída das receitas no
 commit `59f4758`, verifica 176 depfiles, `BINS`, wrappers, agregado e limpeza;
-o alvo `test_incremental_final_contract` roda no agregado após o build.
+o alvo `test_incremental_final_contract` roda no agregado após o build. O
+inventário de executáveis é derivado das receitas dos wrappers `.PHONY` já
+expandidas (forma literal `./test_x_bin` e forma indireta `./$(X_BIN)`), de modo
+que um artefato ausente de `BINS`/`clean` falha o contrato sem pinar contagem ou
+nome — inclusive quando a declaração `BINS +=` precede a definição da variável.
 `test_shell_help_contract.py` reconcilia metadados aprovados de help, incluindo
 `music select <index>`, com manifests de produção e fixtures comportamentais.
 O manifesto de música declara somente `music` como comando de abertura; o alias
@@ -596,28 +600,70 @@ para não alocar um buffer grande na task HTTP.
 `components/cyberdeck/include/platform/net/cyberdeck_local_peer.h` (header-only)
 centraliza a allowlist de peer local (loopback, 10/8, 172.16/12, 192.168/16,
 169.254/16, ULA e link-local IPv6, IPv4 mapeado) usada pelos handlers novos.
-`screenshot_server.cpp` registra as três rotas na porta 80
-(`max_uri_handlers = 7`, rollback por `httpd_stop`) e delega o ciclo de vida ao
-serviço `cyberdeck.screenshot` (manifesto 1.1.0).
+`screenshot_server.cpp` registra as quatro rotas na porta 80
+(`max_uri_handlers = 8`, rollback por `httpd_stop`) e delega o ciclo de vida ao
+serviço `cyberdeck.screenshot` (manifesto 1.1.1).
+
+`components/cyberdeck/include/apps/control/cyberdeck_control_upload.{h,cpp}` é a
+camada pura do transporte binário autenticado (`POST /control/upload`). Ele
+existe porque `fs.write` da ponte USB limita o payload a 2048 bytes e não serve
+para uma fixture BMP full-res (1280x720x24 + 54 = 2.764.854 B). O teto
+`k_max_upload_bytes` é 3 MiB e fica abaixo de `cyberdeck_image::k_max_file_bytes`;
+o nome é um basename ASCII `[A-Za-z0-9._-]` com extensão `.bmp` e limite
+derivado de `k_max_name_bytes`, e o destino é fixo em `/sdcard/screenshots`
+(visível como `/screenshots/<nome>`). A mensagem autenticada tem sete campos
+(`cyberdeck-control-upload/v1`, nonce, método, URI, **basename de destino**,
+tamanho declarado, SHA-256) e a capacidade `k_max_upload_message_bytes` é
+calculada a partir de `k_upload_name_capacity` (128) mais os demais campos, com
+`static_assert` ligando o limite do visualizador a esse teto; o `upload_handler`
+passa a `authorize_upload` exatamente o mesmo basename que depois publica. O
+corpo é lido em buffer fixo de 4096
+bytes, o SHA-256 declarado é reconferido incrementalmente, e a publicação usa
+temporário exclusivo `.upload.<sequência>.tmp` no mesmo diretório (`O_EXCL`,
+`O_NOFOLLOW`), `fsync`/`close` com checagem de tamanho e publicação sem clobber
+(`link`+`unlink` no host; no FATFS, `rename` apenas depois de observar o alvo
+ausente). Em qualquer falha só o temporário possuído é removido.
+
+O tempo total de cada transferência é limitado por `k_max_upload_duration_us`
+(120 s) — orçamento **absoluto por request**, lido uma vez no início por uma
+fonte de tempo injetada (`upload_clock`; a produção passa `esp_timer_get_time()`
+por `upload_stream_now`, o host usa relógio falso) e comparado no topo de cada
+iteração com `clock.now_us(...) - started_us >= k_max_upload_duration_us`.
+Progresso (bytes parciais) **não** renova o prazo, então um peer que goteja
+bytes antes de cada janela de recv não mantém a task HTTP, o lease WRITE e o
+temporário ocupados; o teste não depende de wall clock. O orçamento de
+`k_upload_max_consecutive_timeouts` (3) timeouts de recv consecutivos sem
+progresso permanece como defesa secundária e o contador zera a cada chunk
+positivo (TEST-UPLOAD-STREAM-11/S11-a..g; o teste antigo de -1 único foi
+substituído por "um timeout seguido de progresso não aborta" + "três
+consecutivos abortam"). O timeout continua saindo pelo mesmo
+`error_reply(upload_error(status))`, com `Connection: close` e sem `201`.
 
 | Arquivo | Símbolos/contrato | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/include/apps/control/cyberdeck_control_protocol.h`, `src/apps/control/cyberdeck_control_protocol.cpp` | `k_key_bytes`, `k_max_text_bytes`, `k_max_lines`, `k_nonce_ttl_us`, `nonce_store`, `verify`, `build_message`, `hex_*`, `constant_time_equal`, `valid_utf8`, `plan_text`, `json_escape`, `format_terminal_json`, `error_code`, `http_status` | Protocolo puro do canal; nenhuma dependência de plataforma |
-| `components/cyberdeck/include/apps/control/cyberdeck_control_server.h`, `src/apps/control/cyberdeck_control_server.cpp` | `start`, `stop`, `ready`, `serial_key`, `challenge_handler`, `type_handler`, `terminal_handler`, `k_input_queue_depth`, `k_terminal_max_bytes` | Chave NVS, fila/task de injeção e handlers HTTP |
+| `components/cyberdeck/include/apps/control/cyberdeck_control_protocol.h`, `src/apps/control/cyberdeck_control_protocol.cpp` | `k_key_bytes`, `k_max_text_bytes`, `k_max_lines`, `k_nonce_ttl_us`, `k_upload_domain`, `k_upload_uri`, `k_upload_method`, `k_upload_name_capacity`, `k_upload_message_bytes`, `k_max_upload_message_bytes`, `nonce_store`, `verify`, `verify_upload`, `build_message`, `build_upload_message`, `hex_*`, `constant_time_equal`, `valid_utf8`, `plan_text`, `json_escape`, `format_terminal_json`, `error_code`, `http_status` | Protocolo puro do canal; mensagem de upload com domínio separado e basename autenticado; nenhuma dependência de plataforma |
+| `components/cyberdeck/include/apps/control/cyberdeck_control_upload.h`, `src/apps/control/cyberdeck_control_upload.cpp` | `k_max_upload_bytes`, `k_upload_chunk_bytes`, `k_max_upload_duration_us`, `k_upload_max_consecutive_timeouts`, `upload_clock`, `validate_upload_name`, `parse_upload_size`, `receive_upload`, `upload_files`, `upload_files_sink`, `format_upload_json` | Streaming/digest/prazo absoluto/publicação sem sobrescrita, com sink e clock injetáveis |
+| `components/cyberdeck/include/apps/control/cyberdeck_control_server.h`, `src/apps/control/cyberdeck_control_server.cpp` | `start`, `stop`, `ready`, `serial_key`, `challenge_handler`, `type_handler`, `terminal_handler`, `upload_handler`, `k_input_queue_depth`, `k_terminal_max_bytes` | Chave NVS, fila/task de injeção, handler de upload e handlers HTTP |
 | `components/cyberdeck/include/platform/net/cyberdeck_local_peer.h` | `ipv4_local`, `socket_is_local_peer` | Allowlist de peer local compartilhada |
-| `tools/cyberdeck_http_cli.py` | `provision`, `read_key`, `write_key`, `signed_headers`, `session.challenge/type/terminal` | Cliente host: provisionamento USB, `type`, `terminal`, `status` |
+| `tools/cyberdeck_http_cli.py` | `provision`, `read_key`, `write_key`, `signed_headers`, `upload_signed_headers`, `upload_name_problem`, `session.challenge/type/terminal/upload` | Cliente host: provisionamento USB, `type`, `terminal`, `status`, `upload` |
 | `tests/host/keymap/test_control_protocol.cpp` | TEST-CONTROL-PROTOCOL | Comportamento: vetores cripto, nonce/replay/expiração, MAC/corpo/URI/método, UTF-8, plano de texto, JSON |
+| `tests/host/keymap/test_control_upload_protocol.cpp` | TEST-UPLOAD-AUTH/STREAM/INTEG/PATH | Comportamento: mensagem/domínio, nonce, nome/tamanho, digest incremental, falhas e ownership do temporário |
 | `tests/host/keymap/test_control_http_contract.py` | TEST-CONTROL-HTTP | Contrato estrutural: rotas, guards, fila, ausência de execução no handler, chave só por USB, wiring/CMake/cobertura/docs |
-| `tests/host/keymap/test_control_cli.py` | TEST-CONTROL-CLI | Assinatura do cliente, limites, regras do arquivo de chave |
+| `tests/host/keymap/test_control_upload_contract.py` | TEST-UPLOAD-ROUTE/REG | Contrato estrutural: orçamento de rotas derivado, ordem auth→arquivo, single-flight, lease SD, buffer fixo, publicação sem clobber, CLI/docs |
+| `tests/host/keymap/test_control_cli.py` | TEST-CONTROL-CLI / TEST-UPLOAD-CLI | Assinatura do cliente, limites, regras do arquivo de chave, upload local/assinado |
 
 Operação: provisione uma vez com o monitor fechado
 (`python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision`), abra o
 `idf.py monitor` e use `type`/`terminal` pela LAN. O `202 Accepted` significa
 apenas despacho enfileirado; o efeito deve ser confirmado com `terminal` (ou
-visualmente). Roteiro manual em
+visualmente). Para enviar uma fixture BMP grande sem a ponte USB, use
+`python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO upload fixture.bmp`
+(nome de destino opcional com `--name`); a resposta inclui o caminho
+`/screenshots/<nome>` e o comando `image` sugerido. Roteiro manual em
 `tests/manual/http-control-validation.pt-BR.md`. HTTP não oferece
-confidencialidade — o HMAC autentica a origem lógica, não cifra o texto — e o
-filtro de peer não identifica o usuário; usar apenas em LAN confiável.
+confidencialidade — o HMAC autentica a origem lógica, não cifra o texto nem o
+corpo — e o filtro de peer não identifica o usuário; usar apenas em LAN
+confiável.
 
 Entrega confirmada: no LVGL 9.6 cada `lv_async_call` vira um timer próprio e
 submissões concorrentes podem inverter texto e Enter, concatenando comandos
@@ -639,6 +685,11 @@ Rastreabilidade:
 | REQ-CTL-HTTP-03 (nonce/digest/MAC/uso único) | AC-CTL-HTTP-01 | `test_control_protocol.cpp`, `test_control_cli.py` |
 | REQ-CTL-HTTP-04 (fila bounded, injeção na task, tela apagada) | AC-CTL-HTTP-03 | `test_control_http_contract.py` + validação no Tab5 |
 | REQ-CTL-HTTP-05 (snapshot bounded e read-only) | AC-CTL-HTTP-01 | `test_control_protocol.cpp` (`format_terminal_json`) + `test_control_http_contract.py` |
+| REQ-UPLOAD-01 (rota + autenticação com chave dedicada, nonce, domínio e basename autenticado) | AC-UPLOAD-01 | `test_control_upload_protocol.cpp`, `test_control_upload_contract.py`, `test_control_cli.py` |
+| REQ-UPLOAD-02 (streaming limitado, buffer fixo, deadline absoluto por request, timeouts consecutivos, single-flight) | AC-UPLOAD-01 | `test_control_upload_protocol.cpp` (STREAM-01..11/S11-a..g), `test_control_upload_contract.py`, `test_control_http_contract.py` |
+| REQ-UPLOAD-03 (integridade + publicação sem sobrescrita e cleanup) | AC-UPLOAD-01 | `test_control_upload_protocol.cpp` (sink real e injetado) |
+| REQ-UPLOAD-04 (destino/nome confinados) | AC-UPLOAD-01 | `test_control_upload_protocol.cpp`, `test_control_upload_contract.py` |
+| REQ-UPLOAD-05 (CLI, observabilidade e documentação) | AC-UPLOAD-01/02 | `test_control_cli.py`, `test_control_upload_contract.py` + validação futura no Tab5 |
 
 ## OTA via Wi-Fi
 
@@ -2508,6 +2559,54 @@ exposto, e rejeita conservadoramente plataformas host sem essas garantias. `ls` 
 raiz fisica do SD sem adicionar `/.`; limites de entradas, nome e saida sao
 bounded.
 
+### Visualizador de imagens (REQ/AC-IMG-01..05)
+
+Aplicativo foreground isolado `cyberdeck.image_viewer` (`image <path>`), sem
+estado compartilhado com editor ou player. Recorte aprovado: BMP 24-bit
+`BI_RGB` sem compressão nem transparência, arquivo de até 5 MiB, 1..1280 px por
+eixo, até 64 imagens do diretório, navegação por setas com indicador `i/N` e
+`Esc` de volta ao shell; PNG/JPEG, zoom e varredura recursiva ficam fora.
+
+| Arquivo | Responsabilidade |
+| --- | --- |
+| `components/cyberdeck/include/apps/image/cyberdeck_image_bmp.h` + `src/apps/image/cyberdeck_image_bmp.cpp` | Envelope BMP puro: assinatura `BM`, `biSize >= 40`, `biPlanes == 1`, `biBitCount == 24`, `biCompression == 0`, dimensões 1..1280, `stride = ((w*3)+3) & ~3`, coerência de `bfSize`/`bfOffBits`/`biSizeImage` e limites em 64 bits; `k_max_file_bytes` (5 MiB) e `k_max_dimension` (1280) são as fontes dos testes. `convert_bgr_row_to_rgb565` produz o layout RGB565 do LVGL (vermelho alto, azul baixo). |
+| `components/cyberdeck/include/apps/image/cyberdeck_image_fit.h` + `src/apps/image/cyberdeck_image_fit.cpp` | `fit_to_area()` inteiro e puro: escala `min(area/img)` com clamp `<= 1.0` (nunca amplia), retângulo encaixado, zoom LVGL (256 = 1:1) e posição do objeto de tamanho natural cujo centro coincide com o do retângulo — é isso que faz `lv_image_set_scale()` desenhar dentro da área. Área/imagem zero retorna `valid = false`. |
+| `components/cyberdeck/include/apps/image/cyberdeck_image_decode.h` + `src/apps/image/cyberdeck_image_decode.cpp` | Decodificação streaming por descritor: lê 54 bytes de envelope e uma linha BGR por `pread`, convertendo para RGB565 no buffer final. Não existe buffer de 5 MiB: a única alocação grande é `w*h*2` (≤ 3.276.800 B) somada a uma linha de scratch no mesmo bloco, com `heap_caps_malloc(SPIRAM)` e fallback interno no alvo. `read_at`/`allocate`/`deallocate`/`cancelled` são costuras injetáveis (falha de alocação, leitura curta e cancelamento). |
+| `components/cyberdeck/include/apps/image/cyberdeck_image_list.h` + `src/apps/image/cyberdeck_image_list.cpp` | Listagem determinística de até 64 `.bmp` (extensão case-insensitive) do diretório, ordenada por bytes, com marcador `truncated`; `listing_ops` usa `cyberdeck_local_shell_opendir`/`open_readonly` (raiz virtual `/`, sem `/sdcard`), então caminho confinado, symlink e arquivo > 5 MiB são recusados pelo seam real. Também expõe `valid_directory_path`, `split_image_path`, `format_position` (`i/N`, `i/N+`, `0/0`), `step_image_index` (clamp, sem wrap) e `classify_image_key` (posse de teclado). O parâmetro opcional `requested` (pin) promove o arquivo aberto explicitamente quando ele ordena depois da janela das 64: a página passa a ser os 63 menores + o pedido, com `count` inalterado, `truncated` verdadeiro, índice `<cap>-1` e sem duplicata; o pin só entra se o próprio scan provar que é BMP elegível (extensão, nome ≤ 128, arquivo regular, não vazio, ≤ 5 MiB, sem symlink), então não contorna confinamento nem limites. Nome já presente na janela não altera nada, e cancelamento/erro limpam a página. O índice e o `+` descrevem a **posição na janela**, não a posição no diretório. |
+| `components/cyberdeck/include/apps/image/cyberdeck_image_list.h` (`directory_workspace`) | Staging heap-backed da página de diretório: a `image_directory` mede 8.272 B, então o worker **nunca** a coloca na stack da task `image_load` (6144 B). `run_job()` recebe a página por ponteiro e `list_images()` preenche a página do chamador em vez de criar uma cópia local. A alocação usa os mesmos hooks do decoder (PSRAM no alvo), o `release()` é idempotente e roda no destrutor, cobrindo todos os caminhos de falha. A página é criada com placement **default-init** `new (memory) image_directory;` (sem chaves), que inicia o lifetime sem o temporário de value-init de 8 KiB (**BUG-IMG-02**, frame de 9.040 B em `run_job` numa task de 6.144 B), seguida de `image_directory::clear()` in-place; `release()` encerra o lifetime com `~image_directory()` explícito (hoje trivial, garantido por `static_assert(std::is_trivially_destructible)`). Produção nunca usa a forma `image_directory{}`. Regressão em `test_image_list` (`test_directory_workspace_is_heap_backed`) e em `test_image_stack_frame_contract.py`, que mede frames reais: `-fstack-usage` do TU de listagem (corrente de 368 B) e desmontagem do `build/cyberdeck5.elf` para `run_job`/`worker_entry`/`publish`/`fail`/`start`/`stop`, comparados com `k_worker_stack_bytes` (fonte única em `cyberdeck_image_types.h`), com fail-closed se o ELF estiver mais antigo que as fontes. |
+| `components/cyberdeck/include/apps/image/cyberdeck_image_worker_state.h` + `src/apps/image/cyberdeck_image_worker_state.cpp` | Protocolo puro de handoff entre a task LVGL (`enqueue`) e o worker de decode (`next`/`mark_alive`), sempre chamado com o mutex da fila retido. O worker é **persistente** (criado uma vez no `start()`, sai só por cancelamento) e `next()` aposenta `alive()`/`pending()` no mesmo passo, então um pedido que chegue na transição terminal é instruído a criar task em vez de ficar órfão em `loading`. Host-testado por `test_image_worker_state.cpp`. |
+| `components/cyberdeck/include/apps/image/cyberdeck_image_types.h` | `viewer_state` e `published_image` (frame + índice/contagem/nome), sem FreeRTOS/LVGL, compartilhados pela aplicação e pela view. |
+| `components/cyberdeck/include/apps/image/cyberdeck_image_app.h` + `src/apps/image/cyberdeck_image_app.cpp` | Aplicação foreground: manifesto (`resources = display/input/storage`, `commands = {"image"}`, `owns_console = false`, `commands_require_active_foreground = false` porque `image <path>` carrega argumento), fila de um job por vez com geração monotônica (resultado obsoleto descartado), task `image_load` de 6144 B criada uma única vez no `start()` (worker persistente acordado por semáforo), cancelamento cooperativo + join limitado a 200 ms no `stop()` (nunca libera memória enquanto o worker pode estar usando), publicação em slot único com mutex, `navigate()` reutilizando a listagem publicada e mensagens de erro tipadas. A abertura explícita passa o nome pedido como pin da listagem; a abertura real refaz `open_readonly_stream` depois do scan, então arquivo removido nesse intervalo falha fechado (`image: cannot open file`) sem publicar frame ou indicador. Nenhuma chamada LVGL no worker e nenhum I/O no caminho da UI. |
+| `components/cyberdeck/include/platform/display/cyberdeck_image_view.h` + `src/platform/display/cyberdeck_image_view.cpp` | Superfície LVGL (título, indicador, rodapé e `lv_image`) sobre `s_menu` (portanto abaixo do header de 42 px). É a **única dona** do frame exibido: `set_image()` move a posse, repointa o `lv_image_dsc_t` (magic, `LV_COLOR_FORMAT_RGB565`, `stride = w*2`, `data_size`) e libera o frame anterior; `destroy()` libera o último. Cromo do tema zerado no bitmap e layout recalculado em `LV_EVENT_SIZE_CHANGED`. |
+| `components/cyberdeck/src/platform/display/cyberdeck_ui.cpp` | Integração: `s_image_view`, `s_image_status_timer` (100 ms), `process_image_status` (instala frames, trata aviso de erro devolvendo ao shell), `image_local_key`/`classify_image_key` no `local_key`, gate `image_view_active()` no teclado físico, `terminal_key` e `terminal_insert`, e destroy no teardown junto do timer. |
+| `components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h`, `cyberdeck_app_quota.h` | Capacidade do registry elevada para 21 nos dois headers independentes, com `static_assert` de igualdade (registro excedente aborta o boot). |
+| `tests/host/keymap/test_image_bmp.cpp`, `test_image_fit.cpp`, `test_image_decode.cpp`, `test_image_list.cpp`, `test_image_view.cpp`, `test_image_viewer_contract.py` | Testes focados; ver matriz abaixo. |
+| `tests/manual/image-viewer-validation.pt-BR.md` | Roteiro físico A..E (limites, proporção, navegação por setas, lifecycle, manifesto/help). |
+
+#### Matriz REQ/AC -> TEST (imagem)
+
+| REQ/AC | Cobertura host |
+| --- | --- |
+| REQ/AC-IMG-01 (caminho confinado, BMP 24-bit BI_RGB, limites, falha fechada) | `TEST-IMG-PATH-01..05` (inalterados) + `TEST-IMG-PATH-06..08` (promoção do pedido com bytes reais decodificados, TOCTOU removido entre scan e abertura, e inelegibilidade/limites do pin: png, diretório `x.bmp`, vazio, >5 MiB, symlink, nome 129 e nome de exatamente 128), `TEST-IMG-BMP-01..06`, `TEST-IMG-LIMIT-01..04`, `TEST-IMG-FAIL-01..03` em `test_image_list` e `test_image_decode`; `test_image_bmp` fixa envelope, stride com padding, ordem de linha e teto derivado das constantes. |
+| REQ/AC-IMG-02 (exibição completa, proporção preservada) | `TEST-IMG-FIT-01..04` em `test_image_fit`; `TEST-IMG-VIEW-01..03` em `test_image_view` (colocação dentro da área, resize, escala sem recriar, cromo zero). |
+| REQ/AC-IMG-03 (navegação 1..64, indicador, clamp) | `TEST-IMG-NAV-01..09` (inalterados; NAV-05 vale para a listagem sem pin) + `TEST-IMG-NAV-10..13` em `test_image_list`: forma exata da página promovida (64+1 e 78, `<cap>/<cap>+`, extremos `1/<cap>+`), não perturbação quando o pedido já está na janela (rank 10 e rank `cap`), bordas de capacidade (`== cap` sem `+`, `< cap`), invariante de retenção com 2×cap e rank 90 (vítima = último ordenado, não o primeiro), enumeração reversa e repetição determinísticas, cancelamento/falha com página promovida semeada (limpa, sem página parcial) e clamp das setas dentro da janela. |
+| REQ/AC-IMG-04 (lifecycle, isolamento, troca rápida) | `TEST-IMG-LIFE-02..04` em `test_image_view` (liberação do frame anterior, destroy idempotente, sem crescimento de filhos); `TEST-IMG-LIFE-05/06` em `test_image_worker_state` (sweep exaustivo de interleavings request/take provando que nenhum job fica órfão na transição do worker, incluindo o caso que travava em `loading`) e em `test_image_list` (cancelamento cooperativo da varredura: aborta no primeiro poll ou após N entradas sem publicar página parcial); `TEST-IMG-LIFE-10` estrutural no contrato (um único `xTaskCreate`, zero no `request()`, worker decide sob mutex). `TEST-IMG-LIFE-07` (SD indisponível) permanece no roteiro físico. |
+| REQ/AC-IMG-05 (manifesto, 21 apps, help) | `test_image_viewer_contract.py` (manifesto posicional, igualdade das capacidades, registro em `k_apps`, lista de diagnóstico, CMake, wiring do Makefile, versionamento) + `test_shell_help` / `test_shell_help_contract` (`image [app]`, `image help`, inventário de 21, `TEST-IMG-HELP-01..03`). |
+
+Limites declarados: `test_image_view` roda sob o shim LVGL com ASan+UBSan, mas a
+escala RGB565 no painel real, o consumo de PSRAM durante uma troca de imagem e a
+navegação por setas físicas (não injetáveis pela ponte serial) continuam itens
+do roteiro manual no Tab5. **BUG-IMG-01** (reboot ao abrir BMP por `image_directory` de 8.272 B na
+stack de 6144 B do worker) foi corrigido com staging no heap; **BUG-IMG-02** (o temporário de
+value-initialization do mesmo agregado mantinha o frame em 9.040 B) foi corrigido com placement
+default-init + `clear()` (lifetime C++17 correto), e `release()` encerra o lifetime explicitamente. Ambos têm regressão que mede frames reais; a nova tentativa física continua
+pendente. O worker/FreeRTOS não é linkável no host: sua
+sincronização é provada pelo modelo puro `worker_state` e por contrato
+estrutural, não por execução concorrente real. O orçamento de 200 ms do `stop()`
+cobre apenas uma parada de filesystem de dispositivo, que não é cancelável; se
+estourar, nada é liberado (sem UAF) e o `stop()` falha — um `start()` posterior
+recusa enquanto o worker antigo não for colhido.
+
 ### SSH
 
 Recorte da Etapa 4: `cyberdeck_service_ports::ssh_disconnect_and_wait` e a
@@ -2965,7 +3064,7 @@ IPv4-mapped em IPv6.
 O mesmo servidor registra `GET /events.txt` (projecao textual bounded) e o
 `GET /battery` read-only (`application/json` + `Cache-Control: no-store`) por
 tabela com rollback (`httpd_stop` se um registro falhar) e
-`max_uri_handlers = 3`. O handler de bateria consome
+`max_uri_handlers` igual ao numero de rotas da tabela. O handler de bateria consome
 `battery_protection_get_cached_policy_snapshot` e
 `battery_protection_get_cached_policy_sampled_at_us` (mutex de snapshot
 separado do mutex de politica), nunca amostra o INA226, nunca adquire o display
@@ -3338,7 +3437,7 @@ helpers privados, entao a regra nao fixa a implementacao interna do adaptador.
 | `REQ-BAT-010` — NVS default/option, UI timer/snapshot, shell e ui.type | `test_battery_protection_contract.py` |
 | `REQ-BAT-011` — SoC estimado por contagem de carga ancorada em OCV (`pack_capacity_mah`, `elapsed_ms`, reancoragem/slew) | `test_battery_soc.cpp`, `test_battery_soc_contract.py`, `test_battery_protection.cpp` |
 | `REQ-BAT-012` — escala de corrente 300 uA/LSB (`current_ma_from_raw`) e OCV por 330 mOhm (`ocv_from_terminal_mv`) | `test_battery_contract.cpp`, `test_battery_reader_contract.py`, `test_battery_soc_contract.py` |
-| `REQ-BAT-HTTP-01` — endpoint `GET /battery` read-only, LAN-only (mesma allowlist `is_local_peer`), `max_uri_handlers=3` com rollback | `test_battery_http_contract.py` |
+| `REQ-BAT-HTTP-01` — endpoint `GET /battery` read-only, LAN-only (mesma allowlist `is_local_peer`), `max_uri_handlers` derivado da tabela de rotas com rollback | `test_battery_http_contract.py` |
 | `REQ-BAT-HTTP-02` — JSON schema 1 estavel, ordem fixa, apenas inteiros, <=384 B, `null` documentado, `state:"unavailable"` | `test_battery_json.cpp`, `test_battery_http_contract.py` |
 | `REQ-BAT-HTTP-03` — fonte exclusivamente cacheada (`battery_protection_get_cached_policy_snapshot` + `sampled_at_us`), sem I2C/amostragem no httpd | `test_battery_http_contract.py` |
 | `REQ-BAT-HTTP-04` — `/screenshot` e `/events.txt` e a ponte serial intactos | `test_battery_http_contract.py`, `test_screenshot_lifecycle_contract.py`, `test_event_projection_contract.py` |

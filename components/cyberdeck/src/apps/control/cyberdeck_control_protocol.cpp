@@ -38,6 +38,12 @@ const char *error_code(error value)
     case error::busy: return "busy";
     case error::screen_off: return "screen_off";
     case error::display_busy: return "display_busy";
+    case error::invalid_request: return "invalid_request";
+    case error::invalid_path: return "invalid_path";
+    case error::conflict: return "conflict";
+    case error::checksum: return "checksum";
+    case error::storage_unavailable: return "storage_unavailable";
+    case error::io_error: return "io_error";
     case error::internal: return "internal";
     }
     return "internal";
@@ -58,6 +64,12 @@ int http_status(error value)
     case error::busy: return 429;
     case error::screen_off: return 409;
     case error::display_busy: return 503;
+    case error::invalid_request:
+    case error::invalid_path: return 400;
+    case error::conflict: return 409;
+    case error::checksum: return 422;
+    case error::storage_unavailable: return 503;
+    case error::io_error: return 500;
     case error::internal: return 500;
     }
     return 500;
@@ -151,6 +163,20 @@ bool build_message(const char *nonce_hex, const char *method, const char *uri,
     return written > 0 && static_cast<std::size_t>(written) < capacity;
 }
 
+bool build_upload_message(const char *nonce_hex, const char *method, const char *uri,
+                          const char *name, std::uint64_t declared_size,
+                          const char *body_digest_hex, char *out, std::size_t capacity)
+{
+    if (nonce_hex == nullptr || method == nullptr || uri == nullptr || name == nullptr ||
+        body_digest_hex == nullptr || out == nullptr || capacity == 0)
+        return false;
+    const int written = std::snprintf(out, capacity, "%s\n%s\n%s\n%s\n%s\n%llu\n%s", k_upload_domain,
+                                      nonce_hex, method, uri, name,
+                                      static_cast<unsigned long long>(declared_size),
+                                      body_digest_hex);
+    return written > 0 && static_cast<std::size_t>(written) < capacity;
+}
+
 error verify(nonce_store &store, const std::uint8_t *key, std::size_t key_length,
              const char *nonce_hex, const char *mac_hex, const char *method, const char *uri,
              const std::uint8_t *body, std::size_t body_length, std::int64_t now_us,
@@ -185,6 +211,58 @@ error verify(nonce_store &store, const std::uint8_t *key, std::size_t key_length
     char message[k_max_mac_message_bytes]{};
     if (!build_message(nonce_hex, method, uri, digest_hex, message, sizeof(message)))
         return error::internal;
+
+    std::uint8_t expected[k_mac_bytes]{};
+    std::uint8_t provided[k_mac_bytes]{};
+    const bool computed = mac(key, key_length, reinterpret_cast<const std::uint8_t *>(message),
+                              std::strlen(message), expected);
+    const bool decoded = hex_decode(mac_hex, k_mac_hex_chars, provided, sizeof(provided));
+    const bool valid = computed && decoded && constant_time_equal(expected, provided, sizeof(expected));
+    wipe(expected, sizeof(expected));
+    wipe(provided, sizeof(provided));
+    wipe(reinterpret_cast<std::uint8_t *>(message), sizeof(message));
+    if (!valid) return error::unauthorized;
+    if (!store.consume(nonce_hex, now_us)) return error::no_challenge;
+    return error::none;
+}
+
+error verify_upload(nonce_store &store, const std::uint8_t *key, std::size_t key_length,
+                    const char *nonce_hex, const char *mac_hex, const char *name,
+                    std::uint64_t declared_size, const char *body_digest_hex,
+                    std::int64_t now_us, mac_fn mac)
+{
+    if (key == nullptr || key_length != k_key_bytes || mac == nullptr) return error::not_ready;
+    if (nonce_hex == nullptr || mac_hex == nullptr || body_digest_hex == nullptr ||
+        name == nullptr)
+        return error::unauthorized;
+    if (std::strlen(nonce_hex) != k_nonce_hex_chars || std::strlen(mac_hex) != k_mac_hex_chars ||
+        std::strlen(body_digest_hex) != k_mac_hex_chars)
+        return error::unauthorized;
+
+    /* O digest vem do cliente; exigi-lo canonico evita autenticar duas
+     * grafias do mesmo valor e mantem a mensagem deterministica. */
+    std::uint8_t digest_bytes[k_mac_bytes]{};
+    if (!hex_decode(body_digest_hex, k_mac_hex_chars, digest_bytes, sizeof(digest_bytes))) {
+        wipe(digest_bytes, sizeof(digest_bytes));
+        return error::unauthorized;
+    }
+    wipe(digest_bytes, sizeof(digest_bytes));
+
+    bool expired = false;
+    if (!store.pending(nonce_hex, now_us, &expired)) {
+        if (expired) {
+            store.reset();
+            return error::expired;
+        }
+        return error::no_challenge;
+    }
+
+    char message[k_max_upload_message_bytes]{};
+    if (!build_upload_message(nonce_hex, k_upload_method, k_upload_uri, name, declared_size,
+                              body_digest_hex, message, sizeof(message))) {
+        wipe(reinterpret_cast<std::uint8_t *>(message), sizeof(message));
+        return error::internal;
+    }
 
     std::uint8_t expected[k_mac_bytes]{};
     std::uint8_t provided[k_mac_bytes]{};

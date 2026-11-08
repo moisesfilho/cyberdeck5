@@ -6,10 +6,10 @@ registration cannot be linked in a host binary.  The JSON document itself is
 covered by the linked test_battery_json.cpp; this companion proves the parts
 that only source inspection can prove:
 
-  * the route is registered from a table in start_server() with
-    max_uri_handlers raised to seven (four telemetry routes plus the three
-    /control routes owned by test_control_http_contract.py) and a
-    stop-on-failure rollback;
+  * the route is registered from a table in start_server(), where
+    max_uri_handlers is derived from the table size (the four telemetry routes
+    plus the `/control/*` routes owned by test_control_http_contract.py and
+    test_control_upload_contract.py) and a stop-on-failure rollback;
   * the handler keeps the same guards as the existing endpoints (405 for
     non-GET, 403 through is_local_peer, 503 when the request mutex is busy);
   * the handler is defined after stop_server(), outside the block
@@ -98,16 +98,20 @@ def function_body(source: str, name: str) -> str:
 
 
 def check_route_and_rollback(server: str) -> None:
-    """REQ-BAT-HTTP-01: table registration, four handlers, fail-closed stop."""
+    """REQ-BAT-HTTP-01: table registration, derived budget, fail-closed stop."""
     start = function_body(server, "static esp_err_t start_server")
-    require(re.search(r"max_uri_handlers\s*=\s*7\s*;", start) is not None,
-            "start_server must reserve seven handlers (four telemetry + three /control)")
-    routes = re.findall(r"\.uri\s*=\s*\"([^\"]+)\"", start)
-    require(routes == ["/screenshot", "/events.txt", "/battery", "/usb/audio",
-                       "/control/challenge", "/control/type", "/control/terminal"],
-            f"the registration table must keep the four telemetry routes and add /control, found {routes}")
-    require(len(re.findall(r"\{\s*\.uri\s*=", start)) == 7,
-            "the registration table must hold exactly seven entries")
+    table_start = start.find("const httpd_uri_t uris[]")
+    require(table_start != -1, "start_server must declare its route table")
+    routes = re.findall(r"\.uri\s*=\s*\"([^\"]+)\"", start[table_start:])
+    require(routes[:4] == ["/screenshot", "/events.txt", "/battery", "/usb/audio"],
+            "the registration table must keep the four telemetry routes first, "
+            f"found {routes}")
+    for uri in ("/control/challenge", "/control/type", "/control/terminal"):
+        require(uri in routes, f"the registration table must keep {uri}")
+    require(f"config.max_uri_handlers = {len(routes)};" in start,
+            "max_uri_handlers must equal the number of registered routes")
+    require(len(re.findall(r"\{\s*\.uri\s*=", start[table_start:])) == len(routes),
+            "every table entry must be a registered route")
     for handler in ("screenshot_handler", "events_handler", "battery_handler", "usb_audio_handler"):
         require(re.search(rf"\.handler\s*=\s*{handler}", start) is not None,
                 f"the registration table must wire {handler}")

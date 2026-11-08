@@ -7,6 +7,8 @@
 #include "apps/battery/cyberdeck_battery_console_app.h"
 #include "apps/bluetooth/cyberdeck_bluetooth_console_app.h"
 #include "apps/event_log/cyberdeck_event_log_console_app.h"
+#include "apps/image/cyberdeck_image_app.h"
+#include "apps/image/cyberdeck_image_list.h"
 #include "apps/music/cyberdeck_music_app.h"
 #include "apps/music/cyberdeck_music_manager.h"
 #include "apps/ota/cyberdeck_ota.h"
@@ -34,6 +36,7 @@
 #include "platform/display/cyberdeck_battery_view.h"
 #include "platform/display/cyberdeck_clock.h"
 #include "platform/display/cyberdeck_editor_view.h"
+#include "platform/display/cyberdeck_image_view.h"
 #include "platform/display/cyberdeck_music_view.h"
 #include "platform/display/cyberdeck_music_header_visibility.h"
 #include "platform/display/cyberdeck_music_command_input.h"
@@ -106,6 +109,7 @@ lv_timer_t *s_wifi_survey_timer = nullptr;
 lv_timer_t *s_battery_timer = nullptr;
 lv_timer_t *s_terminal_output_timer = nullptr;
 lv_timer_t *s_music_status_timer = nullptr;
+lv_timer_t *s_image_status_timer = nullptr;
 lv_timer_t *s_ota_timer = nullptr;
 lv_obj_t *s_ota_modal = nullptr;
 lv_obj_t *s_ota_title = nullptr;
@@ -119,6 +123,7 @@ bool s_rendering = false;
 bool s_music_ui_active = false;
 cyberdeck_music_command_input::controller s_music_command_input;
 cyberdeck_music_view::view s_music_view;
+cyberdeck_image_view::view s_image_view;
 cyberdeck_music_manager::manager s_music_manager;
 /* All browser snapshots are copied atomically into this BSS buffer and consumed
  * synchronously on the LVGL context. Never keep references across callbacks. */
@@ -313,6 +318,11 @@ bool music_manager_action(cyberdeck_music_manager::action action, void *context)
 bool music_manager_close(void *context);
 bool music_command_key(uint32_t key);
 void process_music_status(lv_timer_t *timer);
+void process_image_status(lv_timer_t *timer);
+bool image_viewer_foreground();
+bool image_view_active();
+bool image_local_key(uint32_t key);
+void leave_image_viewer();
 bool music_view_browser_action(bool play_selected);
 bool music_view_opening();
 void editor_view_action(std::string_view action, void *context);
@@ -620,6 +630,10 @@ void destroy_ui_resource_handles() {
         lv_timer_del(s_music_status_timer);
         s_music_status_timer = nullptr;
     }
+    if (s_image_status_timer != nullptr) {
+        lv_timer_del(s_image_status_timer);
+        s_image_status_timer = nullptr;
+    }
     if (s_ota_timer != nullptr) {
         lv_timer_del(s_ota_timer);
         s_ota_timer = nullptr;
@@ -648,6 +662,9 @@ void destroy_ui_resource_handles() {
     }
     s_music_manager.deactivate();
     s_music_view.destroy();
+    /* The view owns the decoded frame: deleting it here is what makes the
+     * later application stop safe. */
+    s_image_view.destroy();
     window_manager.deinit();
     s_header_view = {};
     s_terminal_view = {};
@@ -863,6 +880,13 @@ void on_keyboard_event(const char *text, size_t length, uint8_t modifier, uint32
             return;
         }
     }
+    if (image_view_active()) {
+        /* The bitmap owns the screen: typed text must not accumulate in the
+         * hidden shell line.  Only the navigation keys have a meaning here. */
+        if (special_key)
+            local_key(special_key);
+        return;
+    }
     if (s_music_ui_active) {
         if (s_music_view.command_open()) {
             if (text != nullptr && length > 0) {
@@ -1074,6 +1098,99 @@ void process_music_status(lv_timer_t *) {
  * 1000 ms timer (process_battery_protection).  Sampling the policy from both
  * timers in the same tick made every second observation measure 0 ms of
  * elapsed time and reset the state-of-charge quiet window. */
+/* ---------------------------------------------------------------------------
+ * Image viewer (cyberdeck.image_viewer)
+ *
+ * The application decodes on its own worker; this timer is the only place that
+ * installs a frame, so the widget never points at memory the worker could
+ * retire.  The view takes ownership of the pixels, and it is destroyed before
+ * the supervisor stops the application, therefore no buffer can be freed under
+ * a live `lv_image_set_src()` pointer.
+ * ------------------------------------------------------------------------- */
+bool image_viewer_foreground() {
+    return cyberdeck_apps::global_runtime().active_foreground() == "cyberdeck.image_viewer";
+}
+
+bool image_view_active() {
+    return image_viewer_foreground() && s_image_view.exists();
+}
+
+void leave_image_viewer() {
+    /* The view owns its frame, so it can stay alive during the switch: if the
+     * supervisor cannot stop the application (bounded join exhausted) the
+     * bitmap is still displayed instead of leaving an empty screen. */
+    if (cyberdeck_apps::global_runtime().switch_foreground("cyberdeck.shell"))
+        s_image_view.destroy();
+    render_terminal();
+}
+
+bool image_local_key(uint32_t key) {
+    if (!image_viewer_foreground())
+        return false;
+    const cyberdeck_image::image_key mapped = key == LV_KEY_LEFT    ? cyberdeck_image::image_key::previous
+                                              : key == LV_KEY_RIGHT ? cyberdeck_image::image_key::next
+                                              : key == LV_KEY_ESC   ? cyberdeck_image::image_key::escape
+                                                                    : cyberdeck_image::image_key::other;
+    switch (cyberdeck_image::classify_image_key(true, s_image_view.exists(), mapped)) {
+    case cyberdeck_image::key_action::exit:
+        leave_image_viewer();
+        return true;
+    case cyberdeck_image::key_action::previous:
+        (void)cyberdeck_image::global_application().navigate(-1);
+        return true;
+    case cyberdeck_image::key_action::next:
+        (void)cyberdeck_image::global_application().navigate(1);
+        return true;
+    case cyberdeck_image::key_action::pass_through:
+        break;
+    }
+    return false;
+}
+
+void abandon_image_view(const char *message) {
+    if (message != nullptr && message[0] != '\0') {
+        append_output(message, std::strlen(message));
+    }
+    s_image_view.destroy();
+    (void)cyberdeck_apps::global_runtime().switch_foreground("cyberdeck.shell");
+    render_terminal();
+}
+
+void process_image_status(lv_timer_t *) {
+    auto &app = cyberdeck_image::global_application();
+    cyberdeck_image::published_image delivered{};
+    if (app.take_published(delivered)) {
+        const std::string position =
+            cyberdeck_image::format_position(delivered.index, delivered.count, delivered.truncated);
+        if (!s_image_view.exists() && !s_image_view.create(s_menu)) {
+            app.release(delivered);
+            abandon_image_view("image: display unavailable\n");
+            return;
+        }
+        if (!s_image_view.set_image(delivered)) {
+            app.release(delivered);
+            abandon_image_view("image: display unavailable\n");
+            return;
+        }
+        s_image_view.set_status(delivered.name.data(), position);
+    }
+    std::string notice;
+    if (app.take_notice(notice)) {
+        abandon_image_view(notice.c_str());
+        return;
+    }
+    const bool foreground = image_viewer_foreground();
+    if (!foreground && s_image_view.exists())
+        s_image_view.destroy();
+    if (!foreground && app.running() && app.state() == cyberdeck_image::viewer_state::error) {
+        /* A rejected load already reported its message through the shell, but
+         * the supervisor made this application the foreground before
+         * `execute`; hand the console back instead of eating every key. */
+        (void)cyberdeck_apps::global_runtime().switch_foreground("cyberdeck.shell");
+        render_terminal();
+    }
+}
+
 void update_clock(lv_timer_t *) {
     std::string text;
     const time_t now = time(nullptr);
@@ -2116,6 +2233,7 @@ void terminal_insert(lv_event_t *event) {
     if (cyberdeck_poweroff_pending()) return;
     if (!event || s_rendering || !s_terminal)
         return;
+    if (image_view_active()) return;
     const char *inserted = static_cast<const char *>(lv_event_get_param(event));
     if (!inserted || !*inserted)
         return;
@@ -2214,6 +2332,13 @@ void terminal_key(lv_event_t *event) {
     uint32_t key = lv_event_get_key(event);
     if (editor_input_active()) {
         editor_local_key(key);
+        lv_event_stop_processing(event);
+        lv_event_stop_bubbling(event);
+        return;
+    }
+    if (image_view_active()) {
+        if (key == LV_KEY_ESC || key == LV_KEY_LEFT || key == LV_KEY_RIGHT)
+            local_key(key);
         lv_event_stop_processing(event);
         lv_event_stop_bubbling(event);
         return;
@@ -2606,6 +2731,8 @@ void local_key(uint32_t key) {
         if (key == LV_KEY_ENTER || key == LV_KEY_ESC) (void)cyberdeck_ota::decide(key == LV_KEY_ENTER);
         return;
     }
+    if (image_local_key(key))
+        return;
     if (music_view_opening()) {
         const auto mapped = key == LV_KEY_ENTER ? cyberdeck_music_manager::key::enter
             : key == LV_KEY_LEFT ? cyberdeck_music_manager::key::left
@@ -3013,11 +3140,12 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     s_battery_timer = lv_timer_create(process_battery_protection, 1000, nullptr);
     s_terminal_output_timer = lv_timer_create(process_terminal_output, 100, nullptr);
     s_music_status_timer = lv_timer_create(process_music_status, 250, nullptr);
+    s_image_status_timer = lv_timer_create(process_image_status, 100, nullptr);
     s_ota_timer = lv_timer_create(process_ota_confirmation, 250, nullptr);
     if (s_clock_timer == nullptr || s_wifi_state_timer == nullptr || s_wifi_scan_timer == nullptr ||
         s_ble_timer == nullptr || s_ssh_timer == nullptr || s_wifi_audit_timer == nullptr ||
         s_wifi_survey_timer == nullptr || s_battery_timer == nullptr || s_terminal_output_timer == nullptr ||
-        s_music_status_timer == nullptr || s_ota_timer == nullptr) {
+        s_music_status_timer == nullptr || s_image_status_timer == nullptr || s_ota_timer == nullptr) {
         destroy_ui_resource_handles();
         return ESP_ERR_NO_MEM;
     }

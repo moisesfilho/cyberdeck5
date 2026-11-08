@@ -8,10 +8,18 @@ is never reused.
     python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision
     python3 tools/cyberdeck_http_cli.py --host 192.168.0.50 type "help"
     python3 tools/cyberdeck_http_cli.py --host 192.168.0.50 terminal
+    python3 tools/cyberdeck_http_cli.py --host 192.168.0.50 upload fixture.bmp
 
 Every request uses a single-use nonce from /control/challenge and an
 HMAC-SHA256 over nonce, method, URI and the SHA-256 of the body. HTTP does not
 provide confidentiality: use it only on a trusted LAN.
+
+`upload` sends one `.bmp` basename to the fixed device directory
+`/sdcard/screenshots` (visible as `/screenshots/<name>`). The client refuses an
+oversized/invalid file before opening a connection, computes the local SHA-256
+and signs the upload-specific message (domain + nonce + method + URI + basename +
+size + digest). The device re-verifies the digest of the streamed body and never
+overwrites an existing file.
 """
 
 import argparse
@@ -25,6 +33,12 @@ import stat
 import time
 
 CONTROL_MAX_BYTES = 1024
+UPLOAD_MAX_BYTES = 3 * 1024 * 1024
+UPLOAD_URI = "/control/upload"
+UPLOAD_DOMAIN = "cyberdeck-control-upload/v1"
+UPLOAD_NAME_MAX = 128
+UPLOAD_NAME_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 DEFAULT_KEY_FILE = Path.home() / ".config/cyberdeck5/control.key"
 DEFAULT_PORT = 80
 
@@ -57,6 +71,38 @@ def signed_headers(key, nonce, method, uri, body):
         raise ValueError("Invalid key")
     digest = hashlib.sha256(body).hexdigest()
     message = f"{nonce}\n{method}\n{uri}\n{digest}".encode("ascii")
+    return {
+        "X-CTL-Nonce": nonce,
+        "X-CTL-MAC": hmac.new(key, message, hashlib.sha256).hexdigest(),
+    }
+
+
+def upload_name_problem(name):
+    """Return why `name` is not an acceptable device basename, or None."""
+    if not isinstance(name, str):
+        return "name must be a string"
+    if len(name) < 5 or len(name) > UPLOAD_NAME_MAX:
+        return f"name must be 5..{UPLOAD_NAME_MAX} characters"
+    if name[0] not in UPLOAD_NAME_CHARS or not name[0].isascii() or name[0] in "._-":
+        return "name must start with a letter or digit"
+    if any(c not in UPLOAD_NAME_CHARS for c in name):
+        return "name may only contain ASCII letters, digits, '.', '_' and '-'"
+    if ".." in name:
+        return "name must not contain '..'"
+    if not name.lower().endswith(".bmp"):
+        return "name must end with .bmp"
+    return None
+
+
+def upload_signed_headers(key, nonce, name, size, digest_hex):
+    if len(nonce) != 32 or any(c not in "0123456789abcdef" for c in nonce):
+        raise ValueError("Invalid device challenge")
+    if len(key) != 32:
+        raise ValueError("Invalid key")
+    if len(digest_hex) != 64 or any(c not in "0123456789abcdef" for c in digest_hex):
+        raise ValueError("Invalid SHA-256 digest")
+    message = (f"{UPLOAD_DOMAIN}\n{nonce}\nPOST\n{UPLOAD_URI}\n{name}\n{size}\n"
+               f"{digest_hex}").encode("ascii")
     return {
         "X-CTL-Nonce": nonce,
         "X-CTL-MAC": hmac.new(key, message, hashlib.sha256).hexdigest(),
@@ -109,6 +155,35 @@ class session:
         nonce, _ = self.challenge()
         headers = signed_headers(self.key, nonce, "GET", "/control/terminal", b"")
         return self.request("GET", "/control/terminal", b"", headers)
+
+    def upload(self, path, name=None):
+        source = Path(path)
+        if not source.is_file():
+            raise ValueError(f"not a regular file: {source}")
+        size = source.stat().st_size
+        if size <= 0:
+            raise ValueError("refusing to upload an empty file")
+        if size > UPLOAD_MAX_BYTES:
+            raise ValueError(f"file is {size} bytes; the device limit is {UPLOAD_MAX_BYTES}")
+        target = name if name is not None else source.name
+        problem = upload_name_problem(target)
+        if problem is not None:
+            raise ValueError(problem)
+        body = source.read_bytes()
+        if len(body) != size:
+            raise ValueError("file changed while reading")
+        digest = hashlib.sha256(body).hexdigest()
+        nonce, _ = self.challenge()
+        headers = upload_signed_headers(self.key, nonce, target, size, digest)
+        headers.update({
+            "Content-Type": "image/bmp",
+            "Content-Length": str(size),
+            "X-CTL-Name": target,
+            "X-CTL-Size": str(size),
+            "X-CTL-Digest": digest,
+        })
+        status, content = self.request("POST", UPLOAD_URI, body, headers)
+        return status, content, digest
 
 
 def provision(port, key_path):
@@ -165,6 +240,11 @@ def main(argv=None):
     subparsers.add_parser("terminal", help="read the bounded terminal snapshot")
     subparsers.add_parser("status", help="check reachability and nonce provisioning")
 
+    upload_parser = subparsers.add_parser(
+        "upload", help="upload one .bmp basename to /screenshots (max 3 MiB)")
+    upload_parser.add_argument("file", help="local .bmp fixture")
+    upload_parser.add_argument("--name", help="device basename (default: local basename)")
+
     arguments = parser.parse_args(argv)
 
     if arguments.command == "provision":
@@ -192,6 +272,21 @@ def main(argv=None):
         print(json.dumps(envelope) if arguments.json else
               f"accepted for dispatch: {envelope.get('bytes')} bytes, "
               f"{envelope.get('lines')} line(s); verify with 'terminal'")
+        return 0
+
+    if arguments.command == "upload":
+        status, content, digest = client.upload(arguments.file, arguments.name)
+        envelope = parse_envelope(content)
+        if not 200 <= status < 300:
+            raise SystemExit(f"rejected (HTTP {status}): {json.dumps(envelope)}")
+        if envelope.get("sha256") != digest:
+            raise SystemExit("device reported a different SHA-256 than the local file")
+        if arguments.json:
+            print(json.dumps(envelope))
+        else:
+            print(f"uploaded {envelope.get('name')}: {envelope.get('bytes')} bytes "
+                  f"sha256 {envelope.get('sha256')}")
+            print(f"open with: image {envelope.get('path')}")
         return 0
 
     status, content = client.terminal()

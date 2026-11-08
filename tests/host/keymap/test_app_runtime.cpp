@@ -442,7 +442,7 @@ class recording_logger final : public cyberdeck_apps::logger {
 constexpr const char *k_registry_full_ids[] = {
     "full.app00", "full.app01", "full.app02", "full.app03", "full.app04", "full.app05", "full.app06", "full.app07",
     "full.app08", "full.app09", "full.app10", "full.app11", "full.app12", "full.app13", "full.app14", "full.app15",
-    "full.app16", "full.app17", "full.app18", "full.app19",
+    "full.app16", "full.app17", "full.app18", "full.app19", "full.app20",
 };
 static_assert(sizeof(k_registry_full_ids) / sizeof(k_registry_full_ids[0]) ==
                   cyberdeck_apps::k_max_applications,

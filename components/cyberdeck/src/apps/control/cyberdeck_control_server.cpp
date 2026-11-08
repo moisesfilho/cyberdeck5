@@ -1,9 +1,11 @@
 #include "apps/control/cyberdeck_control_server.h"
 
 #include "apps/control/cyberdeck_control_protocol.h"
+#include "apps/control/cyberdeck_control_upload.h"
 #include "platform/display/cyberdeck_ui.h"
 #include "platform/display/screen_off.h"
 #include "platform/net/cyberdeck_local_peer.h"
+#include "platform/storage/cyberdeck_sd_io_coordinator.h"
 
 #include "esp_err.h"
 #include "esp_log.h"
@@ -41,6 +43,20 @@ constexpr std::uint32_t k_inject_timeout_ms = 3000;
 constexpr std::size_t k_task_stack_bytes = 4096;
 constexpr std::size_t k_escape_chunk_bytes = 512;
 constexpr unsigned k_max_recv_timeouts = 3;
+
+/* Upload: chave/nonce compartilhados com o canal, mas transacao propria. O
+ * mutex e try_lock (nunca bloqueia a task HTTP) e serializa a transacao, o
+ * buffer fixo e o lease WRITE do SD. */
+constexpr const char *k_upload_name_header = "X-CTL-Name";
+constexpr const char *k_upload_size_header = "X-CTL-Size";
+constexpr const char *k_upload_digest_header = "X-CTL-Digest";
+std::mutex s_upload_mutex;
+std::uint8_t s_upload_scratch[k_upload_chunk_bytes];
+
+struct sha256_stream {
+    mbedtls_md_context_t context {};
+    bool started = false;
+};
 
 struct job {
     std::size_t length;
@@ -105,6 +121,55 @@ bool hmac_sha256(const std::uint8_t *key, std::size_t key_length, const std::uin
     return ok;
 }
 
+/* Digest incremental do corpo do upload. O contexto e liberado no destruidor,
+ * inclusive quando a transacao aborta antes do `finish`. */
+struct sha256_incremental {
+    sha256_stream stream{};
+
+    ~sha256_incremental() {
+        if (stream.started) mbedtls_md_free(&stream.context);
+    }
+    sha256_incremental() = default;
+    sha256_incremental(const sha256_incremental &) = delete;
+    sha256_incremental &operator=(const sha256_incremental &) = delete;
+};
+
+bool upload_digest_start(void *context)
+{
+    auto *stream = static_cast<sha256_stream *>(context);
+    if (stream == nullptr) return false;
+    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (info == nullptr) return false;
+    mbedtls_md_init(&stream->context);
+    if (mbedtls_md_setup(&stream->context, info, 0) != 0) {
+        mbedtls_md_free(&stream->context);
+        return false;
+    }
+    if (mbedtls_md_starts(&stream->context) != 0) {
+        mbedtls_md_free(&stream->context);
+        return false;
+    }
+    stream->started = true;
+    return true;
+}
+
+bool upload_digest_update(void *context, const std::uint8_t *data, std::size_t length)
+{
+    auto *stream = static_cast<sha256_stream *>(context);
+    if (stream == nullptr || !stream->started) return false;
+    return mbedtls_md_update(&stream->context, data, length) == 0;
+}
+
+bool upload_digest_finish(void *context, std::uint8_t *out)
+{
+    auto *stream = static_cast<sha256_stream *>(context);
+    if (stream == nullptr || !stream->started || out == nullptr) return false;
+    const bool ok = mbedtls_md_finish(&stream->context, out) == 0;
+    mbedtls_md_free(&stream->context);
+    stream->started = false;
+    return ok;
+}
+
 const char *status_text(error value)
 {
     switch (http_status(value)) {
@@ -114,6 +179,7 @@ const char *status_text(error value)
     case 405: return "405 Method Not Allowed";
     case 409: return "409 Conflict";
     case 413: return "413 Payload Too Large";
+    case 422: return "422 Unprocessable Entity";
     case 429: return "429 Too Many Requests";
     case 500: return "500 Internal Server Error";
     case 503: return "503 Service Unavailable";
@@ -201,6 +267,73 @@ error authorize(httpd_req_t *req, const char *method, const char *uri, const cha
     return verify(s_nonces, s_key, sizeof(s_key), nonce, mac, method, uri,
                   reinterpret_cast<const std::uint8_t *>(body), body_length,
                   esp_timer_get_time(), sha256_digest, hmac_sha256);
+}
+
+/* Autentica SOMENTE os metadados do upload, incluindo o basename que sera
+ * publicado. O mutex cobre apenas a verificacao (HMAC sobre a mensagem curta);
+ * o corpo nunca e lido sob esse lock, entao `/control/challenge` e
+ * `/control/type` continuam respondendo durante uma transferencia. */
+error authorize_upload(httpd_req_t *req, const char *name, std::uint64_t declared_size,
+                       const char *digest_hex)
+{
+    char nonce[k_nonce_hex_chars + 1]{};
+    char mac[k_mac_hex_chars + 1]{};
+    if (!header_value(req, k_nonce_header, nonce, sizeof(nonce)) ||
+        !header_value(req, k_mac_header, mac, sizeof(mac)))
+        return error::unauthorized;
+
+    std::lock_guard<std::mutex> lock(s_mutex);
+    if (!s_key_ready) return error::not_ready;
+    return verify_upload(s_nonces, s_key, sizeof(s_key), nonce, mac, name, declared_size,
+                         digest_hex, esp_timer_get_time(), hmac_sha256);
+}
+
+error upload_error(upload_status status)
+{
+    switch (status) {
+    case upload_status::ok: return error::none;
+    case upload_status::empty: return error::empty;
+    case upload_status::too_large: return error::too_large;
+    case upload_status::invalid_name: return error::invalid_path;
+    case upload_status::conflict: return error::conflict;
+    case upload_status::checksum: return error::checksum;
+    case upload_status::truncated:
+    case upload_status::timeout:
+    case upload_status::io_error: return error::io_error;
+    case upload_status::internal: return error::internal;
+    }
+    return error::internal;
+}
+
+struct http_upload_source {
+    httpd_req_t *request = nullptr;
+    std::size_t received = 0;
+};
+
+/* Fonte monotona do prazo do upload; unico ponto do caminho de stream que
+ * consulta o relogio da plataforma. */
+std::int64_t upload_stream_now(void *)
+{
+    return esp_timer_get_time();
+}
+
+/* Le o corpo em chunks do tamanho do buffer fixo. O buffer e sempre do
+ * chamador (nunca proporcional ao corpo). Um timeout de socket e reportado
+ * como -1 e o modulo puro aplica o orcamento consecutivo (defesa secundaria) e
+ * o prazo absoluto do request. */
+int http_upload_read(void *context, std::uint8_t *buffer, std::size_t capacity)
+{
+    auto *source = static_cast<http_upload_source *>(context);
+    if (source == nullptr || source->request == nullptr || buffer == nullptr || capacity == 0)
+        return -2;
+    if (source->received >= source->request->content_len) return 0;
+    std::size_t want = source->request->content_len - source->received;
+    if (want > capacity) want = capacity;
+    const int chunk = httpd_req_recv(source->request, reinterpret_cast<char *>(buffer), want);
+    if (chunk == HTTPD_SOCK_ERR_TIMEOUT) return -1;
+    if (chunk <= 0) return -2;
+    source->received += static_cast<std::size_t>(chunk);
+    return chunk;
 }
 
 esp_err_t send_terminal_json(httpd_req_t *req, const char *text, std::size_t length, bool truncated)
@@ -581,6 +714,129 @@ esp_err_t terminal_handler(httpd_req_t *req)
     const esp_err_t result = send_terminal_json(req, text, bytes, truncated != 0);
     std::free(text);
     return result;
+}
+
+/* POST /control/upload - transporte autenticado de um BMP para o SD.
+ *
+ * Ordem obrigatoria: metodo -> peer local -> pronto -> limite de tamanho ->
+ * single-flight -> nome/tamanho/digest -> autorizacao dos metadados -> lease
+ * WRITE do SD -> temporario -> stream com digest -> fsync/close -> publicacao
+ * sem clobber. Nenhum arquivo e aberto antes de `authorize_upload`, e a
+ * autorizacao vincula o basename validado (o mesmo que sera publicado) ao
+ * tamanho e ao digest; a rota NAO consulta a protecao de tela (o upload nao
+ * depende do display) e nunca loga chave, corpo, MAC ou digest. */
+esp_err_t upload_handler(httpd_req_t *req)
+{
+    if (req->method != HTTP_POST) return method_reply(req, "POST");
+    if (!cyberdeck_net::socket_is_local_peer(httpd_req_to_sockfd(req)))
+        return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "local network only");
+    if (!ready()) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::not_ready);
+    }
+    if (req->content_len == 0) return error_reply(req, error::empty);
+    if (req->content_len > k_max_upload_bytes) {
+        (void)drain_body(req, k_max_text_bytes);
+        /* O restante do corpo fica no socket: nao reutiliza a conexao. */
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::too_large);
+    }
+
+    /* Um upload por vez, sem bloquear a task HTTP. */
+    std::unique_lock<std::mutex> upload_lock(s_upload_mutex, std::try_to_lock);
+    if (!upload_lock.owns_lock()) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::busy);
+    }
+
+    char name[k_max_upload_name_bytes + 1]{};
+    char size_text[24]{};
+    char digest_text[k_max_upload_digest_chars + 1]{};
+    if (!header_value(req, k_upload_name_header, name, sizeof(name)) ||
+        !validate_upload_name(name, std::strlen(name))) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::invalid_path);
+    }
+    if (!header_value(req, k_upload_size_header, size_text, sizeof(size_text)) ||
+        !header_value(req, k_upload_digest_header, digest_text, sizeof(digest_text))) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::invalid_request);
+    }
+
+    std::uint64_t declared = 0;
+    if (!parse_upload_size(size_text, std::strlen(size_text), &declared)) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::invalid_request);
+    }
+    if (declared == 0) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::empty);
+    }
+    if (declared > k_max_upload_bytes) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::too_large);
+    }
+    if (declared != req->content_len) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::invalid_request);
+    }
+
+    std::uint8_t expected_digest[k_mac_bytes]{};
+    if (std::strlen(digest_text) != k_max_upload_digest_chars ||
+        !hex_decode(digest_text, k_max_upload_digest_chars, expected_digest,
+                    sizeof(expected_digest))) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::invalid_request);
+    }
+
+    const error authorized = authorize_upload(req, name, declared, digest_text);
+    if (authorized != error::none) {
+        /* Corpo ainda no socket: a conexao nao pode ser reutilizada. */
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, authorized);
+    }
+
+    /* Lease WRITE mantido durante toda a transacao e liberado no fim (RAII);
+     * gate fechado/fenced responde 503 sem espera e sem criar nada. */
+    auto storage = cyberdeck_sd_io::acquire_global(cyberdeck_sd_io::access::write);
+    if (!storage) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::storage_unavailable);
+    }
+    if (cyberdeck_sd_io::global_fenced()) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::storage_unavailable);
+    }
+
+    cyberdeck_control::upload_files files;
+    if (!cyberdeck_control::upload_files_open(files, cyberdeck_control::k_upload_directory)) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, error::io_error);
+    }
+
+    sha256_incremental hasher;
+    const upload_digest_ops digest_ops = {&hasher.stream, upload_digest_start, upload_digest_update,
+                                          upload_digest_finish};
+    http_upload_source source = {req, 0};
+    const upload_clock clock = {nullptr, upload_stream_now};
+    upload_outcome outcome{};
+    const upload_status status =
+        receive_upload(cyberdeck_control::upload_files_sink(files), digest_ops, http_upload_read,
+                       &source, clock, name, declared, expected_digest, s_upload_scratch,
+                       sizeof(s_upload_scratch), &outcome);
+    if (status != upload_status::ok) {
+        if (status == upload_status::io_error) cyberdeck_sd_io::record_global_persistence_failure();
+        httpd_resp_set_hdr(req, "Connection", "close");
+        return error_reply(req, upload_error(status));
+    }
+
+    char body[k_max_upload_json_bytes + 1]{};
+    if (!format_upload_json(body, sizeof(body), name, outcome.bytes, outcome.digest))
+        return error_reply(req, error::internal);
+    httpd_resp_set_status(req, "201 Created");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
 }
 
 } // namespace cyberdeck_control

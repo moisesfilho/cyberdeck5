@@ -6,6 +6,7 @@
 #include "apps/demo/cyberdeck_demo_app.h"
 #include "apps/editor/cyberdeck_editor_app.h"
 #include "apps/event_log/cyberdeck_event_log_console_app.h"
+#include "apps/image/cyberdeck_image_app.h"
 #include "apps/network/cyberdeck_netdiag_app.h"
 #include "apps/music/cyberdeck_music_app.h"
 #include "apps/ota/cyberdeck_ota.h"
@@ -260,10 +261,10 @@ service_application s_ssh{make_manifest("cyberdeck.ssh", "SSH service", "Asynchr
                           start_ssh, stop_ssh, true};
 service_application s_screenshot{make_manifest("cyberdeck.screenshot", "Screenshot service",
                                                "Local-network telemetry and control HTTP endpoints",
-                                               {"cyberdeck.event_log", "cyberdeck.wifi"}, {"display", "network"}, 1000,
-                                               cyberdeck_apps::app_type::service, {"display", "network"},
+                                               {"cyberdeck.event_log", "cyberdeck.wifi"}, {"display", "network", "storage"}, 1000,
+                                               cyberdeck_apps::app_type::service, {"display", "network", "storage"},
                                                k_screenshot_task_stack_bytes, k_screenshot_control_queue_depth,
-                                               {}, "1.1.0"),
+                                               {}, "1.1.1"),
                                   start_screenshot, stop_screenshot, true};
 /* The runtime models shared buses (display/network/ble/serial/...) but not the
  * USB host controller, so this service declares no resource and grants none;
@@ -307,6 +308,7 @@ cyberdeck_apps::application *const k_apps[] = {
     &cyberdeck_editor::global_application(),
     &cyberdeck_netdiag::global_application(),
     &cyberdeck_music::global_application(),
+    &cyberdeck_image::global_application(),
     &cyberdeck_wifi_console_app::global_application(),
     &cyberdeck_ssh_console_app::global_application(),
     &cyberdeck_bluetooth_console_app::global_application(),
@@ -363,7 +365,7 @@ extern "C" esp_err_t cyberdeck_system_apps_start(void) {
         for (const char *id : {"cyberdeck.event_log", "cyberdeck.shell", "cyberdeck.wifi", "cyberdeck.serial",
                                "cyberdeck.ssh", "cyberdeck.screenshot", "cyberdeck.bluetooth", "cyberdeck.time_sync",
                                 "cyberdeck.ota", "cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag", "cyberdeck.music",
-                                "cyberdeck.usb_audio",
+                                "cyberdeck.image_viewer", "cyberdeck.usb_audio",
                                "cyberdeck.wifi.shell", "cyberdeck.ssh.shell", "cyberdeck.bluetooth.shell",
                                "cyberdeck.battery.shell", "cyberdeck.screen.shell", "cyberdeck.event_log.shell"}) {
             if (runtime.state(id) == cyberdeck_apps::app_state::failed) {

@@ -139,3 +139,38 @@ Limites explícitos:
   é alegado como validado por esta matriz.
 - Nenhum teste desta matriz altera produção nem enfraquece o pino byte a byte:
   mudança intencional de texto exige atualizar o pino, nunca pular a comparação.
+
+## Ciclo 6 — visualizador de imagens (21º app, REQ/AC-IMG-05)
+
+O app foreground isolado `cyberdeck.image_viewer` (`image <path>`) entrou no
+inventário compilado **depois** de `cyberdeck.music`, elevando o registro para
+**21 aplicativos**: 11 comandados (`demo|editor|netdiag|music|image_viewer` e os
+seis consoles), 9 serviços sem `commands` e 1 console owner. As contagens de
+"19 apps / 10 comandados" registradas nos ciclos anteriores ficam **superadas**
+por este ciclo; elas descrevem o snapshot em que foram escritas e não foram
+reescritas para preservar o histórico da matriz.
+
+- TEST-IMG-HELP-01: `help` acrescenta exatamente uma linha `image [app]` na
+  ordem de registro (imediatamente após `music [app]`), e o catálogo legado
+  continua com 12 blocos/38 linhas. Evidência: golden completo do inventário em
+  `test_shell_help.cpp` (`TEST-HELP-APP-INVENTORY`).
+- TEST-IMG-HELP-02: `image help` devolve o bloco hierárquico completo —
+  `image [app]`, identidade/versão (`cyberdeck.image_viewer` 1.0.1, a versão do
+  manifesto do app), descrição,
+  `usage: image <path>` e a linha de parâmetros indentada — sem executar nem
+  iniciar o app. Evidência: cenário dedicado em `test_shell_help.cpp` com golden
+  literal independente.
+- TEST-IMG-HELP-03: o comando não é duplicado entre catálogo legado e apps, e a
+  ordem das linhas `[app]` segue a ordem de registro. Evidência:
+  `test_shell_help_contract.py` (`EXPECTED_APPS` reconciliado com `k_apps`,
+  `COMMAND_BEARING_COUNT` e a sequência de símbolos das fixtures).
+- Espelho: `image_usage_manifest()` reproduz o manifesto real de
+  `src/apps/image/cyberdeck_image_app.cpp` (id, nome, versão, descrição, tipo,
+  comando e a entrada de help); o contrato falha se qualquer campo divergir.
+  O manifesto declara `commands_require_active_foreground = false` porque
+  `image <path>` carrega argumento — com `true`, o supervisor recusaria o
+  comando antes de ativar o app.
+
+Limites deste ciclo: o texto renderizado no LVGL, a largura de linha no Tab5 e o
+efeito de `image help` recuperado por `term.dump` continuam validação manual
+(`tests/manual/image-viewer-validation.pt-BR.md`, itens E3/E4).

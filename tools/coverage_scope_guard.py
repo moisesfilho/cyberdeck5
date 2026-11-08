@@ -45,6 +45,12 @@ ALLOWLIST = {
         "FreeRTOS semaphores); the admission ownership machine itself lives in the "
         "host-tested cyberdeck_lvgl_dispatch_state.cpp and the adapter is pinned "
         "structurally by test_display_lock_contract.py plus device validation",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_app.cpp":
+        "foreground image viewer composition bound to FreeRTOS task/semaphore "
+        "lifecycle and the confined storage facade; not host-linkable. The pure "
+        "envelope/placement/listing/decode modules and the LVGL view are "
+        "host-covered, and test_image_viewer_contract.py pins the manifest, the "
+        "registry capacity and the worker/publication rules",
     "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp":
         "LVGL/BSP/FreeRTOS composition adapter; behavior is in host-tested models",
     "components/cyberdeck/src/platform/display/screen_off.cpp":
@@ -84,6 +90,13 @@ FORBIDDEN_ALLOWLIST = {
 # Keep them explicitly required so a lost test target cannot be hidden by a
 # coincidental change to source discovery or allowlisting.
 REQUIRED_COVERED = {
+    "components/cyberdeck/src/apps/image/cyberdeck_image_bmp.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_fit.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_decode.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_list.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_worker_state.cpp",
+    "components/cyberdeck/src/platform/display/cyberdeck_image_view.cpp",
+    "components/cyberdeck/src/apps/control/cyberdeck_control_upload.cpp",
     "components/cyberdeck/src/apps/control/cyberdeck_control_protocol.cpp",
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp",
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_controller.cpp",

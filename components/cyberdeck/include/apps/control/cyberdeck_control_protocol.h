@@ -14,15 +14,26 @@
  *   GET  /control/challenge  -> {"nonce":"<32 hex>","ttl_ms":60000}
  *   POST /control/type       -> injeta texto + Enter na UI ativa
  *   GET  /control/terminal   -> snapshot textual limitado do terminal
+ *   POST /control/upload     -> transporte binario autenticado (BMP) para o SD
  *
  * Cabecalhos das rotas autenticadas: `X-CTL-Nonce` (32 hex) e `X-CTL-MAC`
- * (64 hex). A mensagem autenticada e
+ * (64 hex). A mensagem autenticada de texto/terminal e
  *
  *   "<nonce>\n<METHOD>\n<uri>\n<sha256(body) hex>"
  *
  * O digest vincula o corpo exato (nao apenas o tamanho) e o nonce impede
  * replay; o mesmo nonce nunca autoriza duas requisicoes. HTTP nao oferece
  * confidencialidade: o HMAC autentica a origem logica, nao cifra o texto.
+ *
+ * O upload tem uma mensagem PROPRIA, com separacao de dominio, porque o corpo
+ * nao pode ser mantido em RAM para calcular o digest antes da autorizacao:
+ *
+ *   "cyberdeck-control-upload/v1\n<nonce>\n<METHOD>\n<uri>\n<nome>\n<tamanho>\n<sha256>"
+ *
+ * O cliente calcula o SHA-256 do arquivo local e envia nome, tamanho e digest
+ * nos cabecalhos; o dispositivo autentica esses metadados (inclusive o nome que
+ * sera publicado) antes de abrir qualquer arquivo e reconfere o digest
+ * incrementalmente enquanto recebe o corpo.
  */
 namespace cyberdeck_control {
 
@@ -39,6 +50,31 @@ constexpr std::size_t k_max_lines = 32;
 constexpr std::int64_t k_nonce_ttl_us = 60'000'000;
 static_assert(k_nonce_ttl_us == 60 * 1000 * 1000, "nonce TTL is documented as 60 s");
 constexpr std::size_t k_max_mac_message_bytes = 200;
+
+/* Rota, metodo e dominio da mensagem de upload.  O prefixo de dominio garante
+ * que um MAC calculado para `/control/type` (4 campos) nunca valide um upload,
+ * mesmo com nonce, URI, tamanho e digest identicos. */
+constexpr char k_upload_method[] = "POST";
+constexpr char k_upload_uri[] = "/control/upload";
+constexpr char k_upload_domain[] = "cyberdeck-control-upload/v1";
+
+/* Teto do basename que a mensagem aceita.  O validador do upload deriva o
+ * proprio limite do visualizador e o `static_assert` em
+ * `cyberdeck_control_upload.h` garante que todo nome aceito caiba aqui. */
+constexpr std::size_t k_upload_name_capacity = 128;
+/* Maior tamanho decimal de um uint64_t (18446744073709551615). */
+constexpr std::size_t k_upload_size_digits = 20;
+
+/* Capacidade da mensagem calculada a partir dos campos reais:
+ * domain \n nonce \n method \n uri \n name \n size \n digest + NUL. */
+constexpr std::size_t k_upload_message_bytes =
+    (sizeof(k_upload_domain) - 1) + 1 + k_nonce_hex_chars + 1 +
+    (sizeof(k_upload_method) - 1) + 1 + (sizeof(k_upload_uri) - 1) + 1 +
+    k_upload_name_capacity + 1 + k_upload_size_digits + 1 + k_mac_hex_chars;
+constexpr std::size_t k_max_upload_message_bytes = k_upload_message_bytes + 1;
+static_assert(k_upload_name_capacity >= 5, "the upload name capacity must allow a shortest .bmp");
+static_assert(k_upload_message_bytes > 27 + k_nonce_hex_chars + 4 + 15 + 5 + 20 + k_mac_hex_chars,
+              "the upload MAC message must fit every field");
 
 struct segment {
     const char *data;
@@ -64,6 +100,12 @@ enum class error {
     busy,
     screen_off,
     display_busy,
+    invalid_request,
+    invalid_path,
+    conflict,
+    checksum,
+    storage_unavailable,
+    io_error,
     internal,
 };
 
@@ -101,6 +143,13 @@ using mac_fn = bool (*)(const std::uint8_t *key, std::size_t key_length, const s
 bool build_message(const char *nonce_hex, const char *method, const char *uri,
                    const char *body_digest_hex, char *out, std::size_t capacity);
 
+/* Mensagem do upload: dominio fixo + metodo + URI + nome do alvo + tamanho
+ * declarado + digest. `name` precisa ser exatamente o basename validado que
+ * sera publicado. `out` precisa comportar `k_max_upload_message_bytes`. */
+bool build_upload_message(const char *nonce_hex, const char *method, const char *uri,
+                          const char *name, std::uint64_t declared_size,
+                          const char *body_digest_hex, char *out, std::size_t capacity);
+
 /*
  * Verifica o nonce pendente, o digest do corpo e o MAC; consome o nonce somente
  * quando o MAC confere. Um MAC invalido NAO queima o nonce (um atacante sem a
@@ -111,6 +160,19 @@ error verify(nonce_store &store, const std::uint8_t *key, std::size_t key_length
              const char *nonce_hex, const char *mac_hex, const char *method, const char *uri,
              const std::uint8_t *body, std::size_t body_length, std::int64_t now_us,
              digest_fn digest, mac_fn mac);
+
+/*
+ * Verificacao do upload. O digest do corpo e informado pelo cliente (hex
+ * minusculo canonico de 64 caracteres) porque o corpo e transmitido depois da
+ * autorizacao; o dispositivo reconfere o digest do stream. `name` e o basename
+ * validado que sera publicado: ele entra na mensagem autenticada, entao trocar
+ * o nome invalida o MAC. As mesmas regras de nonce valem aqui: MAC invalido nao
+ * queima o desafio e um MAC valido sempre o consome.
+ */
+error verify_upload(nonce_store &store, const std::uint8_t *key, std::size_t key_length,
+                    const char *nonce_hex, const char *mac_hex, const char *name,
+                    std::uint64_t declared_size, const char *body_digest_hex,
+                    std::int64_t now_us, mac_fn mac);
 
 bool valid_utf8(const char *text, std::size_t length);
 

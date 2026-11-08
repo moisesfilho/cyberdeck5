@@ -190,6 +190,36 @@ and `cyberdeck.bluetooth`. They are started by the application supervisor in
 dependency order; this keeps `app_main` as composition code instead of a list
 of direct service starts.
 
+### Image viewer (`image`)
+
+`image <path>` opens one uncompressed 24-bit BMP from the SD card in an isolated
+foreground app (`cyberdeck.image_viewer`):
+
+- the path is absolute inside the virtual SD namespace (`/fotos/a.bmp`);
+  `/sdcard/...`, relative paths and traversal are refused;
+- only `.bmp` files with a `BI_RGB` 24-bit header are accepted, up to 5 MiB and
+  1..1280 pixels per axis; PNG/JPEG, RLE compression, alpha and oversized files
+  fail closed with an explicit message;
+- the directory listing is bounded to 64 images, ordered by name, and
+  left/right browse it with a one-based `i/N` (or `i/N+`) indicator; the index
+  and the `+` describe the **window**, not the position inside the whole
+  directory;
+- opening a BMP that sorts beyond those first 64 names still works: the
+  requested file replaces the last entry of the ordered window (63 smallest +
+  the requested one), without raising the cap, duplicating entries or bypassing
+  the path/format/size filters; a navigation scan keeps the ordinary window;
+- the image is scaled with `min(area/image)` and never enlarged, so the whole
+  bitmap stays visible with its aspect ratio; `Esc` returns to the shell.
+
+Decoding runs on a dedicated worker task through the confined storage seam; the
+LVGL surface only receives a finished RGB565 frame and owns it until the next
+image or until the app is closed. Zoom and recursive directory traversal are out
+of scope. Manual validation is documented in
+`tests/manual/image-viewer-validation.pt-BR.md`; the host suites
+(`test_image_bmp`, `test_image_fit`, `test_image_decode`, `test_image_list`,
+`test_image_view`, `test_image_viewer_contract`) cover the pure layers and the
+LVGL surface under the shim.
+
 ### Screen Protection
 
 The firmware turns the display off after a configurable idle timeout
@@ -369,6 +399,25 @@ applied by a dedicated task, never inside the HTTP handler.
 python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision
 python3 tools/cyberdeck_http_cli.py --host DEVICE_IP type "help"
 python3 tools/cyberdeck_http_cli.py --host DEVICE_IP terminal
+```
+
+`POST /control/upload` carries one `.bmp` file (up to 3 MiB) to
+`/sdcard/screenshots`, which the viewer sees as `/screenshots/<name>`. It exists
+because the USB `fs.write` payload is limited to 2048 bytes and cannot transport
+a full-resolution fixture. The client computes the local SHA-256 and signs an
+upload-specific message (domain + nonce + method + URI + target basename +
+declared size + digest); the device authenticates that metadata - including the
+same basename it will publish - before opening anything,
+re-verifies the digest while streaming with a fixed buffer, holds a WRITE lease
+on the SD coordinator and publishes through an exclusive same-directory
+temporary, never overwriting an existing file. Each transfer also has an
+absolute per-request deadline (120 s) that progress cannot extend, so a peer
+that trickles bytes cannot hold the single HTTP task, the SD lease and the
+temporary open; the screen-off overlay does not block an upload.
+
+```bash
+python3 tools/cyberdeck_http_cli.py --host DEVICE_IP upload fixture.bmp
+python3 tools/cyberdeck_http_cli.py --host DEVICE_IP upload fixture.bmp --name viewer-full.bmp
 ```
 
 When a UAC 1.0 playback device is present and ready, the player routes its PCM

@@ -560,6 +560,18 @@ void test_error_mapping()
     check_eq(http_status(error::busy), 429, "http status busy");
     check_eq(http_status(error::screen_off), 409, "http status screen_off");
     check_eq(http_status(error::not_ready), 503, "http status not_ready");
+    check_eq(http_status(error::invalid_request), 400, "http status invalid_request");
+    check_eq(http_status(error::invalid_path), 400, "http status invalid_path");
+    check_eq(http_status(error::conflict), 409, "http status conflict");
+    check_eq(http_status(error::checksum), 422, "http status checksum");
+    check_eq(http_status(error::storage_unavailable), 503, "http status storage_unavailable");
+    check_eq(http_status(error::io_error), 500, "http status io_error");
+    check_eq(std::string(error_code(error::checksum)), std::string("checksum"),
+             "error code checksum");
+    check_eq(std::string(error_code(error::conflict)), std::string("conflict"),
+             "error code conflict");
+    check_eq(std::string(error_code(error::storage_unavailable)),
+             std::string("storage_unavailable"), "error code storage_unavailable");
 }
 
 } // namespace

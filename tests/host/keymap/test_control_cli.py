@@ -120,6 +120,123 @@ class ControlCliTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 cli.provision("/dev/null", path)
 
+    def test_upload_rejects_before_network(self):
+        client = cli.session("127.0.0.1", KEY)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            missing = root / "missing.bmp"
+            empty = root / "empty.bmp"
+            empty.write_bytes(b"")
+            oversized = root / "oversized.bmp"
+            oversized.write_bytes(b"\0" * (cli.UPLOAD_MAX_BYTES + 1))
+            good = root / "good.bmp"
+            good.write_bytes(b"BM" + b"\0" * 8)
+            with patch.object(client, "request", side_effect=AssertionError("network used")):
+                with self.assertRaises(ValueError):
+                    client.upload(missing)
+                with self.assertRaises(ValueError):
+                    client.upload(empty)
+                with self.assertRaises(ValueError):
+                    client.upload(oversized)
+                with self.assertRaises(ValueError):
+                    client.upload(good, "bad.png")
+                with self.assertRaises(ValueError):
+                    client.upload(good, "../escape.bmp")
+
+    def test_upload_signs_domain_size_and_digest(self):
+        client = cli.session("127.0.0.1", KEY)
+        captured = {}
+        payload = b"BM" + bytes(range(16))
+
+        def fake_request(method, uri, body=b"", headers=None):
+            if uri == "/control/challenge":
+                return 200, b'{"nonce":"' + NONCE.encode() + b'"}'
+            captured["method"] = method
+            captured["uri"] = uri
+            captured["body"] = body
+            captured["headers"] = headers
+            digest = hashlib.sha256(body).hexdigest()
+            return 201, (
+                b'{"name":"fixture.bmp","bytes":' + str(len(body)).encode()
+                + b',"sha256":"' + digest.encode() + b'","path":"/screenshots/fixture.bmp"}')
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "fixture.bmp"
+            source.write_bytes(payload)
+            with patch.object(client, "request", side_effect=fake_request):
+                status, content, digest = client.upload(source)
+        self.assertEqual(status, 201)
+        self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
+        self.assertIn(b"/screenshots/fixture.bmp", content)
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["uri"], "/control/upload")
+        self.assertEqual(captured["body"], payload)
+        self.assertEqual(captured["headers"]["Content-Length"], str(len(payload)))
+        self.assertEqual(captured["headers"]["X-CTL-Name"], "fixture.bmp")
+        self.assertEqual(captured["headers"]["X-CTL-Size"], str(len(payload)))
+        self.assertEqual(captured["headers"]["X-CTL-Digest"], digest)
+        message = (f"{cli.UPLOAD_DOMAIN}\n{NONCE}\nPOST\n{cli.UPLOAD_URI}\nfixture.bmp\n"
+                   f"{len(payload)}\n{digest}").encode("ascii")
+        self.assertEqual(captured["headers"]["X-CTL-MAC"],
+                         hmac.new(KEY, message, hashlib.sha256).hexdigest())
+
+    def test_upload_mac_binds_basename(self):
+        """TEST-UPLOAD-AUTH-12: o MAC de upload precisa cobrir o basename.
+
+        Plano aprovado (planner 17:29): o nome viaja autenticado junto com o
+        tamanho e o digest do corpo. Sem isso um intermediario troca
+        `X-CTL-Name` e o dispositivo publica o corpo em outro nome, com MAC
+        valido (misatribuicao silenciosa). Este caso usa o fluxo publico
+        `session.upload` com TODO o resto identico (mesmo nonce, mesmo corpo,
+        mesmo tamanho e digest) e varia apenas o basename.
+        """
+        payload = b"BM" + bytes(range(16))
+
+        def upload_with(name):
+            client = cli.session("127.0.0.1", KEY)
+            captured = {}
+
+            def fake_request(method, uri, body=b"", headers=None):
+                if uri == "/control/challenge":
+                    return 200, b'{"nonce":"' + NONCE.encode() + b'"}'
+                captured["headers"] = headers
+                captured["body"] = body
+                digest = hashlib.sha256(body).hexdigest()
+                return 201, (
+                    b'{"name":"' + name.encode() + b'","bytes":' + str(len(body)).encode()
+                    + b',"sha256":"' + digest.encode() + b'","path":"/screenshots/'
+                    + name.encode() + b'"}')
+
+            with tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "local-source.bmp"
+                source.write_bytes(payload)
+                with patch.object(client, "request", side_effect=fake_request):
+                    status, _, _ = client.upload(source, name)
+            self.assertEqual(status, 201)
+            return captured["headers"]
+
+        first = upload_with("viewer-a.bmp")
+        second = upload_with("viewer-b.bmp")
+        again = upload_with("viewer-a.bmp")
+        self.assertEqual(first["X-CTL-Name"], "viewer-a.bmp")
+        self.assertEqual(second["X-CTL-Name"], "viewer-b.bmp")
+        for field in ("X-CTL-Nonce", "X-CTL-Size", "X-CTL-Digest", "Content-Length"):
+            self.assertEqual(first[field], second[field],
+                             f"{field} must not depend on the basename")
+        self.assertEqual(first["X-CTL-MAC"], again["X-CTL-MAC"],
+                         "the upload MAC must stay deterministic for the same metadata")
+        self.assertNotEqual(first["X-CTL-MAC"], second["X-CTL-MAC"],
+                            "the upload MAC must bind the basename, not only size and digest")
+
+    def test_upload_name_rules(self):
+        self.assertIsNone(cli.upload_name_problem("viewer-upload-20261108-1736.bmp"))
+        self.assertIsNone(cli.upload_name_problem("A.BMP"))
+        self.assertIsNone(cli.upload_name_problem("a" * 124 + ".bmp"))
+        for name in ("", "a.bm", "image.png", "image.bmp.exe", ".hidden.bmp", "..bmp",
+                     "a..bmp", "a/b.bmp", "a b.bmp", "café.bmp", "a" * 125 + ".bmp",
+                     "a.bmp\x00"):
+            self.assertIsNotNone(cli.upload_name_problem(name), name)
+
 
 if __name__ == "__main__":
     unittest.main()

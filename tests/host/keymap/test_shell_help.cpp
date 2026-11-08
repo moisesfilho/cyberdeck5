@@ -3,11 +3,11 @@
 // registered app commands and aliases, without executing either; unknown
 // commands; syntax rejection; general help flags; poweroff isolation; normal
 // dispatch preservation; and — REQ-HELP-05 — the usage-metadata contract:
-// `edit help`, `demo help`, `netdiag help` and `music help` must reveal every usage format
-// and subcommand the application declares, the compiled-in inventory (20 apps:
-// 10 command-bearing, 9 commandless services and the shell) must be filtered
-// correctly, aliases/collisions resolve without shadowing, and help never
-// starts or executes an application.
+// `edit help`, `demo help`, `netdiag help`, `music help` and `image help` must
+// reveal every usage format and subcommand the application declares, the
+// compiled-in inventory (21 apps: 11 command-bearing, 9 commandless services and
+// the shell) must be filtered correctly, aliases/collisions resolve without
+// shadowing, and help never starts or executes an application.
 //
 // The session is LVGL-free and reaches the platform only through
 // cyberdeck_shell_session::host, so it links on the host against the fake
@@ -423,6 +423,22 @@ cyberdeck_apps::manifest music_usage_manifest()
     item.command_help_entries[0] = {
         "music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
         "MP3 playback from SD; volume is capped at 50\n"};
+    return item;
+}
+
+cyberdeck_apps::manifest image_usage_manifest()
+{
+    cyberdeck_apps::manifest item{};
+    item.id = "cyberdeck.image_viewer";
+    item.name = "Image viewer";
+    item.version = "1.0.1";
+    item.description = "Foreground BMP image viewer";
+    item.type = cyberdeck_apps::app_type::foreground;
+    item.commands[0] = "image";
+    item.command_count = 1;
+    item.command_help_entries[0] = {
+        "image <path>",
+        "path: absolute BMP file inside the SD namespace; left/right browses the same directory; Esc closes\n"};
     return item;
 }
 
@@ -995,6 +1011,29 @@ int main()
         check_no_side_effects(h, "TEST-HELP-APP-USAGE-MUSIC: no platform side effects");
     }
 
+    /* --- TEST-IMG-HELP-02: `image help` reveals the approved usage and keeps
+     * the application idle (no execution, no start). */
+    {
+        fake_host h;
+        help_manifest_app image_viewer(image_usage_manifest());
+        check(h.apps.register_application(image_viewer),
+              "TEST-IMG-HELP-02: image manifest registers");
+        session s(h);
+        submit(s, "image help");
+        const std::string expected =
+            "/$ image help\n"
+            "image [app]\n"
+            "  Image viewer (cyberdeck.image_viewer) version 1.0.1\n"
+            "  Foreground BMP image viewer\n"
+            "  usage: image <path>\n"
+            "  path: absolute BMP file inside the SD namespace; left/right browses the same directory; Esc closes\n";
+        check_eq(h.output, expected, "TEST-IMG-HELP-02: complete independent golden");
+        check(image_viewer.executions == 0 &&
+                  h.apps.state("cyberdeck.image_viewer") == cyberdeck_apps::app_state::registered,
+              "TEST-IMG-HELP-02: help does not execute or start the viewer");
+        check_no_side_effects(h, "TEST-IMG-HELP-02: no platform side effects");
+    }
+
     /* --- TEST-HELP-APP-USAGE-DEMO: `demo help` on the REAL demo application
      * declares no arguments and keeps the faithful note about ignored extras. */
     {
@@ -1047,7 +1086,7 @@ int main()
         help_manifest_app screenshot(commandless_manifest(
             "cyberdeck.screenshot", "Screenshot service",
             "Local-network telemetry and control HTTP endpoints", cyberdeck_apps::app_type::service,
-            "1.1.0"));
+            "1.1.1"));
         help_manifest_app usb_audio(commandless_manifest(
             "cyberdeck.usb_audio", "USB audio host", "Generic USB Audio Class playback device discovery"));
         help_manifest_app bluetooth(
@@ -1063,6 +1102,7 @@ int main()
         help_manifest_app editor(editor_usage_manifest());
         help_manifest_app netdiag(netdiag_usage_manifest());
         help_manifest_app music(music_usage_manifest());
+        help_manifest_app image_viewer(image_usage_manifest());
         help_manifest_app wifi_console(wifi_console_usage_manifest());
         help_manifest_app ssh_console(ssh_console_usage_manifest());
         help_manifest_app bluetooth_console(bluetooth_console_usage_manifest());
@@ -1073,14 +1113,14 @@ int main()
             &event_log,         &shell_app,        &wifi,
             &serial,            &ssh,              &screenshot,       &usb_audio,
             &bluetooth,         &time_sync,        &ota,             &demo,
-            &editor,            &netdiag,          &music,
+            &editor,            &netdiag,          &music,          &image_viewer,
             &wifi_console,      &ssh_console,      &bluetooth_console,
             &battery_console,   &screen_console,   &event_log_console};
         for (cyberdeck_apps::application *app : registered)
             check(h.apps.register_application(*app),
                   "TEST-HELP-APP-INVENTORY: inventory application registers");
-        check(h.apps.size() == 20,
-               "TEST-HELP-APP-INVENTORY: registers all 20 compiled-in applications");
+        check(h.apps.size() == 21,
+               "TEST-HELP-APP-INVENTORY: registers all 21 compiled-in applications");
 
         std::size_t command_bearing = 0;
         std::size_t commandless_services = 0;
@@ -1103,10 +1143,11 @@ int main()
                 ++commandless_services;
             }
         }
-        check(command_bearing == 10,
-              "TEST-HELP-APP-INVENTORY: exactly 10 applications are command-bearing");
+        check(command_bearing == 11,
+              "TEST-HELP-APP-INVENTORY: exactly 11 applications are command-bearing");
         check(bearing_ids == std::vector<std::string>{"cyberdeck.demo", "cyberdeck.editor", "cyberdeck.netdiag",
-                                                      "cyberdeck.music", "cyberdeck.wifi.shell",
+                                                      "cyberdeck.music", "cyberdeck.image_viewer",
+                                                      "cyberdeck.wifi.shell",
                                                       "cyberdeck.ssh.shell", "cyberdeck.bluetooth.shell",
                                                       "cyberdeck.battery.shell", "cyberdeck.screen.shell",
                                                       "cyberdeck.event_log.shell"},
@@ -1127,6 +1168,8 @@ int main()
             "netdiag [app]\n"
             "  start compiled application\n"
             "music [app]\n"
+            "  start compiled application\n"
+            "image [app]\n"
             "  start compiled application\n"
             "wifi [app]\n"
             "  start compiled application\n"

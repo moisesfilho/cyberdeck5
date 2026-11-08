@@ -44,6 +44,25 @@ inline constexpr int LV_OBJ_FLAG_CLICKABLE=1, LV_OBJ_FLAG_CLICK_FOCUSABLE=2;
 
 struct shim_event_cb { lv_event_cb_t callback{}; int filter{}; void *user_data{}; };
 
+/* LVGL 9.6 descriptor consumed by `lv_image_set_src()`.  The harness records
+ * the header the production view builds (magic/format/stride/size) and the
+ * pointer it hands over, so a wrong stride or a freed buffer is observable. */
+struct lv_image_header_t {
+    std::uint32_t magic{};
+    std::uint32_t cf{};
+    std::uint32_t flags{};
+    std::uint32_t w{};
+    std::uint32_t h{};
+    std::uint32_t stride{};
+};
+struct lv_image_dsc_t {
+    lv_image_header_t header{};
+    std::uint32_t data_size{};
+    const std::uint8_t *data{};
+    const void *reserved{};
+    const void *reserved_2{};
+};
+
 struct _lv_obj_t {
     _lv_obj_t *parent{}; std::vector<_lv_obj_t *> children; std::string text;
     int32_t width{}, height{}, x{}, y{}, slider_value{}; bool hidden{};
@@ -70,6 +89,12 @@ struct _lv_obj_t {
     int32_t scroll_dir{LV_DIR_ALL}, scrollbar_mode{LV_SCROLLBAR_MODE_AUTO}, scroll_y{};
     bool scroll_chain{true};
     std::vector<shim_event_cb> event_callbacks;
+    /* Bitmap widget state: `lv_image_set_src()` stores the pointer, it does not
+     * copy the descriptor, so keeping both lets a scenario prove the source
+     * outlives the widget and that destruction repoints it first. */
+    const void *image_src{};
+    std::uint32_t image_scale{256};
+    bool is_image{};
 };
 using lv_result_t = int;
 inline constexpr lv_result_t LV_RESULT_OK = 0, LV_RESULT_INVALID = -1;
@@ -90,8 +115,38 @@ inline lv_obj_t *lv_label_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_arc_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_textarea_create(lv_obj_t *p) { return lv_obj_create(p); }
 inline lv_obj_t *lv_slider_create(lv_obj_t *p) { return lv_obj_create(p); }
+inline constexpr int LV_COLOR_FORMAT_RGB565 = 0x12;
+#define LV_IMAGE_HEADER_MAGIC (0x19)
+inline lv_obj_t *lv_image_create(lv_obj_t *p)
+{
+    auto *o = lv_obj_create(p);
+    if (o != nullptr) o->is_image = true;
+    return o;
+}
+inline void lv_image_set_src(lv_obj_t *o, const void *src) { if (o) o->image_src = src; }
+inline const void *lv_image_get_src(const lv_obj_t *o) { return o ? o->image_src : nullptr; }
+inline void lv_image_set_scale(lv_obj_t *o, std::uint32_t zoom) { if (o) o->image_scale = zoom; }
+inline std::uint32_t lv_image_get_scale(const lv_obj_t *o) { return o ? o->image_scale : 0; }
+inline void lv_image_set_inner_align(lv_obj_t *, int) {}
+inline void lv_image_set_antialias(lv_obj_t *, bool) {}
 inline lv_obj_t *lv_keyboard_create(lv_obj_t *p) { return lv_obj_create(p); }
-inline void lv_obj_delete(lv_obj_t *o) { delete o; }
+inline void lv_obj_delete(lv_obj_t *o)
+{
+    if (o == nullptr) return;
+    /* Real LVGL deletes the subtree and unlinks the object from its parent.
+     * Recursing keeps the recorded child count meaningful and makes every
+     * destroyed view leak-free, so a stale surface or an orphan child fails a
+     * host assertion (or LeakSanitizer) instead of staying invisible behind a
+     * dangling pointer. */
+    if (o->parent != nullptr) {
+        auto &siblings = o->parent->children;
+        siblings.erase(std::remove(siblings.begin(), siblings.end(), o), siblings.end());
+    }
+    const std::vector<_lv_obj_t *> children = o->children;
+    o->children.clear();
+    for (_lv_obj_t *child : children) lv_obj_delete(child);
+    delete o;
+}
 /* LVGL 9 keeps the v8 spelling alive through its API map; mirror it so the
  * shim never decides which name a production adapter is allowed to use. */
 inline void lv_obj_del(lv_obj_t *o) { lv_obj_delete(o); }
