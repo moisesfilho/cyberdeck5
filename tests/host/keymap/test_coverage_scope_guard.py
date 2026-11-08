@@ -49,12 +49,20 @@ NEWLY_ALLOWLISTED = frozenset({
     "components/cyberdeck/src/apps/control/cyberdeck_control_server.cpp",
 })
 
+# The pre-existing USB Host/UAC hardware adapter. It is the single TU covered
+# by the narrow, user-authorized exception of 2026-11-07: it includes BSP,
+# esp_err/esp_timer, FreeRTOS and usb_host/uac_host and cannot link on the host.
+USB_AUDIO_HOST = "components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_host.cpp"
+USB_AUDIO_JSON = "components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_json.cpp"
+USB_AUDIO_ALLOWLIST = frozenset({USB_AUDIO_HOST})
+
 # The reviewed allowlist as a whole.  The counterfactual fixtures below build
 # their tree from this set instead of the live ALLOWLIST so each scenario
 # exercises the guard itself and cannot be masked by allowlist drift (drift is
 # the exclusive job of TEST-COV-001..005).
 REVIEWED_ALLOWLIST = {path: f"fixture stub for {path}"
-                      for path in PRE_EXISTING_ALLOWLIST | NEWLY_ALLOWLISTED}
+                      for path in PRE_EXISTING_ALLOWLIST | NEWLY_ALLOWLISTED
+                      | USB_AUDIO_ALLOWLIST}
 
 # TUs that must never be allowlisted, whatever else changes.
 REQUIRED_FORBIDDEN = frozenset({
@@ -162,7 +170,7 @@ def write_report(report: Path, files) -> None:
 
 def test_allowlist_is_exactly_the_reviewed_set() -> None:
     """TEST-COV-001: compare with the independently reviewed adapter set."""
-    expected = PRE_EXISTING_ALLOWLIST | NEWLY_ALLOWLISTED
+    expected = PRE_EXISTING_ALLOWLIST | NEWLY_ALLOWLISTED | USB_AUDIO_ALLOWLIST
     assert len(ALLOWLIST) == len(expected), \
         f"allowlist must hold exactly {len(expected)} entries, found {len(ALLOWLIST)}"
     assert set(ALLOWLIST) == expected, (
@@ -254,6 +262,36 @@ def test_netdiag_app_is_required_covered_and_not_allowlisted() -> None:
         assert NETDIAG_APP in output, output
 
 
+def test_usb_audio_exception_is_exactly_the_hardware_tu() -> None:
+    """TEST-COV-013: the user-authorized USB exception covers one exact TU.
+
+    The exception exists only for the hardware adapter; every other production
+    TU under platform/usb/ (the pure serializer) must stay host-covered.
+    """
+    usb_allowlisted = {path for path in ALLOWLIST
+                       if path.startswith("components/cyberdeck/src/platform/usb/")}
+    assert usb_allowlisted == set(USB_AUDIO_ALLOWLIST), (
+        "the USB exception must cover exactly the reviewed set: "
+        f"missing={sorted(set(USB_AUDIO_ALLOWLIST) - usb_allowlisted)} "
+        f"unexpected={sorted(usb_allowlisted - set(USB_AUDIO_ALLOWLIST))}")
+    production = production_sources(ROOT, SOURCE_ROOT)
+    assert (ROOT / USB_AUDIO_HOST).is_file(), f"{USB_AUDIO_HOST} must exist"
+    assert USB_AUDIO_HOST in production, \
+        f"{USB_AUDIO_HOST} must be discovered by the production source scan"
+    assert USB_AUDIO_HOST not in FORBIDDEN_ALLOWLIST
+    # The pure serializer is built and covered by the host suite.
+    assert USB_AUDIO_JSON not in ALLOWLIST, \
+        f"{USB_AUDIO_JSON} is host-covered and must not be allowlisted"
+    assert USB_AUDIO_JSON in production, f"{USB_AUDIO_JSON} must exist"
+    makefile = (ROOT / "tests/host/keymap/Makefile").read_text()
+    assert f"test_usb_audio_host_bin: test_usb_audio_host.cpp ../../../{USB_AUDIO_JSON}" in makefile, \
+        "the host target must keep compiling the real serializer TU"
+    reason = ALLOWLIST[USB_AUDIO_HOST]
+    hardware_dependency = ("usb_host", "uac", "bsp", "freertos")
+    assert any(token in reason.lower() for token in hardware_dependency), \
+        f"the exception must justify the hardware dependency: {reason}"
+
+
 # --- TEST-COV-006..010: fail-closed counterfactuals over temporary fixtures ----
 
 def test_allowlisted_and_covered_is_rejected() -> None:
@@ -284,7 +322,7 @@ def test_allowlist_typo_outside_source_root_is_rejected() -> None:
 def test_removing_an_allowlist_entry_is_rejected() -> None:
     """TEST-COV-008: dropping one of the new entries makes the guard demand
     coverage for a TU that no host binary builds."""
-    for removed in sorted(NEWLY_ALLOWLISTED):
+    for removed in sorted(NEWLY_ALLOWLISTED | USB_AUDIO_ALLOWLIST):
         with tempfile.TemporaryDirectory() as tmp:
             root, source, report = make_fixture(Path(tmp), REVIEWED_ALLOWLIST)
             reduced = {path: reason for path, reason in REVIEWED_ALLOWLIST.items()
@@ -324,6 +362,24 @@ def test_allowlisting_the_covered_demo_app_is_rejected() -> None:
         assert DEMO_APP in output, f"the diagnostic must name {DEMO_APP}: {output}"
 
 
+def test_allowlisting_the_covered_usb_serializer_is_rejected() -> None:
+    """TEST-COV-014: the pure USB serializer must stay host-covered, so adding
+    it to the USB exception fails closed instead of shipping silently."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, source, report = make_fixture(Path(tmp), REVIEWED_ALLOWLIST)
+        serializer = root / USB_AUDIO_JSON
+        serializer.parent.mkdir(parents=True, exist_ok=True)
+        serializer.write_text("int state_name() { return 0; }\n")
+        broken = dict(REVIEWED_ALLOWLIST)
+        broken[USB_AUDIO_JSON] = "pure serializer already covered on the host"
+        write_report(report, [ELIGIBLE, USB_AUDIO_JSON, *sorted(REQUIRED_COVERED)])
+        code, output = run_guard(root, source, report, broken)
+        assert code == 1, \
+            f"allowlisting the covered serializer must fail closed, got {code}: {output}"
+        assert "allowlisted TUs are covered and must be removed from allowlist" in output, output
+        assert USB_AUDIO_JSON in output, f"the diagnostic must name {USB_AUDIO_JSON}: {output}"
+
+
 def allowlist_membership_scenarios() -> None:
     test_allowlist_is_exactly_the_reviewed_set()
     test_new_entries_are_real_production_sources()
@@ -332,6 +388,7 @@ def allowlist_membership_scenarios() -> None:
     test_demo_app_is_not_allowlisted()
     test_editor_view_is_host_covered_and_not_allowlisted()
     test_netdiag_app_is_required_covered_and_not_allowlisted()
+    test_usb_audio_exception_is_exactly_the_hardware_tu()
 
 
 def allowlist_counterfactual_scenarios() -> None:
@@ -340,6 +397,7 @@ def allowlist_counterfactual_scenarios() -> None:
     test_removing_an_allowlist_entry_is_rejected()
     test_demo_app_is_a_required_covered_tu()
     test_allowlisting_the_covered_demo_app_is_rejected()
+    test_allowlisting_the_covered_usb_serializer_is_rejected()
 
 
 def main() -> None:

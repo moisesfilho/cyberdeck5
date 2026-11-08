@@ -266,7 +266,7 @@ were verified.
 | TEST-AUDIO-12 | ID3v2.2, v2.3 and v2.4 title/artist frame decode | Real parser PASS |
 | TEST-AUDIO-13 | Non-ID3 input leaves provided metadata unchanged | Real parser PASS |
 | TEST-AUDIO-14 | Unsupported version, reserved header byte, invalid syncsafe size | Real parser rejects |
-| TEST-AUDIO-15 | Truncated frame and tag-size >64 KiB | Real parser rejects |
+| TEST-AUDIO-15 | Truncated frame and tag-size above the 1 MiB ceiling (`k_id3_max_tag_bytes`, header + payload) | Real parser rejects. A antiga fronteira de 64 KiB de payload foi superada por REQ-MUSIC-META-06 (ver "Envelope de metadados de 1 MiB" no fim deste arquivo) |
 | TEST-AUDIO-16 | UTF-8 valid/invalid and title/artist capacity truncation | Real parser PASS |
 | TEST-AUDIO-17 | Directory enumeration bound (64), MP3 filtering, canceled scan fencing and all-or-nothing queue publish | `test_music_app.cpp` runs real app scan TU against real secure-open APIs/temp root. Two valid MP3s survive text, empty, directory and symlink entries; 65-track overflow preserves prior queue; cancellation during blocked secure-open followed by quiesce does not publish. PASS, 74/74 app checks |
 | TEST-AUDIO-18 | Real host secure-open/secure-opendir for regular file/directory; symlink, traversal and oversize rejection | `test_local_shell.cpp::test_music_scan_secure_open_primitives` invokes production APIs against temp root; target PASS (1122 checks), including regular read, size cap, symlink/traversal and directory handling |
@@ -316,7 +316,7 @@ the non-audio USB negative case remain open. Record in
 | TEST-MUSIC-NAME-FALLBACK | The file-name fallback goes through `sanitize_display_text`: a valid name is preserved, an invalid byte becomes one `?` (maximal subpart), controls become spaces, typographic marks are transliterated and a two-byte sequence that does not fit is dropped whole with NUL termination at `max` | `test_music_model.cpp::test_metadata_struct_and_display_text` covers valid/invalid/control/ellipsis/exact-fit/truncation/degenerate capacities; `test_music_app.cpp` still asserts the real scan fallback title (`alpha.mp3`, `root-track.mp3`) |
 | TEST-MUSIC-TAG-OVERRIDE | The player publishes the ID3 title/artist as `current.title`/`current.artist`, the tag wins over the file-name fallback, and an absent TPE1 leaves the artist empty instead of inheriting a stale value; the reused scan candidate never leaks a previous file's title/artist into the next track | `test_music_player.cpp` plays real tagged fixtures through the real player/decoder (TIT2+TPE1, TIT2 only) and asserts the published snapshot; `test_music_app.cpp` scans a tagged file sorted before an untagged one and asserts the untagged title/artist stay clean; mutation-checked (removing the player tag copy or the reuse reset fails these checks) |
 | TEST-MUSIC-SCAN-STACK | `read_metadata` uses the bounded `metadata` struct and declares no `track` on the 6144-byte scan task; `scan_entry` logs `uxTaskGetStackHighWaterMark(nullptr)` before `vTaskDelete` | `test_music_scan_stack_contract.py` structural guard runs in the aggregate `test`; the logged peak itself is device-only evidence (no host execution) |
-| TEST-MUSIC-ID3-LARGE | ID3 tag larger than the 64 KiB metadata cap is skipped without preventing playback; valid MP3 frames immediately after the declared tag reach the real decoder, and playback remains `failure_stage=none` | `test_music_player.cpp` writes a 70 KiB tag plus valid frames, observes real PCM output and a non-error snapshot; player uses actual decoder and file descriptor. ID3 offset overflow/truncation safety remains exercised through malformed-header ID3 failure below |
+| TEST-MUSIC-ID3-LARGE | A tag above the 1 MiB ceiling (`k_id3_max_tag_bytes`, header + payload) is rejected whole without preventing playback; tags up to the ceiling are parsed and valid MP3 frames immediately after the declared tag reach the real decoder, with playback remaining `failure_stage=none` | `test_music_player.cpp` writes a 70 KiB padding-only tag (historical fixture of the superseded 64 KiB window, now accepted with no fields) plus valid frames, observes real PCM output and a non-error snapshot; player uses actual decoder and file descriptor. Omitir APIC/artwork e limites de leitura: ver `test_music_metadata_io` e "Envelope de metadados de 1 MiB" no fim deste arquivo. ID3 offset overflow/truncation safety remains exercised through malformed-header ID3 failure below |
 | TEST-MUSIC-FAILURE-STAGE | Open, malformed ID3, decode, read, close/I/O, codec-start, and codec-write failures publish their exact stage; successful decode publishes `none`; app status includes `error_stage` only in error state | `test_music_player.cpp` uses the real player/decoder with secure-open, read/close and audio-output failure seams; `test_music_app.cpp` checks rendered status for error/non-error snapshots |
 | TEST-MUSIC-GENERATION-REGRESSION | Superseded playback requests do not publish stale completion/state after stop/play races | Existing barrier-controlled stop/play coverage in `test_music_player.cpp` remains unchanged and is rerun with this batch |
 | TEST-MUSIC-QUEUE-PSRAM | Playback queue payload and worker stack are allocated from byte-addressable PSRAM; worker TCB is statically supplied by the app and resources are released only after completion | `test_music_player.cpp` shim verifies queue capabilities and bounded completion/teardown; host does not prove ESP32-P4 boot, heap availability, or FreeRTOS PSRAM runtime behavior. Physical build `3c21fe901d934f36583efb02959f8540c55c9fb0302a3c5016895b61341d00cd` panicked before firmware logs (`PC=0x4fc0424c`, `MTVAL=0x50091000`), so this variant is not hardware-validated |
@@ -448,3 +448,94 @@ user confirmed on fw `9bfd6410` that the audible cutouts stopped after this
 change. `manual_validation: pending` only for a tester-owned repeat run (the
 image on `/dev/ttyACM0` during the review reported `fw_version` `3`/IDF `v6.1`
 with a two-node `ui.dump`, so it could not be tied to this worktree by hash).
+
+## Identidade da faixa em execução: artista, álbum e título (REQ-MUSIC-META)
+
+Escopo aprovado em `docs/agent-state/music-track-metadata/` (planner + tester).
+O álbum entra na estrutura bounded existente (`metadata`/`track`), é lido do
+mesmo descritor já aberto pelo worker e é transportado por atribuição integral
+do `snapshot.current`; a view ganha uma região própria no card NOW PLAYING
+alimentada por `playback.current`, independente de `render()` e
+`render_browser()`. `music status`, `music list` e `music help` não ganham linha
+de álbum.
+
+| REQ / AC | TEST | Cenário e asserts obrigatórios | Resultado desta entrega |
+| --- | --- | --- | --- |
+| REQ-MUSIC-META-01 / AC-MUSIC-META-01..05 | TEST-MUSIC-META-PARSE-ALBUM, -PARSE-ENCODINGS, -PARSE-LIMIT, -PARSE-FAIL-CLOSED, -PARSE-REGRESSION | `TALB` (v2.3/v2.4) e `TAL` (v2.2) decodificam pelo mesmo caminho de title/artist; frame duplicado segue a regra do último frame (vazio limpa); encodings 0/1/2/3 e transliteração iguais; capacidade nomeada `k_max_album_bytes`, truncagem entre code points e NUL; tag inválida não publica nada (fail-closed via scratch) | `test_music_model` 290/290. Mutações executadas e detectadas: troca dos ids `TAL`↔`TALB` (23 falhas), remoção de `seen.album = true` (27 falhas, inclui frame vazio), quebra de fronteira `k_max_album_bytes - 2` (5 falhas: exato, `cap+1`, code point de 2 bytes, code point de 4 bytes) |
+| REQ-MUSIC-META-02 / AC-MUSIC-META-06..11 | TEST-MUSIC-META-READ-FD, -CURRENT-TAGGED, -CURRENT-SWITCH-NO-STALE, -CURRENT-GENERATION, -CURRENT-ERROR, -CURRENT-PAUSE-STOP-SELECT, -CURRENT-CONSISTENCY, -CURRENT-NO-EXTRA-OPEN | `read_metadata` preenche álbum do mesmo fd sem sobrescrever campo com frame vazio e sem publicar nada se `size` não cobre a tag; `snapshot.current` é a identidade do path do request, substituída integralmente sob guarda de geração; erro de outra faixa não herda artista/álbum; pause/resume/stop/select/set_queue preservam; cada play faz exatamente uma abertura segura | `test_music_player` 560/560 (asserções de tripla/flag e os 11 checks acrescentados pelo tester, contagem final do ciclo de validação). A leitura atômica é regressão observável; TSan/execução concorrente ficam no gate do reviewer |
+| REQ-MUSIC-META-03 / AC-MUSIC-META-12..17 | TEST-MUSIC-META-VIEW-FIELDS, -VIEW-BROWSER-INDEPENDENT, -VIEW-UNAVAILABLE, -VIEW-FALLBACK, -VIEW-LAYOUT-PORTRAIT, -VIEW-LAYOUT-LANDSCAPE, -VIEW-COMMAND-OPEN-COEXIST, -VIEW-TRUNCATION, -VIEW-LIFECYCLE | `now_playing()` devolve a tripla renderizada e o flag de fallback; labels de uma linha com `LV_LABEL_LONG_MODE_DOTS` e largura interna; `render()`/`render_browser()` não escrevem a região; placeholder único para campo ausente e para sessão sem play; fallback = basename sanitizado com extensão e flag; três linhas entre status e progresso, sem sobreposição em portrait/landscape, Command aberto/fechado, resize nos dois sentidos; destroy/create volta a pintar | `test_display_views` PASS (TU LVGL real sob shim). Mutações executadas e detectadas: `render_now_playing()` ignorando `item.title` falha a asserção da tripla; troca do gate de orientação de `view::resized()` (par do mesmo intervalo, `width > height`, e sem `layout()` em portrait) falha `assert_orientation(false)` em `test_display_views` (`now_playing->width == browser->width`) na volta portrait→landscape→portrait — mutação detectada e restaurada pelo tester (fonte de volta ao sha256 original `50011e11…`, `cmp` idêntico; estado mutado era `087b407d…`). Limite do shim: DOTS não é provado em pixels — apenas modo, largura e ausência de `\n` |
+| REQ-MUSIC-META-04 / AC-MUSIC-META-18..19 | TEST-MUSIC-META-GLYPH-ASCII, TEST-MUSIC-META-BOUNDS-DUMP | Literais novos em `0x20–0x7E` cobertos pela `cyberdeck_font`; `k_max_album_bytes` + maior literal da região ≤ `ui_dump::k_max_text_bytes`, ambos derivados dos headers | `test_music_metadata_contract.py` PASS (64 + 15 ≤ 120, placeholder printable ASCII dentro do cmap real). Mutações executadas e detectadas: en dash U+2013 no placeholder falha a cobertura; o contrato também rejeita `render_browser()`/`render()` escrevendo a região |
+| REQ-MUSIC-META-05 / AC-MUSIC-META-20..22 | TEST-MUSIC-META-APP-SNAPSHOT, -APP-QUEUE-UNAFFECTED + regressões preservadas | `music status`/`list`/`help` mantêm as linhas atuais e não ganham álbum; comandos/formatos/dependências inalterados; `music list` mantém `n. <title>`; `replace_queue` valida NUL do álbum; asserções existentes de player/view/app preservadas (os labels novos são criados após `controls_`, então os índices históricos de `now_playing_->children` não mudam) | `test_music_app` 428/428 (inclui negativo exato de álbum em `music status` e `music list`, scan preenchendo `player.last_queue[].album` e `player_snapshot` expondo álbum); `test_display_views` PASS com os índices históricos intactos |
+| REQ-MUSIC-META-03 / wiring | TEST-MUSIC-META-UI-WIRING | `process_music_status` alimenta a região com `s_music_view.render_now_playing(playback.current)` atrás de `if (has_playback_snapshot)`; nunca a partir do texto de status, da lista ou do snapshot do browser | `test_music_metadata_contract.py` PASS. Mutação executada e detectada: trocar a fonte para `s_music_browser_snapshot.current` falha nas três asserções de wiring |
+
+Ciclo de validação final (tester, ciclo 4): os 10 alvos focados foram
+reexecutados sobre o código e os testes desta entrega (nenhuma edição de
+produção ou de teste depois disso) e passaram — `test_music_model` 290/290,
+`test_music_player` 560/560, `test_music_app` 428/428, `test_display_views`
+PASS, `test_music_metadata_contract` PASS, `test_music_player_ui_contract`
+PASS, `test_music_scan_stack_contract` 24 PASS,
+`test_music_player_teardown_contract` 14 PASS, `test_shell_help_contract`
+2 PASS e `test_shell_help` 243 checks/0 falhas. A suíte agregada, os gates de
+cobertura/scope guard, `make verify`, ASan/UBSan/TSan, `idf.py build`,
+`git diff --check` e a validação física continuam não executados nesta entrega.
+
+Validação física permanece pendente (`manual_validation: pending`): os cenários
+`TEST-MUSIC-META-PHYS-*` de `tests/manual/music-player-validation.pt-BR.md`
+dependem de SD com tags conhecidas, `screen.dump`/`ui.dump` e aceite visual no
+Tab5; nenhum flash, build ESP-IDF ou ensaio acústico foi executado nesta
+entrega.
+
+## Envelope de metadados de 1 MiB, streaming por offsets (REQ-MUSIC-META-06)
+
+Contrato reaprovado depois do bug físico: o parser rejeitava tag acima de 64 KiB
+e lia no máximo esse prefixo de um buffer, então um MP3 real com tag de 254209
+bytes (`APIC` de 252112) exibia só o nome do arquivo. O envelope passou a ser
+**1 MiB contando header + payload** (`k_id3_max_tag_bytes`; total igual ao teto é
+aceito, um byte acima rejeita), o leitor percorre frames por offset no mesmo
+descritor e pula `APIC`/frames desconhecidos sem carregar o artwork. A cláusula
+de 64 KiB de `AC-MUSIC-META-04/05` está **superada** apenas nesses pontos; o
+restante do fail-closed e todos os AC 01..22 continuam válidos.
+
+| REQ/AC | TEST | Regra verificada | Evidência |
+| --- | --- | --- | --- |
+| AC-MUSIC-META-23 | TEST-MUSIC-META-ID3-ORDER | v2.2/2.3/2.4 decodificam `TT2/TIT2`, `TP1/TPE1` e `TAL/TALB` com ou sem `APIC` grande antes dos textos e com `TPE2`/`TSSE`/`TRCK`/`TYER` intercalados; bytes dentro do payload de um frame não-alvo nunca viram frame nem texto (decoy `TIT2 "Fake"` embutido no artwork não é publicado) | `test_music_model.cpp::test_id3_large_tag_frame_walk` (parser puro), `test_music_metadata_io.cpp` (variantes `reported` e `apic-first`) |
+| AC-MUSIC-META-24 | TEST-MUSIC-META-READ-SAME-FD | `read_metadata` usa só o `fd` recebido, com `pread` em offset explícito; não fecha o descritor, não altera a posição corrente e é idempotente em chamadas repetidas | `test_music_metadata_io.cpp::test_read_same_fd_keeps_position` (`--wrap=open/openat/dup/close` registram zero chamadas; `lseek(fd,0,SEEK_CUR)` continua 1234 após duas leituras) |
+| AC-MUSIC-META-25 | TEST-MUSIC-META-READ-SKIP-APIC | Nenhuma leitura única excede `k_id3_read_window_bytes`; o total lido não cresce com o tamanho do `APIC`; nenhuma leitura toca o payload do artwork; `TIT2` gigante (300 KiB) é lido até a janela e truncado em `k_max_title_bytes` | `test_music_metadata_io.cpp::test_read_skips_artwork` (maior `pread` ≤ janela, total < 252112, offsets crescentes, zero sobreposição com `[350, 252462)`) |
+| AC-MUSIC-META-26 | TEST-MUSIC-META-ID3-CAP | Teto único e exportado com semântica de bytes totais; total no teto decodifica os três textos mesmo com artwork quase no teto e textos depois dele; teto + 1 rejeita sem publicar | `test_music_model.cpp::test_id3_large_tag_frame_walk` e `test_music_metadata_io.cpp::test_read_cap_boundaries` (fixture de exatamente `k_id3_max_tag_bytes`) |
+| AC-MUSIC-META-27 | TEST-MUSIC-META-ID3-BOUNDS, -ID3-ALLOR-NOTHING, -READ-SHORT-IO, -READ-OOM | Header inválido, versão fora de 2..4, revisão `0xff`, syncsafe `0x80`, frame de tamanho 0, header truncado, frame cruzando o fim, tag acima do teto, tag que não cabe no `size`, short read/`0`/`EIO`, arquivo truncado e falha de alocação rejeitam a tag inteira com `out` preservado; arquivo sem `ID3` não altera `out`. A área final depois do último frame é toda validada: um byte zero só abre padding se **toda** a área declarada restante for zero, então frame de texto válido + `0x00` + lixo não-zero rejeita a tag sem publicar o texto, tanto no parser puro quanto no leitor streaming (que valida em blocos limitados por `k_id3_read_window_bytes`, sem alocar além da janela) | `test_music_model.cpp::test_id3_frame_bounds_flags_and_all_or_nothing` (zero + lixo logo após o último frame e lixo profundo, ambos com sentinelas preservadas; padding zero de vários blocos aceito); `test_music_metadata_io.cpp::test_read_short_io` (injeção por `--wrap=pread`), `test_read_allocation_failure` (falha armada e igualdade de alocação entre tag compacta e tag no teto), `test_read_padding_and_absent_tag` (mesmos três casos sobre arquivo real, com `probe.highest_end == tag end` e nenhuma leitura acima da janela) |
+| AC-MUSIC-META-28 | TEST-MUSIC-META-ID3-FLAGS | `unsynchronisation` (`0x80`), extended header (`0x40`) e bits reservados de header rejeitam; experimental (`0x20`) e footer (`0x10`, v2.4) são tolerados; v2.2 com qualquer flag de header rejeita; frame-alvo com flag de frame rejeita a tag; frame não-alvo com flags é pulado e os textos seguintes decodificam | mesmos dois alvos (matriz de flags em `test_id3_frame_bounds_flags_and_all_or_nothing` e em `test_read_versions_and_flags`) |
+| AC-MUSIC-META-29 | TEST-MUSIC-META-COMPACT-REGRESSION (player) | Rejeição não é erro de playback: `state=playing`, `failure_stage=none`, contadores e sequência inalterados, título = basename sanitizado com extensão, artista/álbum vazios, uma abertura segura por play | `test_music_player.cpp` e `test_music_app.cpp` (fixtures de tag grande e tag acima do teto, mantidos sem mudança de expectativa) |
+| AC-MUSIC-META-30 | TEST-MUSIC-META-COMPACT-REGRESSION | Tags dentro do envelope antigo mantêm resultados idênticos (encodings 0/1/2/3, transliteração, duplicata last-wins, frame vazio limpa, limites de saída, `sanitize`); payload acima de 64 KiB passa a ser aceito com os mesmos valores | `test_music_model.cpp` (matriz existente + `k_legacy_tag_payload + 1` aceito com os três campos exatos) |
+| REQ-MUSIC-META-06 / wiring | TEST-MUSIC-META-ID3-CONTRACT | Constante única do teto (`1024 * 1024`, contado como header + payload) e janela de leitura derivada, usadas pelos dois caminhos; `read_metadata` sem `open`/`openat`/`dup`/`fopen`/`close`/`lseek`/`read` sequencial e com `pread` por offset; uma única alocação `new (std::nothrow)` do tamanho exato da janela; avanço por `header_bytes + payload_bytes` uma vez; rejeição de cross-end, tamanho 0 e syncsafe `0x80`; política de flags aprovada; wiring de alvo/agregado/`--wrap`; documentação do envelope atual com o antigo só como histórico | `test_music_id3_contract.py` (alvo `.PHONY` `test_music_id3_contract`, sem artefato `_bin`) → **PASS**, EXIT=0. Sensibilidade estrutural: **C1** (remover `$(MUSIC_METADATA_HDR)` da regra do alvo de I/O) falha com `must depend on $(MUSIC_METADATA_HDR)`; **C2** (`new (std::nothrow) unsigned char[tag_bytes]`) falha com "the only allocation must be k_id3_read_window_bytes" — ambas restauradas e conferidas por sha256. O contrato complementa (não substitui) os TESTs comportamentais: só eles provam comportamento |
+
+Estado da validação (verificado pelo tester sobre o snapshot `8743eb38…`):
+`test_music_metadata_io` **190/190**, `test_music_model` **361/361**,
+`test_music_player` **598/598**, `test_music_app` **438/438** e
+`test_music_id3_contract` **PASS** (EXIT=0). Mutações obrigatórias
+**M1'–M12 (12/12) executadas, detectadas e restauradas** com sha256 conferido —
+placar parcial anterior (M2–M6) está superado; M10 no parser exigiu `-B`
+enquanto o header de metadata não era pré-requisito de `$(MUSIC_MODEL_BIN)`, e
+depois da correção desse wiring (ciclo 9) M10 foi detectado sem `-B`; M11/M12
+também executadas no mesmo ciclo. M1' só ficou conclusivo na versão compilável
+(ler a tag inteira viola janela/total/overlap/alocação). O agregado, os gates de
+cobertura/scope guard, `make verify`, ASan/UBSan/TSan, `idf.py build`,
+`git diff --check` global e a validação física continuam fora desta entrega.
+
+Estado do dispositivo x aceite: o ensaio manual feito com o firmware **`1.15.1`**
+mostrou apenas o nome do arquivo para o MP3 real — era a reprodução do bug (tag
+de 254209 B com `APIC` de 252112), não uma falha nova. O firmware **`1.15.2`**
+(este fix) foi compilado e gravado por USB Serial-JTAG (imagem `f6c4ba7f…cc4e9e9`,
+2.740.496 bytes, app `0x29d110`), com `sys.info` reportando `fw_version=1.15.2`,
+`safe_mode=false`, `interrupted_boots=0` e uptime monotônico. O usuário executou
+o ensaio nessa imagem com a mesma faixa real e **relatou** “funcionou tudo
+corretamente”: esse é o aceite humano da correção.
+
+O aceite é **reportado pelo usuário**, não observação independente: não há
+`screen.dump`/`ui.dump` arquivado, comparação `ffprobe` lado a lado nem
+repetição por outro operador, e as fixtures caracterizadas de `-OVERCAP`,
+`-ORDER` e `-COMPACT` não têm relato individual. `TEST-MUSIC-META-PHYS-SCAN-COST`
+continua **sem medição**: no pior caso teórico (padding todo-zero até o teto de
+1 MiB, janela de 196 B) são ~5350 `pread` por faixa — risco residual calculado,
+não falha observada; o roteiro de
+`tests/manual/music-player-validation.pt-BR.md` seção 3.3.1 permanece para
+reprodução independente com as fixtures caracterizadas e `ui.dump`/`screen.dump`.

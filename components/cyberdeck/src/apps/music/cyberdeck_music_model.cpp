@@ -1,5 +1,7 @@
 #include "apps/music/cyberdeck_music_model.h"
 
+#include "apps/music/cyberdeck_music_metadata.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -20,17 +22,6 @@ bool safe_path(std::string_view path) {
     }
     const std::string_view ext = path.substr(path.size() - 4);
     return ext[0] == '.' && (ext[1] == 'm' || ext[1] == 'M') && (ext[2] == 'p' || ext[2] == 'P') && ext[3] == '3';
-}
-
-std::uint32_t frame_size(const unsigned char *p, std::size_t count, std::uint8_t version) {
-    if (version == 4) {
-        if (count < 4 || (p[0] | p[1] | p[2] | p[3]) & 0x80)
-            return UINT32_MAX;
-        return (std::uint32_t(p[0]) << 21) | (std::uint32_t(p[1]) << 14) | (std::uint32_t(p[2]) << 7) | p[3];
-    }
-    if (count < 4)
-        return UINT32_MAX;
-    return (std::uint32_t(p[0]) << 24) | (std::uint32_t(p[1]) << 16) | (std::uint32_t(p[2]) << 8) | p[3];
 }
 
 /* Encodes one code point as UTF-8 inside the `cyberdeck_font` repertoire.
@@ -132,12 +123,156 @@ void copy_utf8_text(char *target, std::size_t max, const unsigned char *data, st
     target[out] = '\0';
 }
 
-void copy_text(char *target, std::size_t max, const unsigned char *data, std::size_t length) {
-    if (length < 1)
+/* Frames actually present in the tag, so the `track` overload preserves the
+ * historical "a present but empty frame clears the field" behavior. */
+struct frame_fields {
+    bool title = false;
+    bool artist = false;
+    bool album = false;
+};
+
+bool parse_tag(std::string_view bytes, metadata &out, frame_fields &seen) {
+    const auto *p = reinterpret_cast<const unsigned char *>(bytes.data());
+    id3v2_header tag{};
+    const id3v2_header_status status = parse_id3v2_header(p, bytes.size(), tag);
+    if (status == id3v2_header_status::absent)
+        return true;
+    if (status == id3v2_header_status::rejected)
+        return false;
+    const std::size_t end = k_id3v2_header_bytes + tag.payload_bytes;
+    if (end > bytes.size())
+        return false;
+    /* Frames are decoded into a scratch value and only merged into `out` once
+     * the whole tag parsed, so a rejected tag never publishes a partial album
+     * (or a partial title/artist) from the frames before the failure. */
+    metadata decoded{};
+    std::size_t offset = k_id3v2_header_bytes;
+    const std::size_t frame_header_bytes = tag.version == 2 ? 6 : k_id3v2_header_bytes;
+    while (offset + frame_header_bytes <= end) {
+        if (p[offset] == 0)
+            break;
+        id3v2_frame_header frame{};
+        if (!parse_id3v2_frame_header(p + offset, end - offset, tag.version, frame) ||
+            frame.payload_bytes > end - offset - frame.header_bytes)
+            return false;
+        if (frame.field != id3v2_field::none) {
+            if (!frame.flags_clear)
+                return false;
+            const auto *payload = reinterpret_cast<const char *>(p + offset + frame.header_bytes);
+            const std::string_view text(payload, frame.payload_bytes);
+            switch (frame.field) {
+            case id3v2_field::title:
+                decode_id3v2_text(text, decoded.title.data(), k_max_title_bytes);
+                seen.title = true;
+                break;
+            case id3v2_field::artist:
+                decode_id3v2_text(text, decoded.artist.data(), k_max_artist_bytes);
+                seen.artist = true;
+                break;
+            case id3v2_field::album:
+                decode_id3v2_text(text, decoded.album.data(), k_max_album_bytes);
+                seen.album = true;
+                break;
+            case id3v2_field::none:
+                break;
+            }
+        }
+        offset += frame.header_bytes + frame.payload_bytes;
+    }
+    /* Everything between the last complete frame and the declared tag end must
+     * be zero. A remainder shorter than a frame header is only padding when it
+     * is zero, and a zero byte that ends the frames area only opens padding
+     * when the whole area after it is zero too: a non-zero byte there is
+     * leftover garbage or a truncated frame, which rejects the tag whole
+     * instead of publishing the frames that came before it. The scan is over
+     * the tag bytes already in memory, so it never waits on I/O. */
+    for (std::size_t i = offset; i < end; ++i)
+        if (p[i] != 0)
+            return false;
+    if (seen.title)
+        out.title = decoded.title;
+    if (seen.artist)
+        out.artist = decoded.artist;
+    if (seen.album)
+        out.album = decoded.album;
+    return true;
+}
+} // namespace
+
+bool is_mp3_path(std::string_view path) {
+    return safe_path(path);
+}
+
+id3v2_header_status parse_id3v2_header(const unsigned char *bytes, std::size_t count, id3v2_header &out) {
+    if (bytes == nullptr || count < 3 || std::memcmp(bytes, "ID3", 3) != 0)
+        return id3v2_header_status::absent;
+    if (count < k_id3v2_header_bytes)
+        return id3v2_header_status::rejected;
+    const std::uint8_t version = bytes[3];
+    if (version < 2 || version > 4 || bytes[4] == 0xff || (bytes[6] | bytes[7] | bytes[8] | bytes[9]) & 0x80)
+        return id3v2_header_status::rejected;
+    /* Unsynchronisation and the extended header move or re-encode the payload,
+     * so those tags are rejected instead of being walked at the wrong offsets.
+     * Experimental (2.3/2.4) and footer (2.4) do not move it and are tolerated.
+     * ID3v2.2 has no tolerated flag: unsync, compression and the reserved bits
+     * all mean the frames cannot be trusted. */
+    const std::uint8_t flags = bytes[5];
+    const std::uint8_t reserved = version == 2 ? 0x3f : version == 3 ? 0x1f : 0x0f;
+    if (version == 2 ? flags != 0 : (flags & (0x80 | 0x40 | reserved)) != 0)
+        return id3v2_header_status::rejected;
+    const std::size_t payload_bytes = (std::size_t(bytes[6]) << 21) | (std::size_t(bytes[7]) << 14) |
+                                      (std::size_t(bytes[8]) << 7) | bytes[9];
+    if (payload_bytes + k_id3v2_header_bytes > k_id3_max_tag_bytes)
+        return id3v2_header_status::rejected;
+    out.version = version;
+    out.payload_bytes = payload_bytes;
+    return id3v2_header_status::accepted;
+}
+
+bool parse_id3v2_frame_header(const unsigned char *bytes, std::size_t count, std::uint8_t version,
+                              id3v2_frame_header &out) {
+    const std::size_t header_bytes = version == 2 ? 6 : k_id3v2_header_bytes;
+    if (bytes == nullptr || count < header_bytes)
+        return false;
+    std::uint32_t size = 0;
+    if (version == 2) {
+        size = (std::uint32_t(bytes[3]) << 16) | (std::uint32_t(bytes[4]) << 8) | bytes[5];
+    } else if (version == 4) {
+        if ((bytes[4] | bytes[5] | bytes[6] | bytes[7]) & 0x80)
+            return false;
+        size = (std::uint32_t(bytes[4]) << 21) | (std::uint32_t(bytes[5]) << 14) |
+               (std::uint32_t(bytes[6]) << 7) | bytes[7];
+    } else {
+        size = (std::uint32_t(bytes[4]) << 24) | (std::uint32_t(bytes[5]) << 16) |
+               (std::uint32_t(bytes[6]) << 8) | bytes[7];
+    }
+    if (size == 0)
+        return false;
+    const char *id = reinterpret_cast<const char *>(bytes);
+    out.header_bytes = static_cast<std::uint8_t>(header_bytes);
+    out.payload_bytes = size;
+    out.flags_clear = version == 2 || (bytes[8] == 0 && bytes[9] == 0);
+    out.field = id3v2_field::none;
+    if ((version == 2 && std::memcmp(id, "TT2", 3) == 0) || (version != 2 && std::memcmp(id, "TIT2", 4) == 0))
+        out.field = id3v2_field::title;
+    else if ((version == 2 && std::memcmp(id, "TP1", 3) == 0) || (version != 2 && std::memcmp(id, "TPE1", 4) == 0))
+        out.field = id3v2_field::artist;
+    else if ((version == 2 && std::memcmp(id, "TAL", 3) == 0) || (version != 2 && std::memcmp(id, "TALB", 4) == 0))
+        out.field = id3v2_field::album;
+    return true;
+}
+
+void decode_id3v2_text(std::string_view payload, char *dst, std::size_t max) {
+    if (dst == nullptr || max == 0)
         return;
+    dst[0] = '\0';
+    if (payload.empty())
+        return;
+    const auto *data = reinterpret_cast<const unsigned char *>(payload.data());
+    const std::size_t length = payload.size();
     const unsigned encoding = data[0];
     if (encoding == 3) {
-        copy_utf8_text(target, max, data + 1, length - 1);
+        copy_utf8_text(dst, max, data + 1, length - 1);
         return;
     }
     std::size_t out = 0;
@@ -146,7 +281,7 @@ void copy_text(char *target, std::size_t max, const unsigned char *data, std::si
             const unsigned char c = data[i];
             if (c == 0)
                 break;
-            if (!append_codepoint(target, out, max, c))
+            if (!append_codepoint(dst, out, max, c))
                 break;
         }
     } else if ((encoding == 1 || encoding == 2) && length >= 3) {
@@ -178,63 +313,11 @@ void copy_text(char *target, std::size_t max, const unsigned char *data, std::si
                     i += 2;
                 }
             }
-            if (!append_codepoint(target, out, max, codepoint))
+            if (!append_codepoint(dst, out, max, codepoint))
                 break;
         }
     }
-    target[out] = '\0';
-}
-
-/* Frames actually present in the tag, so the `track` overload preserves the
- * historical "a present but empty frame clears the field" behavior. */
-struct frame_fields {
-    bool title = false;
-    bool artist = false;
-};
-
-bool parse_tag(std::string_view bytes, metadata &out, frame_fields &seen) {
-    if (bytes.size() < 10 || bytes.substr(0, 3) != "ID3")
-        return true;
-    const auto *p = reinterpret_cast<const unsigned char *>(bytes.data());
-    const std::uint8_t version = p[3];
-    if (version < 2 || version > 4 || p[4] == 0xff || (p[6] | p[7] | p[8] | p[9]) & 0x80)
-        return false;
-    const std::size_t tag_bytes =
-        (std::size_t(p[6]) << 21) | (std::size_t(p[7]) << 14) | (std::size_t(p[8]) << 7) | p[9];
-    if (tag_bytes > 64 * 1024 || tag_bytes + 10 > bytes.size())
-        return false;
-    std::size_t offset = 10;
-    const std::size_t end = 10 + tag_bytes;
-    const std::size_t header_bytes = version == 2 ? 6 : 10;
-    while (offset + header_bytes <= end) {
-        if (p[offset] == 0)
-            break;
-        const std::uint32_t size =
-            version == 2 ? (std::uint32_t(p[offset + 3]) << 16) | (std::uint32_t(p[offset + 4]) << 8) | p[offset + 5]
-                         : frame_size(p + offset + 4, 4, version);
-        if (size == UINT32_MAX || size == 0 || offset + header_bytes + size > end)
-            return false;
-        const char *id = reinterpret_cast<const char *>(p + offset);
-        const bool title =
-            (version == 2 && std::memcmp(id, "TT2", 3) == 0) || (version != 2 && std::memcmp(id, "TIT2", 4) == 0);
-        const bool artist =
-            (version == 2 && std::memcmp(id, "TP1", 3) == 0) || (version != 2 && std::memcmp(id, "TPE1", 4) == 0);
-        if (title) {
-            copy_text(out.title.data(), k_max_title_bytes, p + offset + header_bytes, size);
-            seen.title = true;
-        }
-        if (artist) {
-            copy_text(out.artist.data(), k_max_artist_bytes, p + offset + header_bytes, size);
-            seen.artist = true;
-        }
-        offset += header_bytes + size;
-    }
-    return true;
-}
-} // namespace
-
-bool is_mp3_path(std::string_view path) {
-    return safe_path(path);
+    dst[out] = '\0';
 }
 
 bool parse_id3v2(std::string_view bytes, metadata &out) {
@@ -251,6 +334,8 @@ bool parse_id3v2(std::string_view bytes, track &out) {
         out.title = tags.title;
     if (seen.artist)
         out.artist = tags.artist;
+    if (seen.album)
+        out.album = tags.album;
     return true;
 }
 
@@ -265,7 +350,8 @@ bool model::replace_queue(const track *items, std::size_t count) {
         return false;
     for (std::size_t i = 0; i < count; ++i) {
         if (items[i].path.back() != '\0' || !safe_path(items[i].path.data()) || items[i].title.back() != '\0' ||
-            items[i].artist.back() != '\0' || items[i].size_bytes == 0 || items[i].size_bytes > k_max_track_bytes)
+            items[i].artist.back() != '\0' || items[i].album.back() != '\0' || items[i].size_bytes == 0 ||
+            items[i].size_bytes > k_max_track_bytes)
             return false;
     }
     tracks_ = {};

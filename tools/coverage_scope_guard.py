@@ -62,6 +62,14 @@ ALLOWLIST = {
         "i2c_master_bus_add_device); no host build, pinned structurally by "
         "test_battery_protection_contract.py and behaviorally for the broker "
         "lease by test_expander_broker.cpp",
+    "components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_host.cpp":
+        "BSP ESP32-P4 USB Host + espressif/usb_host_uac + FreeRTOS adapter "
+        "(bsp_usb_host_start, usb_host_*, uac_host_*); no host build or link. "
+        "Narrow exception authorized by the user on 2026-11-07 for this "
+        "pre-existing TU only: the pure serializer "
+        "cyberdeck_usb_audio_json.cpp stays host-covered and "
+        "test_usb_audio_host_contract.py pins the wiring, while the UAC "
+        "behavior was accepted on the Tab5",
 }
 
 FORBIDDEN_ALLOWLIST = {

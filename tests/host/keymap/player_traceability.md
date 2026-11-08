@@ -419,3 +419,25 @@ estático BSS, atualizado pela cópia atômica existente e consumido sincronicam
 somente no contexto LVGL pelos caminhos de timer, render e ações. TEST-MUSIC-SCAN-UI-SNAPSHOT-07
 protege ausência de cópias locais e os consumidores; não amplia a análise do
 budget global da task LVGL nem valida hardware.
+
+## Identidade da faixa em execução (artista/álbum) — REQ-MUSIC-META-02
+
+A identidade publicada pelo worker (`snapshot.current`) passou a carregar
+`album` e o flag `title_from_filename`, sempre por atribuição integral
+(`state.current = current`) sob `state_mutex` e guarda de geração. Ela é sempre
+a do **path do request que foi aberto**, não a do índice selecionado na fila;
+o fallback de título é o basename sanitizado com extensão e o flag só fica falso
+quando um `TIT2/TT2` não vazio substituiu o nome. O caminho de erro também fixa
+a identidade do request que falhou (basename, sem herdar artista/álbum da faixa
+anterior). Cenários `TEST-MUSIC-META-CURRENT-*`, `TEST-MUSIC-META-READ-FD` e
+`TEST-MUSIC-META-CURRENT-NO-EXTRA-OPEN` estão em `test_music_player`
+(598 checks PASS na validação independente mais recente, que incorpora 11 checks
+do tester e os casos do envelope de 1 MiB) e a leitura de metadados por offset,
+o skip de `APIC`, o short read e a falha de alocação estão no alvo dedicado
+`test_music_metadata_io` (`TEST-MUSIC-META-READ-SAME-FD`, `-SKIP-APIC`,
+`-SHORT-IO`, `-OOM`), com o contrato estrutural
+`test_music_id3_contract` (`TEST-MUSIC-META-ID3-CONTRACT`, PASS) cobrindo os
+invariantes de constantes/`pread`/alocação/flags e o wiring do Makefile; a
+rastreabilidade completa em `music_traceability.md` →
+"Identidade da faixa em execução" e "Envelope de metadados de 1 MiB". A validação
+física dos três campos na view continua pendente e é do tester/device.

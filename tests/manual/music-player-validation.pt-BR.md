@@ -237,6 +237,126 @@ stage=...`) são evidência diagnóstica para uma rodada autorizada futura; host
 tests não provam ausência de reboot no Tab5. A regressão de ESC tem cenário
 próprio e autorização explícita na seção 4.
 
+### 3.3. Identidade da faixa em execução — título, artista e álbum (REQ-MUSIC-META)
+
+Requer a mesma autorização de playback da seção 3.2. A região fica no card
+`NOW PLAYING`, entre o bloco de status e a barra de progresso: três linhas de
+uma linha cada (título, artista, álbum), truncadas com `...` quando não couberem.
+Campo ausente na tag mostra `(not available)`; nunca um texto de outra faixa.
+
+Oráculo independente no PC, registrado **antes** de copiar para `/musica`:
+
+- (A) MP3 com `TIT2`+`TPE1`+`TALB` (ID3v2.3), com ASCII e acentos;
+- (B) MP3 só com `TIT2` (sem `TPE1`/`TALB`);
+- (C) MP3 sem ID3v2 (fallback pelo nome do arquivo, incluindo um nome longo);
+- (D) opcional: tag UTF-16/BOM com tipográficos.
+
+Registre os três primeiros com `ffprobe -show_entries
+format_tags=title,artist,album:s -of default=nw=1 <arquivo>` (ou exiftool/mid3v2)
+e compare com o que aparece na tela; não use leitura subjetiva como prova.
+
+Cenários (cada um com evidência própria; `ui.dump` trunca por nó e pode não
+mostrar a região, então use `screen.dump` quando necessário):
+
+- `TEST-MUSIC-META-PHYS-PORTRAIT`: `music queue /musica` → `music list` →
+  `music play <A>` → `music` → `ui.dump`/`screen.dump`. Esperado: os três textos
+  iguais ao oráculo A; `sys.info` com uptime monotônico.
+- `TEST-MUSIC-META-PHYS-LANDSCAPE`: girar o Tab5 e repetir `ui.dump`+
+  `screen.dump`; as três linhas continuam legíveis e sem sobreposição com
+  status/progresso/tempo/volume/controles. Se a rotação não puder ser feita com
+  segurança, registrar landscape como pendente (não inferir por host).
+- `TEST-MUSIC-META-PHYS-SWITCH`: com o player aberto, `ui.tap "Next"` (ou
+  `Esc` + `music next`) para B: artista/álbum mostram `(not available)` e o
+  título mostra o `TIT2` de B; voltar para A restaura os três. Depois `music
+  stop` (via shell após `Esc`): a tripla persiste e não aparece metadado de
+  outra faixa. Sem reboot, uptime monotônico.
+- `TEST-MUSIC-META-PHYS-UNAVAILABLE`: abrir o player sem tocar nada
+  (`state=stopped`): os três campos mostram `(not available)` e não o metadado
+  da faixa meramente selecionada na fila.
+- `TEST-MUSIC-META-PHYS-COMMAND`: abrir `Command` no player e confirmar que a
+  região continua visível, sem sobreposição com o campo nem com os controles,
+  nas duas orientações; fechar restaura o layout.
+
+Fora do escopo desta seção: acústica speaker/jack, fone USB/P2 e A2DP, que têm
+autorização separada.
+
+#### 3.3.1. Envelope de metadados de 1 MiB (ID3v2 grande, streaming por offsets)
+
+Cobre o bug físico em que uma faixa real exibia só o nome do arquivo porque a
+tag (`01 - The Kid (Kid Cosmic Theme).mp3`, ID3v2.3 sem flags, payload 254209,
+`APIC` 252112) excedia o limite antigo de 64 KiB. O contrato vigente aceita tag
+de até **1 MiB contando header + payload** (total igual ao teto é aceito, um
+byte acima rejeita a tag inteira), percorre os frames por offset no mesmo
+descritor e pula `APIC`/frames desconhecidos sem carregar o artwork.
+
+Estado do ensaio físico: o teste manual feito no Tab5 com o firmware
+**`1.15.1`** mostrou apenas o nome do arquivo para esse MP3 — era a reprodução
+do bug (tag de 254209 B com `APIC` de 252112), não um defeito novo. O firmware
+**`1.15.2`**, que contém a correção, foi compilado e gravado por USB
+Serial-JTAG (imagem `build/cyberdeck5.bin` SHA-256 `f6c4ba7f…cc4e9e9`,
+2.740.496 bytes, app `0x29d110`), com `sys.info` reportando `fw_version=1.15.2`,
+`safe_mode=false`, `interrupted_boots=0` e uptime monotônico. O usuário executou
+o ensaio nessa imagem com a mesma faixa real que antes exibia o basename e
+**relatou** que “funcionou tudo corretamente”: esse é o aceite humano desta
+correção.
+
+Limites desse registro: o aceite é **reportado pelo usuário**, não uma
+observação independente — não há `screen.dump`/`ui.dump` arquivado, comparação
+`ffprobe` lado a lado nem repetição por outro operador, e as fixtures
+caracterizadas de `-OVERCAP`, `-ORDER` e `-COMPACT` não têm relato individual.
+`TEST-MUSIC-META-PHYS-SCAN-COST` continua **sem medição**: no pior caso teórico
+(padding todo-zero até o teto de 1 MiB, janela de leitura de 196 B) o leitor
+emite ~5350 `pread` por faixa, então o custo no SD segue como risco residual do
+gate de física — risco calculado, não falha observada. Os cenários abaixo ficam
+como roteiro para reproduzir a evidência de forma independente.
+
+Pré-condições, além do gate comum: registrar `fw_version` (esperado `1.15.2`) e
+o SHA-256 do `build/cyberdeck5.bin` gravado; `sys.info` com `safe_mode=false`,
+`interrupted_boots=0` e uptime monotônico. Uma sessão serial por vez; não abrir
+`idf.py monitor` durante o playback.
+
+Preparar no PC (o `fs.write` da ponte aceita só 2 KiB, então copie pelo leitor de
+cartão) e registrar o SHA-256 de cada arquivo antes de copiar para `/musica`:
+
+- o MP3 real do usuário (não versionar no repositório, não copiar para
+  `tests/`), oráculo `ffprobe -show_entries format_tags=title,artist,album`;
+- `real-shaped`: tag sintética com a geometria do arquivo relatado (payload
+  254209, `TALB`@10/69, `TPE1`@89/47, `TPE2`@146/47, `TSSE`@203/29,
+  `TIT2`@242/59, `TRCK`@311/3, `TYER`@324/6, `APIC`@340/252112, padding 1757) e
+  artwork zerado;
+- `apic-first`: textos depois do `APIC` grande;
+- `cap`: total exatamente 1 MiB, com os três textos após artwork quase no teto;
+- `cap+1`: um byte acima do teto, com os três textos completos;
+- `compact-64KiB`: tag pequena só com padding (sem frames de texto);
+- `truncado`: tag declarada maior que o arquivo.
+
+Cenários (cada um com evidência própria; `ui.dump` trunca por nó, use
+`screen.dump` quando a região não couber):
+
+- `TEST-MUSIC-META-PHYS-LARGE`: `music queue /musica` → `music list` →
+  `music play <real>` → `music` → `ui.dump`/`screen.dump`. Esperado: título,
+  artista e álbum exatamente iguais ao oráculo (inclusive o espaço inicial do
+  título), em portrait e landscape, sem sobreposição nem truncagem; amostrar a
+  tela a cada 1 s durante 2 min de play/troca para detectar stale/flicker;
+  uptime monotônico, sem panic/WDT.
+- `TEST-MUSIC-META-PHYS-OVERCAP`: tocar `cap+1`. Esperado: playback normal
+  (`playing`, `failure_stage=none`, sem linha de erro), título = basename com
+  extensão, artista/álbum indisponíveis; nenhum reboot.
+- `TEST-MUSIC-META-PHYS-ORDER`: tocar `apic-first`. Esperado: os três campos
+  corretos (o artwork não pode virar texto nem deslocar os frames).
+- `TEST-MUSIC-META-PHYS-COMPACT`: tocar `compact-64KiB` (só padding) ⇒ basename;
+  tocar um MP3 compacto com tags ⇒ os três campos (regressão visível do caminho
+  antigo).
+- `TEST-MUSIC-META-PHYS-SCAN-COST`: `music queue` em um diretório com 5 arquivos
+  de tag grande; registrar tempo e, se exposto, o stack/high-water do scan.
+  Aceite: sem panic/reboot e tempo coerente com leitura bounded — o número de
+  `pread` cresce com o número de frames, então este é o gate de custo no SD.
+
+Nenhum ensaio destrutivo e não repetir interação que já causou reboot/panic. O
+aceite reportado pelo usuário cobre a faixa real; os cenários sem relato
+individual (fixtures caracterizadas) e `TEST-MUSIC-META-PHYS-SCAN-COST`
+permanecem como evidência independente pendente.
+
 ### Fora do escopo desta rodada: autorização explícita obrigatória
 
 Os testes acústicos/de playback abaixo só podem ser executados em outra rodada,

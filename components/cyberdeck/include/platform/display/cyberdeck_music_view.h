@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include "apps/music/cyberdeck_music_browser.h"
+#include "apps/music/cyberdeck_music_model.h"
 
 struct _lv_obj_t;
 using lv_obj_t = _lv_obj_t;
@@ -12,6 +13,18 @@ struct _lv_event_t;
 using lv_event_t = _lv_event_t;
 
 namespace cyberdeck_music_view {
+/* Text actually rendered by the NOW PLAYING identity region, in the order
+ * title/artist/album. An absent field renders the single production placeholder
+ * (`kUnavailableText`), never an empty string or a value borrowed from another
+ * track. `title_from_filename` is the machine-readable fallback marker: it is
+ * true only while the title is the sanitized file name of the playing track. */
+struct now_playing_text {
+    std::string_view title;
+    std::string_view artist;
+    std::string_view album;
+    bool title_from_filename = false;
+};
+
 class view final {
   public:
     using callback = void (*)(std::string_view action, void *context);
@@ -21,6 +34,11 @@ class view final {
     bool visible() const { return surface_ != nullptr && visible_; }
     bool exists() const { return surface_ != nullptr; }
     void render(std::string_view text);
+    /* Feeds the track identity region from the playback snapshot. It is a
+     * separate entry point on purpose: `render()` and `render_browser()` own the
+     * status and library labels and must never overwrite the region. */
+    void render_now_playing(const cyberdeck_music::track &item);
+    now_playing_text now_playing() const;
     void render_browser(const cyberdeck_music::browser_snapshot &snapshot, bool scanning);
     void set_command_open(bool open);
     bool command_open() const;
@@ -54,6 +72,12 @@ class view final {
     lv_obj_t *now_title_ = nullptr;
     lv_obj_t *browser_title_ = nullptr;
     lv_obj_t *status_ = nullptr;
+    /* Identity region of the track in execution (AC-MUSIC-META-12..16). The
+     * labels are appended after the existing children so the historical child
+     * indices of `now_playing_` do not move. */
+    lv_obj_t *meta_title_ = nullptr;
+    lv_obj_t *meta_artist_ = nullptr;
+    lv_obj_t *meta_album_ = nullptr;
     lv_obj_t *now_playing_ = nullptr;
     lv_obj_t *time_ = nullptr;
     lv_obj_t *volume_ = nullptr;
@@ -78,6 +102,10 @@ class view final {
     std::size_t browser_entry_count_ = 0;
     bool browser_parent_visible_ = false;
     bool browser_mode_ = false;
+    bool meta_title_from_filename_ = false;
+    std::string meta_title_text_;
+    std::string meta_artist_text_;
+    std::string meta_album_text_;
     std::string browser_directory_;
 };
 } // namespace cyberdeck_music_view

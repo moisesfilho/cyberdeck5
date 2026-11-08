@@ -240,12 +240,14 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_SOC_BIN) $(BATTERY_VIEW_BIN) $(BATTERY_JSON_BIN) test_music_model_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN) test_music_header_visibility_bin $(MUSIC_PRESENCE_BIN)
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_SOC_BIN) $(BATTERY_VIEW_BIN) $(BATTERY_JSON_BIN) test_music_model_bin test_music_metadata_io_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN) test_music_header_visibility_bin $(MUSIC_PRESENCE_BIN)
 
 MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
 MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
 MUSIC_MODEL_TEST := test_music_model.cpp
 MUSIC_MODEL_BIN := test_music_model_bin
+MUSIC_METADATA_IO_TEST := test_music_metadata_io.cpp
+MUSIC_METADATA_IO_BIN := test_music_metadata_io_bin
 MUSIC_AUDIO_TEST := test_music_audio_output.cpp
 MUSIC_AUDIO_SRC := ../../../components/cyberdeck/src/platform/audio/cyberdeck_audio_output.cpp
 MUSIC_AUDIO_HDR := ../../../components/cyberdeck/include/platform/audio/cyberdeck_audio_output.h
@@ -2330,6 +2332,21 @@ test_music_player_ui_contract: test_music_player_ui_contract.py \
 		../../../components/cyberdeck/src/platform/display/cyberdeck_font.c Makefile
 	$(PYTHON) test_music_player_ui_contract.py
 
+# Structural contract of the NOW PLAYING track-identity region (title, artist,
+# album of the track in execution): UI wiring from `playback.current`, glyph
+# coverage of the single placeholder, and the album/dump bounds derived from the
+# two headers.
+.PHONY: test_music_metadata_contract
+test_music_metadata_contract: test_music_metadata_contract.py \
+		test_music_player_ui_contract.py \
+		../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h \
+		../../../components/cyberdeck/include/platform/display/cyberdeck_music_view.h \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_music_view.cpp \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp \
+		../../../components/cyberdeck/include/apps/serial/cyberdeck_ui_dump_serializer.h \
+		../../../components/cyberdeck/src/platform/display/cyberdeck_font.c Makefile
+	$(PYTHON) test_music_metadata_contract.py
+
 # Drift gate between the versioned `LV_SYMBOL_*` map and the pinned LVGL header.
 # Deliberately NOT part of the aggregate `test`: `managed_components/` is
 # gitignored and only materializes after a CMake warm-up, so the aggregate must
@@ -2914,6 +2931,30 @@ test-build: $(BINS)
 test_music_model: $(MUSIC_MODEL_BIN)
 	@./$(MUSIC_MODEL_BIN)
 
+# Streaming ID3v2 reader: real temp files plus descriptor/allocator probes. The
+# wrappers prove that the reader uses only the descriptor it was given, at
+# explicit offsets, with bounded reads.
+.PHONY: test_music_metadata_io
+test_music_metadata_io: $(MUSIC_METADATA_IO_BIN)
+	@./$(MUSIC_METADATA_IO_BIN)
+
+$(MUSIC_METADATA_IO_BIN): $(MUSIC_METADATA_IO_TEST) $(MUSIC_MODEL_SRC) $(MUSIC_METADATA_SRC) $(MUSIC_MODEL_HDR) $(MUSIC_METADATA_HDR) music_traceability.md Makefile
+	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(MUSIC_METADATA_IO_TEST) $(MUSIC_MODEL_SRC) $(MUSIC_METADATA_SRC) -Wl,--wrap=pread -Wl,--wrap=open -Wl,--wrap=openat -Wl,--wrap=dup -Wl,--wrap=close -o $@
+
+# Structural contract for the 1 MiB ID3v2 envelope (TEST-MUSIC-META-ID3-CONTRACT):
+# single exported constants, pread/offset reader without reopen, bounded
+# allocation/frame walk, approved flag policy, Makefile wiring and documentation.
+# Complements, and does not replace, the behavioral tests.
+.PHONY: test_music_id3_contract
+test_music_id3_contract: test_music_id3_contract.py \
+		../../../components/cyberdeck/include/apps/music/cyberdeck_music_metadata.h \
+		../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h \
+		../../../components/cyberdeck/src/apps/music/cyberdeck_music_metadata.cpp \
+		../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
+		../../../docs/03-audio-player-plan.pt-BR.md \
+		../../../tests/manual/music-player-validation.pt-BR.md Makefile
+	$(PYTHON) test_music_id3_contract.py
+
 .PHONY: test_music_browser
 test_music_browser: test_music_browser_bin
 	@./test_music_browser_bin
@@ -2921,7 +2962,7 @@ test_music_browser: test_music_browser_bin
 test_music_browser_bin: test_music_browser.cpp ../../../components/cyberdeck/src/apps/music/cyberdeck_music_browser.cpp ../../../components/cyberdeck/include/apps/music/cyberdeck_music_browser.h Makefile
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $< ../../../components/cyberdeck/src/apps/music/cyberdeck_music_browser.cpp -o $@
 
-$(MUSIC_MODEL_BIN): $(MUSIC_MODEL_TEST) $(MUSIC_MODEL_SRC) $(MUSIC_MODEL_HDR) music_traceability.md Makefile
+$(MUSIC_MODEL_BIN): $(MUSIC_MODEL_TEST) $(MUSIC_MODEL_SRC) $(MUSIC_MODEL_HDR) $(MUSIC_METADATA_HDR) music_traceability.md Makefile
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include $(MUSIC_MODEL_TEST) $(MUSIC_MODEL_SRC) -o $@
 
 .PHONY: test_music_audio_output
@@ -3068,6 +3109,8 @@ test: test-build
 	@$(MAKE) --no-print-directory test_music_decoder_scratch
 	@$(MAKE) --no-print-directory test_music_duration
 	@$(MAKE) --no-print-directory test_music_model
+	@$(MAKE) --no-print-directory test_music_metadata_io
+	@$(MAKE) --no-print-directory test_music_id3_contract
 	@$(MAKE) --no-print-directory test_music_audio_output
 	@$(MAKE) --no-print-directory test_music_presence
 	@$(MAKE) --no-print-directory test_music_app
@@ -3204,6 +3247,8 @@ test: test-build
 	@$(MAKE) --no-print-directory test_display_lock_contract
 	@echo "==> Executando contrato de UI do player de musica"
 	@$(MAKE) --no-print-directory test_music_player_ui_contract
+	@echo "==> Executando contrato da identidade da faixa em execucao (REQ-MUSIC-META)"
+	@$(MAKE) --no-print-directory test_music_metadata_contract
 	@echo "==> Executando contrato dos system apps"
 	@$(MAKE) --no-print-directory test_system_apps_contract
 	@$(MAKE) --no-print-directory test_screenshot_lifecycle_contract

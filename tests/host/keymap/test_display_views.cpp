@@ -1209,8 +1209,169 @@ int main()
     assert(music_content.children.back() == music_surface);
     music_view.set_visible(false);
     assert(!music_view.visible() && music_surface->hidden);
+
+    /* TEST-MUSIC-META-VIEW-FIELDS / -BROWSER-INDEPENDENT / -UNAVAILABLE /
+     * -FALLBACK / -LAYOUT-* / -TRUNCATION: the NOW PLAYING identity region is
+     * fed by the playback snapshot, not by `render()` or `render_browser()`, so
+     * it survives a library repaint and never shows a merely selected track. */
+    std::string meta_placeholder;
+    {
+        const auto *meta_title = now_playing->children[7];
+        const auto *meta_artist = now_playing->children[8];
+        const auto *meta_album = now_playing->children[9];
+        /* A freshly created card starts unavailable, never blank. */
+        meta_placeholder.assign(meta_title->text);
+        assert(!meta_placeholder.empty());
+        assert(meta_artist->text == meta_placeholder && meta_album->text == meta_placeholder);
+        for (const unsigned char byte : meta_placeholder)
+            assert(byte >= 0x20 && byte <= 0x7e);
+        const auto initial = music_view.now_playing();
+        assert(initial.title == meta_placeholder && initial.artist == meta_placeholder &&
+               initial.album == meta_placeholder);
+        assert(!initial.title_from_filename);
+
+        cyberdeck_music::track playing{};
+        std::strcpy(playing.path.data(), "/music/really.mp3");
+        std::strcpy(playing.title.data(), "Real title");
+        std::strcpy(playing.artist.data(), "Real artist");
+        std::strcpy(playing.album.data(), "Real album");
+        music_view.render_now_playing(playing);
+        const auto rendered = music_view.now_playing();
+        assert(rendered.title == "Real title" && rendered.artist == "Real artist" &&
+               rendered.album == "Real album");
+        assert(!rendered.title_from_filename);
+        assert(meta_title->text == "Real title");
+        assert(meta_artist->text == "Real artist");
+        assert(meta_album->text == "Real album");
+        for (const auto *label : {meta_title, meta_artist, meta_album}) {
+            assert(label->long_mode == LV_LABEL_LONG_MODE_DOTS);
+            assert(label->height == lv_font_get_line_height(&cyberdeck_font));
+            assert(label->width == lv_obj_get_content_width(now_playing) - 2 * kCardInset);
+            assert(label->text.find('\n') == std::string::npos);
+        }
+
+        /* The status text and the library never own the region: a repaint with
+         * arbitrary text and a different browser snapshot leaves it untouched. */
+        music_view.render("state: playing\ntrack: 1/2\nmusic queue:\n1. other.mp3\n2. second.mp3\n");
+        music_view.render_browser(browser_snapshot, true);
+        assert(meta_title->text == "Real title" && meta_artist->text == "Real artist" &&
+               meta_album->text == "Real album");
+        const auto after_browser = music_view.now_playing();
+        assert(after_browser.title == "Real title" && after_browser.artist == "Real artist" &&
+               after_browser.album == "Real album");
+        music_view.render_browser(browser_snapshot, false);
+        assert(meta_album->text == "Real album");
+
+        /* Missing fields use the single placeholder; the flag is the only
+         * machine-readable difference between a fallback and a real TIT2 (even
+         * when the TIT2 text equals the file name). */
+        cyberdeck_music::track title_only{};
+        std::strcpy(title_only.title.data(), "Only title");
+        music_view.render_now_playing(title_only);
+        assert(meta_title->text == "Only title");
+        assert(meta_artist->text == meta_placeholder && meta_album->text == meta_placeholder);
+        assert(meta_placeholder != "Only title" && meta_placeholder != "bad?.mp3");
+        music_view.render_now_playing(cyberdeck_music::track{});
+        assert(meta_title->text == meta_placeholder && meta_artist->text == meta_placeholder &&
+               meta_album->text == meta_placeholder);
+
+        cyberdeck_music::track fallback{};
+        std::strcpy(fallback.title.data(), "bad?.mp3");
+        fallback.title_from_filename = true;
+        music_view.render_now_playing(fallback);
+        assert(meta_title->text == "bad?.mp3" && music_view.now_playing().title_from_filename);
+
+        cyberdeck_music::track same_as_file{};
+        std::strcpy(same_as_file.title.data(), "same.mp3");
+        same_as_file.title_from_filename = false;
+        music_view.render_now_playing(same_as_file);
+        assert(meta_title->text == "same.mp3" && !music_view.now_playing().title_from_filename);
+
+        /* The region endures a track with an album and no artist, too. */
+        cyberdeck_music::track album_only{};
+        std::strcpy(album_only.title.data(), "Album title");
+        std::strcpy(album_only.album.data(), "Album only");
+        music_view.render_now_playing(album_only);
+        assert(meta_artist->text == meta_placeholder && meta_album->text == "Album only");
+
+        /* Capacity text is passed verbatim; visual truncation stays the DOTS
+         * label's job (the shim cannot prove pixels, only mode/width/no '\n'). */
+        const std::string capped_title(cyberdeck_music::k_max_title_bytes, 'T');
+        cyberdeck_music::track capped{};
+        std::memcpy(capped.title.data(), capped_title.data(), capped_title.size());
+        capped.title[capped_title.size()] = '\0';
+        music_view.render_now_playing(capped);
+        assert(meta_title->text == capped_title);
+        assert(meta_album->text == meta_placeholder);
+        music_view.render_now_playing(playing);
+
+        /* Geometry: three single rows between the status block and the progress
+         * rail, never overlapping the caption/status/time/volume/controls (nor
+         * the Command field when open), re-applied on every resize. */
+        const auto assert_region_layout = [&]() {
+            assert(progress->y > meta_album->y + meta_album->height);
+            assert(meta_artist->y == meta_title->y + meta_title->height);
+            assert(meta_album->y == meta_artist->y + meta_artist->height);
+            for (const auto *label : {meta_title, meta_artist, meta_album}) {
+                assert(label->x == kCardInset);
+                assert(label->x + label->width == lv_obj_get_content_width(now_playing) - kCardInset);
+                assert(label->y >= 0 && label->y + label->height <= now_playing->height);
+                assert(!overlaps(label, now_playing->children[0]));
+                assert(!overlaps(label, music_status_label));
+                assert(!overlaps(label, progress));
+                assert(!overlaps(label, now_playing->children[2]));
+                assert(!overlaps(label, now_playing->children[4]));
+                assert(!overlaps(label, controls));
+                if (music_view.command_open()) assert(!overlaps(label, command_field));
+            }
+        };
+        /* AC-MUSIC-META-16: the region follows the card in both orientations.
+         * The card shape (full width under the library, or 45 % beside it) is
+         * the orientation-derived property the previous geometry checks cannot
+         * see: those compare the labels against whatever layout produced last,
+         * so a stale landscape card in portrait would still be self-consistent. */
+        const auto assert_orientation = [&](bool landscape) {
+            assert(now_playing->parent == browser->parent);
+            if (landscape) {
+                assert(now_playing->width < browser->width);
+                assert(now_playing->y == browser->y);
+            } else {
+                assert(now_playing->width == browser->width);
+                assert(now_playing->y < browser->y);
+            }
+        };
+        assert_region_layout();
+        music_view.set_command_open(true);
+        assert_region_layout();
+        /* `destroy()` of the sibling view above already removed a
+         * `parent_resized` entry from this parent (the shim drops the first
+         * match), so drive the real `resized` callback on the surface with the
+         * portrait/landscape geometry instead of the parent event. */
+        music_surface->width = 696;
+        music_surface->height = 1203;
+        lv_shim_emit_event(music_surface, LV_EVENT_SIZE_CHANGED);
+        assert_region_layout();
+        assert_orientation(false);
+        assert(meta_album->text == "Real album");
+        music_surface->width = 1256;
+        music_surface->height = 643;
+        lv_shim_emit_event(music_surface, LV_EVENT_SIZE_CHANGED);
+        assert_region_layout();
+        assert_orientation(true);
+        /* AC-MUSIC-META-16: the return to portrait re-applies the region instead
+         * of leaving the landscape positions behind. */
+        music_surface->width = 696;
+        music_surface->height = 1203;
+        lv_shim_emit_event(music_surface, LV_EVENT_SIZE_CHANGED);
+        assert_region_layout();
+        assert_orientation(false);
+        assert(meta_title->text == "Real title" && meta_album->text == "Real album");
+        music_view.set_command_open(false);
+    }
+
     music_view.destroy();
     assert(!music_view.visible());
+    assert(music_view.now_playing().title.empty() && music_view.now_playing().album.empty());
     music_view.destroy();
     assert(!music_view.create(nullptr, record_music_action, &music_log));
     assert(music_view.create(&music_content, record_music_action, &music_log));
@@ -1221,7 +1382,19 @@ int main()
     auto *recreated_surface = music_content.children.back();
     assert(recreated_surface->children.size() == 4);
     assert(recreated_surface->children[3]->text == music_footer_landscape);
+    /* TEST-MUSIC-META-VIEW-LIFECYCLE: the fresh card repaints the identity
+     * region with the unavailable placeholder instead of residual text. */
+    const auto recreated_region = music_view.now_playing();
+    assert(recreated_region.title == meta_placeholder && recreated_region.artist == meta_placeholder &&
+           recreated_region.album == meta_placeholder);
+    assert(recreated_surface->children[1]->children[7]->text == meta_placeholder);
+    cyberdeck_music::track replayed{};
+    std::strcpy(replayed.title.data(), "Replayed title");
+    std::strcpy(replayed.album.data(), "Replayed album");
+    music_view.render_now_playing(replayed);
+    assert(music_view.now_playing().album == "Replayed album");
     music_view.destroy();
+    assert(music_view.now_playing().title.empty());
 
     /* TEST-EDIT-FOOTER-HOST/CONTRACT: keyboard inset and orientation resize
      * recalculate the footer without overlap or stale document slots. */

@@ -33,6 +33,13 @@ constexpr const char *kMusicControlsHint =
         "Enter play/pause  P play selected  left/right track  up/down list  +/- volume  Esc close";
 constexpr const char *kMusicControlsHintPortrait =
         "Enter play/pause  P play selected\nleft/right track  up/down list  +/- volume  Esc close";
+/* Single placeholder for a field the playing track does not carry. ASCII only
+ * (cyberdeck_font covers 0x20-0x7E and 0xA0-0xFF), deliberately distinct from
+ * any plausible tag value and from a file name so the device evidence cannot be
+ * confused with a real title/artist/album. `k_max_album_bytes` plus this literal
+ * stays inside `cyberdeck_serial::ui_dump::k_max_text_bytes`, so `ui.dump`
+ * shows the whole album. */
+constexpr const char *kUnavailableText = "(not available)";
 const lv_color_t kBlack = lv_color_hex(0x000000);
 const lv_color_t kSurface = lv_color_hex(0x0A0A0A);
 const lv_color_t kBorder = lv_color_hex(0x2A2A2A);
@@ -102,16 +109,30 @@ bool view::create(lv_obj_t *parent, callback on_action, void *context) {
     command_ = lv_textarea_create(now_playing_);
     controls_ = lv_obj_create(now_playing_);
     if (!status_ || !time_ || !progress_ || !volume_ || !command_ || !controls_) { destroy(); return false; }
+    /* Created after `controls_` so every historical child index of the card
+     * (status 1, time 2, progress 3, volume 4, command 5, controls 6) is
+     * unchanged for the existing device/UI assertions. */
+    meta_title_ = lv_label_create(now_playing_);
+    meta_artist_ = lv_label_create(now_playing_);
+    meta_album_ = lv_label_create(now_playing_);
+    if (!meta_title_ || !meta_artist_ || !meta_album_) { destroy(); return false; }
     disable_scrolling(status_);
     disable_scrolling(time_);
     disable_scrolling(progress_);
     disable_scrolling(volume_);
     disable_scrolling(command_);
     disable_scrolling(controls_);
+    disable_scrolling(meta_title_);
+    disable_scrolling(meta_artist_);
+    disable_scrolling(meta_album_);
     style(title_, kWhite); style(now_title_, kWhite); style(browser_title_, kWhite);
     style(status_, kWhite); style(time_, kWhite); style(volume_, kWhite); style(command_, kWhite);
+    style(meta_title_, kWhite); style(meta_artist_, kWhite); style(meta_album_, kWhite);
     style(footer_, kMuted);
     lv_label_set_long_mode(status_, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_long_mode(meta_title_, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_long_mode(meta_artist_, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_long_mode(meta_album_, LV_LABEL_LONG_MODE_DOTS);
     lv_label_set_long_mode(footer_, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_layout(controls_, LV_LAYOUT_NONE);
     lv_obj_set_style_bg_color(controls_, kSurface, 0);
@@ -207,6 +228,9 @@ bool view::create(lv_obj_t *parent, callback on_action, void *context) {
         lv_obj_add_event_cb(buttons_[index], clicked, LV_EVENT_CLICKED, this);
     }
     set_visible(false);
+    /* Fresh card: the region starts unavailable instead of blank, so "no play
+     * yet" is visibly distinct from an empty tag field. */
+    render_now_playing(cyberdeck_music::track{});
     layout();
     return true;
 }
@@ -215,6 +239,7 @@ void view::destroy() {
     if (parent_) lv_obj_remove_event_cb(parent_, parent_resized);
     if (surface_) lv_obj_delete(surface_);
     surface_ = title_ = now_title_ = browser_title_ = status_ = now_playing_ = time_ = volume_ = progress_ = command_ = list_ = footer_ = controls_ = nullptr;
+    meta_title_ = meta_artist_ = meta_album_ = nullptr;
     parent_ = nullptr;
     tracks_.fill(nullptr); buttons_.fill(nullptr);
     callback_ = nullptr; context_ = nullptr; visible_ = false; command_open_ = false;
@@ -226,6 +251,12 @@ void view::destroy() {
     browser_mode_ = false;
     browser_directory_.clear();
     footer_landscape_ = -1;
+    /* No residual text from the deleted labels: a recreated view must repaint
+     * the region (create() re-applies the placeholder). */
+    meta_title_from_filename_ = false;
+    meta_title_text_.clear();
+    meta_artist_text_.clear();
+    meta_album_text_.clear();
 }
 
 void view::set_visible(bool visible) {
@@ -326,6 +357,26 @@ void view::render(std::string_view text) {
         lv_label_set_text(time_, "-- / -- s");
     }
     layout();
+}
+
+void view::render_now_playing(const cyberdeck_music::track &item) {
+    if (!meta_title_ || !meta_artist_ || !meta_album_)
+        return;
+    /* The fields arrive already sanitized by the model (ID3 decoder or the file
+     * name fallback), so they are rendered verbatim: the view never re-encodes,
+     * parses the status text or invents a value. A missing field is the single
+     * `kUnavailableText` placeholder. */
+    meta_title_text_ = item.title[0] != '\0' ? item.title.data() : kUnavailableText;
+    meta_artist_text_ = item.artist[0] != '\0' ? item.artist.data() : kUnavailableText;
+    meta_album_text_ = item.album[0] != '\0' ? item.album.data() : kUnavailableText;
+    meta_title_from_filename_ = item.title_from_filename;
+    lv_label_set_text(meta_title_, meta_title_text_.c_str());
+    lv_label_set_text(meta_artist_, meta_artist_text_.c_str());
+    lv_label_set_text(meta_album_, meta_album_text_.c_str());
+}
+
+now_playing_text view::now_playing() const {
+    return {meta_title_text_, meta_artist_text_, meta_album_text_, meta_title_from_filename_};
 }
 
 void view::render_browser(const cyberdeck_music::browser_snapshot &snapshot, bool scanning) {
@@ -494,6 +545,13 @@ void view::layout() {
     lv_label_set_long_mode(browser_title_, LV_LABEL_LONG_MODE_DOTS);
     int content_y = line + 12;
     lv_obj_set_pos(status_, 8, content_y); lv_obj_set_size(status_, inner_width, line * 3); content_y += line * 3 + pad;
+    /* Identity region of the playing track: three single-line labels between the
+     * status block and the progress rail. `LV_LABEL_LONG_MODE_DOTS` truncates
+     * visually instead of wrapping, so each field keeps exactly one row and the
+     * region can never grow into the progress/time/volume/controls block. */
+    lv_obj_set_pos(meta_title_, 8, content_y); lv_obj_set_size(meta_title_, inner_width, line); content_y += line;
+    lv_obj_set_pos(meta_artist_, 8, content_y); lv_obj_set_size(meta_artist_, inner_width, line); content_y += line;
+    lv_obj_set_pos(meta_album_, 8, content_y); lv_obj_set_size(meta_album_, inner_width, line); content_y += line + pad;
     lv_obj_set_pos(progress_, 8, content_y); lv_obj_set_size(progress_, inner_width, progress_height); content_y += progress_height + pad;
     lv_obj_set_pos(time_, 8, content_y); lv_obj_set_size(time_, inner_width, line); content_y += line + pad;
     lv_obj_set_pos(volume_, 8, content_y); lv_obj_set_size(volume_, inner_width, line); content_y += line + pad;

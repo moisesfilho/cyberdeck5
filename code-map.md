@@ -1705,18 +1705,35 @@ destrói recursos potencialmente usados.
 - `components/cyberdeck/include/apps/music/cyberdeck_music_model.h` e
   `src/apps/music/cyberdeck_music_model.cpp` definem os limites bounded da fila
   (64 faixas, caminhos/títulos limitados, MP3 até 32 MiB), estados, seleção,
-  progresso, seek, volume, shuffle/repeat e parser ID3v2.2–2.4 para título e
-  artista. `copy_text` grava o texto no repertório real de `cyberdeck_font`
+  progresso, seek, volume, shuffle/repeat e parser ID3v2.2–2.4 para título,
+  artista e álbum (`TIT2`/`TT2`, `TPE1`/`TP1`, `TALB`/`TAL`; capacidade
+  `k_max_album_bytes`). `decode_id3v2_text` — compartilhado pelo parser em
+  memória e pelo leitor streaming — grava o texto no repertório real de `cyberdeck_font`
   (0x20–0x7E e 0xA0–0xFF): a saída é sempre UTF-8 válido, porque o LVGL
   (`CONFIG_LV_TXT_ENC_UTF8`) decodifica por codepoint e um byte Latin-1 cru
   seria lido como lead de 3 bytes e engoliria o caractere seguinte. Sequências
   UTF-8 válidas passam verbatim; ISO-8859-1 e UTF-16 são transcodificados para
   UTF-8; aspas/dashes tipográficos e ellipsis viram ASCII, U+00A0 vira espaço e
-  o resto vira `?`, sempre respeitando `k_max_title_bytes`/`k_max_artist_bytes`,
-  sem dividir sequência multi-byte e sem perder a terminação NUL. O parser
-  preenche o struct bounded `metadata` (só `title`/`artist`); a sobrecarga
-  `parse_id3v2(bytes, track&)` continua existindo e delega a ele, substituindo
-  apenas os campos cujo frame está presente. Encoding 2 é UTF-16BE sem BOM,
+  o resto vira `?`, sempre respeitando `k_max_title_bytes`/`k_max_artist_bytes`/
+  `k_max_album_bytes`, sem dividir sequência multi-byte e sem perder a terminação
+  NUL. O parser preenche o struct bounded `metadata` (`title`/`artist`/`album`)
+  por um scratch interno: os frames são decodificados fora de `out` e só
+  publicados quando a tag inteira foi aceita, então uma tag rejeitada não deixa
+  campo parcial (fail-closed). O framing é compartilhado pelos dois caminhos:
+  `parse_id3v2_header` classifica o header de 10 bytes (`absent` quando não há
+  `ID3`, `rejected` para tag truncada, versão fora de 2..4, revisão reservada
+  `0xff`, syncsafe com bit `0x80`, acima do teto `k_id3_max_tag_bytes` ou com
+  flags que deslocam o payload) e `parse_id3v2_frame_header` valida o header de
+  frame (6 bytes em v2.2, 10 em v2.3/v2.4 com tamanho syncsafe em v2.4), rejeita
+  tamanho 0 e classifica o frame como `title`/`artist`/`album`/`none`, expondo
+  `flags_clear` para a rejeição de frame-alvo com flags. Todo o resto entre o
+  último frame completo e o fim declarado da tag precisa ser zero: um resto menor
+  que um frame header só é padding se for zero e um byte zero que encerra a área
+  de frames só abre padding quando toda a área depois dele é zero — um byte
+  não-zero em qualquer posição dessa área rejeita a tag inteira.
+  Um frame presente e vazio limpa o campo; a
+  sobrecarga `parse_id3v2(bytes, track&)` continua existindo e delega a ele,
+  substituindo apenas os campos cujo frame está presente. Encoding 2 é UTF-16BE sem BOM,
   como define a ID3v2.4; encoding 1 lê o BOM (FF FE little-endian, FE FF
   big-endian) e usa little-endian quando ele falta. O mesmo validador/reencoder
   UTF-8 é exposto como `sanitize_display_text(source, dst, max)`, usado pelo
@@ -1725,11 +1742,34 @@ destrói recursos potencialmente usados.
   `include/apps/music/cyberdeck_music_metadata.h` e
   `src/apps/music/cyberdeck_music_metadata.cpp` expõem
   `cyberdeck_music::read_metadata(fd, size, metadata&)`, extraído do player e
-  compartilhado com o scan: `pread` do header de 10 bytes, só segue com `ID3`,
-  buffer no heap (`std::nothrow`), leitura limitada a 64 KiB + 10 e substituição
-  de título/artista apenas quando a ID3 traz valor. A task do scan não declara
+  compartilhado com o scan. As constantes do envelope ficam nesse header e são
+  fonte única para os dois caminhos de leitura: `k_id3v2_header_bytes` (10),
+  `k_id3_max_tag_bytes` (`1024 * 1024`, contando **header + payload**: um total
+  igual ao teto é aceito e um byte acima é rejeitado inteiro) e
+  `k_id3_read_window_bytes` (`2 * k_max_title_bytes + 4`, a maior leitura
+  única). O leitor é streaming por offsets no **mesmo** `fd`: um `pread` de 10
+  bytes no offset 0, header classificado por `parse_id3v2_header`, e iteração de
+  frames com um `pread` de header por frame (`parse_id3v2_frame_header`), lendo
+  `min(payload, janela)` apenas dos frames-alvo e pulando frames desconhecidos
+  — inclusive `APIC` com artwork de centenas de KiB — pelo tamanho declarado,
+  sem carregar o payload. A única alocação é uma janela fixa no heap
+  (`std::nothrow`); a posição do descritor não muda e nada de
+  `open`/`openat`/`dup`/`close` é chamado. Header inválido, versão fora de 2..4,
+  syncsafe com bit `0x80`, tag acima do teto, tag que não cabe no `size`
+  recebido, frame de tamanho 0, frame que cruza o fim da tag, área final depois do
+  último frame com qualquer byte não-zero (inclusive depois de um zero inicial,
+  validado em blocos limitados pela janela e sem alocação extra), short read/erro
+  de I/O e falha de
+  alocação rejeitam a tag inteira e deixam `out` intocado; só então título,
+  artista e álbum não vazios são copiados (frame vazio não sobrescreve). Flags:
+  `unsynchronisation` (`0x80`), extended header (`0x40`) e bits reservados do
+  header rejeitam; experimental (`0x20`) e footer (`0x10`, só v2.4) são
+  tolerados porque não deslocam o payload; em v2.2 qualquer flag de header
+  rejeita; frame-alvo com qualquer flag de frame rejeita a tag, enquanto frame
+  não-alvo com flags é pulado pelo tamanho. Essa perda de metadado é
+  fail-closed intencional e não altera o playback. A task do scan não declara
   `track` para decodificar metadados: `read_metadata` usa só o struct leve e os
-  donos (scan e player) copiam `title`/`artist` não vazios para o `track`. O app
+  donos (scan e player) copiam `title`/`artist`/`album` não vazios para o `track`. O app
   `cyberdeck.music` em `cyberdeck_music_app.{h,cpp}` registra o
   comando de terminal `music` como app foreground único, sujeito ao lifecycle e
   exclusividade do runtime; `queue /diretorio` inicia scan assíncrono,
@@ -1738,13 +1778,17 @@ destrói recursos potencialmente usados.
  64 MP3 regulares e consulta o secure-open do shell; mantém READ lease durante
   enumeração e só publica uma fila completa após validar grant/lifecycle. Para
   cada arquivo admitido, o descritor já aberto é usado para ler a ID3 antes do
-  `close`, então `track.title` recebe o título real e cai no nome do arquivo
+  `close`, então `track.title` recebe o título real, `track.artist`/`track.album`
+  os campos presentes, e o título cai no nome do arquivo
   (com extensão) quando a tag falta ou não traz `TIT2`; o fallback é
   `sanitize_display_text(next_name, ...)`, que mantém o nome legível sem byte
-  inválido. O playback worker usa o mesmo helper para o basename fallback antes
-  de publicar `snapshot.current`, mantendo NOW PLAYING/status em UTF-8 válido;
-  `test_music_player.cpp` cobre basename inválido, acento válido e truncamento
-  atômico pelo snapshot real. O `track candidate` do walker também é uma única
+  inválido. O playback worker usa o mesmo sanitizador para o basename fallback
+  antes de publicar `snapshot.current` (por atribuição integral, sob geração),
+  mantendo NOW PLAYING/status em UTF-8 válido e expondo o flag
+  `track.title_from_filename` (verdadeiro só quando não houve `TIT2`); o caminho
+  de erro fixa a identidade do request que falhou em vez de manter a faixa
+  anterior. `test_music_player.cpp` cobre basename inválido, acento válido, truncamento
+  atômico, tripla completa, troca sem herança, erro e leitura de álbum pelo fd. O `track candidate` do walker também é uma única
   alocação reutilizada no heap, criada uma vez antes do lambda recursivo e
   liberada por RAII; falta de memória aborta o scan antes de enumerar. Assim,
   nem a decodificação nem o caminho por arquivo adicionam um `track` inteiro à
@@ -1802,7 +1846,22 @@ destrói recursos potencialmente usados.
         tick. `test_music_player_ui_contract.py::footer_issues` exige o sentinela
         no header, o `lv_label_set_text(footer_, ...)` como corpo do `if` da
         orientação e o reset em `destroy()`, com provas de mutação para a guarda
-        removida e para o sentinela não resetado. O scroll permanece exclusivo da lista; Command
+        removida e para o sentinela não resetado. O cartão NOW PLAYING também tem
+        uma região própria de identidade da faixa em execução (`meta_title_`,
+        `meta_artist_`, `meta_album_`, seam `now_playing_text{title,artist,album,
+        title_from_filename}`): os labels são criados depois de `controls_`, então os
+        índices históricos de `now_playing_->children` não mudam, ocupam uma linha
+        cada com `LV_LABEL_LONG_MODE_DOTS` e largura interna. `render_now_playing(
+        const cyberdeck_music::track&)` pinta o texto verbatim e usa o placeholder
+        único `kUnavailableText` para campo vazio; `render()` (status) e
+        `render_browser()` nunca escrevem a região. Quem a alimenta é
+        `cyberdeck_ui.cpp::process_music_status` com `playback.current`, atrás de
+        `if (has_playback_snapshot)`; `destroy()` zera labels e textos.
+        `test_display_views` cobre tripla, independência do browser, placeholders,
+        flag de fallback, layout portrait/landscape/Command e lifecycle, e
+        `test_music_metadata_contract.py` fixa o wiring, a cobertura de glifo do
+        placeholder e o limite derivado `k_max_album_bytes + literal ≤
+        ui_dump::k_max_text_bytes`. O scroll permanece exclusivo da lista; Command
        usa textarea na mesma surface e o roteador da UI encaminha exclusivamente ao
        parser do app, consumindo texto fora do overlay para preservar a linha shell.
        Seleção altera índice sem iniciar reprodução; stop por Esc ou
@@ -2067,9 +2126,45 @@ destrói recursos potencialmente usados.
   fechar admissão SD e antes do drain; `cyberdeck_music_poweroff_quiesce` cancela
   e aguarda scan e player.
 - Os testes adicionados ao Makefile incluem `test_music_model.cpp` para a lógica
-  pura (incluindo a transcodificação UTF-8 de acentos/pontuação de `copy_text`),
-  `test_music_app.cpp` para comandos/scan com portas injetadas,
+  pura (incluindo a transcodificação UTF-8 de acentos/pontuação de
+  `decode_id3v2_text`, a matriz de álbum/fail-closed e, no envelope de 1 MiB,
+  `test_id3_large_tag_frame_walk` — v2.2/2.3/2.4 com APIC de 252112 bytes antes e
+  depois dos textos, decoy `TIT2` embutido no artwork, tag exatamente no teto com
+  textos após artwork quase no teto e teto + 1 rejeitado — e
+  `test_id3_frame_bounds_flags_and_all_or_nothing` — tamanho 0, frame cruzando o
+  fim, resto curto vs padding, zero seguido de lixo na área final (rejeitado com
+  sentinelas), padding zero com vários blocos aceito, matriz de flags de
+  header/frame e sentinelas),
+  `test_music_metadata_io.cpp` (alvo `.PHONY` `test_music_metadata_io`, `_bin` em
+  `BINS` e uma entrada no agregado `test`) para o leitor streaming sobre arquivos
+  temporários reais: fixture com a geometria do arquivo relatado (payload 254209,
+  `APIC` 252112, padding 1757) e variante APIC-primeiro, posição do fd preservada
+  e idempotência, nenhum `open`/`openat`/`dup`/`close` durante a leitura, bound de
+  leitura (maior `pread` ≤ `k_id3_read_window_bytes`, total menor que o payload do
+  APIC, zero sobreposição com o artwork), `TIT2` de 300 KiB truncado em
+  `k_max_title_bytes`, injeção de short read/`0`/`-1` via `--wrap=pread`, arquivo
+  truncado com `size` antigo, falha de alocação (`operator new` local) e igualdade
+  de alocação entre tag compacta e tag no teto, além de v2.2/v2.4, flags, padding
+  final zero aceito (inclusive maior que uma janela, validado em blocos) vs zero
+  seguido de lixo rejeitado com `out` preservado, arquivo sem `ID3` e `size` menor
+  que a tag,
+  `test_music_id3_contract.py` (alvo `.PHONY` `test_music_id3_contract` no agregado
+  `test`, com pré-requisitos nos dois headers, nos dois fontes de música, no plano,
+  no manual e no Makefile — sem artefato `_bin`) como contrato **estrutural** que
+  complementa os testes comportamentais: deriva do header as três constantes
+  (teto de 1 MiB contado como header + payload e janela de leitura), exige
+  `pread` por offset e a ausência de `open`/`openat`/`dup`/`fopen`/`close`/
+  `lseek`/`read` sequencial, uma única alocação `new (std::nothrow)` exatamente
+  do tamanho da janela, avanço por `header_bytes + payload_bytes` uma única vez,
+  rejeição de cross-end/tamanho 0/syncsafe `0x80`, a política de flags aprovada,
+  o wiring do alvo de I/O e do próprio contrato (`BINS`/`.PHONY`/agregado/
+  `--wrap`) e a documentação (plano e manual citam 1 MiB e header + payload; o
+  plano nomeia a constante; menção remanescente ao envelope antigo precisa de
+  marcador histórico na vizinhança, com nomes de fixture isentos),
+  `test_music_app.cpp` para comandos/scan com portas injetadas (incluindo o scan
+  preenchendo álbum e os negativos de `music status`/`list`),
   `test_music_player.cpp` para fila, cancelamento, leases, lifecycle worker e
+  transporte da identidade (`TEST-MUSIC-META-CURRENT-*`, `-READ-FD`),
   shims `music_runtime_shim/freertos/idf_additions.h` e
   `music_runtime_shim/music_freertos_shim.cpp` suportam fault injection de
   semáforo binário e criação de task estática para cobrir rollback de startup.
@@ -2099,11 +2194,20 @@ destrói recursos potencialmente usados.
   retorna false) dentro do ring, com controles negativos para remoção/elevação,
    e fonte única dos valores (TEST-DMA-01..03 são cobertos por esse contrato; sem lógica
    compartilhada adicional, não se duplica teste de fórmula). `MUSIC_METADATA_SRC`/`MUSIC_METADATA_HDR` entram em
-  `MUSIC_APP_SOURCES`/`MUSIC_PLAYER_SOURCES` e nas dependências dos dois alvos;
+  `MUSIC_APP_SOURCES`/`MUSIC_PLAYER_SOURCES` e nas dependências dos dois alvos,
+   e sustentam o alvo `test_music_metadata_io` (com `MUSIC_MODEL_SRC`/`_HDR`), que
+   linka `--wrap=pread/open/openat/dup/close` para observar bytes, offsets e fd;
+   a regra de `$(MUSIC_MODEL_BIN)` passou a declarar `$(MUSIC_METADATA_HDR)` como
+   pré-requisito, porque `test_music_model.cpp` inclui o header de metadata: sem
+   isso, mudança só no header não recompilava o binário e o alvo reportava verde
+   falso (defeito de wiring encontrado na mutação do teto);
   `MUSIC_DURATION_SRC`/`MUSIC_DURATION_HDR` entram em `MUSIC_PLAYER_SOURCES` e
   no alvo incremental `test_music_duration` (`test_music_duration/test.o` +
   `test_music_duration/duration.o`, depfiles em `MAKE_DEPFILES`, `_bin` em
-  `BINS`). `music_traceability.md` relaciona esses cenários a
+  `BINS`). `test_music_metadata_contract.py` (alvo `.PHONY` no agregado `test`)
+  fixa o wiring da região de identidade por `playback.current`, a cobertura de
+  glifo do placeholder e o limite `k_max_album_bytes + literal ≤
+  ui_dump::k_max_text_bytes`, ambos derivados dos headers. `music_traceability.md` relaciona esses cenários a
   REQ-MUSIC/AC-MUSIC/TEST-AUDIO; os casos de secure-open usam a produção real do
   shell em `test_local_shell.cpp` e exercitam recusa de symlink/traversal sem
   enfraquecer os flags `O_NOFOLLOW`.
@@ -2387,7 +2491,7 @@ agregado `test` e as TUs fora da allowlist do guard de cobertura. O alvo do
 Makefile declara todos os arquivos inspecionados como pre-requisitos, incluindo
 `cyberdeck_terminal_view.cpp` e `cyberdeck_header_view.cpp`. |
 | `tests/host/keymap/test_system_apps_contract.py` + `tests/host/keymap/test_screenshot_lifecycle_contract.py` | contratos dos system apps e Screenshot | Confirma manifests, ordem de startup, uso do runtime global pela UI e ausência de inicialização direta dos serviços em `app_main`; verifica também callback Wi-Fi bounded, unregister sincronizado, task/fila, handshake, stop/join fail-safe e lifecycle idempotente do Screenshot; tambem exige a criacao da task SSH por `xTaskCreateWithCaps(ssh_client_task, "ssh_client", 24576` (regex tolerante a whitespace/quebra de linha) e ausencia de `xTaskCreate(` cru. |
-| `tests/host/keymap/test_recovery_policy.cpp` + `tests/host/keymap/test_phase10_contract.py` + `tests/host/keymap/test_boot_sequence.py` + `tests/host/keymap/phase10_traceability.md` | Fase 10 (TEST-10-01..07) | Testa a política pura de tentativa/checkpoint, três interrupções, latch/reset e erros por app; os contratos estruturais verificam o namespace NVS `cyberdeck_rec` <=15, persistência/diagnóstico, fail-closed sem erase, safe mode com serviços permitidos e o gate `boot_ready` -> `commit_ready`. A matriz REQ/AC -> TEST fica no arquivo de rastreabilidade. `test_coverage_scope_guard.py` fixa a allowlist aprovada de 16 TUs, incluindo os adaptadores event-log e recovery, sem abrir mão dos TUs host-cobertos e forbidden. |
+| `tests/host/keymap/test_recovery_policy.cpp` + `tests/host/keymap/test_phase10_contract.py` + `tests/host/keymap/test_boot_sequence.py` + `tests/host/keymap/phase10_traceability.md` | Fase 10 (TEST-10-01..07) | Testa a política pura de tentativa/checkpoint, três interrupções, latch/reset e erros por app; os contratos estruturais verificam o namespace NVS `cyberdeck_rec` <=15, persistência/diagnóstico, fail-closed sem erase, safe mode com serviços permitidos e o gate `boot_ready` -> `commit_ready`. A matriz REQ/AC -> TEST fica no arquivo de rastreabilidade. `test_coverage_scope_guard.py` fixa a allowlist por conjunto exato (TEST-COV-001/013, sem contagem literal), incluindo os adaptadores event-log, recovery e USB Host/UAC, sem abrir mão dos TUs host-cobertos e forbidden. |
 
 O runtime inicial é deliberadamente compilado no firmware: não há loader ELF,
 instalação dinâmica, scripts ou execução de aplicações do SD nesta fase. O SD
@@ -2842,7 +2946,7 @@ de report map, notificações ou injeção de teclas.
 | `components/cyberdeck/src/apps/screenshot/screenshot_server.cpp` | `screenshot_server_init`, `screenshot_server_set_display_port`, `screenshot_server_wifi_state`, `screenshot_frame_t`, `battery_handler`, `usb_audio_handler` | Servidor na porta 80, iniciado/parado por estado Wi-Fi. Serializa BMP de frame RGB565 bounded pela porta de display; também registra `/events.txt`, `/battery` e `/usb/audio` via tabela com rollback (`httpd_stop` se um registro falhar), com `max_uri_handlers = 4`. `usb_audio_handler` atende apenas peers locais e serializa o snapshot cacheado sem consultar USB. |
 | `components/cyberdeck/include/platform/display/cyberdeck_display_port.h`, `components/cyberdeck/src/platform/display/cyberdeck_display_port.cpp` | `cyberdeck_display_capture`, `cyberdeck_display_release` | Adapter exclusivo de LVGL/BSP da porta de display do Screenshot; delega o snapshot a `cyberdeck_lvgl_dispatch::run` (lock/despacho pertencem ao dispatcher), copia o frame bounded e libera recursos. Nao adquire display lock proprio. |
 | `components/cyberdeck/src/apps/screenshot/screenshot_bmp.cpp` | geracao de BMP | Converte framebuffer RGB565 em BMP 24-bit bottom-up com stride/padding. |
-| `components/cyberdeck/include/platform/usb/cyberdeck_usb_audio_host.h`, `components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_host.cpp` | `start`, `stop`, `get_snapshot`, `snapshot`, `audio_format`, `probe_descriptors`, `address_present`, `forget_device`, `playback_start`, `playback_write`, `playback_stop` | Serviço opcional `cyberdeck.usb_audio`: inicializa o BSP USB Host da USB-A e o `usb_host_uac` (cópia local) ; cliente USB passivo observa presença de dispositivo e lê descritores (bcdUSB, VID/PID, bcdADC, direção dos endpoints isócronos), enquanto o driver de classe fornece strings e formatos. Snapshot composto bounded (8 formatos, strings de 48 bytes). O worker consulta `usb_host_device_addr_list_fill` a cada ciclo porque a remoção não é anunciada a cliente sem handle aberto; ao perder o endereço ele fecha o stream e publica `waiting`. A reprodução abre stream PCM 16-bit e escreve com backpressure limitado (o decoder roda mais rápido que o relógio isócrono); escrita, abertura e fechamento são serializados por mutex. |
+| `components/cyberdeck/include/platform/usb/cyberdeck_usb_audio_host.h`, `components/cyberdeck/src/platform/usb/cyberdeck_usb_audio_host.cpp` | `start`, `stop`, `get_snapshot`, `snapshot`, `audio_format`, `probe_descriptors`, `address_present`, `forget_device`, `playback_start`, `playback_write`, `playback_stop` | Serviço opcional `cyberdeck.usb_audio`: inicializa o BSP USB Host da USB-A e o `usb_host_uac` (cópia local) ; cliente USB passivo observa presença de dispositivo e lê descritores (bcdUSB, VID/PID, bcdADC, direção dos endpoints isócronos), enquanto o driver de classe fornece strings e formatos. Snapshot composto bounded (8 formatos, strings de 48 bytes). O worker consulta `usb_host_device_addr_list_fill` a cada ciclo porque a remoção não é anunciada a cliente sem handle aberto; ao perder o endereço ele fecha o stream e publica `waiting`. A reprodução abre stream PCM 16-bit e escreve com backpressure limitado (o decoder roda mais rápido que o relógio isócrono); escrita, abertura e fechamento são serializados por mutex. O TU depende de BSP ESP32-P4/USB Host/UAC/FreeRTOS e não linka no host, por isso é a **única** exceção allowlisted em `tools/coverage_scope_guard.py`, com autorização estreita do usuário em 07/11/2026 (TEST-COV-013/014). |
 | `components/cyberdeck/include/platform/audio/cyberdeck_audio_presence.h`, `components/cyberdeck/src/platform/audio/cyberdeck_audio_presence.cpp` | `presence`, `sample`, `watch::reset`, `watch::update`, `k_confirm_samples`, `confirmed_usb`, `confirmed_jack` | Detector puro (sem ESP-IDF/LVGL) da presença de fone USB-A e P2: `unknown/absent/present`, `unknown` nunca equivale a ausente (leitura que falha não pausa), duas amostras consecutivas iguais confirmam uma mudança (contato intermitente do P2 não interrompe o áudio), `reset()` adota a leitura atual como referência sem reportar transição e as duas fontes são avaliadas na mesma amostra. Testado por `test_music_presence`. |
 | `components/cyberdeck/src/platform/audio/cyberdeck_audio_output.cpp` | `install_usb_output`, `usb_output_hooks`, `start`, `write`, `stop`, `write_timing::route_lost`, `device_present` | Rota de saída com hooks injetáveis: dispositivo USB pronto assume a reprodução; se o stream não abrir, cai para o codec da placa. O volume do player (0-50) é aplicado ao fone: Feature Unit via
 `uac_host_device_set_volume` quando suportada, senão atenuação Q15 do PCM. Quando o hook opcional `device_present` informa que o fone deixou o barramento, o frame falho **não** é reenviado ao codec: a rota é liberada e `write_timing::route_lost` pede a pausa do player. Sem o hook ou com o dispositivo presente, mantém o fallback histórico para o speaker. |
@@ -2850,7 +2954,7 @@ de report map, notificações ou injeção de teclas.
 | `components/cyberdeck/include/platform/usb/cyberdeck_usb_audio_host.h` (presença), `components/cyberdeck/src/apps/music/cyberdeck_music_player.cpp` (`device_presence`, `set_audio_presence_probe`) | `playback_presence`, `playback_device_present`, `s_playback_lost`, `audio_presence_probe`, `route_watch` | Presença para a pausa automática: `playback_presence()` deriva presença do snapshot publicado (fone UAC de reprodução conta mesmo sem formatos utilizáveis; teclado/armazenamento não contam; `stopped/starting/error` = `unknown`). `playback_device_present()` combina a flag atômica `s_playback_lost` (levantada pelo callback do driver em `DISCONNECTED`) com `status == ready`, sem chamar a USB Host library na task do player. A sonda de dispositivo no player faz cache de 200 ms (o pino P2 é I2C) e o worker do player amostra a cada iteração, pausando em `reason=audio_route_change` / `reason=output_removed`. Testes host injetam a sonda via `set_audio_presence_probe`. |
 | `components/m5stack_tab5/src/bsp_usb.c` | `bsp_usb_host_start`, `bsp_usb_host_stop`, `usb_lib_task` | BSP vendored do USB Host: alimenta a porta USB-A, instala/desinstala o driver e drena eventos até `ALL_FREE`; `ESP_ERR_TIMEOUT` de janela ociosa não é fatal; rollback de instalação e espera bounded no encerramento. |
 | `main/idf_component.yml`, `sdkconfig.defaults`, `components/usb_host_uac/` | `espressif/usb_host_uac`, `CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` | Dependência UAC fixada em 1.5.0 e resolvida por `override_path` para a cópia local (correção do caminho de erro de `uac_host_device_open`); limite de 1024 bytes para o descritor de configuração (o padrão de 256 falha `CHECK_SHORT_CONFIG_DESC` em headsets). |
-| `tests/host/keymap/test_usb_audio_host.cpp`, `test_usb_audio_host_contract.py` | formatter e wiring USB/UAC | Testa escaping, payload e limites do serializador; contrato estrutural fixa dependência local, USB-A, lifecycle opcional, descoberta TX sem identidade fixa, endpoint LAN baseado em cache, detecção de remoção sem stream aberto, fechamento do handle fora do callback e correção do caminho de erro do driver. |
+| `tests/host/keymap/test_usb_audio_host.cpp`, `test_usb_audio_host_contract.py` | formatter e wiring USB/UAC | Testa escaping, payload e limites do serializador; contrato estrutural fixa dependência local, USB-A, lifecycle opcional, descoberta TX sem identidade fixa, endpoint LAN baseado em cache, detecção de remoção sem stream aberto, fechamento do handle fora do callback e correção do caminho de erro do driver. `test_coverage_scope_guard.py` (TEST-COV-013/014) garante que `cyberdeck_usb_audio_host.cpp` seja a única exceção allowlisted em `platform/usb/` e rejeita allowlistar o serializador puro, que permanece coberto no host. |
 | `components/cyberdeck/include/platform/sensors/cyberdeck_battery_json.h`, `components/cyberdeck/src/platform/sensors/cyberdeck_battery_json.cpp` | `kMaxJsonBytes`, `struct view`, `format_json` | Formatter puro e sem alocacao do corpo de `GET /battery`: ordem fixa (`schema`=1, `state`, `charge`, `available`, `bus_voltage_mv`, `current_ma`, `percentage`, `protection_enabled`, `protection_active`, `charger_enabled`, `sampled_at_us`, `sampled_age_ms`, `fw_version`, `uptime_s`), `null` para valor desconhecido, `state`/`charge` `unavailable` quando o snapshot falha, inteiros com suporte a int64 e `fw_version` escapada/truncada com falha fechada (retorno -1, buffer vazio) acima de `kMaxJsonBytes` (384). Nao usa ESP-IDF, FreeRTOS, I2C, NVS, LVGL ou display lock. |
 
 O endpoint serializa requisicoes, captura pelo adapter de display (o
@@ -3244,7 +3348,7 @@ helpers privados, entao a regra nao fixa a implementacao interna do adaptador.
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `.clang-format`, `.github/workflows/quality-gate.yml`, `tools/coverage_scope_guard.py`, `tests/host/keymap/test_coverage_scope_guard.py` | `quality`, guard de escopo gcovr | Gate usa clang-format 23.1.3, Ruff 0.17.1, gcovr 8.7, Bandit 1.9.4 e checkout v7.0.1 pinado por SHA; agrega testes host e build ESP-IDF 6.1. Mantém os limites globais de cobertura (80% linhas, 90% funções, 50% branches), `coverage_scope_guard.py` fail-closed e allowlist explícita dos adaptadores hardware. A formatação de `ble_mgr.cpp` valida somente faixas explícitas (incluindo pairing/reconnect) para preservar regiões legadas; ao inserir linhas nesses blocos, mantenha os intervalos alinhados. `cyberdeck_time_sync.cpp` e os shims NetDiag listados no workflow também são validados integralmente conforme clang-format 23.1.3. O step `Prepare ESP-Hosted CPU-staging` roda entre a instalação do ESP-IDF e o build: faz um `idf.py -B build-warmup reconfigure` para materializar `managed_components` (gitignored), tolera o rc apenas quando o log contém `ESP-Hosted CPU-staging is missing or changed` e o componente existe, aplica o patch, revalida com `verify` e remove `build-warmup`; o verify fail-closed do `CMakeLists.txt` permanece ativo no build real.
+| `.clang-format`, `.github/workflows/quality-gate.yml`, `tools/coverage_scope_guard.py`, `tests/host/keymap/test_coverage_scope_guard.py` | `quality`, guard de escopo gcovr | Gate usa clang-format 23.1.3, Ruff 0.17.1, gcovr 8.7, Bandit 1.9.4 e checkout v7.0.1 pinado por SHA; agrega testes host e build ESP-IDF 6.1. Mantém os limites globais de cobertura (80% linhas, 90% funções, 50% branches), `coverage_scope_guard.py` fail-closed e allowlist explícita dos adaptadores hardware. A exceção `cyberdeck_usb_audio_host.cpp` é estreita (um único TU de hardware, justificado no próprio guard) e coberta por `test_coverage_scope_guard.py` TEST-COV-013/014. A formatação de `ble_mgr.cpp` valida somente faixas explícitas (incluindo pairing/reconnect) para preservar regiões legadas; ao inserir linhas nesses blocos, mantenha os intervalos alinhados. `cyberdeck_time_sync.cpp` e os shims NetDiag listados no workflow também são validados integralmente conforme clang-format 23.1.3. O step `Prepare ESP-Hosted CPU-staging` roda entre a instalação do ESP-IDF e o build: faz um `idf.py -B build-warmup reconfigure` para materializar `managed_components` (gitignored), tolera o rc apenas quando o log contém `ESP-Hosted CPU-staging is missing or changed` e o componente existe, aplica o patch, revalida com `verify` e remove `build-warmup`; o verify fail-closed do `CMakeLists.txt` permanece ativo no build real.
 
 Declaracao de validacao fisica reportada pelo usuario (REQ-HW-01): foram testados
 no firmware gravado `0202b2b` os cenarios de conexao Bluetooth, scan,

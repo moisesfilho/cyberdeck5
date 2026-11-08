@@ -1,5 +1,6 @@
 #include "apps/music/cyberdeck_music_player.h"
 #include "apps/music/cyberdeck_music_diagnostics.h"
+#include "apps/music/cyberdeck_music_metadata.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/runtime/cyberdeck_app_storage.h"
 #include "apps/shell/cyberdeck_local_shell.h"
@@ -358,10 +359,12 @@ std::string id3_utf8_frame(const char *id, std::string_view text) {
     return frame;
 }
 
-bool write_id3_tagged_mp3(const std::string &path, std::string_view title, std::string_view artist) {
+bool write_id3_tagged_mp3(const std::string &path, std::string_view title, std::string_view artist,
+                          std::string_view album = {}) {
     std::string frames;
     if (!title.empty()) frames += id3_utf8_frame("TIT2", title);
     if (!artist.empty()) frames += id3_utf8_frame("TPE1", artist);
+    if (!album.empty()) frames += id3_utf8_frame("TALB", album);
     std::string tag = "ID3";
     tag.push_back('\x03');
     tag.append(2, '\0');
@@ -384,6 +387,88 @@ bool write_id3_tagged_mp3(const std::string &path, std::string_view title, std::
     output.write(tag.data(), static_cast<std::streamsize>(tag.size()));
     output.write(reinterpret_cast<const char *>(audio.data()), static_cast<std::streamsize>(audio.size()));
     return output.good();
+}
+
+/* Artwork frame with zeroed picture bytes of an exact size: the player tests
+ * only need a frame whose declared size pushes the tag past the legacy 64 KiB
+ * prefix, never real cover art. */
+std::string id3_apic_frame(std::size_t payload_bytes) {
+    std::string payload(1, '\x00');
+    payload += "image/jpeg";
+    payload.push_back('\0');
+    payload.push_back('\x03');
+    payload.push_back('\0');
+    if (payload.size() < payload_bytes) payload.append(payload_bytes - payload.size(), '\0');
+    std::string frame("APIC", 4);
+    const auto size = static_cast<std::uint32_t>(payload.size());
+    frame.push_back(static_cast<char>((size >> 24) & 0xff));
+    frame.push_back(static_cast<char>((size >> 16) & 0xff));
+    frame.push_back(static_cast<char>((size >> 8) & 0xff));
+    frame.push_back(static_cast<char>(size & 0xff));
+    frame.append(2, '\0');
+    frame += payload;
+    return frame;
+}
+
+/* Arbitrary ID3v2.3 frames followed by the same decodable audio as the tagged
+ * fixture, so a metadata case still reaches playback and PCM writes. */
+bool write_framed_tag_mp3(const std::string &path, std::string_view frames) {
+    std::string tag = "ID3";
+    tag.push_back('\x03');
+    tag.append(2, '\0');
+    const auto size = static_cast<std::uint32_t>(frames.size());
+    tag.push_back(static_cast<char>((size >> 21) & 0x7f));
+    tag.push_back(static_cast<char>((size >> 14) & 0x7f));
+    tag.push_back(static_cast<char>((size >> 7) & 0x7f));
+    tag.push_back(static_cast<char>(size & 0x7f));
+    tag += frames;
+    constexpr std::size_t frame_bytes = 417;
+    constexpr unsigned frame_count = 24;
+    std::array<unsigned char, frame_bytes * frame_count> audio{};
+    for (unsigned frame = 0; frame < frame_count; ++frame) {
+        audio[frame * frame_bytes] = 0xff;
+        audio[frame * frame_bytes + 1] = 0xfb;
+        audio[frame * frame_bytes + 2] = 0x90;
+        audio[frame * frame_bytes + 3] = 0x64;
+    }
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(tag.data(), static_cast<std::streamsize>(tag.size()));
+    output.write(reinterpret_cast<const char *>(audio.data()), static_cast<std::streamsize>(audio.size()));
+    return output.good();
+}
+
+/* Geometry of the file that motivated the fix (provenance, not a firmware
+ * constant): payload 254209 with a 252112-byte artwork frame after the text
+ * frames and 1757 bytes of padding. The UTF-16 encoding of the real file is
+ * covered by the reader tests; this integration case only needs the same size
+ * and frame order with the exact ffprobe text. */
+constexpr std::size_t k_reported_tag_payload = 254209;
+constexpr std::size_t k_reported_artwork_bytes = 252112;
+
+bool write_reported_metadata_mp3(const std::string &path, bool artwork_first) {
+    std::string texts;
+    texts += id3_utf8_frame("TIT2", " The Kid (Kid Cosmic Theme)");
+    texts += id3_utf8_frame("TPE1", "Dr. Fang and The Gang");
+    texts += id3_utf8_frame("TALB", "Kid Cosmic and the Sonic Courage");
+    std::string frames = artwork_first ? id3_apic_frame(k_reported_artwork_bytes) + texts
+                                       : texts + id3_apic_frame(k_reported_artwork_bytes);
+    if (frames.size() < k_reported_tag_payload)
+        frames.append(k_reported_tag_payload - frames.size(), '\0');
+    return write_framed_tag_mp3(path, frames);
+}
+
+/* Complete text frames inside a tag one byte above the approved ceiling: the
+ * reader must reject the whole tag and the player must fall back to the file
+ * name instead of publishing a partial identity. */
+bool write_over_cap_metadata_mp3(const std::string &path) {
+    std::string frames;
+    frames += id3_utf8_frame("TIT2", "Over title");
+    frames += id3_utf8_frame("TPE1", "Over artist");
+    frames += id3_utf8_frame("TALB", "Over album");
+    const std::size_t payload = cyberdeck_music::k_id3_max_tag_bytes + 1 -
+                                cyberdeck_music::k_id3v2_header_bytes;
+    if (frames.size() < payload) frames.append(payload - frames.size(), '\0');
+    return write_framed_tag_mp3(path, frames);
 }
 
 class storage_owner final : public cyberdeck_apps::application {
@@ -939,6 +1024,29 @@ int main() {
     }
 
     CHECK(subject.start(&storage, access));
+    /* AC-MUSIC-META-06/07/15: the published track identity is an integral copy
+     * of title/artist/album plus the fallback flag, so each assertion below can
+     * prove the whole triple at once and detect a field inherited from the
+     * previous track. */
+    const auto assert_identity = [](const cyberdeck_music::snapshot &state, std::string_view title,
+                                    std::string_view artist, std::string_view album,
+                                    bool from_filename) {
+        CHECK(std::string_view(state.current.title.data()) == title);
+        CHECK(std::string_view(state.current.artist.data()) == artist);
+        CHECK(std::string_view(state.current.album.data()) == album);
+        CHECK(state.current.title_from_filename == from_filename);
+    };
+    const auto set_expected_open_path = [&](std::string_view path) {
+        std::lock_guard<std::mutex> lock(open_mutex);
+        expected_secure_open_path.assign(path);
+    };
+    const auto wait_for_stopped = [&](std::string_view path) {
+        return wait_until([&] {
+            cyberdeck_music::snapshot state{};
+            return subject.status(state) && state.state == cyberdeck_music::playback_state::stopped &&
+                   std::string_view(state.current.path.data()) == path;
+        }, std::chrono::seconds(5));
+    };
     /* The current-track title is also rendered by the UI, so the basename
      * fallback must use the same bounded UTF-8 sanitizer as the queue scan. */
     const auto check_title_fallback = [&](std::string_view path, std::string_view expected) {
@@ -958,6 +1066,12 @@ int main() {
         cyberdeck_music::snapshot state{};
         CHECK(subject.status(state));
         CHECK(std::string_view(state.current.title.data()) == expected);
+        /* AC-MUSIC-META-06/15: the fallback is the sanitized basename of the
+         * requested path, flagged for the UI, and never fills artist/album. */
+        CHECK(std::string_view(state.current.path.data()) == path);
+        CHECK(state.current.title_from_filename);
+        CHECK(std::string_view(state.current.artist.data()).empty());
+        CHECK(std::string_view(state.current.album.data()).empty());
         {
             std::lock_guard<std::mutex> lock(open_mutex);
             CHECK(secure_open_paths.size() == previous_open_count + 1 &&
@@ -976,32 +1090,308 @@ int main() {
     const std::string expected_truncated(cyberdeck_music::k_max_title_bytes - 1, 'a');
     check_title_fallback(long_basename, expected_truncated);
 
-    /* The tag wins over the file name, and the artist only comes from the tag:
-     * the basename fallback never fills `artist`. A missing TPE1 frame must
-     * leave the artist empty instead of inheriting a stale value. */
-    CHECK(write_id3_tagged_mp3(fixture_path, "Tag title", "Tag artist"));
-    CHECK(begin_gated_playback("/stream.mp3"));
+    /* TEST-MUSIC-META-CURRENT-TAGGED: TIT2+TPE1+TALB reach `current` for the
+     * path the request opened, and a real TIT2 clears the fallback marker. */
+    CHECK(write_id3_tagged_mp3(fixture_path, "Tag title", "Tag artist", "Tag album"));
+    set_expected_open_path("/track-a.mp3");
+    CHECK(begin_gated_playback("/track-a.mp3"));
     cyberdeck_music::snapshot tagged{};
     CHECK(subject.status(tagged));
     CHECK(tagged.state == cyberdeck_music::playback_state::playing);
-    CHECK(std::string_view(tagged.current.title.data()) == "Tag title");
-    CHECK(std::string_view(tagged.current.artist.data()) == "Tag artist");
-    CHECK(std::string_view(tagged.current.path.data()) == "/stream.mp3");
+    assert_identity(tagged, "Tag title", "Tag artist", "Tag album", false);
+    CHECK(std::string_view(tagged.current.path.data()) == "/track-a.mp3");
     CHECK(tagged.failure_stage == cyberdeck_music::error_stage::none);
-    release_playback();
-    CHECK(stop_releases_once());
-    CHECK(subject.start(&storage, access));
 
-    CHECK(write_id3_tagged_mp3(fixture_path, "Only title", std::string_view{}));
+    /* TEST-MUSIC-META-CURRENT-PAUSE-STOP-SELECT: pause/resume keep the triple.
+     * The worker is held inside its first PCM write, so the flag changes are
+     * observed on the same published identity. */
+    CHECK(subject.pause());
+    CHECK(subject.status(tagged));
+    assert_identity(tagged, "Tag title", "Tag artist", "Tag album", false);
+    CHECK(subject.resume());
+    CHECK(subject.status(tagged));
+    assert_identity(tagged, "Tag title", "Tag artist", "Tag album", false);
+
+    /* TEST-MUSIC-META-CURRENT-SWITCH-NO-STALE / -CURRENT-GENERATION: queue B
+     * (TIT2 only, different path) while A is still inside its write. A must be
+     * retired without resurrecting its artist/album, and the final identity is
+     * B's request path with the B tag. */
+    CHECK(write_id3_tagged_mp3(fixture_path, "Second title", std::string_view{}));
+    set_expected_open_path("/track-b.mp3");
+    CHECK(subject.play("/track-b.mp3"));
+    /* AC-MUSIC-META-11: `status()` copies the snapshot under the same mutex the
+     * worker uses to replace `current`, so every sample taken while the running
+     * request changes is one of the two whole triples. A field-by-field
+     * publication (title from B with artist/album from A) would be caught here,
+     * which the post-hoc assertions below cannot see. */
+    const auto identity_key = [](const cyberdeck_music::snapshot &state) {
+        return std::string(state.current.title.data()) + '|' + state.current.artist.data() + '|' +
+               state.current.album.data();
+    };
+    const std::string key_a = "Tag title|Tag artist|Tag album";
+    const std::string key_b = "Second title||";
+    bool saw_a = false, saw_b = false, mixed = false;
+    const auto sample_identity = [&]() {
+        cyberdeck_music::snapshot sample{};
+        if (!subject.status(sample)) return false;
+        const std::string key = identity_key(sample);
+        if (key == key_a)
+            saw_a = true;
+        else if (key == key_b)
+            saw_b = true;
+        else
+            mixed = true;
+        return key == key_b;
+    };
+    const auto poll_identity = [&](int samples) {
+        for (int i = 0; i < samples && !saw_b; ++i) {
+            sample_identity();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+    /* A is still parked inside its first PCM write, so B cannot have published
+     * anything yet: every sample before the release is A's triple. */
+    poll_identity(20);
+    CHECK(!mixed && saw_a && !saw_b);
+    release_playback();
+    CHECK(wait_until([&] { return sample_identity(); }, std::chrono::seconds(2)));
+    CHECK(!mixed && saw_b);
+    CHECK(wait_for_stopped("/track-b.mp3"));
+    cyberdeck_music::snapshot switched{};
+    CHECK(subject.status(switched));
+    assert_identity(switched, "Second title", std::string_view{}, std::string_view{}, false);
+    CHECK(switched.failure_stage == cyberdeck_music::error_stage::none);
+
+    /* TEST-MUSIC-META-CURRENT-PAUSE-STOP-SELECT: select/set_queue without a play
+     * never rewrite the identity of the track in execution. */
+    CHECK(subject.set_queue(queue, 1, 0));
+    subject.select(0);
+    CHECK(subject.status(switched));
+    assert_identity(switched, "Second title", std::string_view{}, std::string_view{}, false);
+
+    /* TEST-MUSIC-META-CURRENT-ERROR: a failing play of another file must not
+     * leave the previous track's metadata (artist/album included) in `current`;
+     * the fixed identity is the sanitized basename of the failing request. */
+    CHECK(write_id3_tagged_mp3(fixture_path, "Full title", "Full artist", "Full album"));
+    set_expected_open_path("/stream.mp3");
+    CHECK(subject.play("/stream.mp3"));
+    CHECK(wait_for_stopped("/stream.mp3"));
+    cyberdeck_music::snapshot full{};
+    CHECK(subject.status(full));
+    assert_identity(full, "Full title", "Full artist", "Full album", false);
+    {
+        std::ofstream malformed(fixture_path, std::ios::binary | std::ios::trunc);
+        malformed.write(reinterpret_cast<const char *>(invalid_mp3), sizeof(invalid_mp3));
+    }
+    set_expected_open_path("/late-error.mp3");
+    CHECK(subject.play("/late-error.mp3"));
+    CHECK(wait_until([&] {
+        cyberdeck_music::snapshot state{};
+        return subject.status(state) && state.state == cyberdeck_music::playback_state::error &&
+               state.failure_stage == cyberdeck_music::error_stage::decode &&
+               std::string_view(state.current.path.data()) == "/late-error.mp3";
+    }, std::chrono::seconds(2)));
+    cyberdeck_music::snapshot failed{};
+    CHECK(subject.status(failed));
+    assert_identity(failed, "late-error.mp3", std::string_view{}, std::string_view{}, true);
+    CHECK(failed.failure_stage == cyberdeck_music::error_stage::decode);
+    set_expected_open_path("/stream.mp3");
+
+    /* TEST-MUSIC-META-CURRENT-ERROR (pre-publication branch): a request that
+     * fails before the tag is read (`error_stage=id3`) must also replace the
+     * previous track's identity. The decode case above cannot reach this branch
+     * because the metadata publish happens first, so without this block the fix
+     * that stops `current` from keeping the old track would go unproven. */
+    {
+        std::ofstream bad_id3(fixture_path, std::ios::binary | std::ios::trunc);
+        bad_id3.write("ID3\x01\0\0\0\0\0\0", 10);
+    }
+    set_expected_open_path("/early-error.mp3");
+    CHECK(subject.play("/early-error.mp3"));
+    CHECK(wait_until([&] {
+        cyberdeck_music::snapshot state{};
+        return subject.status(state) && state.state == cyberdeck_music::playback_state::error &&
+               state.failure_stage == cyberdeck_music::error_stage::id3 &&
+               std::string_view(state.current.path.data()) == "/early-error.mp3";
+    }, std::chrono::seconds(2)));
+    cyberdeck_music::snapshot early_failed{};
+    CHECK(subject.status(early_failed));
+    assert_identity(early_failed, "early-error.mp3", std::string_view{}, std::string_view{}, true);
+    CHECK(early_failed.failure_stage == cyberdeck_music::error_stage::id3);
+    set_expected_open_path("/stream.mp3");
+
+    /* The tag still wins over the file name after a failed request, so the
+     * fallback marker is not sticky. */
+    CHECK(write_id3_tagged_mp3(fixture_path, "Only title", std::string_view{}, std::string_view{}));
     CHECK(begin_gated_playback("/stream.mp3"));
     cyberdeck_music::snapshot title_only_tag{};
     CHECK(subject.status(title_only_tag));
     CHECK(title_only_tag.state == cyberdeck_music::playback_state::playing);
-    CHECK(std::string_view(title_only_tag.current.title.data()) == "Only title");
-    CHECK(std::string_view(title_only_tag.current.artist.data()).empty());
+    assert_identity(title_only_tag, "Only title", std::string_view{}, std::string_view{}, false);
     release_playback();
     CHECK(stop_releases_once());
     CHECK(subject.start(&storage, access));
+
+    /* TEST-MUSIC-META-CURRENT-SWITCH-NO-STALE (inverse): a track with an album
+     * but no TPE1 keeps the artist empty instead of inheriting one. */
+    CHECK(write_id3_tagged_mp3(fixture_path, "Album title", std::string_view{}, "Album only"));
+    CHECK(begin_gated_playback("/stream.mp3"));
+    cyberdeck_music::snapshot album_only{};
+    CHECK(subject.status(album_only));
+    CHECK(album_only.state == cyberdeck_music::playback_state::playing);
+    assert_identity(album_only, "Album title", std::string_view{}, "Album only", false);
+    release_playback();
+    CHECK(stop_releases_once());
+    CHECK(subject.start(&storage, access));
+
+    /* TEST-MUSIC-META-PLAYER-LARGE: a tag above the legacy 64 KiB window with
+     * the texts before a 252 KiB artwork frame reaches `current` with the exact
+     * oracle values, and playback still writes PCM. */
+    CHECK(write_reported_metadata_mp3(fixture_path, false));
+    set_expected_open_path("/large-tag.mp3");
+    {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        audio_write_count = 0;
+    }
+    CHECK(begin_gated_playback("/large-tag.mp3"));
+    cyberdeck_music::snapshot reported_tag{};
+    CHECK(subject.status(reported_tag));
+    CHECK(reported_tag.state == cyberdeck_music::playback_state::playing);
+    CHECK(reported_tag.failure_stage == cyberdeck_music::error_stage::none);
+    assert_identity(reported_tag, " The Kid (Kid Cosmic Theme)", "Dr. Fang and The Gang",
+                    "Kid Cosmic and the Sonic Courage", false);
+    release_playback();
+    CHECK(wait_until([&] {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        return audio_write_count > 1;
+    }, std::chrono::seconds(2)));
+    CHECK(stop_releases_once());
+    CHECK(subject.start(&storage, access));
+
+    /* Artwork first: the frame order must not change the identity, and the
+     * reader must still reach the texts after the skip. */
+    CHECK(write_reported_metadata_mp3(fixture_path, true));
+    set_expected_open_path("/large-tag-apic-first.mp3");
+    CHECK(begin_gated_playback("/large-tag-apic-first.mp3"));
+    cyberdeck_music::snapshot artwork_first{};
+    CHECK(subject.status(artwork_first));
+    CHECK(artwork_first.state == cyberdeck_music::playback_state::playing);
+    assert_identity(artwork_first, " The Kid (Kid Cosmic Theme)", "Dr. Fang and The Gang",
+                    "Kid Cosmic and the Sonic Courage", false);
+    release_playback();
+    CHECK(stop_releases_once());
+    CHECK(subject.start(&storage, access));
+
+    /* TEST-MUSIC-META-PLAYER-OVERCAP: one byte above the ceiling with complete
+     * text frames is rejected whole: the player keeps playing and publishes the
+     * sanitized file name, never the partial tag. */
+    CHECK(write_over_cap_metadata_mp3(fixture_path));
+    set_expected_open_path("/over-cap.mp3");
+    {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        audio_write_count = 0;
+    }
+    CHECK(begin_gated_playback("/over-cap.mp3"));
+    cyberdeck_music::snapshot over_cap{};
+    CHECK(subject.status(over_cap));
+    CHECK(over_cap.state == cyberdeck_music::playback_state::playing);
+    CHECK(over_cap.failure_stage == cyberdeck_music::error_stage::none);
+    assert_identity(over_cap, "over-cap.mp3", std::string_view{}, std::string_view{}, true);
+    release_playback();
+    CHECK(wait_until([&] {
+        std::lock_guard<std::mutex> lock(audio_mutex);
+        return audio_write_count > 1;
+    }, std::chrono::seconds(2)));
+    CHECK(stop_releases_once());
+    CHECK(subject.start(&storage, access));
+    /* Restore the descriptor expectation used by the blocks that follow, which
+     * never re-set it themselves. */
+    set_expected_open_path("/stream.mp3");
+
+    /* TEST-MUSIC-META-READ-FD: `read_metadata` fills the album from the same
+     * descriptor the player already opened, ignores an empty frame instead of
+     * clearing the field, and publishes nothing when the verified size does not
+     * cover the whole tag. The declared tag is clamped by the existing metadata
+     * window, so no read here goes past the bounded prefix. */
+    {
+        const std::string tag_path = fixture_path + ".metadata";
+        const auto write_tag_only = [&](std::string_view frames) {
+            std::string tag = "ID3";
+            tag.push_back('\x03');
+            tag.append(2, '\0');
+            const auto size = static_cast<std::uint32_t>(frames.size());
+            tag.push_back(static_cast<char>((size >> 21) & 0x7f));
+            tag.push_back(static_cast<char>((size >> 14) & 0x7f));
+            tag.push_back(static_cast<char>((size >> 7) & 0x7f));
+            tag.push_back(static_cast<char>(size & 0x7f));
+            tag += frames;
+            std::ofstream output(tag_path, std::ios::binary | std::ios::trunc);
+            output.write(tag.data(), static_cast<std::streamsize>(tag.size()));
+            return output.good();
+        };
+        const auto reset_tags = [](cyberdeck_music::metadata &tags) {
+            std::strcpy(tags.title.data(), "keep-title");
+            std::strcpy(tags.artist.data(), "keep-artist");
+            std::strcpy(tags.album.data(), "keep-album");
+        };
+        const auto open_tag_file = [&] { return ::open(tag_path.c_str(), O_RDONLY); };
+        const auto tag_file_size = [](int descriptor) {
+            struct stat info{};
+            return ::fstat(descriptor, &info) == 0 ? static_cast<std::size_t>(info.st_size) : std::size_t{0};
+        };
+
+        std::string frames;
+        frames += id3_utf8_frame("TIT2", "File title");
+        frames += id3_utf8_frame("TPE1", "File artist");
+        frames += id3_utf8_frame("TALB", "File album");
+        CHECK(write_tag_only(frames));
+        int tag_fd = open_tag_file();
+        CHECK(tag_fd >= 0);
+        cyberdeck_music::metadata tags{};
+        reset_tags(tags);
+        const std::size_t tag_size = tag_file_size(tag_fd);
+        CHECK(tag_size > 0);
+        cyberdeck_music::read_metadata(tag_fd, tag_size, tags);
+        CHECK(std::string_view(tags.title.data()) == "File title");
+        CHECK(std::string_view(tags.artist.data()) == "File artist");
+        CHECK(std::string_view(tags.album.data()) == "File album");
+
+        /* A present but empty TALB frame is not copied, so the caller keeps the
+         * value it already had (same rule as title/artist). */
+        frames.clear();
+        frames += id3_utf8_frame("TIT2", "File title");
+        frames += id3_utf8_frame("TALB", std::string_view{});
+        CHECK(write_tag_only(frames));
+        CHECK(::close(tag_fd) == 0);
+        tag_fd = open_tag_file();
+        CHECK(tag_fd >= 0);
+        reset_tags(tags);
+        cyberdeck_music::read_metadata(tag_fd, tag_file_size(tag_fd), tags);
+        CHECK(std::string_view(tags.title.data()) == "File title");
+        CHECK(std::string_view(tags.artist.data()) == "keep-artist");
+        CHECK(std::string_view(tags.album.data()) == "keep-album");
+
+        /* A verified size smaller than the tag publishes nothing at all. */
+        reset_tags(tags);
+        cyberdeck_music::read_metadata(tag_fd, 12, tags);
+        CHECK(std::string_view(tags.title.data()) == "keep-title");
+        CHECK(std::string_view(tags.artist.data()) == "keep-artist");
+        CHECK(std::string_view(tags.album.data()) == "keep-album");
+
+        /* A file without an ID3v2 prologue leaves the struct untouched. */
+        {
+            std::ofstream plain(tag_path, std::ios::binary | std::ios::trunc);
+            plain.write("not-an-id3-file", 15);
+        }
+        CHECK(::close(tag_fd) == 0);
+        tag_fd = open_tag_file();
+        CHECK(tag_fd >= 0);
+        reset_tags(tags);
+        cyberdeck_music::read_metadata(tag_fd, tag_file_size(tag_fd), tags);
+        CHECK(std::string_view(tags.album.data()) == "keep-album");
+        CHECK(std::string_view(tags.title.data()) == "keep-title");
+        CHECK(::close(tag_fd) == 0);
+    }
 
     CHECK(write_large_id3_mp3(fixture_path));
     struct stat large_info{};
@@ -1017,6 +1407,10 @@ int main() {
     CHECK(subject.status(large_tag_playback));
     CHECK(large_tag_playback.state == cyberdeck_music::playback_state::playing);
     CHECK(large_tag_playback.failure_stage == cyberdeck_music::error_stage::none);
+    /* Compact legacy tag (70 KiB of padding, no text frame) stays a successful
+     * no-op for metadata: the identity is the sanitized file name and the
+     * fallback marker is set. */
+    assert_identity(large_tag_playback, "stream.mp3", std::string_view{}, std::string_view{}, true);
     release_playback();
     CHECK(wait_until([&] {
         std::lock_guard<std::mutex> lock(audio_mutex);

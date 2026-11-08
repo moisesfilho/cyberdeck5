@@ -24,7 +24,7 @@ namespace {
 constexpr char k_tag[] = "music";
 constexpr cyberdeck_apps::manifest k_manifest{"cyberdeck.music",
                                               "Music",
-                                              "1.0.2",
+                                              "1.0.4",
                                               "Foreground local MP3 player",
                                               "",
                                               {"cyberdeck.event_log"},
@@ -512,6 +512,11 @@ bool application::scan_directory_sync(std::string_view path) {
                     candidate->title = tags.title;
                 if (tags.artist[0] != '\0')
                     candidate->artist = tags.artist;
+                /* The album travels in the same bounded struct as title/artist,
+                 * so a reused candidate cannot carry it from the previous file:
+                 * `*candidate = track{}` above already cleared it. */
+                if (tags.album[0] != '\0')
+                    candidate->album = tags.album;
                 if (count < tracks->size()) {
                     (*tracks)[count++] = *candidate;
                 } else {

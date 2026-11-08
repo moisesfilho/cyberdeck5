@@ -168,6 +168,21 @@ const char *presence_name(cyberdeck_audio_presence::presence value) {
     }
     return "unknown";
 }
+
+/* Identity of the file a request targets, built before the tag is read. The
+ * title starts as the sanitized file name and only a non-empty TIT2/TT2
+ * replaces it, which is what `title_from_filename` reports: the UI can tell a
+ * real title from the fallback without parsing text. An empty `track` (no
+ * request yet) and a file that failed to open both keep artist/album empty
+ * instead of inheriting the previous track. */
+void fill_track_identity(const char *path, track &out) {
+    out = track{};
+    std::memcpy(out.path.data(), path, std::strlen(path) + 1);
+    const char *base = std::strrchr(path, '/');
+    base = base == nullptr ? path : base + 1;
+    sanitize_display_text(base, out.title.data(), k_max_title_bytes);
+    out.title_from_filename = true;
+}
 } // namespace
 
 void set_audio_presence_probe(audio_presence_probe probe, void *context) {
@@ -288,6 +303,13 @@ struct player::impl {
                 add_saturated(diagnostics.failure_counts[static_cast<std::size_t>(stage)], 1);
                 add_saturated(diagnostics.generations_retired, 1);
                 diagnostics.failure_stage = static_cast<std::uint8_t>(stage);
+                /* The snapshot must never show the previous track while the
+                 * failing request targeted another file: the fixed identity is
+                 * the basename fallback of the request itself, with no artist or
+                 * album inherited from the old `current`. A retry of the same
+                 * path keeps whatever the tag of that path already published. */
+                if (std::strcmp(state.current.path.data(), req.path) != 0)
+                    fill_track_identity(req.path, state.current);
                 if (duration != 0) state.current.duration_ms = duration;
             }
         }
@@ -392,17 +414,18 @@ struct player::impl {
                      static_cast<unsigned long>(session_duration_ms), session_probe.has_toc ? 1 : 0,
                      session_duration_ms != 0 ? "probe" : "pending_fallback");
             track current{};
-            std::memcpy(current.path.data(), req.path, std::strlen(req.path) + 1);
-            const char *base = std::strrchr(req.path, '/');
-            base = base == nullptr ? req.path : base + 1;
-            sanitize_display_text(base, current.title.data(), k_max_title_bytes);
+            fill_track_identity(req.path, current);
             current.size_bytes = static_cast<std::uint32_t>(file_size);
             metadata tags{};
             read_metadata(fd, file_size, tags);
-            if (tags.title[0] != '\0')
+            if (tags.title[0] != '\0') {
                 current.title = tags.title;
+                current.title_from_filename = false;
+            }
             if (tags.artist[0] != '\0')
                 current.artist = tags.artist;
+            if (tags.album[0] != '\0')
+                current.album = tags.album;
             bool metadata_request_is_current = false;
             {
                 std::lock_guard<std::mutex> lock(state_mutex);

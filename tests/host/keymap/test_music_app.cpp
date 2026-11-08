@@ -1,4 +1,5 @@
 #include "apps/music/cyberdeck_music_app.h"
+#include "apps/music/cyberdeck_music_metadata.h"
 #include "apps/music/cyberdeck_music_scan_batch.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/shell/cyberdeck_local_shell.h"
@@ -302,10 +303,13 @@ std::string id3_utf8_frame(const char *id, std::string_view text) {
     return frame;
 }
 
-std::string id3_title_tag(std::string_view title, std::string_view artist = {}) {
+std::string id3_title_tag(std::string_view title, std::string_view artist = {},
+                          std::string_view album = {}) {
     std::string frame = id3_utf8_frame("TIT2", title);
     if (!artist.empty())
         frame += id3_utf8_frame("TPE1", artist);
+    if (!album.empty())
+        frame += id3_utf8_frame("TALB", album);
     std::string tag = "ID3";
     tag.push_back(static_cast<char>(3));
     tag.append(2, '\0');
@@ -316,6 +320,62 @@ std::string id3_title_tag(std::string_view title, std::string_view artist = {}) 
     tag.push_back(static_cast<char>(tag_size & 0x7f));
     tag += frame;
     return tag;
+}
+
+/* Artwork with zeroed picture bytes: the scan tests only need a frame whose
+ * declared size pushes the tag past the legacy 64 KiB window, never real art. */
+std::string id3_apic_frame(std::size_t payload_bytes) {
+    std::string payload(1, static_cast<char>(0));
+    payload += "image/jpeg";
+    payload.push_back('\0');
+    payload.push_back(static_cast<char>(3));
+    payload.push_back('\0');
+    if (payload.size() < payload_bytes) payload.append(payload_bytes - payload.size(), '\0');
+    std::string frame("APIC", 4);
+    const auto size = static_cast<std::uint32_t>(payload.size());
+    frame.push_back(static_cast<char>((size >> 24) & 0xff));
+    frame.push_back(static_cast<char>((size >> 16) & 0xff));
+    frame.push_back(static_cast<char>((size >> 8) & 0xff));
+    frame.push_back(static_cast<char>(size & 0xff));
+    frame.append(2, '\0');
+    frame += payload;
+    return frame;
+}
+
+std::string id3_padded_tag(std::string frames, std::size_t payload_bytes) {
+    if (frames.size() < payload_bytes) frames.append(payload_bytes - frames.size(), '\0');
+    std::string tag = "ID3";
+    tag.push_back(static_cast<char>(3));
+    tag.append(2, '\0');
+    const auto tag_size = static_cast<std::uint32_t>(frames.size());
+    tag.push_back(static_cast<char>((tag_size >> 21) & 0x7f));
+    tag.push_back(static_cast<char>((tag_size >> 14) & 0x7f));
+    tag.push_back(static_cast<char>((tag_size >> 7) & 0x7f));
+    tag.push_back(static_cast<char>(tag_size & 0x7f));
+    tag += frames;
+    return tag;
+}
+
+/* Reported geometry: payload 254209 with a 252112-byte artwork frame after the
+ * text frames and zero padding (provenance, not a firmware constant). */
+std::string id3_reported_tag() {
+    std::string frames;
+    frames += id3_utf8_frame("TIT2", " The Kid (Kid Cosmic Theme)");
+    frames += id3_utf8_frame("TPE1", "Dr. Fang and The Gang");
+    frames += id3_utf8_frame("TALB", "Kid Cosmic and the Sonic Courage");
+    frames += id3_apic_frame(252112);
+    return id3_padded_tag(std::move(frames), 254209);
+}
+
+/* Complete text frames in a tag one byte above the approved ceiling. */
+std::string id3_over_cap_tag() {
+    std::string frames;
+    frames += id3_utf8_frame("TIT2", "Over title");
+    frames += id3_utf8_frame("TPE1", "Over artist");
+    frames += id3_utf8_frame("TALB", "Over album");
+    const std::size_t payload = cyberdeck_music::k_id3_max_tag_bytes + 1 -
+                                cyberdeck_music::k_id3v2_header_bytes;
+    return id3_padded_tag(std::move(frames), payload);
 }
 } // namespace
 
@@ -826,14 +886,26 @@ int main() {
     player.state.volume = 27;
     player.state.current.title = {'T', 'r', 'a', 'c', 'k', '\0'};
     player.state.current.artist = {'A', 'r', 't', 'i', 's', 't', '\0'};
+    player.state.current.album = {'A', 'l', 'b', 'u', 'm', ' ', 'X', '\0'};
     player.state.shuffle = true;
     player.state.repeat = cyberdeck_music::repeat_mode::one;
     CHECK(music.has_playback());
+    /* TEST-MUSIC-META-APP-SNAPSHOT: the app forwards the album of the track in
+     * execution through `player_snapshot`, but the `music status` text keeps its
+     * current lines and never grows an album line (AC-MUSIC-META-20). */
+    {
+        cyberdeck_music::snapshot forwarded{};
+        CHECK(music.player_snapshot(forwarded));
+        CHECK(std::string_view(forwarded.current.title.data()) == "Track");
+        CHECK(std::string_view(forwarded.current.artist.data()) == "Artist");
+        CHECK(std::string_view(forwarded.current.album.data()) == "Album X");
+    }
     result = music.execute("music", "status");
     CHECK(result.status == cyberdeck_apps::result_status::handled);
     CHECK(result.output.find("state: playing") != std::string::npos);
     CHECK(result.output.find("track: 1/2") != std::string::npos);
     CHECK(result.output.find("Track - Artist") != std::string::npos);
+    CHECK(result.output.find("Album X") == std::string::npos);
     CHECK(result.output.find("progress: 4s / 12s") != std::string::npos);
     CHECK(result.output.find("volume: 27  shuffle: on  repeat: one") != std::string::npos);
     player.state.state = cyberdeck_music::playback_state::error;
@@ -910,11 +982,11 @@ int main() {
     CHECK(fs::exists(music_dir / invalid_name));
 
     /* The scan reuses one heap candidate for every file, so a tagged file that
-     * sorts first must not leak its title/artist into the untagged file after
-     * it (the reuse reset is the only thing standing between them). */
+     * sorts first must not leak its title/artist/album into the untagged file
+     * after it (the reuse reset is the only thing standing between them). */
     fs::remove_all(music_dir);
     fs::create_directories(music_dir);
-    write_file(music_dir / "tagged.mp3", id3_title_tag("Tagged", "Artist"));
+    write_file(music_dir / "tagged.mp3", id3_title_tag("Tagged", "Artist", "Album"));
     write_file(music_dir / "zeta.mp3", "zeta-data");
     CHECK(music.execute("music", "queue /music").status == cyberdeck_apps::result_status::handled);
     CHECK(wait_until(
@@ -928,9 +1000,19 @@ int main() {
     CHECK(std::string_view(player.last_queue[0].path.data()) == "/music/tagged.mp3");
     CHECK(std::string_view(player.last_queue[0].title.data()) == "Tagged");
     CHECK(std::string_view(player.last_queue[0].artist.data()) == "Artist");
+    CHECK(std::string_view(player.last_queue[0].album.data()) == "Album");
     CHECK(std::string_view(player.last_queue[1].path.data()) == "/music/zeta.mp3");
     CHECK(std::string_view(player.last_queue[1].title.data()) == "zeta.mp3");
     CHECK(std::string_view(player.last_queue[1].artist.data()).empty());
+    CHECK(std::string_view(player.last_queue[1].album.data()).empty());
+    /* TEST-MUSIC-META-APP-QUEUE-UNAFFECTED: the queue listing keeps its
+     * `n. <title>` format and never gains the album. */
+    {
+        const auto listed = music.execute("music", "list").output;
+        CHECK(listed.find("1. Tagged\n") != std::string::npos);
+        CHECK(listed.find("2. zeta.mp3\n") != std::string::npos);
+        CHECK(listed.find("Album") == std::string::npos);
+    }
 
     fs::remove_all(music_dir);
     fs::create_directories(music_dir);
@@ -1254,6 +1336,43 @@ int main() {
     CHECK(std::string_view(player.last_queue.front().path.data()) == "/music-pages/m00.mp3");
     CHECK(std::string_view(player.last_queue[63].path.data()) == "/music-pages/m63.mp3");
     CHECK(music.execute("music", "status").output.find("queue: 64 tracks") != std::string::npos);
+
+    /* TEST-MUSIC-META-APP-SCAN-LARGE: the queue scan reads a tag above the
+     * legacy 64 KiB window through the same descriptor (fields filled from the
+     * frames before artwork), and a tag above the ceiling falls back to the
+     * sanitized file name without failing the scan. Placed last so the extra
+     * scan does not move the cumulative counters asserted above. */
+    const fs::path large_dir = fs::path(scan_root) / "music-large";
+    fs::create_directories(large_dir);
+    write_file(large_dir / "large.mp3", id3_reported_tag());
+    write_file(large_dir / "over.mp3", id3_over_cap_tag());
+    CHECK(music.execute("music", "queue /music-large").status == cyberdeck_apps::result_status::handled);
+    CHECK(wait_until(
+        [&] {
+            const auto current = music.execute("music", "status").output;
+            return current.find("queue: scan complete") != std::string::npos &&
+                   current.find("queue: 2 tracks") != std::string::npos;
+        },
+        std::chrono::seconds(2)));
+    CHECK(player.last_queue.size() == 2);
+    const cyberdeck_music::track *large_track = nullptr;
+    const cyberdeck_music::track *over_track = nullptr;
+    for (const auto &scanned : player.last_queue) {
+        if (std::string_view(scanned.path.data()) == "/music-large/large.mp3") large_track = &scanned;
+        if (std::string_view(scanned.path.data()) == "/music-large/over.mp3") over_track = &scanned;
+    }
+    CHECK(large_track != nullptr && over_track != nullptr);
+    if (large_track != nullptr) {
+        CHECK(std::string_view(large_track->title.data()) == " The Kid (Kid Cosmic Theme)");
+        CHECK(std::string_view(large_track->artist.data()) == "Dr. Fang and The Gang");
+        CHECK(std::string_view(large_track->album.data()) == "Kid Cosmic and the Sonic Courage");
+    }
+    if (over_track != nullptr) {
+        CHECK(std::string_view(over_track->title.data()) == "over.mp3");
+        CHECK(std::string_view(over_track->artist.data()).empty());
+        CHECK(std::string_view(over_track->album.data()).empty());
+    }
+    fs::remove_all(large_dir);
 
     CHECK(runtime.stop_application("cyberdeck.music"));
     CHECK(runtime.stop_all());

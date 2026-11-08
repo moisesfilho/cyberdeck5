@@ -1041,6 +1041,11 @@ void process_music_status(lv_timer_t *) {
         text += tracks.output;
         text += s_music_command_input.feedback();
         s_music_view.render(text);
+        /* The track identity region is fed by the playback snapshot itself, not
+         * by the status text or the browser, so it survives render_browser() and
+         * never shows a merely selected track. */
+        if (has_playback_snapshot)
+            s_music_view.render_now_playing(playback.current);
         if (refresh_music_browser_snapshot(music))
             s_music_view.render_browser(s_music_browser_snapshot, music.browser_scan_active());
     } else if (s_music_manager.active() && s_music_view.exists()) {
@@ -1050,6 +1055,8 @@ void process_music_status(lv_timer_t *) {
         text += tracks.output;
         text += s_music_command_input.feedback();
         s_music_view.render(text);
+        if (has_playback_snapshot)
+            s_music_view.render_now_playing(playback.current);
         if (refresh_music_browser_snapshot(music))
             s_music_view.render_browser(s_music_browser_snapshot, music.browser_scan_active());
         s_music_view.set_visible(true);

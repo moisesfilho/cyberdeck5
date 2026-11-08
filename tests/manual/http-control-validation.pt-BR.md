@@ -5,7 +5,9 @@
 porta 80 e o cliente host `tools/cyberdeck_http_cli.py`, exercitando
 provisionamento USB da chave dedicada, autenticação HMAC/nonce, limites de
 texto, fila de injeção, snapshot do terminal e recusa com a proteção de tela.
-**Estado sob validação:** firmware `1.15.0`; serviço `cyberdeck.screenshot`
+**Estado sob validação:** firmware `1.15.0` (release de referência em que este
+roteiro foi escrito; incrementos posteriores de PATCH do firmware não alteram as
+rotas); serviço `cyberdeck.screenshot`
 1.1.0; fila bounded de 4 comandos; task `ctl_input`; chave em NVS
 (`ctl_auth/key`) exposta apenas por `control.key` na ponte USB.
 **Duração estimada:** 20-30 min.

@@ -1120,3 +1120,83 @@ scan (~0,3 s) + tick de 250 ms da UI + abertura do app, não com o codec
 demora, o próximo passo é medir scan por arquivo (metadados/secure-open) e
 avaliar um cache de listagem com invalidação explícita, que não foi feito aqui
 por risco de servir fila velha.
+
+### Envelope de metadados ID3v2 até 1 MiB — 2026-11-07
+
+Relato do usuário: uma faixa real do SD mostrava apenas o nome do arquivo no card
+`NOW PLAYING`, embora o `ffprobe` trouxesse título, artista e álbum. A tag do
+arquivo (`01 - The Kid (Kid Cosmic Theme).mp3`) é ID3v2.3 sem flags, com 254209
+bytes de payload e um `APIC` de 252112 bytes; o parser então vigente rejeitava
+qualquer tag acima de 64 KiB e lia no máximo esse prefixo do descritor, então os
+três campos ficavam vazios e o player caía no basename.
+
+Mudança (fw `1.15.2`, app `cyberdeck.music` `1.0.4`): o envelope passou a ser
+**1 MiB contando header + payload**, com a semântica fixada pela constante
+`k_id3_max_tag_bytes` em `include/apps/music/cyberdeck_music_metadata.h` — total
+igual ao teto é aceito, um byte acima rejeita a tag inteira. `read_metadata`
+deixou de ler um buffer do tamanho da tag e passou a percorrer os frames por
+offset no **mesmo** descritor já aberto: um `pread` de 10 bytes para o header,
+um header de frame por `pread` e `min(payload, k_id3_read_window_bytes)` apenas
+para `TIT2`/`TPE1`/`TALB` (e `TT2`/`TP1`/`TAL` em v2.2). Frames que o metadado
+não consome — `APIC` incluído — são pulados pelo tamanho declarado, sem carregar
+o payload; a maior leitura é limitada pela janela derivada de
+`k_max_title_bytes`, a única alocação é uma janela fixa no heap e a posição do
+descritor não é alterada (`pread` com offset explícito, sem `open`/`dup`/`close`).
+
+Fail-closed permanece all-or-nothing: header inválido, versão fora de 2..4,
+revisão `0xff`, syncsafe com bit `0x80`, tag acima do teto, tag que não cabe no
+`size` recebido, frame de tamanho 0, frame que cruza o fim da tag, área final
+não-zero depois do último frame (inclusive a partir de um byte zero que abriria
+padding — a área declarada restante é validada inteira, em blocos limitados pela
+janela), short read/erro de I/O e falha de alocação
+rejeitam a tag inteira e não publicam campo parcial — o player continua no
+basename sanitizado, com `state=playing` e `failure_stage=none`. Flags passaram
+a ser explícitas: `unsynchronisation` (`0x80`), extended header (`0x40`) e bits
+reservados de header rejeitam (em v2.2 qualquer flag de header rejeita);
+experimental (`0x20`) e footer (`0x10`, só v2.4) são tolerados porque não
+deslocam o payload; frame-alvo com qualquer flag de frame rejeita a tag,
+enquanto frame não-alvo com flags é pulado pelo tamanho. A perda de metadado
+nesses arquivos é intencional e não muda playback, formatos aceitos, comandos,
+layout ou dependências. O `APIC`/artwork nunca é exibido nem interpretado como
+texto.
+
+Testes (`make -C tests/host/keymap …`): `test_music_metadata_io` (novo alvo com
+`--wrap=pread/open/openat/dup/close` e `operator new` local) cobre a geometria do
+arquivo relatado, `APIC` antes e depois dos textos, teto exato e teto + 1, bound
+de bytes/offsets, short read/`0`/`EIO`, arquivo truncado, falha de alocação e
+v2.2/v2.4; `test_music_model` cobre o parser puro (percurso por tamanho de frame,
+decoy `TIT2` embutido no artwork, fronteiras, flags e sentinelas);
+`test_music_player`/`test_music_app` continuam cobrindo playback e scan com tag
+grande, e `test_music_id3_contract.py` (alvo `.PHONY` no agregado) fixa os
+invariantes estruturais: constantes únicas no header, leitura só por `pread` com
+offset no mesmo descritor, uma alocação do tamanho da janela, avanço por
+header + payload, rejeição de cross-end/tamanho 0/syncsafe `0x80`, política de
+flags, wiring de `BINS`/`.PHONY`/agregado/`--wrap` e a documentação deste
+envelope. Não há prova de custo no SD: o número de `pread` cresce com o número de
+frames, e a medição de `music queue` com tags grandes (`TEST-MUSIC-META-PHYS-SCAN-COST`)
+segue pendente. Estado: alvos host focados verdes na validação independente
+(`test_music_metadata_io` 190/190, `test_music_model` 361/361,
+`test_music_player` 598/598, `test_music_app` 438/438 e o contrato PASS), com as
+mutações obrigatórias M1'–M12 executadas e restauradas.
+
+Estado do dispositivo x versão: o ensaio manual com o firmware **`1.15.1`**
+caiu no fallback de nome do arquivo para o MP3 real — era a reprodução do bug
+(tag de 254209 B com `APIC` de 252112), não uma falha nova. O firmware
+**`1.15.2`**, que contém a correção, foi compilado, gravado por USB Serial-JTAG
+(imagem `build/cyberdeck5.bin` SHA-256 `f6c4ba7f…cc4e9e9`, 2.740.496 bytes, app
+`0x29d110`) e verificado por `sys.info` com `fw_version=1.15.2`,
+`safe_mode=false`, `interrupted_boots=0` e uptime monotônico.
+
+O usuário executou o ensaio nessa imagem com a mesma faixa real que antes exibia
+o basename e **relatou** que “funcionou tudo corretamente”: esse é o aceite
+humano registrado para `TEST-MUSIC-META-PHYS-LARGE`. O aceite é **reportado pelo
+usuário**, não uma observação independente: não há `screen.dump`/`ui.dump`
+arquivado, comparação `ffprobe` lado a lado nem repetição por outro operador, e
+as fixtures caracterizadas de `-OVERCAP`, `-ORDER` e `-COMPACT` não têm relato
+individual — os cenários de `tests/manual/music-player-validation.pt-BR.md` seção
+3.3.1 continuam como roteiro para evidência independente.
+`TEST-MUSIC-META-PHYS-SCAN-COST` segue **sem medição**: no pior caso teórico
+(padding todo-zero até o teto de 1 MiB, janela de leitura de 196 B) são ~5350
+`pread` por faixa, risco residual calculado e não falha observada. Detalhes em
+`tests/manual/music-player-validation.pt-BR.md` seção 3.3.1 e
+`tests/host/keymap/music_traceability.md`.

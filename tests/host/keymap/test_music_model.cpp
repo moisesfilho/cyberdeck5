@@ -1,3 +1,4 @@
+#include "apps/music/cyberdeck_music_metadata.h"
 #include "apps/music/cyberdeck_music_model.h"
 
 #include <algorithm>
@@ -20,6 +21,7 @@ int failures = 0;
     } \
 } while (false)
 
+using cyberdeck_music::k_max_album_bytes;
 using cyberdeck_music::k_max_artist_bytes;
 using cyberdeck_music::k_max_path_bytes;
 using cyberdeck_music::k_max_title_bytes;
@@ -74,16 +76,14 @@ bool valid_utf8(std::string_view text) {
     return true;
 }
 
-void append_frame(std::string &tag, unsigned version, std::string_view id, std::string_view text) {
-    const std::string payload = std::string(1, '\x03') + std::string(text);
+void append_raw_frame(std::string &tag, unsigned version, std::string_view id, std::string_view payload) {
     tag.append(id);
+    const auto size = static_cast<std::uint32_t>(payload.size());
     if (version == 2) {
-        const auto size = static_cast<std::uint32_t>(payload.size());
         tag.push_back(static_cast<char>((size >> 16) & 0xff));
         tag.push_back(static_cast<char>((size >> 8) & 0xff));
         tag.push_back(static_cast<char>(size & 0xff));
     } else {
-        const auto size = static_cast<std::uint32_t>(payload.size());
         if (version == 4) append_syncsafe(tag, size);
         else {
             tag.push_back(static_cast<char>((size >> 24) & 0xff));
@@ -96,10 +96,12 @@ void append_frame(std::string &tag, unsigned version, std::string_view id, std::
     tag += payload;
 }
 
-std::string make_tag(unsigned version, std::string_view title, std::string_view artist) {
-    std::string frames;
-    append_frame(frames, version, version == 2 ? "TT2" : "TIT2", title);
-    append_frame(frames, version, version == 2 ? "TP1" : "TPE1", artist);
+void append_frame(std::string &tag, unsigned version, std::string_view id, std::string_view text) {
+    const std::string payload = std::string(1, '\x03') + std::string(text);
+    append_raw_frame(tag, version, id, payload);
+}
+
+std::string wrap_tag(unsigned version, std::string_view frames) {
     std::string bytes = "ID3";
     bytes.push_back(static_cast<char>(version));
     bytes.push_back('\0');
@@ -107,6 +109,47 @@ std::string make_tag(unsigned version, std::string_view title, std::string_view 
     append_syncsafe(bytes, static_cast<std::uint32_t>(frames.size()));
     bytes += frames;
     return bytes;
+}
+
+std::string make_tag(unsigned version, std::string_view title, std::string_view artist,
+                     std::string_view album = {}) {
+    std::string frames;
+    append_frame(frames, version, version == 2 ? "TT2" : "TIT2", title);
+    append_frame(frames, version, version == 2 ? "TP1" : "TPE1", artist);
+    if (!album.empty())
+        append_frame(frames, version, version == 2 ? "TAL" : "TALB", album);
+    return wrap_tag(version, frames);
+}
+
+/* Total bytes of one accepted tag: the ten-byte header plus the payload the
+ * syncsafe size field declares. */
+constexpr std::size_t k_tag_total_cap = cyberdeck_music::k_id3_max_tag_bytes;
+/* Historical envelope of the previous parser; tags on both sides of it are
+ * accepted now and keep their frames. Provenance of the superseded boundary,
+ * not a production limit. */
+constexpr std::size_t k_legacy_tag_payload = 64 * 1024;
+
+/* Rewrites the size field of an already framed tag and zero-pads it so the
+ * declared payload is exactly `payload_bytes`. */
+std::string tag_with_payload(std::string tag, std::size_t payload_bytes) {
+    const std::size_t frames = tag.size() - cyberdeck_music::k_id3v2_header_bytes;
+    if (payload_bytes < frames)
+        return tag;
+    tag.append(payload_bytes - frames, '\0');
+    const auto size = static_cast<std::uint32_t>(payload_bytes);
+    tag[6] = static_cast<char>((size >> 21) & 0x7f);
+    tag[7] = static_cast<char>((size >> 14) & 0x7f);
+    tag[8] = static_cast<char>((size >> 7) & 0x7f);
+    tag[9] = static_cast<char>(size & 0x7f);
+    return tag;
+}
+
+/* One frame the metadata never consumes (artwork-like) with a zeroed payload.
+ * The parser must skip it by its declared size instead of loading it. */
+std::string filler_frame(unsigned version, std::string_view id, std::size_t payload_bytes) {
+    std::string frame;
+    append_raw_frame(frame, version, id, std::string(payload_bytes, '\0'));
+    return frame;
 }
 
 void test_path_policy() {
@@ -168,6 +211,16 @@ void test_track_validation_and_selection() {
     CHECK(!queue.replace_queue(&invalid, 1));
     invalid = tracks[0]; invalid.size_bytes = k_max_track_bytes + 1;
     CHECK(!queue.replace_queue(&invalid, 1));
+    /* The album is transported by the same bounded struct, so it carries the
+     * same NUL-termination guard as title/artist. A dedicated queue keeps the
+     * selection state of `queue` untouched. */
+    model album_queue;
+    track with_album = make_track("/album.mp3");
+    std::strcpy(with_album.album.data(), "Album");
+    CHECK(album_queue.replace_queue(&with_album, 1));
+    CHECK(std::string_view(album_queue.current()->album.data()) == "Album");
+    with_album.album.back() = 'x';
+    CHECK(!album_queue.replace_queue(&with_album, 1));
     CHECK(queue.status().selected == 1);
 }
 
@@ -237,14 +290,265 @@ void test_id3_versions_and_malformed_tags() {
     auto truncated = make_tag(3, "long", "artist"); truncated.pop_back();
     CHECK(!cyberdeck_music::parse_id3v2(truncated, unchanged));
 
+    /* The ceiling counts the whole tag (header plus payload) and is derived from
+     * the production constant: a tag whose total equals it is accepted, one byte
+     * more is rejected whole (TEST-MUSIC-META-ID3-CAP). */
     std::string oversized("ID3\x04\0\0", 6);
-    append_syncsafe(oversized, 64 * 1024 + 1);
-    oversized.append(64 * 1024 + 1, 'x');
+    append_syncsafe(oversized, static_cast<std::uint32_t>(k_tag_total_cap - cyberdeck_music::k_id3v2_header_bytes + 1));
+    oversized.append(k_tag_total_cap - cyberdeck_music::k_id3v2_header_bytes + 1, 'x');
     CHECK(!cyberdeck_music::parse_id3v2(oversized, unchanged));
     std::string max_tag("ID3\x04\0\0", 6);
-    append_syncsafe(max_tag, 64 * 1024);
-    max_tag.append(64 * 1024, '\0');
+    append_syncsafe(max_tag, static_cast<std::uint32_t>(k_tag_total_cap - cyberdeck_music::k_id3v2_header_bytes));
+    max_tag.append(k_tag_total_cap - cyberdeck_music::k_id3v2_header_bytes, '\0');
     CHECK(cyberdeck_music::parse_id3v2(max_tag, unchanged));
+
+    /* A payload above the historical 64 KiB window keeps its frames: the old
+     * boundary is superseded, not weakened, so the values stay exact. */
+    std::string above_old_frames;
+    append_frame(above_old_frames, 3, "TIT2", "Wide title");
+    append_frame(above_old_frames, 3, "TPE1", "Wide artist");
+    append_frame(above_old_frames, 3, "TALB", "Wide album");
+    const std::string above_old = tag_with_payload(wrap_tag(3, above_old_frames), k_legacy_tag_payload + 1);
+    cyberdeck_music::metadata wide{};
+    CHECK(cyberdeck_music::parse_id3v2(above_old, wide));
+    CHECK(std::string_view(wide.title.data()) == "Wide title");
+    CHECK(std::string_view(wide.artist.data()) == "Wide artist");
+    CHECK(std::string_view(wide.album.data()) == "Wide album");
+}
+
+void append_flagged_frame(std::string &tag, unsigned version, std::string_view id, std::string_view payload,
+                          unsigned char flag1, unsigned char flag2) {
+    const std::size_t start = tag.size();
+    append_raw_frame(tag, version, id, payload);
+    if (version != 2) {
+        tag[start + id.size() + 4] = static_cast<char>(flag1);
+        tag[start + id.size() + 5] = static_cast<char>(flag2);
+    }
+}
+
+/* The reported file carries a 252 KiB APIC; walking the frames by their declared
+ * size reaches the text frames on either side of it (TEST-MUSIC-META-ID3-ORDER,
+ * TEST-MUSIC-META-ID3-ACTUAL geometry, TEST-MUSIC-META-ID3-CAP). */
+void test_id3_large_tag_frame_walk() {
+    /* Payload of the APIC in the reported file (provenance of the bug, not a
+     * production constant). */
+    constexpr std::size_t k_artwork_payload = 252112;
+
+    for (unsigned version : {2U, 3U, 4U}) {
+        const std::string_view title_id = version == 2 ? "TT2" : "TIT2";
+        const std::string_view artist_id = version == 2 ? "TP1" : "TPE1";
+        const std::string_view album_id = version == 2 ? "TAL" : "TALB";
+        const std::string_view artwork_id = version == 2 ? "PIC" : "APIC";
+        const std::string_view unknown_id = version == 2 ? "TP2" : "TPE2";
+        const std::string_view encoder_id = version == 2 ? "TSS" : "TSSE";
+
+        /* Texts before the artwork, with frames the metadata ignores between. */
+        std::string after_frames;
+        append_frame(after_frames, version, title_id, "Walk title");
+        after_frames += filler_frame(version, unknown_id, 47);
+        append_frame(after_frames, version, artist_id, "Walk artist");
+        after_frames += filler_frame(version, encoder_id, 29);
+        append_frame(after_frames, version, album_id, "Walk album");
+        after_frames += filler_frame(version, artwork_id, k_artwork_payload);
+        track after{};
+        CHECK(cyberdeck_music::parse_id3v2(wrap_tag(version, after_frames), after));
+        CHECK(std::string_view(after.title.data()) == "Walk title");
+        CHECK(std::string_view(after.artist.data()) == "Walk artist");
+        CHECK(std::string_view(after.album.data()) == "Walk album");
+
+        /* Artwork first, carrying a decoy target frame inside its payload: a
+         * parser that scans for the frame id instead of using the declared size
+         * would publish the decoy. */
+        std::string decoy;
+        append_frame(decoy, version, title_id, "Fake");
+        decoy.append(k_artwork_payload - decoy.size(), '\0');
+        std::string before_frames;
+        append_raw_frame(before_frames, version, artwork_id, decoy);
+        append_frame(before_frames, version, title_id, "Walk title");
+        append_frame(before_frames, version, artist_id, "Walk artist");
+        append_frame(before_frames, version, album_id, "Walk album");
+        track before{};
+        CHECK(cyberdeck_music::parse_id3v2(wrap_tag(version, before_frames), before));
+        CHECK(std::string_view(before.title.data()) == "Walk title");
+        CHECK(std::string_view(before.artist.data()) == "Walk artist");
+        CHECK(std::string_view(before.album.data()) == "Walk album");
+    }
+
+    /* Exactly at the ceiling, with the three texts after a nearly ceiling-sized
+     * artwork frame: the last bytes inside the tag are still reached. */
+    std::string capped_frames;
+    append_frame(capped_frames, 3, "TIT2", "Cap title");
+    append_frame(capped_frames, 3, "TPE1", "Cap artist");
+    append_frame(capped_frames, 3, "TALB", "Cap album");
+    const std::size_t text_bytes = capped_frames.size();
+    const std::size_t artwork_bytes =
+        k_tag_total_cap - cyberdeck_music::k_id3v2_header_bytes - text_bytes - 10 /* APIC header */;
+    std::string at_cap_frames = filler_frame(3, "APIC", artwork_bytes);
+    at_cap_frames += capped_frames;
+    CHECK(at_cap_frames.size() + cyberdeck_music::k_id3v2_header_bytes == k_tag_total_cap);
+    const std::string at_cap = wrap_tag(3, at_cap_frames);
+    CHECK(at_cap.size() == k_tag_total_cap);
+    track capped{};
+    CHECK(cyberdeck_music::parse_id3v2(at_cap, capped));
+    CHECK(std::string_view(capped.title.data()) == "Cap title");
+    CHECK(std::string_view(capped.artist.data()) == "Cap artist");
+    CHECK(std::string_view(capped.album.data()) == "Cap album");
+
+    /* One byte above the ceiling rejects the whole tag, even with complete text
+     * frames before and after the artwork. */
+    std::string over_frames = at_cap_frames;
+    over_frames.push_back('\0');
+    CHECK(wrap_tag(3, over_frames).size() == k_tag_total_cap + 1);
+    cyberdeck_music::metadata over{};
+    std::strcpy(over.title.data(), "keep-title");
+    std::strcpy(over.artist.data(), "keep-artist");
+    std::strcpy(over.album.data(), "keep-album");
+    CHECK(!cyberdeck_music::parse_id3v2(wrap_tag(3, over_frames), over));
+    CHECK(std::string_view(over.title.data()) == "keep-title");
+    CHECK(std::string_view(over.artist.data()) == "keep-artist");
+    CHECK(std::string_view(over.album.data()) == "keep-album");
+}
+
+/* Frame bounds, padding and flag handling shared by both read paths
+ * (TEST-MUSIC-META-ID3-BOUNDS, -ID3-FLAGS, -ID3-ALLOR-NOTHING). */
+void test_id3_frame_bounds_flags_and_all_or_nothing() {
+    const auto reset = [](cyberdeck_music::metadata &out) {
+        std::strcpy(out.title.data(), "keep-title");
+        std::strcpy(out.artist.data(), "keep-artist");
+        std::strcpy(out.album.data(), "keep-album");
+    };
+    const auto preserved = [](const cyberdeck_music::metadata &out) {
+        return std::string_view(out.title.data()) == "keep-title" &&
+               std::string_view(out.artist.data()) == "keep-artist" &&
+               std::string_view(out.album.data()) == "keep-album";
+    };
+    cyberdeck_music::metadata target{};
+
+    /* A zero-sized frame after a valid title rejects the tag without leaking the
+     * title that was already decoded. */
+    std::string zero_frames;
+    append_frame(zero_frames, 3, "TIT2", "Partial");
+    zero_frames.append("TALB", 4);
+    zero_frames.append(6, '\0');
+    reset(target);
+    CHECK(!cyberdeck_music::parse_id3v2(wrap_tag(3, zero_frames), target));
+    CHECK(preserved(target));
+
+    /* Artwork that crosses the declared tag end rejects the tag as well. */
+    std::string crossing_frames;
+    append_frame(crossing_frames, 3, "TIT2", "Partial");
+    crossing_frames += filler_frame(3, "APIC", 512);
+    std::string crossing = wrap_tag(3, crossing_frames);
+    crossing.pop_back();
+    reset(target);
+    CHECK(!cyberdeck_music::parse_id3v2(crossing, target));
+    CHECK(preserved(target));
+
+    /* A remainder shorter than a frame header is a truncated frame unless it is
+     * zero padding. */
+    std::string short_frames;
+    append_frame(short_frames, 3, "TIT2", "Title");
+    std::string truncated = tag_with_payload(wrap_tag(3, short_frames), short_frames.size() + 4);
+    truncated.replace(cyberdeck_music::k_id3v2_header_bytes + short_frames.size(), 4, "xxxx");
+    reset(target);
+    CHECK(!cyberdeck_music::parse_id3v2(truncated, target));
+    CHECK(preserved(target));
+
+    std::string padded = tag_with_payload(wrap_tag(3, short_frames), short_frames.size() + 4);
+    reset(target);
+    CHECK(cyberdeck_music::parse_id3v2(padded, target));
+    CHECK(std::string_view(target.title.data()) == "Title");
+
+    /* A zero byte only opens the padding area: the whole declared remainder
+     * must be zero. A valid text frame followed by one zero and non-zero bytes
+     * that still fit a frame header is a malformed frame area, so the tag is
+     * rejected whole instead of publishing the title (AC-MUSIC-META-27). */
+    std::string zero_then_garbage_frames;
+    append_frame(zero_then_garbage_frames, 3, "TIT2", "Leaked title");
+    zero_then_garbage_frames.append(1, '\0');
+    zero_then_garbage_frames.append(cyberdeck_music::k_id3v2_header_bytes + 6, 'x');
+    reset(target);
+    CHECK(!cyberdeck_music::parse_id3v2(wrap_tag(3, zero_then_garbage_frames), target));
+    CHECK(preserved(target));
+
+    /* The non-zero byte may sit far inside the padding area: the entire frame
+     * area before the tag end is validated, not only its first bytes. */
+    std::string deep_garbage_frames;
+    append_frame(deep_garbage_frames, 3, "TIT2", "Leaked title");
+    deep_garbage_frames.append(2 * cyberdeck_music::k_id3_read_window_bytes + 3, '\0');
+    deep_garbage_frames.back() = 'x';
+    reset(target);
+    CHECK(!cyberdeck_music::parse_id3v2(wrap_tag(3, deep_garbage_frames), target));
+    CHECK(preserved(target));
+
+    /* Zero padding of the same size is padding and keeps the frame. */
+    std::string full_padding_frames;
+    append_frame(full_padding_frames, 3, "TIT2", "Padded title");
+    full_padding_frames.append(2 * cyberdeck_music::k_id3_read_window_bytes + 3, '\0');
+    reset(target);
+    CHECK(cyberdeck_music::parse_id3v2(wrap_tag(3, full_padding_frames), target));
+    CHECK(std::string_view(target.title.data()) == "Padded title");
+
+    /* Header flags: the ones that move the payload and the reserved bits reject,
+     * experimental (2.3/2.4) and footer (2.4) are tolerated. */
+    std::string plain_frames;
+    append_frame(plain_frames, 3, "TIT2", "Flag title");
+    for (unsigned char flag : {0x80, 0x40, 0x01}) {
+        std::string tagged = wrap_tag(3, plain_frames);
+        tagged[5] = static_cast<char>(flag);
+        reset(target);
+        CHECK(!cyberdeck_music::parse_id3v2(tagged, target));
+        CHECK(preserved(target));
+    }
+    std::string experimental = wrap_tag(3, plain_frames);
+    experimental[5] = static_cast<char>(0x20);
+    reset(target);
+    CHECK(cyberdeck_music::parse_id3v2(experimental, target));
+    CHECK(std::string_view(target.title.data()) == "Flag title");
+
+    std::string v4_frames;
+    append_frame(v4_frames, 4, "TIT2", "Footer title");
+    std::string footer = wrap_tag(4, v4_frames);
+    footer[5] = static_cast<char>(0x10);
+    reset(target);
+    CHECK(cyberdeck_music::parse_id3v2(footer, target));
+    CHECK(std::string_view(target.title.data()) == "Footer title");
+    std::string v4_reserved = wrap_tag(4, v4_frames);
+    v4_reserved[5] = static_cast<char>(0x08);
+    reset(target);
+    CHECK(!cyberdeck_music::parse_id3v2(v4_reserved, target));
+    CHECK(preserved(target));
+
+    std::string v2_frames;
+    append_frame(v2_frames, 2, "TT2", "Legacy title");
+    for (unsigned char flag : {0x80, 0x40, 0x01}) {
+        std::string tagged = wrap_tag(2, v2_frames);
+        tagged[5] = static_cast<char>(flag);
+        reset(target);
+        CHECK(!cyberdeck_music::parse_id3v2(tagged, target));
+        CHECK(preserved(target));
+    }
+
+    /* A target frame with any flag cannot be decoded at the declared offset; a
+     * skipped frame with flags does not stop the following texts. */
+    std::string flagged_target;
+    append_flagged_frame(flagged_target, 3, "TIT2", std::string(1, '\x03') + "Grouped", 0x00, 0x20);
+    reset(target);
+    CHECK(!cyberdeck_music::parse_id3v2(wrap_tag(3, flagged_target), target));
+    CHECK(preserved(target));
+
+    std::string flagged_artwork;
+    append_flagged_frame(flagged_artwork, 3, "APIC", std::string(64, '\0'), 0x00, 0x20);
+    append_frame(flagged_artwork, 3, "TIT2", "After artwork");
+    reset(target);
+    CHECK(cyberdeck_music::parse_id3v2(wrap_tag(3, flagged_artwork), target));
+    CHECK(std::string_view(target.title.data()) == "After artwork");
+
+    /* Data that does not start with an ID3v2 tag publishes nothing and stays a
+     * successful no-op. */
+    reset(target);
+    CHECK(cyberdeck_music::parse_id3v2("not-an-id3-tag", target));
+    CHECK(preserved(target));
 }
 
 void test_id3_text_encoding_and_limits() {
@@ -507,6 +811,197 @@ void test_metadata_struct_and_display_text() {
     cyberdeck_music::sanitize_display_text("abc", nullptr, k_max_title_bytes);
 }
 
+/* AC-MUSIC-META-01/02: `TALB` (v2.3/v2.4) and `TAL` (v2.2) fill the album
+ * through the same decode path as title/artist, a duplicated frame follows the
+ * same last-frame-wins rule, and a present but empty frame clears the field. */
+void test_id3_album_versions_and_duplicates() {
+    for (unsigned version : {2U, 3U, 4U}) {
+        const std::string id = version == 2 ? "TAL" : "TALB";
+        std::string frames;
+        append_frame(frames, version, version == 2 ? "TT2" : "TIT2", "Title");
+        append_frame(frames, version, version == 2 ? "TP1" : "TPE1", "Artist");
+        append_frame(frames, version, id, "Album");
+        const std::string bytes = wrap_tag(version, frames);
+
+        track parsed{};
+        CHECK(cyberdeck_music::parse_id3v2(bytes, parsed));
+        CHECK(std::string_view(parsed.title.data()) == "Title");
+        CHECK(std::string_view(parsed.artist.data()) == "Artist");
+        CHECK(std::string_view(parsed.album.data()) == "Album");
+
+        cyberdeck_music::metadata tags{};
+        CHECK(cyberdeck_music::parse_id3v2(bytes, tags));
+        CHECK(std::string_view(tags.album.data()) == "Album");
+
+        /* The frame ids are version-specific: a control frame that is not the
+         * album id must leave the album empty for every version. */
+        const std::string control_id = version == 2 ? "TCO" : "TCON";
+        std::string control_frames;
+        append_raw_frame(control_frames, version, control_id, std::string(1, '\x03') + "Album");
+        track control{};
+        CHECK(cyberdeck_music::parse_id3v2(wrap_tag(version, control_frames), control));
+        CHECK(control.album[0] == '\0');
+
+        /* Duplicate album frames: the last one wins, exactly like title/artist. */
+        std::string duplicates;
+        append_frame(duplicates, version, id, "First");
+        append_frame(duplicates, version, id, "Second");
+        track last{};
+        CHECK(cyberdeck_music::parse_id3v2(wrap_tag(version, duplicates), last));
+        CHECK(std::string_view(last.album.data()) == "Second");
+
+        /* A present but empty frame clears instead of inheriting "First". */
+        std::string cleared;
+        append_frame(cleared, version, id, "First");
+        append_frame(cleared, version, id, "");
+        track empty{};
+        std::strcpy(empty.album.data(), "stale");
+        CHECK(cyberdeck_music::parse_id3v2(wrap_tag(version, cleared), empty));
+        CHECK(empty.album[0] == '\0');
+    }
+}
+
+/* AC-MUSIC-META-01/02: the album decodes through every supported encoding with
+ * the same transliteration as title/artist; an unsupported encoding clears. */
+void test_id3_album_encodings() {
+    const auto album_tag = [](unsigned version, std::string payload) {
+        std::string frames;
+        append_raw_frame(frames, version, version == 2 ? "TAL" : "TALB", payload);
+        return wrap_tag(version, frames);
+    };
+    track parsed{};
+
+    CHECK(cyberdeck_music::parse_id3v2(album_tag(4, std::string(1, '\x03') + "Caf\xc3\xa9"), parsed));
+    CHECK(std::string_view(parsed.album.data()) == "Caf\xc3\xa9");
+    CHECK(valid_utf8(parsed.album.data()));
+
+    CHECK(cyberdeck_music::parse_id3v2(album_tag(3, std::string(1, '\x00') + "Caf\xe9"), parsed));
+    CHECK(std::string_view(parsed.album.data()) == "Caf\xc3\xa9");
+    CHECK(valid_utf8(parsed.album.data()));
+
+    CHECK(cyberdeck_music::parse_id3v2(
+        album_tag(4, std::string(1, '\x01') + std::string("\xfe\xff\0A\0B", 6)), parsed));
+    CHECK(std::string_view(parsed.album.data()) == "AB");
+    CHECK(cyberdeck_music::parse_id3v2(
+        album_tag(4, std::string(1, '\x01') + std::string("\xff\xfe" "A\0B\0", 6)), parsed));
+    CHECK(std::string_view(parsed.album.data()) == "AB");
+    CHECK(cyberdeck_music::parse_id3v2(
+        album_tag(4, std::string(1, '\x02') + std::string("\x00" "A\x00" "B", 4)), parsed));
+    CHECK(std::string_view(parsed.album.data()) == "AB");
+
+    /* Typographic marks are transliterated and out-of-font code points become a
+     * single '?', never a dangling byte. */
+    CHECK(cyberdeck_music::parse_id3v2(
+        album_tag(4, std::string(1, '\x03') + "\xe2\x80\x9cHi\xe2\x80\x9d\xe2\x80\xa6"), parsed));
+    CHECK(std::string_view(parsed.album.data()) == "\"Hi\"...");
+    CHECK(cyberdeck_music::parse_id3v2(
+        album_tag(4, std::string(1, '\x03') + "\xe6\xbc\xa2"), parsed));
+    CHECK(std::string_view(parsed.album.data()) == "?");
+    CHECK(valid_utf8(parsed.album.data()));
+
+    /* Unsupported encodings (and a payload with no encoding byte at all) clear
+     * the field instead of keeping whatever it held before. */
+    std::strcpy(parsed.album.data(), "stale");
+    CHECK(cyberdeck_music::parse_id3v2(album_tag(4, std::string(1, '\x04') + "ignored"), parsed));
+    CHECK(parsed.album[0] == '\0');
+    std::strcpy(parsed.album.data(), "stale");
+    CHECK(cyberdeck_music::parse_id3v2(album_tag(4, std::string(1, '\x03')), parsed));
+    CHECK(parsed.album[0] == '\0');
+    /* The `metadata` overload leaves an absent album untouched. */
+    std::string title_only;
+    append_frame(title_only, 4, "TIT2", "Only title");
+    cyberdeck_music::metadata tags{};
+    std::strcpy(tags.album.data(), "keep");
+    CHECK(cyberdeck_music::parse_id3v2(wrap_tag(4, title_only), tags));
+    CHECK(std::string_view(tags.album.data()) == "keep");
+}
+
+/* AC-MUSIC-META-03/04: the album is bounded by a single named constant, output
+ * stays valid UTF-8 and NUL-terminated, truncation happens between code points
+ * and a failed tag publishes nothing at all. */
+void test_id3_album_limits_and_fail_closed() {
+    const auto album_tag = [](std::string text) {
+        std::string frames;
+        append_raw_frame(frames, 4, "TALB", std::string(1, '\x03') + text);
+        return wrap_tag(4, frames);
+    };
+    const std::size_t capacity = cyberdeck_music::k_max_album_bytes;
+    track parsed{};
+
+    CHECK(cyberdeck_music::parse_id3v2(album_tag(std::string(capacity, 'a')), parsed));
+    CHECK(std::strlen(parsed.album.data()) == capacity);
+    CHECK(parsed.album[capacity] == '\0');
+
+    CHECK(cyberdeck_music::parse_id3v2(album_tag(std::string(capacity + 1, 'a')), parsed));
+    CHECK(std::strlen(parsed.album.data()) == capacity);
+    CHECK(parsed.album[capacity] == '\0');
+
+    /* A two-byte code point that does not fit is dropped whole. */
+    CHECK(cyberdeck_music::parse_id3v2(
+        album_tag(std::string(capacity - 1, 'a') + "\xc3\xa7"), parsed));
+    CHECK(std::strlen(parsed.album.data()) == capacity - 1);
+    CHECK(std::string_view(parsed.album.data()) == std::string(capacity - 1, 'a'));
+    CHECK(valid_utf8(parsed.album.data()));
+
+    /* ... and one that fits exactly is kept with the NUL one byte later. */
+    CHECK(cyberdeck_music::parse_id3v2(
+        album_tag(std::string(capacity - 2, 'a') + "\xc3\xa7"), parsed));
+    CHECK(std::strlen(parsed.album.data()) == capacity);
+    CHECK(parsed.album[capacity] == '\0');
+    CHECK(valid_utf8(parsed.album.data()));
+
+    /* A four-byte code point with no glyph collapses to '?', never a partial
+     * sequence. */
+    CHECK(cyberdeck_music::parse_id3v2(
+        album_tag(std::string(capacity - 4, 'a') + "\xf0\x9f\x8e\xb5"), parsed));
+    CHECK(std::string_view(parsed.album.data()) == std::string(capacity - 4, 'a') + "?");
+    CHECK(valid_utf8(parsed.album.data()));
+
+    /* Fail closed: the album must not be published when the tag is rejected. */
+    std::string frames;
+    append_frame(frames, 4, "TALB", "Album");
+    std::string bad_version = wrap_tag(4, frames);
+    bad_version[3] = 5;
+    track rejected{};
+    std::strcpy(rejected.album.data(), "unchanged");
+    CHECK(!cyberdeck_music::parse_id3v2(bad_version, rejected));
+    CHECK(std::string_view(rejected.album.data()) == "unchanged");
+
+    std::string bad_syncsafe = wrap_tag(4, frames);
+    bad_syncsafe[6] = static_cast<char>(0x80);
+    CHECK(!cyberdeck_music::parse_id3v2(bad_syncsafe, rejected));
+    CHECK(std::string_view(rejected.album.data()) == "unchanged");
+
+    std::string oversized("ID3\x04\0\0", 6);
+    append_syncsafe(oversized, static_cast<std::uint32_t>(k_tag_total_cap - cyberdeck_music::k_id3v2_header_bytes + 1));
+    oversized.append(k_tag_total_cap - cyberdeck_music::k_id3v2_header_bytes + 1, 'x');
+    CHECK(!cyberdeck_music::parse_id3v2(oversized, rejected));
+    CHECK(std::string_view(rejected.album.data()) == "unchanged");
+
+    /* A frame that overruns the declared tag size rejects the whole tag. */
+    std::string overrun = wrap_tag(4, frames);
+    CHECK(!cyberdeck_music::parse_id3v2(overrun.substr(0, overrun.size() - 1), rejected));
+    CHECK(std::string_view(rejected.album.data()) == "unchanged");
+
+    /* A zero-sized frame is rejected after a valid one, and the earlier frame
+     * must not leak into the output. */
+    std::string zero_frames;
+    append_frame(zero_frames, 4, "TIT2", "Partial");
+    std::string zero_frame("TALB", 4);
+    zero_frame.append(6, '\0');
+    zero_frames += zero_frame;
+    std::strcpy(rejected.title.data(), "unchanged-title");
+    CHECK(!cyberdeck_music::parse_id3v2(wrap_tag(4, zero_frames), rejected));
+    CHECK(std::string_view(rejected.album.data()) == "unchanged");
+    CHECK(std::string_view(rejected.title.data()) == "unchanged-title");
+
+    /* The `track` overload also stays fail-closed. */
+    track track_rejected{};
+    std::strcpy(track_rejected.album.data(), "keep");
+    CHECK(!cyberdeck_music::parse_id3v2(bad_version, track_rejected));
+    CHECK(std::string_view(track_rejected.album.data()) == "keep");
+}
+
 void test_clear_and_empty_state() {
     model queue;
     track item = make_track("/single.mp3");
@@ -533,9 +1028,14 @@ int main() {
     test_track_validation_and_selection();
     test_navigation_repeat_shuffle_and_seek();
     test_id3_versions_and_malformed_tags();
+    test_id3_large_tag_frame_walk();
+    test_id3_frame_bounds_flags_and_all_or_nothing();
     test_id3_text_encoding_and_limits();
     test_id3_legacy_text_encodings();
     test_metadata_struct_and_display_text();
+    test_id3_album_versions_and_duplicates();
+    test_id3_album_encodings();
+    test_id3_album_limits_and_fail_closed();
     test_clear_and_empty_state();
     std::cout << checks - failures << '/' << checks << " checks passed\n";
     return failures == 0 ? 0 : 1;
