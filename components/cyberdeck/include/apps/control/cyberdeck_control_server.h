@@ -16,6 +16,11 @@
  * teclado usada por `ui.type` da ponte USB. Assim o `idf.py monitor` pode ficar
  * aberto durante a validacao.
  *
+ * `POST /control/upload` compartilha a chave e o nonce, mas nao passa pela fila
+ * de teclado: ele transmite um BMP para `/sdcard/screenshots` em streaming com
+ * buffer fixo, sob lease WRITE do coordenador de SD. O adapter HTTP autentica
+ * os metadados (tamanho + SHA-256) antes de abrir qualquer arquivo.
+ *
  * `start()` prepara a chave em NVS (gerando na primeira vez), a fila bounded e
  * a task de injecao. Falha de NVS nao derruba o boot: as rotas respondem
  * not_ready ate uma nova inicializacao bem-sucedida.
@@ -39,5 +44,6 @@ esp_err_t serial_key(char *hex, std::size_t capacity);
 esp_err_t challenge_handler(httpd_req_t *req);
 esp_err_t type_handler(httpd_req_t *req);
 esp_err_t terminal_handler(httpd_req_t *req);
+esp_err_t upload_handler(httpd_req_t *req);
 
 } // namespace cyberdeck_control

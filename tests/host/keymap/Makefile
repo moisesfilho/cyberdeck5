@@ -231,7 +231,7 @@ BLE_STATE_BIN := test_ble_state_machine_bin
 BLE_EVENTS_BIN := test_ble_event_dispatch_bin
 BLE_STORE_BIN := test_ble_store_bin
 BLE_COMMAND_BIN := test_ble_command_parse_bin
-BINS := test_shell_help_bin test_shell_app_bin test_keymap_bin test_shell_utils_bin test_history_bin test_keyboard_event_bin test_event_log_recent_bin test_event_log_shim test_wifi_indicator_state_bin test_wifi_icon_layout_bin test_wifi_menu_bin test_wifi_state_machine_bin test_clock_formatter_bin test_screen_protection_bin test_terminal_filter_bin test_terminal_scrollback_bin test_edit_line_bin test_editor_model_bin test_net_coordinator_bin test_ssh_line_composer_bin test_screenshot_bmp_bin test_control_protocol_bin test_wifi_event_dispatch_bin test_wifi_persistence_queue_bin test_wifi_persistence_coordination_bin test_local_shell_bin test_save_sidecar_recovery test_cat_multiline_bin test_help_unification_bin test_orientation_bin $(WIFI_AUDIT_BIN) test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_guard_bin test_screen_off_active_bin test_serial_screen_dump_bin test_serial_ui_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session_bin test_app_runtime_bin test_runtime_sdk_bin test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app_bin test_window_manager_bin test_recovery_policy_bin test_recovery_runtime_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
+BINS := test_shell_help_bin test_shell_app_bin test_keymap_bin test_shell_utils_bin test_history_bin test_keyboard_event_bin test_event_log_recent_bin test_event_log_shim test_wifi_indicator_state_bin test_wifi_icon_layout_bin test_wifi_menu_bin test_wifi_state_machine_bin test_clock_formatter_bin test_screen_protection_bin test_terminal_filter_bin test_terminal_scrollback_bin test_edit_line_bin test_editor_model_bin test_net_coordinator_bin test_ssh_line_composer_bin test_screenshot_bmp_bin test_control_protocol_bin test_control_upload_protocol_bin test_wifi_event_dispatch_bin test_wifi_persistence_queue_bin test_wifi_persistence_coordination_bin test_local_shell_bin test_save_sidecar_recovery test_cat_multiline_bin test_help_unification_bin test_orientation_bin $(WIFI_AUDIT_BIN) test_wifi_audit_persistence_bin test_wifi_audit_save_bin test_wifi_survey_bin test_wifi_survey_export_controller test_serial_ndjson_dispatch_bin test_serial_screen_guard_bin test_screen_off_active_bin test_serial_screen_dump_bin test_serial_ui_dump_bin test_serial_cli_tolerance_bin test_serial_sysinfo_wifi_bin test_serial_term_dump_bin test_fs_write_dispatch_bin $(BLE_TYPES_BIN) $(BLE_STATE_BIN) $(BLE_EVENTS_BIN) $(BLE_STORE_BIN) $(BLE_COMMAND_BIN) test_shell_session_bin test_app_runtime_bin test_runtime_sdk_bin test_storage_facade_bin test_phase9_capabilities_bin test_cat_worker_bin test_ble_background_bin test_keyboard_dispatch_bin test_display_views_bin test_demo_app_bin test_window_manager_bin test_recovery_policy_bin test_recovery_runtime_bin test_time_sync_bin $(BATTERY_PROTECTION_BIN)
 SAVE_SIDECAR_BIN := test_save_sidecar_recovery_bin
 WIFI_SURVEY_EXPORT_BIN := test_wifi_survey_export_controller_bin
 NETDIAG_CONTROLLER_BIN := test_netdiag_controller_bin
@@ -240,7 +240,7 @@ NETDIAG_DNS_BIN := test_netdiag_dns_adapter_bin
 NETDIAG_HTTPS_BIN := test_netdiag_https_adapter_bin
 NETDIAG_APP_BIN := test_netdiag_app_bin
 BINS := $(filter-out test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter,$(BINS))
-BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_SOC_BIN) $(BATTERY_VIEW_BIN) $(BATTERY_JSON_BIN) test_music_model_bin test_music_metadata_io_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin $(MUSIC_DURATION_BIN) test_music_header_visibility_bin $(MUSIC_PRESENCE_BIN)
+BINS += $(SAVE_SIDECAR_BIN) $(WIFI_SURVEY_EXPORT_BIN) $(NETDIAG_CONTROLLER_BIN) $(NETDIAG_TCP_BIN) $(NETDIAG_DNS_BIN) $(NETDIAG_HTTPS_BIN) $(NETDIAG_APP_BIN) $(EVENT_LOG_RUNTIME_BIN) $(SD_IO_COORDINATOR_BIN) $(BATTERY_BIN) $(BATTERY_SOC_BIN) $(BATTERY_VIEW_BIN) $(BATTERY_JSON_BIN) test_music_model_bin test_music_metadata_io_bin test_music_audio_output_bin test_music_app_bin test_music_manager_bin test_music_player_bin test_music_decoder_scratch_bin test_music_command_controller_bin test_lvgl_dispatch_state_bin test_music_header_visibility_bin
 
 MUSIC_MODEL_SRC := ../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp
 MUSIC_MODEL_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_music_model.h
@@ -255,6 +255,33 @@ MUSIC_PRESENCE_TEST := test_music_presence.cpp
 MUSIC_PRESENCE_SRC := ../../../components/cyberdeck/src/platform/audio/cyberdeck_audio_presence.cpp
 MUSIC_PRESENCE_HDR := ../../../components/cyberdeck/include/platform/audio/cyberdeck_audio_presence.h
 MUSIC_PRESENCE_BIN := test_music_presence_bin
+# Isolated image viewer (REQ-IMG-01..05 / AC-IMG-01..05).  The four pure modules
+# run standalone; the view target links them against shim/full so the RGB565
+# descriptor, the frame ownership and the placement are host-testable.
+IMAGE_BMP_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_bmp.cpp
+IMAGE_BMP_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_bmp.h
+IMAGE_FIT_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_fit.cpp
+IMAGE_FIT_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_fit.h
+IMAGE_DECODE_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_decode.cpp
+IMAGE_DECODE_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_decode.h
+IMAGE_LIST_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_list.cpp
+IMAGE_LIST_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_list.h
+IMAGE_APP_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_app.cpp
+IMAGE_APP_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_app.h
+IMAGE_VIEW_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_image_view.cpp
+IMAGE_VIEW_HDR := ../../../components/cyberdeck/include/platform/display/cyberdeck_image_view.h
+IMAGE_BMP_BIN := test_image_bmp_bin
+IMAGE_FIT_BIN := test_image_fit_bin
+IMAGE_DECODE_BIN := test_image_decode_bin
+IMAGE_LIST_BIN := test_image_list_bin
+IMAGE_VIEW_BIN := test_image_view_bin
+IMAGE_WORKER_STATE_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_worker_state.cpp
+IMAGE_WORKER_STATE_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_worker_state.h
+IMAGE_WORKER_BIN := test_image_worker_state_bin
+IMAGE_CONTRACT := test_image_viewer_contract.py
+IMAGE_STACK_CONTRACT := test_image_stack_frame_contract.py
+BINS += $(IMAGE_BMP_BIN) $(IMAGE_FIT_BIN) $(IMAGE_DECODE_BIN) $(IMAGE_LIST_BIN) $(IMAGE_VIEW_BIN) $(IMAGE_WORKER_BIN)
+
 MUSIC_AUDIO_SHIMS := music_runtime_shim/bsp/m5stack_tab5.h \
 	music_runtime_shim/esp_codec_dev.h \
 	music_runtime_shim/freertos/FreeRTOS.h \
@@ -271,6 +298,12 @@ MUSIC_TRACE_HDR := ../../../components/cyberdeck/include/apps/music/cyberdeck_mu
 MUSIC_DURATION_TEST := test_music_duration.cpp
 MUSIC_DURATION_BIN := test_music_duration_bin
 MUSIC_DURATION_OBJS := test_music_duration/test.o test_music_duration/duration.o
+
+# `BINS` is expanded when it is parsed, so an artifact spelled through a
+# variable must be appended after that variable exists; otherwise the reference
+# expands to nothing and `test-build`/`clean` silently miss the artifact (a
+# leftover `_bin` then rewrites `*.gcda` without a matching `*.gcno`).
+BINS += $(MUSIC_DURATION_BIN) $(MUSIC_PRESENCE_BIN)
 MUSIC_APP_SOURCES := \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_model.cpp \
 	../../../components/cyberdeck/src/apps/music/cyberdeck_music_browser.cpp \
@@ -651,7 +684,7 @@ test_time_sync: test_time_sync_bin
 test_phase9_capabilities_contract: test_phase9_capabilities_contract.py $(PHASE9_CAPABILITIES_TEST) Makefile
 	$(PYTHON) test_phase9_capabilities_contract.py
 
-.PHONY: all test verify clean test_shell_help test_shell_help_contract test_screenshot_lifecycle_contract test_control_protocol test_control_http_contract test_control_cli test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_battery_soc test_battery_soc_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
+.PHONY: all test verify clean test_shell_help test_shell_help_contract test_screenshot_lifecycle_contract test_control_protocol test_control_upload_protocol test_control_http_contract test_control_upload_contract test_control_cli test_event_log_contract test_event_log_config_contract test_boot_sequence imu_sensor_contract test_keyboard_input_contract test_ui_resource_contract test_terminal_output_contract test_ssh_output_gap test_local_prompt_contract test_prompt_behavior test_wifi_dispatch_contract test_wifi_enter_routing_contract test_wifi_audit_contract test_wifi_audit_persistence test_wifi_audit_persistence_contract test_wifi_audit_save test_wifi_audit_save_contract test_wifi_evt_worker_lifecycle_contract test_cat_contract test_cat_multiline_contract test_cat_lifecycle_sanitization_contract test_cat_start_teardown_start_contract test_cat_stack_footprint_contract test_cat_worker_path_safety_contract local_shell_security_contract local_shell_tokenizer_contract help_unification_contract test_serial_lifecycle_contract test_serial_ndjson_dispatch test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_term_dump_contract test_term_dump_cli test_fs_write_dispatch test_fs_write_cli test_fs_write_contract test_battery_contract test_battery_reader_contract test_battery_ui_contract test_battery_protection test_battery_protection_contract test_battery_view test_battery_view_contract test_battery_soc test_battery_soc_contract test_screen_protection test_screen_protection_contract test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_ble_integration_contract test_ble_ui_timeout_contract test_ble_adv_types_contract test_ble_scan_contract test_ble_pre_sync_contract test_ble_review_regressions test_ble_runtime_regressions test_ble_ui_render_contract test_ble_header_contract test_ble_auth_contract test_ble_hid_contract test_ble_connection_lifecycle_contract test_ble_background_contract test_ble_bond_name_contract test_ble_bond_reconnect test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_coverage_scope_guard test_shell_app test_shell_app_contract test_window_manager test_window_manager_contract
 
 .PHONY: test_wifi_survey test_wifi_survey_integration_contract test_wifi_survey_export_controller test_wifi_survey_export_result_contract
 .PHONY: test_recovery_policy test_phase10_contract test_event_projection_contract test_save_sidecar_recovery
@@ -1951,6 +1984,31 @@ test_control_protocol_bin: $(CONTROL_PROTOCOL_OBJS) Makefile
 test_control_protocol: test_control_protocol_bin
 	@./test_control_protocol_bin
 
+# Upload autenticado: mensagem com dominio separado, validador de nome/tamanho,
+# digest incremental e maquina de estados de publicacao com sinks injetados.
+CONTROL_UPLOAD_OBJS := test_control_upload/test.o test_control_upload/protocol.o test_control_upload/upload.o
+CONTROL_UPLOAD_HDR := ../../../components/cyberdeck/include/apps/control/cyberdeck_control_upload.h
+CONTROL_UPLOAD_SRC := ../../../components/cyberdeck/src/apps/control/cyberdeck_control_upload.cpp
+
+test_control_upload/test.o: test_control_upload_protocol.cpp $(CONTROL_PROTOCOL_HDR) $(CONTROL_UPLOAD_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_control_upload/protocol.o: $(CONTROL_PROTOCOL_SRC) $(CONTROL_PROTOCOL_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_control_upload/upload.o: $(CONTROL_UPLOAD_SRC) $(CONTROL_UPLOAD_HDR) $(CONTROL_PROTOCOL_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $@.d -c $< -o $@
+
+test_control_upload_protocol_bin: $(CONTROL_UPLOAD_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(CONTROL_UPLOAD_OBJS) -o $@
+
+.PHONY: test_control_upload_protocol
+test_control_upload_protocol: test_control_upload_protocol_bin
+	@./test_control_upload_protocol_bin
+
 # Host test for the confined /sdcard local shell.  Include the production
 # header directly: a duplicate test-only ABI here can make the test compile
 # while linking a different class layout/API than the implementation.
@@ -2257,6 +2315,24 @@ test_control_http_contract: test_control_http_contract.py \
 # Cliente host: autenticacao, limites e recusa de sobrescrever a chave.
 test_control_cli: test_control_cli.py ../../../tools/cyberdeck_http_cli.py
 	$(PYTHON) test_control_cli.py
+
+# Contrato estrutural do upload autenticado: orcamento de rotas derivado,
+# ordem do handler (auth antes de arquivo), single-flight, lease SD, buffer fixo,
+# temporario exclusivo/fsync/publicacao sem clobber e wiring de CMake/cobertura.
+test_control_upload_contract: test_control_upload_contract.py \
+		../../../components/cyberdeck/src/apps/control/cyberdeck_control_server.cpp \
+		../../../components/cyberdeck/include/apps/control/cyberdeck_control_server.h \
+		$(CONTROL_PROTOCOL_SRC) $(CONTROL_PROTOCOL_HDR) \
+		$(CONTROL_UPLOAD_SRC) $(CONTROL_UPLOAD_HDR) \
+		../../../components/cyberdeck/src/apps/screenshot/screenshot_server.cpp \
+		../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp \
+		../../../components/cyberdeck/CMakeLists.txt ../../../tools/coverage_scope_guard.py \
+		../../../tools/cyberdeck_http_cli.py ../../../code-map.md ../../../README.md \
+		../../../README.pt-BR.md ../../../docs/ARCHITECTURE.md \
+		../../../docs/ARCHITECTURE.pt-BR.md \
+		../../../tests/manual/http-control-validation.pt-BR.md \
+		../../../tests/manual/image-viewer-validation.pt-BR.md ../../../version.txt Makefile
+	$(PYTHON) test_control_upload_contract.py
 
 # Structural companion for expander-B, NVS, UI timer/snapshot, shell and
 # ui.type.  It reads production source and fails closed when the feature is
@@ -2924,6 +3000,66 @@ test_expander_broker: $(EXPANDER_BROKER_BIN)
 test_wake_key_contract: test_wake_key_contract.py ../../../components/cyberdeck/src/platform/display/cyberdeck_ui.cpp
 	$(PYTHON) test_wake_key_contract.py
 
+# ---------------------------------------------------------------------------
+# Isolated image viewer (REQ/AC-IMG-01..05).  Focused targets only: the pure
+# modules are plain C++ and the view runs against shim/full.
+# ---------------------------------------------------------------------------
+$(IMAGE_BMP_BIN): test_image_bmp.cpp $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_bmp.cpp $(IMAGE_BMP_SRC) -o $@
+
+$(IMAGE_FIT_BIN): test_image_fit.cpp $(IMAGE_FIT_SRC) $(IMAGE_FIT_HDR) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_fit.cpp $(IMAGE_FIT_SRC) -o $@
+
+$(IMAGE_DECODE_BIN): test_image_decode.cpp $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_decode.cpp $(IMAGE_DECODE_SRC) $(IMAGE_BMP_SRC) -o $@
+
+$(IMAGE_WORKER_BIN): test_image_worker_state.cpp $(IMAGE_WORKER_STATE_SRC) $(IMAGE_WORKER_STATE_HDR) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_worker_state.cpp $(IMAGE_WORKER_STATE_SRC) -o $@
+
+$(IMAGE_LIST_BIN): test_image_list.cpp $(IMAGE_LIST_SRC) $(IMAGE_LIST_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR) $(SD_IO_COORDINATOR_SRC) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_list.cpp $(IMAGE_LIST_SRC) $(IMAGE_BMP_SRC) $(IMAGE_DECODE_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -o $@
+
+# The view owns the decoded frame, so this target runs under ASan/UBSan: a leak,
+# a double free or a use-after-free of the bitmap buffer fails here.
+$(IMAGE_VIEW_BIN): test_image_view.cpp $(IMAGE_VIEW_SRC) $(IMAGE_VIEW_HDR) $(IMAGE_FIT_SRC) $(IMAGE_FIT_HDR) $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_APP_HDR) $(IMAGE_LIST_HDR) shim/full/lvgl.h Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g --coverage -fsanitize=address,undefined -pthread -Ishim/full -I../../../components/cyberdeck/include test_image_view.cpp $(IMAGE_VIEW_SRC) $(IMAGE_FIT_SRC) $(IMAGE_DECODE_SRC) $(IMAGE_BMP_SRC) -o $@
+
+.PHONY: test_image_bmp
+test_image_bmp: $(IMAGE_BMP_BIN)
+	@./$(IMAGE_BMP_BIN)
+
+.PHONY: test_image_fit
+test_image_fit: $(IMAGE_FIT_BIN)
+	@./$(IMAGE_FIT_BIN)
+
+.PHONY: test_image_decode
+test_image_decode: $(IMAGE_DECODE_BIN)
+	@./$(IMAGE_DECODE_BIN)
+
+.PHONY: test_image_list
+test_image_list: $(IMAGE_LIST_BIN)
+	@./$(IMAGE_LIST_BIN)
+
+.PHONY: test_image_view
+test_image_view: $(IMAGE_VIEW_BIN)
+	@./$(IMAGE_VIEW_BIN)
+
+.PHONY: test_image_worker_state
+test_image_worker_state: $(IMAGE_WORKER_BIN)
+	@./$(IMAGE_WORKER_BIN)
+
+# Stack budget (BUG-IMG-01/02): real `-fstack-usage` frames for the production
+# list TU plus ELF-disassembly frames for the application functions, both
+# compared against k_worker_stack_bytes.  The ELF is required when present; the
+# script prints SKIP with the reason when the build/toolchain are missing.
+.PHONY: test_image_stack_frame_contract
+test_image_stack_frame_contract: $(IMAGE_STACK_CONTRACT) $(IMAGE_LIST_SRC) $(IMAGE_LIST_HDR) $(IMAGE_APP_SRC) ../../../components/cyberdeck/include/apps/image/cyberdeck_image_types.h Makefile
+	$(PYTHON) $(IMAGE_STACK_CONTRACT)
+
+.PHONY: test_image_viewer_contract
+test_image_viewer_contract: $(IMAGE_CONTRACT) $(IMAGE_APP_SRC) $(IMAGE_APP_HDR) $(IMAGE_VIEW_SRC) $(IMAGE_VIEW_HDR) ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_quota.h ../../../version.txt ../../../code-map.md Makefile
+	$(PYTHON) $(IMAGE_CONTRACT)
+
 .PHONY: test-build
 test-build: $(BINS)
 
@@ -3098,6 +3234,14 @@ test_music_command_controller_bin: test_music_command_controller.cpp $(MUSIC_COM
 	$(CXX) $(CXXFLAGS) -I../../../components/cyberdeck/include test_music_command_controller.cpp $(MUSIC_COMMAND_INPUT_SRC) -o $@
 
 test: test-build
+	@$(MAKE) --no-print-directory test_image_bmp
+	@$(MAKE) --no-print-directory test_image_fit
+	@$(MAKE) --no-print-directory test_image_decode
+	@$(MAKE) --no-print-directory test_image_list
+	@$(MAKE) --no-print-directory test_image_view
+	@$(MAKE) --no-print-directory test_image_worker_state
+	@$(MAKE) --no-print-directory test_image_stack_frame_contract
+	@$(MAKE) --no-print-directory test_image_viewer_contract
 	@$(MAKE) --no-print-directory test_lvgl_dispatch_state
 	@$(MAKE) --no-print-directory test_esp_hosted_cpu_staging
 	@$(MAKE) --no-print-directory test_music_decoder_stack_contract
@@ -3268,8 +3412,12 @@ test: test-build
 	@./test_screenshot_bmp_bin
 	@echo "==> Executando protocolo puro do canal HTTP de comandos (nonce/HMAC)"
 	@$(MAKE) --no-print-directory test_control_protocol
+	@echo "==> Executando protocolo puro do upload autenticado (stream/digest)"
+	@$(MAKE) --no-print-directory test_control_upload_protocol
 	@echo "==> Executando contrato estrutural do canal HTTP de comandos"
 	@$(MAKE) --no-print-directory test_control_http_contract
+	@echo "==> Executando contrato do upload autenticado"
+	@$(MAKE) --no-print-directory test_control_upload_contract
 	@echo "==> Executando testes do cliente HTTP de comandos"
 	@$(MAKE) --no-print-directory test_control_cli
 	@echo "==> Executando contrato do shell local seguro"
@@ -3550,6 +3698,6 @@ clean:
 	rm -f $(MUSIC_CODEC_I2S_BIN)
 	rm -rf test_console_dispatch test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff test_expander_broker
 	rm -f $(BINS) test_app_runtime_tsan test_screen_off_active_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
-	rm -rf test_keymap test_screenshot_bmp test_orientation test_control_protocol
+	rm -rf test_keymap test_screenshot_bmp test_orientation test_control_protocol test_control_upload
 	rm -rf test_screen_protection test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_guard test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_soc test_battery_view test_battery_json test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_terminal_scrollback test_wifi_survey test_recovery_policy test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_clock_formatter test_terminal_filter test_edit_line test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_line_composer .objects
 	rm -f $(LEGACY_TEST_ARTIFACTS)

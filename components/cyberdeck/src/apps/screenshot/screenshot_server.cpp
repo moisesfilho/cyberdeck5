@@ -212,7 +212,7 @@ static esp_err_t start_server(void)
     if (s_server != NULL) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 7;
+    config.max_uri_handlers = 8;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
     if (httpd_start(&s_server, &config) != ESP_OK) {
@@ -231,6 +231,9 @@ static esp_err_t start_server(void)
          .handler = cyberdeck_control::type_handler, .user_ctx = NULL},
         {.uri = "/control/terminal", .method = HTTP_GET,
          .handler = cyberdeck_control::terminal_handler, .user_ctx = NULL},
+        /* Transporte binario autenticado (BMP) para o SD. */
+        {.uri = "/control/upload", .method = HTTP_POST,
+         .handler = cyberdeck_control::upload_handler, .user_ctx = NULL},
     };
     for (const httpd_uri_t &uri : uris) {
         if (httpd_register_uri_handler(s_server, &uri) == ESP_OK) continue;

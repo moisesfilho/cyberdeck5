@@ -16,11 +16,17 @@
 
 namespace cyberdeck_apps {
 
-constexpr std::size_t k_max_applications = 20;
+constexpr std::size_t k_max_applications = 21;
 constexpr std::size_t k_max_dependencies = 4;
 constexpr std::size_t k_max_resources = 8;
 constexpr std::size_t k_max_capabilities = 8;
 constexpr std::size_t k_max_commands = 4;
+
+/* Two independent constants size the registry and the quota table.  They must
+ * agree: a manifest that fits one but not the other would be rejected at
+ * registration and abort the boot. */
+static_assert(k_max_applications == quota::k_max_applications,
+              "registry and quota capacities must stay equal");
 
 struct command_help {
     std::string_view usage;

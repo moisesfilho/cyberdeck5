@@ -39,6 +39,7 @@ SHELL_APP = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_app.cpp"
 DEMO_APP = ROOT / "components/cyberdeck/src/apps/demo/cyberdeck_demo_app.cpp"
 EDITOR_APP = ROOT / "components/cyberdeck/src/apps/editor/cyberdeck_editor_app.cpp"
 NETDIAG_APP = ROOT / "components/cyberdeck/src/apps/network/cyberdeck_netdiag_app.cpp"
+IMAGE_APP = ROOT / "components/cyberdeck/src/apps/image/cyberdeck_image_app.cpp"
 WIFI_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/wifi/cyberdeck_wifi_console_app.h"
 SSH_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/ssh/cyberdeck_ssh_console_app.h"
 BLUETOOTH_CONSOLE_APP = ROOT / "components/cyberdeck/include/apps/bluetooth/cyberdeck_bluetooth_console_app.h"
@@ -105,6 +106,10 @@ NETDIAG_USAGE = (
 MUSIC_USAGE = (
     ("music queue <directory> | list | select <index> | play [index] | pause | resume | stop | next | prev | seek <seconds> | volume <0-50> | shuffle | repeat | status",
       "MP3 playback from SD; volume is capped at 50\n"),
+)
+IMAGE_USAGE = (
+    ("image <path>",
+     "path: absolute BMP file inside the SD namespace; left/right browses the same directory; Esc closes\n"),
 )
 WIFI_CONSOLE_USAGE = (
     ("wifi [search|saved|audit|survey]",
@@ -187,6 +192,11 @@ EXPECTED_APPS = (
      "id": "cyberdeck.music", "name": "Music", "description": "Foreground local MP3 player",
      "type": "foreground", "commands": ("music",), "command": "", "usage": MUSIC_USAGE,
      "owns_console": False, "commands_require_active_foreground": True},
+    {"symbol": "&cyberdeck_image::global_application()", "source": "image_viewer",
+     "id": "cyberdeck.image_viewer", "name": "Image viewer",
+     "description": "Foreground BMP image viewer",
+     "type": "foreground", "commands": ("image",), "command": "", "usage": IMAGE_USAGE,
+     "owns_console": False, "commands_require_active_foreground": False},
     {"symbol": "&cyberdeck_wifi_console_app::global_application()", "source": "wifi_console",
      "id": "cyberdeck.wifi.shell", "name": "Wi-Fi console",
      "description": "manage Wi-Fi, passively survey networks, and explicitly export results",
@@ -219,7 +229,7 @@ EXPECTED_APPS = (
      "owns_console": False},
 )
 
-COMMAND_BEARING_COUNT = 10
+COMMAND_BEARING_COUNT = 11
 COMMANDLESS_SERVICE_COUNT = 9
 CONSOLE_OWNER_COUNT = 1
 
@@ -227,6 +237,7 @@ FIXTURE_USAGE_FUNCTIONS = {
     "editor": "editor_usage_manifest",
     "netdiag": "netdiag_usage_manifest",
     "music": "music_usage_manifest",
+    "image_viewer": "image_usage_manifest",
     "wifi_console": "wifi_console_usage_manifest",
     "ssh_console": "ssh_console_usage_manifest",
     "bluetooth_console": "bluetooth_console_usage_manifest",
@@ -956,6 +967,7 @@ def main() -> int:
         "editor": EDITOR_APP.read_text(encoding="utf-8"),
         "netdiag": NETDIAG_APP.read_text(encoding="utf-8"),
         "music": (ROOT / "components/cyberdeck/src/apps/music/cyberdeck_music_app.cpp").read_text(encoding="utf-8"),
+        "image_viewer": IMAGE_APP.read_text(encoding="utf-8"),
         "wifi_console": WIFI_CONSOLE_APP.read_text(encoding="utf-8"),
         "ssh_console": SSH_CONSOLE_APP.read_text(encoding="utf-8"),
         "bluetooth_console": BLUETOOTH_CONSOLE_APP.read_text(encoding="utf-8"),
@@ -1086,7 +1098,7 @@ def main() -> int:
         require(len(fixture_symbols) == len(EXPECTED_APPS),
                 f"the fixture inventory must register {len(EXPECTED_APPS)} applications")
         require(fixture_symbols[-COMMAND_BEARING_COUNT:] ==
-                ("&demo", "&editor", "&netdiag", "&music", "&wifi_console", "&ssh_console",
+                ("&demo", "&editor", "&netdiag", "&music", "&image_viewer", "&wifi_console", "&ssh_console",
                  "&bluetooth_console", "&battery_console", "&screen_console", "&event_log_console"),
                 "the fixture inventory must register the command-bearing apps in production order")
         for app in EXPECTED_APPS:

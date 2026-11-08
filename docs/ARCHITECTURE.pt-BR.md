@@ -394,6 +394,7 @@ curl --fail --output screenshot.bmp http://IP_DO_DISPOSITIVO/screenshot
 | `/control/challenge` | GET | `application/json` com `Cache-Control: no-store` | nonce de uso único (16 bytes aleatórios, 32 hex) válido por 60 s |
 | `/control/type` | POST | `202 Accepted` com `{"accepted":true,"bytes":N,"lines":N}` | texto UTF-8 limitado, autenticado e enfileirado para a task de injeção |
 | `/control/terminal` | GET | `application/json` com `Cache-Control: no-store` | snapshot textual bounded (`cyberdeck_ui_term_dump`, 2048 bytes) |
+| `/control/upload` | POST | `201 Created` com `{"name","bytes","sha256","path"}` | arquivo BMP autenticado (até 3 MiB) em `/sdcard/screenshots`; streaming com buffer fixo e publicação sem sobrescrita |
 
 Todos os endpoints aceitam apenas clientes da rede privada/local, respondem 405
 a métodos diferentes de `GET` e 503 quando o mutex de requisição está ocupado.
@@ -437,10 +438,29 @@ HTTP não oferece confidencialidade — o HMAC autentica a origem lógica, não 
 o texto — e o filtro de peer local não identifica o usuário. Use o canal apenas
 em LAN confiável.
 
+`POST /control/upload` é o transporte binário do canal. Ele reusa a chave e o
+nonce, mas assina uma mensagem própria com domínio fixo
+(`cyberdeck-control-upload/v1`, nonce, método, URI, basename de destino,
+tamanho declarado e SHA-256), de modo que um MAC de `/control/type` nunca
+autoriza um upload. O handler autentica esses metadados (inclusive o basename
+que publicará) **antes** de abrir qualquer arquivo, adquire
+um lease WRITE do coordenador de SD e lê o corpo em chunks de 4096 bytes,
+reconferindo o digest incrementalmente. O destino é fixo em
+`/sdcard/screenshots` com basename `.bmp`; a publicação usa temporário exclusivo
+no mesmo diretório, `fsync`/`close` e nunca sobrescreve um alvo existente. Um
+upload por vez (`429 busy`), `413` acima de 3 MiB, `400` para nome/tamanho
+inválido, `409` para alvo existente, `422` para digest divergente e `503` com o
+gate de SD fechado. O tempo total de cada transferência é limitado por um
+orçamento absoluto por request (`k_max_upload_duration_us`, 120 s) que
+progresso não renova, mantendo o limite de timeouts consecutivos como defesa
+secundária. A proteção de tela não bloqueia o upload porque a rota não
+depende do display.
+
 ```bash
 python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision
 python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO type "help"
 python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO terminal
+python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO upload fixture.bmp
 ```
 
 `cyberdeck.usb_audio` é serviço opcional do runtime. O BSP habilita o USB Host
@@ -585,6 +605,42 @@ editor. Ele contém os atalhos ativos e somente a sigla do encoding (`UTF-8`,
 essa superfície antes do cálculo da capacidade do documento e da posição do
 rodapé, sem sobreposição. Mudanças de tamanho recalculam o layout e limitam
 scroll e visibilidade do cursor em retrato e paisagem.
+
+
+O aplicativo `cyberdeck.image_viewer` (`image <caminho>`) é um app foreground
+isolado: o recorte aprovado é um BMP 24-bit `BI_RGB` sem compressão de no máximo
+5 MiB e 1..1280 px por eixo, com listagem do diretório limitada a 64 nomes
+`.bmp` ordenados por bytes. Um `image <caminho>` explícito também funciona
+quando o arquivo pedido ordena depois desses 64 nomes: o scan mantém a página
+ordinária mas promove o pedido para a última posição (63 menores + pedido),
+preservando o cap, a ordenação, a unicidade e todos os filtros de caminho,
+formato e tamanho, e só depois de o próprio scan provar que o arquivo é um BMP
+elegível daquele diretório. O indicador e o `+` descrevem a janela, não o
+diretório inteiro; um scan de navegação nunca promove. PNG/JPEG, compressão RLE,
+transparência, zoom e varredura recursiva são recusados em vez de adivinhados.
+
+A divisão de camadas segue a regra do editor. `cyberdeck_image_bmp` é dono do
+envelope (assinatura, `biSize`, planos, profundidade, compressão, dimensões,
+`((w*3)+3) & ~3` e limites em 64 bits), `cyberdeck_image_fit` é dono da
+colocação inteira (`min(área/imagem)` com clamp para nunca ampliar, mais o zoom
+LVGL e a posição do objeto cujo centro coincide com o retângulo encaixado) e
+`cyberdeck_image_decode` lê uma linha BGR (com padding) por `pread` direto no
+frame RGB565 final, então não existe buffer de 5 MiB: a única alocação grande é
+`w*h*2` (no máximo 3.276.800 B) mais uma linha de scratch no mesmo bloco.
+`cyberdeck_image_list` enumera pelo seam confinado do shell local, portanto
+traversal, alias `/sdcard`, symlink, diretório, arquivo vazio e arquivo acima do
+teto falham fechado.
+
+A decodificação roda em task worker dedicada com geração monotônica; resultado
+superado por um pedido mais novo, ou que termina depois de `Esc`, é descartado
+em vez de publicado. O aplicativo nunca chama LVGL e a UI nunca toca o
+filesystem. Apenas um frame é publicado por vez e sua posse é transferida para
+`cyberdeck_image_view`, que libera o frame anterior ao repointar o widget e o
+último no `destroy()`; a UI destrói a view antes do supervisor parar o
+aplicativo. A posse de teclado é um predicado puro: as setas só são consumidas
+enquanto o visualizador é o foreground **e** há imagem publicada, então uma
+carga recusada mantém o teclado do shell, e `Esc` sempre volta para
+`cyberdeck.shell`.
 
 ## SSH
 

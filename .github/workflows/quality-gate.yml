@@ -107,6 +107,35 @@ jobs:
             components/cyberdeck/include/apps/music/cyberdeck_music_browser.h \
             components/cyberdeck/src/apps/music/cyberdeck_music_browser.cpp \
             tests/host/keymap/test_music_browser.cpp
+          # The authenticated upload transport and the image viewer are new
+          # code; their production headers/sources and test TUs stay inside
+          # the format gate so the omission that shipped unformatted files
+          # cannot happen again.
+          clang-format --dry-run --Werror \
+            components/cyberdeck/include/apps/control/cyberdeck_control_upload.h \
+            components/cyberdeck/src/apps/control/cyberdeck_control_upload.cpp \
+            components/cyberdeck/include/apps/image/cyberdeck_image_app.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_bmp.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_decode.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_fit.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_list.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_types.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_worker_state.h \
+            components/cyberdeck/src/apps/image/cyberdeck_image_app.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_bmp.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_decode.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_fit.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_list.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_worker_state.cpp \
+            components/cyberdeck/include/platform/display/cyberdeck_image_view.h \
+            components/cyberdeck/src/platform/display/cyberdeck_image_view.cpp \
+            tests/host/keymap/test_control_upload_protocol.cpp \
+            tests/host/keymap/test_image_bmp.cpp \
+            tests/host/keymap/test_image_decode.cpp \
+            tests/host/keymap/test_image_fit.cpp \
+            tests/host/keymap/test_image_list.cpp \
+            tests/host/keymap/test_image_view.cpp \
+            tests/host/keymap/test_image_worker_state.cpp
           # F is the repository's deterministic Python syntax/import-format
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.

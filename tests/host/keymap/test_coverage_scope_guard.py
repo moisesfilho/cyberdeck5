@@ -47,6 +47,7 @@ NEWLY_ALLOWLISTED = frozenset({
     "components/cyberdeck/src/platform/display/cyberdeck_lvgl_dispatch.cpp",
     "components/cyberdeck/src/platform/sensors/cyberdeck_expander_device.cpp",
     "components/cyberdeck/src/apps/control/cyberdeck_control_server.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_app.cpp",
 })
 
 # The pre-existing USB Host/UAC hardware adapter. It is the single TU covered
@@ -87,6 +88,13 @@ REQUIRED_COVERED = frozenset({
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_tcp_adapter.cpp",
     "components/cyberdeck/src/apps/network/cyberdeck_netdiag_https_adapter.cpp",
     "components/cyberdeck/src/apps/control/cyberdeck_control_protocol.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_bmp.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_fit.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_decode.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_list.cpp",
+    "components/cyberdeck/src/apps/image/cyberdeck_image_worker_state.cpp",
+    "components/cyberdeck/src/platform/display/cyberdeck_image_view.cpp",
+    "components/cyberdeck/src/apps/control/cyberdeck_control_upload.cpp",
 })
 
 

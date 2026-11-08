@@ -1,15 +1,16 @@
 # Validacao Manual: Canal HTTP de Comandos (LAN)
 
 **Projeto:** cyberdeck5 (M5Stack Tab5)
-**Escopo:** rotas `/control/challenge`, `/control/type` e `/control/terminal` na
-porta 80 e o cliente host `tools/cyberdeck_http_cli.py`, exercitando
-provisionamento USB da chave dedicada, autenticação HMAC/nonce, limites de
-texto, fila de injeção, snapshot do terminal e recusa com a proteção de tela.
-**Estado sob validação:** firmware `1.15.0` (release de referência em que este
-roteiro foi escrito; incrementos posteriores de PATCH do firmware não alteram as
-rotas); serviço `cyberdeck.screenshot`
-1.1.0; fila bounded de 4 comandos; task `ctl_input`; chave em NVS
-(`ctl_auth/key`) exposta apenas por `control.key` na ponte USB.
+**Escopo:** rotas `/control/challenge`, `/control/type`, `/control/terminal` e
+`/control/upload` na porta 80 e o cliente host `tools/cyberdeck_http_cli.py`,
+exercitando provisionamento USB da chave dedicada, autenticação HMAC/nonce,
+limites de texto, fila de injeção, snapshot do terminal, recusa com a proteção
+de tela e transporte binário autenticado de uma fixture BMP.
+**Estado sob validação:** firmware `1.16.0` (transporte de upload adicionado;
+incrementos posteriores de PATCH não alteram as rotas); serviço
+`cyberdeck.screenshot` 1.1.1; fila bounded de 4 comandos; task `ctl_input`;
+chave em NVS (`ctl_auth/key`) exposta apenas por `control.key` na ponte USB;
+upload limitado a 3 MiB, um por vez, em `/sdcard/screenshots`.
 **Duração estimada:** 20-30 min.
 **Objetivo principal:** enviar comandos sem ocupar a USB Serial-JTAG, mantendo o
 `idf.py monitor` aberto para observar logs, panic e reboot.
@@ -86,17 +87,48 @@ data e observador. **Nunca** cole o conteúdo de `control.key`.
 
 ---
 
-## 6. Evidências a registrar
+## 6. Upload autenticado (`POST /control/upload`)
+
+Fixture: BMP 24-bit `BI_RGB`, `biHeight=+720` (bottom-up), `54 + 1280*720*3 =
+2.764.854 B`, gerada no PC com `sha256` registrado. O destino é sempre
+`/sdcard/screenshots/<nome>.bmp`; nunca há sobrescrita. O diretório
+`/sdcard/screenshots` precisa existir antes do primeiro upload (por exemplo,
+`mkdir /screenshots` uma vez no shell local): a rota não cria diretórios e
+responde erro de I/O quando ele falta.
+
+| ID | Ação | Resultado esperado | Pass/Fail | Obs |
+|----|------|--------------------|-----------|-----|
+| U1 | `upload fixture.bmp` | `201` com `name`, `bytes=2764854`, `sha256` igual ao local e `path=/screenshots/<nome>.bmp`; imprime o comando `image ...` |  |  |
+| U2 | `type "ls -a /screenshots"` + `terminal` | Nome presente; nenhum `.upload.*.tmp` restante |  |  |
+| U3 | `type "image /screenshots/<nome>.bmp"` | Viewer abre com título/indicador coerentes; uptime monotônico; sem panic no monitor |  |  |
+| U4 | Repetir U1 com o mesmo `--name` | `409 conflict`; arquivo existente byte-idêntico (`sha256`/CRC inalterado) |  |  |
+| U5 | Nome com `../`, `.png`, 129 caracteres ou espaço | `400 invalid_path`; diretório inalterado |  |  |
+| U6 | MAC inválido / replay do mesmo nonce | `401 unauthorized` / `401 no_challenge`; nada escrito |  |  |
+| U6b | Repetir com MAC válido mas `X-CTL-Name` trocado (mesmo nonce, tamanho e digest) | `401 unauthorized`; nada escrito; o MAC original continua válido para o nome correto |  |  |
+| U7 | Gerar dois uploads simultâneos (um com `--name` distinto) | Um `201` e um `429 busy`, sem temporário órfão; o segundo funciona depois |  |  |
+| U8 | Fechar o socket no meio do corpo | Aborta; nenhum temporário/alvo; `type "help"` continua funcionando no mesmo boot |  |  |
+| U8b | Gotejar o corpo (ex.: 1 KiB a cada poucos segundos) por mais de 120 s, sem fechar o socket | Aborta no deadline absoluto do request (~120 s), temporário removido, nada publicado e `type "help"` responde no mesmo boot; exige cliente ad-hoc e autorização específica |  |  |
+| U9 | Upload com a tela apagada | `201` (a rota não depende do display); `screen.wake` e U3 funcionam |  |  |
+| U10 | `sys.info` após 3 uploads sequenciais | `internal_free`/`psram` voltam ao baseline (delta ≤ 64 KiB), uptime contínuo, 0 panic/WDT |  |  |
+
+## 7. Evidências a registrar
 
 - Versão/SHA-256 do binário e slot em execução.
 - Saídas de `status`, `type` e `terminal` (sem a chave).
-- Trecho do monitor serial durante T1/T7/R1, comprovando ausência de reboot.
+- Saída de `upload` (nome, bytes, `sha256`, caminho) e comparação com o hash local.
+- Trecho do monitor serial durante T1/T7/U7/U8, comprovando ausência de reboot.
 - `sys.info` antes e depois (uptime, heap, `safe_mode`).
 - Resultado de R2/R4 (403/413) e o método usado.
 
-## 7. Limites conhecidos
+## 8. Limites conhecidos
 
-- HTTP sem TLS: o texto do comando e a resposta do terminal são visíveis na LAN.
+- HTTP sem TLS: o texto do comando, a resposta do terminal e o corpo do upload
+  são visíveis na LAN; o HMAC autentica a origem lógica e a integridade, não
+  identifica a pessoa.
+- Os metadados autenticados do upload são nonce, método, URI, **basename de
+  destino**, tamanho declarado e SHA-256; trocar o nome, o tamanho ou o digest
+  invalida o MAC antes de qualquer abertura de arquivo. O basename também é
+  validado localmente (ASCII `[A-Za-z0-9._-]`, `.bmp`, sem diretórios).
 - O HMAC autentica quem possui a chave, não identifica a pessoa; o filtro de
   peer local não autoriza usuário.
 - `terminal` reflete o terminal inteiro (shell, SSH, apps, teclado físico), não
@@ -104,3 +136,11 @@ data e observador. **Nunca** cole o conteúdo de `control.key`.
 - `202 Accepted` não significa execução concluída; confirme com `terminal`.
 - O canal tem o mesmo alcance de `ui.type`; comandos destrutivos devem ser
   evitados durante a validação.
+- O tempo total de cada upload é limitado a 120 s (`k_max_upload_duration_us`),
+  um orçamento absoluto por request que **não** é renovado por progresso; o
+  limite de timeouts consecutivos de recv continua como defesa secundária.
+  Corpos legítimos em LAN/Wi-Fi ficam muito abaixo disso (o pior caso aceito,
+  3 MiB, exige ≥ 26 KiB/s).
+- FATFS não promete substituição atômica: o firmware recusa um alvo existente e
+  nunca remove o destino para tentar de novo; uma publicação concluída não é
+  sobrescrita por outro upload.

@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from test_incremental_batch_contract import Model, expand_vars
+from test_incremental_batch_contract import Model, expand_recipe, expand_vars
 
 
 HERE = Path(__file__).resolve().parent
@@ -31,17 +31,23 @@ def check() -> None:
     # duplicated.  An exact count would have to be rewritten by hand whenever a
     # target is added, which the project rules forbid.
     assert len(bins) == len(set(bins))
+    # A wrapper may spell the executable literally (`@./test_foo_bin`) or
+    # through a variable (`@./$(FOO_BIN)`).  Both spellings are expanded here,
+    # otherwise an artifact declared by an `+=` that precedes its own `:=`
+    # definition would expand to nothing and escape `clean` unnoticed: the
+    # leftover `_bin` keeps running and rewrites `*.gcda` without `*.gcno`.
     executed = set()
     for target in model.phony():
         rule = model.rule_resolved(target)
         if not rule:
             continue
+        prereqs = expand_vars(rule["prereqs_raw"], model).split()
         for line in rule["recipe"]:
-            match = re.search(r"\./(test_[A-Za-z0-9_]+_bin)\b", line)
-            if match:
+            expanded = expand_recipe(line, model, target, prereqs)
+            for match in re.finditer(r"\./(test_[A-Za-z0-9_]+_bin)\b", expanded):
                 executed.add(match.group(1))
     assert executed, "the Makefile must expose at least one wrapper executable"
-    clean_recipe = "\n".join(clean["recipe"])
+    clean_recipe = "\n".join(expand_vars(line, model) for line in clean["recipe"])
     missing = [name for name in sorted(executed) if name not in set(bins) and name not in clean_recipe]
     assert not missing, missing
     assert music_header_visibility_bin in bins

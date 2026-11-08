@@ -168,6 +168,35 @@ alterações, Enter escolhe Salvar, `D` escolhe Descartar e Esc escolhe Cancelar
 `Ctrl+F`, texto, Enter e Esc executam a busca. Undo/redo são mantidos pelo
 modelo (`Ctrl+Z`/`Ctrl+Y` no teclado que fornece esses modificadores).
 
+### Visualizador de imagens (`image`)
+
+`image <caminho>` abre um BMP 24-bit sem compressão do cartão SD em um app
+foreground isolado (`cyberdeck.image_viewer`):
+
+- o caminho é absoluto no namespace virtual do SD (`/fotos/a.bmp`); `/sdcard/...`,
+  caminhos relativos e traversal são recusados;
+- só `.bmp` com cabeçalho `BI_RGB` 24-bit é aceito, até 5 MiB e 1..1280 px por
+  eixo; PNG/JPEG, compressão RLE, transparência e arquivos maiores falham
+  fechado com mensagem explícita;
+- a listagem do diretório é limitada a 64 imagens, ordenada por nome, e as setas
+  esquerda/direita navegam com indicador 1-based `i/N` (ou `i/N+`); o índice e o
+  `+` descrevem a **janela**, não a posição no diretório inteiro;
+- abrir um BMP que ordena depois desses 64 nomes continua funcionando: o arquivo
+  pedido substitui a última entrada da janela ordenada (63 menores + o pedido),
+  sem elevar o cap, sem duplicar entradas e sem contornar os filtros de caminho,
+  formato e tamanho; um scan de navegação mantém a janela ordinária;
+- a imagem é reduzida por `min(área/imagem)` e nunca ampliada, então aparece
+  inteira e sem distorção; `Esc` volta ao shell.
+
+A decodificação roda em task worker dedicada pelo seam de storage confinado; a
+superfície LVGL recebe apenas o frame RGB565 pronto e é sua dona até a próxima
+imagem ou até o app fechar. Zoom e varredura recursiva de diretórios estão fora
+do escopo. A validação manual está em
+`tests/manual/image-viewer-validation.pt-BR.md`; os alvos host (`test_image_bmp`,
+`test_image_fit`, `test_image_decode`, `test_image_list`, `test_image_view`,
+`test_image_viewer_contract`) cobrem as camadas puras e a superfície LVGL sob o
+shim.
+
 ### Proteção de Tela
 
 O firmware desliga o display após um tempo configurável de inatividade
@@ -341,6 +370,25 @@ bounded e é aplicado por uma task dedicada, nunca dentro do handler HTTP.
 python3 tools/cyberdeck_http_cli.py --port /dev/ttyACM0 provision
 python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO type "help"
 python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO terminal
+```
+
+`POST /control/upload` transporta um arquivo `.bmp` (até 3 MiB) para
+`/sdcard/screenshots`, visível ao visualizador como `/screenshots/<nome>`. Ele
+existe porque o `fs.write` da USB é limitado a 2048 bytes e não leva uma
+fixture em resolução completa. O cliente calcula o SHA-256 local e assina uma
+mensagem própria do upload (domínio + nonce + método + URI + basename de
+destino + tamanho declarado + digest); o dispositivo autentica os metadados —
+inclusive o mesmo basename que publicará — antes de abrir qualquer
+arquivo, reconfere o digest durante o streaming com buffer fixo, mantém lease
+WRITE no coordenador do SD e publica por um temporário exclusivo no mesmo
+diretório, nunca sobrescrevendo um arquivo existente. Cada transferência tem
+ainda um prazo absoluto por request (120 s) que o progresso não renova, para
+que um peer que goteja bytes não segure a única task HTTP, o lease do SD e o
+temporário aberto; a proteção de tela não bloqueia o upload.
+
+```bash
+python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO upload fixture.bmp
+python3 tools/cyberdeck_http_cli.py --host IP_DO_DISPOSITIVO upload fixture.bmp --name viewer-full.bmp
 ```
 
 Quando um dispositivo UAC 1.0 de reprodução está presente e pronto, o player

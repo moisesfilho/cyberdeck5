@@ -7,7 +7,7 @@ covered behaviourally by test_control_protocol.cpp and the client by
 test_control_cli.py; this companion proves the parts that only source
 inspection can prove:
 
-  * the three /control routes are registered by the existing LAN server with
+  * the four /control routes are registered by the existing LAN server with
     the right methods and the handler table keeps its fail-closed rollback;
   * every handler refuses non-local peers and wrong methods;
   * the command is never executed inside the HTTP handler: it is authenticated,
@@ -79,8 +79,11 @@ def function_body(source, name):
 
 def check_routes(server):
     start = function_body(server, "static esp_err_t start_server")
-    require("config.max_uri_handlers = 7;" in start,
-            "the LAN server must reserve seven handler slots")
+    table_start = start.find("const httpd_uri_t uris[]")
+    require(table_start != -1, "the LAN server must declare its route table")
+    handlers = len(re.findall(r"\{\.uri\s*=", start[table_start:]))
+    require(f"config.max_uri_handlers = {handlers};" in start,
+            "max_uri_handlers must equal the number of registered routes")
     for uri, method, handler in (
         ("/screenshot", "HTTP_GET", "screenshot_handler"),
         ("/events.txt", "HTTP_GET", "events_handler"),
@@ -89,6 +92,7 @@ def check_routes(server):
         ("/control/challenge", "HTTP_GET", "cyberdeck_control::challenge_handler"),
         ("/control/type", "HTTP_POST", "cyberdeck_control::type_handler"),
         ("/control/terminal", "HTTP_GET", "cyberdeck_control::terminal_handler"),
+        ("/control/upload", "HTTP_POST", "cyberdeck_control::upload_handler"),
     ):
         pattern = (rf"\.uri\s*=\s*\"{re.escape(uri)}\"\s*,\s*\.method\s*=\s*{method}\s*,"
                    rf"\s*\.handler\s*=\s*{re.escape(handler)}")
@@ -223,7 +227,12 @@ def check_key_handling(server, bridge, bridge_header):
 def check_wiring(apps, cmake, scope_guard, cli, codemap, version):
     require('"Local-network telemetry and control HTTP endpoints"' in apps,
             "the service description must reflect the added control routes")
-    require('"1.1.0"' in apps, "the screenshot/control service version must be bumped")
+    service_version = re.search(r's_screenshot\{.*?start_screenshot', apps, re.DOTALL)
+    require(service_version is not None, "the screenshot/control service manifest must stay declared")
+    versions = re.findall(r'"([0-9]+\.[0-9]+\.[0-9]+)"', service_version.group(0))
+    require(bool(versions), "the service manifest must publish a MAJOR.MINOR.PATCH version")
+    require(tuple(int(part) for part in versions[-1].split(".")) >= (1, 1, 1),
+            "the screenshot/control service version must reflect the upload route")
     for source in ("src/apps/control/cyberdeck_control_protocol.cpp",
                    "src/apps/control/cyberdeck_control_server.cpp"):
         require(source in cmake, f"{source} must be registered in CMake")
