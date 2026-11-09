@@ -251,8 +251,24 @@ jobs:
             exit 1
           fi
           CROSS_BIN_DIRS=""
-          IDF_EXPORT_PATH=$(python3 "$IDF_TOOLS_PY" export --format key-value 2>/dev/null \
-            | sed -n 's/^PATH=//p')
+          # The exporter is only a probe: a non-zero status must never abort the
+          # host step before the fallbacks/guards (it did in run 42703506289).
+          # Capture stderr and status for diagnosis, then fall back to the
+          # installed toolchain roots and finally to command -v.
+          IDF_PYTHON="${IDF_PYTHON_ENV_PATH:-}/bin/python"
+          if [ ! -x "$IDF_PYTHON" ]; then
+            IDF_PYTHON=python3
+          fi
+          IDF_EXPORT_ERR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/idf-tools-export.err"
+          IDF_EXPORT_PATH=""
+          IDF_EXPORT_STATUS=0
+          IDF_EXPORT_PATH=$("$IDF_PYTHON" "$IDF_TOOLS_PY" export --format key-value 2>"$IDF_EXPORT_ERR" \
+            | sed -n 's/^PATH=//p') || IDF_EXPORT_STATUS=$?
+          if [ "$IDF_EXPORT_STATUS" -ne 0 ]; then
+            echo "idf_tools.py export failed (status=$IDF_EXPORT_STATUS); using installed tool dirs" >&2
+            sed -n '1,10p' "$IDF_EXPORT_ERR" >&2 || true
+            IDF_EXPORT_PATH=""
+          fi
           IFS=':' read -r -a idf_path_entries <<< "$IDF_EXPORT_PATH"
           for entry in "${idf_path_entries[@]}"; do
             case "$entry" in
@@ -267,6 +283,17 @@ jobs:
             esac
             HOST_PATH="${HOST_PATH:+$HOST_PATH:}$entry"
           done
+          if [ -z "$CROSS_BIN_DIRS" ]; then
+            # Installed toolchain roots: IDF_TOOLS_PATH on the runner and the
+            # developer default ~/.espressif.
+            for root in "${IDF_TOOLS_PATH:-}/tools" "${HOME:-}/.espressif/tools"; do
+              for dir in "$root"/riscv32-esp-elf/*/riscv32-esp-elf/bin; do
+                if [ -x "$dir/riscv32-esp-elf-nm" ]; then
+                  CROSS_BIN_DIRS="${CROSS_BIN_DIRS:+$CROSS_BIN_DIRS:}$dir"
+                fi
+              done
+            done
+          fi
           if [ -z "$CROSS_BIN_DIRS" ]; then
             # Last resort for an install layout idf_tools.py does not report:
             # keep the directory of the nm/objdump already visible on PATH.
