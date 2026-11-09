@@ -64,23 +64,29 @@ bool view::create(lv_obj_t *parent) {
     title_ = lv_label_create(surface_);
     position_ = lv_label_create(surface_);
     footer_ = lv_label_create(surface_);
+    error_ = lv_label_create(surface_);
     image_ = lv_image_create(surface_);
-    if (title_ == nullptr || position_ == nullptr || footer_ == nullptr || image_ == nullptr) {
+    if (title_ == nullptr || position_ == nullptr || footer_ == nullptr || error_ == nullptr || image_ == nullptr) {
         destroy();
         return false;
     }
     style(title_, kWhite);
     style(position_, kWhite);
     style(footer_, kMuted);
+    style(error_, kWhite);
     lv_label_set_text(title_, "");
     lv_label_set_text(position_, "");
     lv_label_set_text(footer_, kFooterHint);
+    lv_label_set_text(error_, "");
     lv_label_set_long_mode(title_, LV_LABEL_LONG_MODE_DOTS);
     lv_label_set_long_mode(position_, LV_LABEL_LONG_MODE_DOTS);
     lv_label_set_long_mode(footer_, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_long_mode(error_, LV_LABEL_LONG_MODE_DOTS);
     disable_scrolling(title_);
     disable_scrolling(position_);
     disable_scrolling(footer_);
+    disable_scrolling(error_);
+    lv_obj_set_hidden(error_, true);
     /* The default (light) theme paints a background, border and radius on
      * every widget; the bitmap must reach the panel untouched, so every
      * decoration and every padding is zeroed and the alpha stays opaque. */
@@ -105,7 +111,7 @@ void view::destroy() {
         lv_image_set_src(image_, nullptr);
     if (surface_ != nullptr)
         lv_obj_delete(surface_);
-    surface_ = title_ = position_ = footer_ = image_ = nullptr;
+    surface_ = title_ = position_ = footer_ = image_ = error_ = nullptr;
     parent_ = nullptr;
     clear_image();
     if (descriptor_ != nullptr) {
@@ -113,6 +119,8 @@ void view::destroy() {
         descriptor_ = nullptr;
     }
     status_text_.clear();
+    position_text_.clear();
+    error_text_.clear();
     placement_ = fit_result{};
 }
 
@@ -131,6 +139,20 @@ void view::clear_image() {
     image_height_ = 0;
 }
 
+void view::clear_error() {
+    error_text_.clear();
+    if (error_ != nullptr)
+        lv_label_set_text(error_, "");
+}
+
+void view::drop_frame() {
+    /* Repoint before releasing: after `lv_image_set_src(nullptr)` the widget no
+     * longer reads the buffer (NEG-IMGF-RNAV-05). */
+    if (image_ != nullptr)
+        lv_image_set_src(image_, nullptr);
+    clear_image();
+}
+
 bool view::set_image(cyberdeck_image::published_image &image) {
     if (surface_ == nullptr || image_ == nullptr || image.pixels == nullptr || image.width == 0 || image.height == 0)
         return false;
@@ -144,6 +166,8 @@ bool view::set_image(cyberdeck_image::published_image &image) {
      * widget no longer references the old buffer. */
     lv_image_set_src(image_, nullptr);
     clear_image();
+    /* A new frame supersedes a recoverable error that was still on screen. */
+    clear_error();
 
     std::fill_n(reinterpret_cast<std::uint8_t *>(descriptor), sizeof(lv_image_dsc_t), 0);
     descriptor->header.magic = LV_IMAGE_HEADER_MAGIC;
@@ -177,8 +201,28 @@ void view::set_status(std::string_view name, std::string_view position) {
     status_text_.assign(name.data(), name.size());
     const std::string text(name);
     lv_label_set_text(title_, text.c_str());
-    const std::string indicator(position);
-    lv_label_set_text(position_, indicator.c_str());
+    position_text_.assign(position.data(), position.size());
+    lv_label_set_text(position_, position_text_.c_str());
+    layout();
+}
+
+void view::apply_chrome(const cyberdeck_image::viewer_chrome &chrome) {
+    if (surface_ == nullptr)
+        return;
+    if (chrome.message.empty()) {
+        clear_error();
+    } else {
+        /* Atomic error chrome: the bitmap goes away before the message appears,
+         * and the surface (with its key ownership) stays in place. */
+        drop_frame();
+        error_text_ = chrome.message;
+        lv_label_set_text(error_, error_text_.c_str());
+        lv_obj_set_hidden(error_, false);
+    }
+    status_text_.assign(chrome.name.data());
+    lv_label_set_text(title_, status_text_.c_str());
+    position_text_ = chrome.position();
+    lv_label_set_text(position_, position_text_.c_str());
     layout();
 }
 
@@ -197,16 +241,23 @@ void view::layout() {
     lv_obj_set_pos(footer_, kInset, bottom_y);
     lv_obj_set_size(footer_, std::max(1, width - 2 * kInset), line);
 
+    const int area_x = kInset;
+    const int area_y = top + line + kBandGap;
+    const int area_w = std::max(1, width - 2 * kInset);
+    const int area_h = std::max(1, bottom_y - kBandGap - area_y);
+    if (error_ != nullptr) {
+        /* The recoverable error lives in the content area, vertically centred,
+         * and never covers the title/indicator/footer bands (D12). */
+        lv_obj_set_pos(error_, area_x, area_y + std::max(0, (area_h - line) / 2));
+        lv_obj_set_size(error_, area_w, line);
+    }
+
     if (!has_image()) {
         lv_obj_set_pos(image_, 0, 0);
         lv_obj_set_size(image_, 0, 0);
         placement_ = fit_result{};
         return;
     }
-    const int area_x = kInset;
-    const int area_y = top + line + kBandGap;
-    const int area_w = std::max(1, width - 2 * kInset);
-    const int area_h = std::max(1, bottom_y - kBandGap - area_y);
     placement_ = cyberdeck_image::fit_to_area(image_width_, image_height_, area_x, area_y, area_w, area_h);
     if (!placement_.valid) {
         lv_obj_set_pos(image_, 0, 0);

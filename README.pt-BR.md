@@ -170,30 +170,51 @@ modelo (`Ctrl+Z`/`Ctrl+Y` no teclado que fornece esses modificadores).
 
 ### Visualizador de imagens (`image`)
 
-`image <caminho>` abre um BMP 24-bit sem compressão do cartão SD em um app
-foreground isolado (`cyberdeck.image_viewer`):
+`image <caminho>` abre uma imagem do cartão SD em um app foreground isolado
+(`cyberdeck.image_viewer`):
 
 - o caminho é absoluto no namespace virtual do SD (`/fotos/a.bmp`); `/sdcard/...`,
   caminhos relativos e traversal são recusados;
-- só `.bmp` com cabeçalho `BI_RGB` 24-bit é aceito, até 5 MiB e 1..1280 px por
-  eixo; PNG/JPEG, compressão RLE, transparência e arquivos maiores falham
-  fechado com mensagem explícita;
+- a extensão escolhe o decoder e é autoritativa — o conteúdo nunca é adivinhado —
+  então `.bmp`, `.jpg`, `.jpeg` e `.png` (case-insensitive) são aceitos e uma
+  divergência falha fechado com mensagem tipada;
+- variantes suportadas, até 5 MiB e 1..1280 px por eixo:
+  - BMP: 24-bit `BI_RGB` sem compressão (bottom-up ou top-down), inalterado;
+  - JPEG: baseline `SOF0`, 8-bit, um componente (grayscale, replicado em R=G=B)
+    ou três componentes YCbCr com amostragem 4:4:4, 4:2:2 ou 4:2:0; progressivo,
+    aritmético, lossless, 12-bit, CMYK e 4:1:1 são recusados; orientação EXIF e
+    perfil ICC são ignorados (sem rotação nem color management) e marcadores de
+    restart são suportados;
+  - PNG: 8-bit sem interlace, tipo de cor 0 (grayscale), 2 (truecolor) ou 3
+    (paleta), compressão/filtro 0 e os cinco filtros de linha; alfa (tipos 4/6 e
+    qualquer `tRNS`) é recusado com mensagem tipada;
 - a listagem do diretório é limitada a 64 imagens, ordenada por nome, e as setas
   esquerda/direita navegam com indicador 1-based `i/N` (ou `i/N+`); o índice e o
   `+` descrevem a **janela**, não a posição no diretório inteiro;
-- abrir um BMP que ordena depois desses 64 nomes continua funcionando: o arquivo
-  pedido substitui a última entrada da janela ordenada (63 menores + o pedido),
-  sem elevar o cap, sem duplicar entradas e sem contornar os filtros de caminho,
-  formato e tamanho; um scan de navegação mantém a janela ordinária;
+- abrir uma imagem que ordena depois desses 64 nomes continua funcionando: o
+  arquivo pedido substitui a última entrada da janela ordenada (63 menores + o
+  pedido), sem elevar o cap, sem duplicar entradas e sem contornar os filtros de
+  caminho, formato e tamanho; um scan de navegação mantém a janela ordinária;
+- uma seta que chega a um arquivo listado cujo conteúdo, formato ou limites falha
+  **mantém o viewer aberto** com erro recuperável: o frame anterior é limpo, a
+  mensagem tipada `image: <motivo>` aparece com o nome do arquivo que falhou e a
+  posição `i/N` desse índice, e as setas continuam a partir dele até uma imagem
+  válida limpar o erro; `Esc` continua fechando. Uma abertura inicial
+  `image <caminho>` que falha mantém o baseline: a mensagem vai para o terminal e
+  o shell volta;
 - a imagem é reduzida por `min(área/imagem)` e nunca ampliada, então aparece
   inteira e sem distorção; `Esc` volta ao shell.
 
-A decodificação roda em task worker dedicada pelo seam de storage confinado; a
-superfície LVGL recebe apenas o frame RGB565 pronto e é sua dona até a próxima
-imagem ou até o app fechar. Zoom e varredura recursiva de diretórios estão fora
-do escopo. A validação manual está em
-`tests/manual/image-viewer-validation.pt-BR.md`; os alvos host (`test_image_bmp`,
-`test_image_fit`, `test_image_decode`, `test_image_list`, `test_image_view`,
+A decodificação roda em task worker dedicada pelo seam de storage confinado e com
+memória limitada (um frame RGB565 mais o pool de trabalho do formato, nunca o
+arquivo inteiro); a superfície LVGL recebe apenas o frame pronto e é sua dona até
+a próxima imagem ou até o app fechar. Zoom, varredura recursiva e upload de
+JPEG/PNG (`POST /control/upload` continua BMP-only) estão fora do escopo. A
+validação manual está em `tests/manual/image-viewer-validation.pt-BR.md`; os
+alvos host (`test_image_bmp`, `test_image_fit`, `test_image_formats`,
+`test_image_jpeg`, `test_image_png`, `test_image_decode`, `test_image_list`,
+`test_image_navigation`, `test_image_view`, `test_image_capture_orientation`,
+`test_image_decoders_contract`, `test_image_stack_frame_contract`,
 `test_image_viewer_contract`) cobrem as camadas puras e a superfície LVGL sob o
 shim.
 

@@ -431,14 +431,14 @@ cyberdeck_apps::manifest image_usage_manifest()
     cyberdeck_apps::manifest item{};
     item.id = "cyberdeck.image_viewer";
     item.name = "Image viewer";
-    item.version = "1.0.1";
-    item.description = "Foreground BMP image viewer";
+    item.version = "1.0.3";
+    item.description = "Foreground image viewer (BMP, JPEG, PNG)";
     item.type = cyberdeck_apps::app_type::foreground;
     item.commands[0] = "image";
     item.command_count = 1;
     item.command_help_entries[0] = {
         "image <path>",
-        "path: absolute BMP file inside the SD namespace; left/right browses the same directory; Esc closes\n"};
+        "path: absolute .bmp/.jpg/.jpeg/.png inside the SD namespace; left/right browses the same directory; Esc closes\n"};
     return item;
 }
 
@@ -1023,10 +1023,10 @@ int main()
         const std::string expected =
             "/$ image help\n"
             "image [app]\n"
-            "  Image viewer (cyberdeck.image_viewer) version 1.0.1\n"
-            "  Foreground BMP image viewer\n"
+            "  Image viewer (cyberdeck.image_viewer) version 1.0.3\n"
+            "  Foreground image viewer (BMP, JPEG, PNG)\n"
             "  usage: image <path>\n"
-            "  path: absolute BMP file inside the SD namespace; left/right browses the same directory; Esc closes\n";
+            "  path: absolute .bmp/.jpg/.jpeg/.png inside the SD namespace; left/right browses the same directory; Esc closes\n";
         check_eq(h.output, expected, "TEST-IMG-HELP-02: complete independent golden");
         check(image_viewer.executions == 0 &&
                   h.apps.state("cyberdeck.image_viewer") == cyberdeck_apps::app_state::registered,

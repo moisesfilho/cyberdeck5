@@ -1,0 +1,147 @@
+{
+  "command": "python3 tools/gen_image_fixtures.py",
+  "files": {
+    "jpeg_1280.jpg": {
+      "bytes": 62050,
+      "sha256": "586ec298b357c168bfaac836136715be308595e3e12f745eff096a3f5864baf7"
+    },
+    "jpeg_1x1.jpg": {
+      "bytes": 286,
+      "sha256": "9fcfd6ad086f9dd9e1bc10cb6874c44391c32c53c9ba303836f7fec8c6865f15"
+    },
+    "jpeg_3x5.jpg": {
+      "bytes": 286,
+      "sha256": "a35c83583207e67f078e2371c58d50332317c3cbed0aec93e540f46d7b9281af"
+    },
+    "jpeg_420_16x16.jpg": {
+      "bytes": 355,
+      "sha256": "244696fae9a141a2bc250fd6ebd1a9d3d4619222f10560c896e748d70420dd4c"
+    },
+    "jpeg_422_32x16.jpg": {
+      "bytes": 307,
+      "sha256": "f387713a5d0fd37403b36247bb6472175b722b8acb11230aef567545e31f36dd"
+    },
+    "jpeg_444_16x16.jpg": {
+      "bytes": 304,
+      "sha256": "53e2ab6a287bd1f24054282b0de51b49c6ced4e424537a5f3fbea5318cb6045f"
+    },
+    "jpeg_444_8x8.jpg": {
+      "bytes": 385,
+      "sha256": "075b2ac074566791fc98df5b22b69d2c77a9a66ef2eccb0266071e95aa49f723"
+    },
+    "jpeg_app1_big.jpg": {
+      "bytes": 40337,
+      "sha256": "ff1dc11a7c17018fb8682047d390ad23c723b2bfc2b09132c8cf56cf7a24c79a"
+    },
+    "jpeg_exif_16x16.jpg": {
+      "bytes": 344,
+      "sha256": "3ea3c743566722d5eeea51126b35ad6eedbea46b6e046c3a5b8a67633ab28f2f"
+    },
+    "jpeg_gray_8x8.jpg": {
+      "bytes": 191,
+      "sha256": "d73e8e732a68c0a874a6aef8b8e15188483168bf70353527437feb66c36c3ff2"
+    },
+    "jpeg_progressive_16x16.jpg": {
+      "bytes": 591,
+      "sha256": "804ad1b6ddf90e5b66174fe45a7fcb4affc01f1bc20a427dc9c6500d49077a6b"
+    },
+    "jpeg_restart_16x16.jpg": {
+      "bytes": 361,
+      "sha256": "d3c7a82f31002cdae42c6510f9318c8c213d0c993cdbe50b03a00defa61e933c"
+    },
+    "jpeg_trailing_16x16.jpg": {
+      "bytes": 1336,
+      "sha256": "1306126d7be50d35c72100ecd6346417c4ef63a067d8c37fe430a68e3ef7699e"
+    },
+    "png_1280.png": {
+      "bytes": 10196,
+      "sha256": "f12c67789691a79eff9d4ab852541236d70c28a88e4289a887feda2c1d24ec06"
+    },
+    "png_16bit_4x4.png": {
+      "bytes": 68,
+      "sha256": "5bab8ab32389b0e997b67b910231637d69583b75137223c9d73693d319437c87"
+    },
+    "png_1x1.png": {
+      "bytes": 69,
+      "sha256": "e2591135b9b33c58472a9e4f1e0d95e9237de4ccd9a626d8a2bad7b0ae6fab4c"
+    },
+    "png_ancillary_4x4.png": {
+      "bytes": 176,
+      "sha256": "9093fe12088a7a7511f5640aaa4fba92ecd1ff60357730e555475b0ca703bee0"
+    },
+    "png_bad_filter_4x4.png": {
+      "bytes": 68,
+      "sha256": "973f25d5d2710dac484d0d945a75f05c608e49258a8f4c7322eefb07ecd2a652"
+    },
+    "png_bomb_4x4.png": {
+      "bytes": 1096,
+      "sha256": "fb9a81eb797803beb2f396f0cd01601b599008c3c9367e6d8bd9aa2cff874531"
+    },
+    "png_filters_8x8.png": {
+      "bytes": 99,
+      "sha256": "12d06ee31ee5c4920bd8726fa011dc99b82cf2c4517b1369ca006ec462a54f20"
+    },
+    "png_gray_4x4.png": {
+      "bytes": 85,
+      "sha256": "6522fe27dc4fdef508a322dc005b295ad37bf10adfa0e101c88395224d360c07"
+    },
+    "png_interlaced_4x4.png": {
+      "bytes": 103,
+      "sha256": "4a511e41b4eac86e1e10ef6aad8f09041fc2ab928540451e613fa62ab430284a"
+    },
+    "png_multi_idat_4x4.png": {
+      "bytes": 187,
+      "sha256": "b4cf0aa3007ad9e94860b15690d65ed35e11edc151be518c84d29159bce2c414"
+    },
+    "png_no_plte_4x4.png": {
+      "bytes": 82,
+      "sha256": "d422b48a4c4cd2f60c361f995ee49187dee20be5c138c9fe34fe50e7575fd04f"
+    },
+    "png_palette_128.png": {
+      "bytes": 166,
+      "sha256": "131d19d6547332507b9bd8306234dbfe2b93e0e991b339e8ed12a251bc4d720c"
+    },
+    "png_palette_4x4.png": {
+      "bytes": 106,
+      "sha256": "bcd53d108ab723af4820d389e8df603b762b92de11324b0dcf31c2e8535e4966"
+    },
+    "png_palette_index_4x4.png": {
+      "bytes": 96,
+      "sha256": "027f467aac8eca52eaaa3884d2a78b38a0904c2bd00207d07ae243f1b5bfa652"
+    },
+    "png_rgb_4x4.png": {
+      "bytes": 103,
+      "sha256": "a42d90d08f60cbec011ddb247f16ffa003e8cccfce29b21a0449c00ab6ba9184"
+    },
+    "png_rgba_4x4.png": {
+      "bytes": 82,
+      "sha256": "7da1b2f280e4ca049b6195ce4f19a3098a3a13f485ada1d36fb89a5f5ba42c19"
+    },
+    "png_short_data_4x4.png": {
+      "bytes": 96,
+      "sha256": "dd1d8984f4ba50e8379d10f6bed109eaf3f58f133b8905b589adae5111d03048"
+    },
+    "png_trns_4x4.png": {
+      "bytes": 121,
+      "sha256": "3aeb6b9c3387b4eea1180b295d79c102c7a6ffbbcfd205d1a9817b68baeba381"
+    },
+    "png_truncated_4x4.png": {
+      "bytes": 51,
+      "sha256": "6c51a3672c218073fd2cb69a431de3db464ddfdf6ea4734a855ed2c14449fca9"
+    },
+    "png_unknown_critical_4x4.png": {
+      "bytes": 122,
+      "sha256": "2e0337cc5f8255f7f97a0c2160e42f4a244bd26b7586d1d724f698a254b83a2b"
+    },
+    "png_zlib_bad_4x4.png": {
+      "bytes": 78,
+      "sha256": "7edc1b534edbdadae43c5ef138a1dd84c67fe949c6007e4cfa8bccee6f6087d7"
+    }
+  },
+  "generator": "tools/gen_image_fixtures.py",
+  "tools": {
+    "cjpeg": "libjpeg-turbo version 3.2.1 (build 20261028)",
+    "python": "3.14.9",
+    "zlib": "1.3.1.zlib-ng"
+  }
+}

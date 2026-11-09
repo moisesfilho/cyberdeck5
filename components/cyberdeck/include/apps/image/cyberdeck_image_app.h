@@ -3,6 +3,7 @@
 #include "apps/image/cyberdeck_image_bmp.h"
 #include "apps/image/cyberdeck_image_decode.h"
 #include "apps/image/cyberdeck_image_list.h"
+#include "apps/image/cyberdeck_image_navigation.h"
 #include "apps/image/cyberdeck_image_types.h"
 #include "apps/image/cyberdeck_image_worker_state.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
@@ -19,12 +20,19 @@
 
 /* Foreground image viewer as an isolated compiled application.
  *
- * Binding: `image <path>` opens one BMP of the directory that contains it and
- * publishes it for the UI; left/right browse the bounded list of the same
- * directory; Esc returns to the shell.  The application owns no LVGL object and
+ * Binding: `image <path>` opens one BMP, JPEG or PNG of the directory that
+ * contains it and publishes it for the UI; left/right browse the bounded list of
+ * the same directory; Esc returns to the shell.  The extension selects the
+ * decoder and is authoritative - the content is never sniffed.  The application owns no LVGL object and
  * never touches the filesystem from the LVGL task: a dedicated worker lists,
  * reads and decodes, and the UI timer only *moves* an already decoded frame
- * into the view, which becomes its sole owner. */
+ * into the view, which becomes its sole owner.
+ *
+ * A failed *navigation* request is recoverable: the application stays in the
+ * foreground, keeps the published page and the accepted index, drops the old
+ * frame and exposes a typed error through `take_recoverable_error()` so the
+ * arrows can continue toward a valid image.  A failed *initial* open keeps the
+ * historical behaviour: the message goes to the shell and the app leaves. */
 namespace cyberdeck_image {
 
 class application final : public cyberdeck_apps::application {
@@ -41,13 +49,19 @@ class application final : public cyberdeck_apps::application {
     /* ---- LVGL task only ---- */
     bool take_published(published_image &out);
     bool take_notice(std::string &out);
+    /* Recoverable navigation failure (C11): separate from `take_notice()` so the
+     * UI never parses text to decide between "keep the viewer" and "return to
+     * the shell".  One-shot; a newer request or a successful publish clears it. */
+    bool take_recoverable_error(viewer_chrome &out);
     void release(published_image &image) const;
     viewer_state state() const {
         return state_.load(std::memory_order_acquire);
     }
     /* Requests the neighbouring image of the published list.  Returns false
-     * when there is no neighbour (clamped) or no job could be accepted. */
-    bool navigate(int direction);
+     * when there is no neighbour (clamped), no page is published or no job could
+     * be accepted; the accepted target is copied into `accepted` when supplied
+     * (its name/index/count come from the page that navigation reuses). */
+    bool navigate(int direction, navigation_target *accepted = nullptr);
 
   private:
     struct job {
@@ -60,9 +74,15 @@ class application final : public cyberdeck_apps::application {
 
     bool request(const job &value);
     void run_job(const job &value);
-    void publish(std::uint64_t generation, published_image &image, const image_directory &listing,
+    void publish(const job &value, published_image &image, const image_directory &listing,
                  const std::array<char, k_max_path_bytes + 1> &directory_path, std::size_t index);
-    void fail(std::uint64_t generation, const char *reason);
+    /* Classifies the completion with the pure model (C8).  A failed navigation
+     * keeps the page/index and publishes a recoverable error; a failed initial
+     * open returns to the shell. */
+    completion_disposition disposition(const job &value, completion_outcome outcome) const;
+    void fail(const job &value, const char *reason);
+    void fail_initial(std::uint64_t generation, const char *reason);
+    void fail_recoverable(const job &value, const char *reason);
     static void worker_entry(void *context);
 
     std::mutex request_mutex_;
@@ -84,6 +104,8 @@ class application final : public cyberdeck_apps::application {
     published_image published_{};
     bool has_published_ = false;
     std::string notice_{};
+    viewer_chrome recoverable_error_{};
+    bool has_recoverable_error_ = false;
     std::atomic<viewer_state> state_{viewer_state::idle};
     std::atomic<bool> cancel_{false};
     /* The worker is created once by `start()` and only leaves on cancellation:

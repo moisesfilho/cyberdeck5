@@ -74,12 +74,13 @@ const listing_ops &default_listing_ops() {
 }
 
 bool is_bmp_name(std::string_view name) {
-    if (name.size() < 5 || name.size() > k_max_name_bytes)
-        return false;
-    const std::string_view extension = name.substr(name.size() - 4);
-    return extension[0] == '.' && std::tolower(static_cast<unsigned char>(extension[1])) == 'b' &&
-           std::tolower(static_cast<unsigned char>(extension[2])) == 'm' &&
-           std::tolower(static_cast<unsigned char>(extension[3])) == 'p';
+    /* Kept as the upload-path predicate; the extension table itself lives in
+     * `cyberdeck_image_formats.cpp` so `.bmp` is never described twice. */
+    return format_from_name(name) == image_format::bmp;
+}
+
+bool is_viewer_name(std::string_view name) {
+    return format_from_name(name) != image_format::none;
 }
 
 bool valid_directory_path(std::string_view path) {
@@ -166,7 +167,7 @@ bool list_images(std::string_view directory, image_directory &out, const listing
         const std::string_view name(item->d_name);
         if (name.empty() || name == "." || name == ".." || name.size() > k_max_name_bytes)
             continue;
-        if (!is_bmp_name(name))
+        if (!is_viewer_name(name))
             continue;
         const std::string path = join_image_path(directory, name);
         if (path.size() > k_max_path_bytes)

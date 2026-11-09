@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 
 extern const lv_font_t cyberdeck_font;
 const lv_font_t cyberdeck_font{18};
@@ -229,6 +230,107 @@ void test_small_image_is_not_enlarged() {
     lv_obj_delete(root);
 }
 
+bool same(std::string_view text, const char *expected) {
+    const std::size_t length = std::strlen(expected);
+    return text.size() == length && std::memcmp(text.data(), expected, length) == 0;
+}
+
+/* Finds the label that carries `text` under `root` (the shim exposes the tree,
+ * so the visibility of the error chrome is observable without a production
+ * accessor).  An empty `text` never matches. */
+lv_obj_t *find_label(lv_obj_t *root, const char *text) {
+    if (root == nullptr || text == nullptr || text[0] == '\0')
+        return nullptr;
+    for (lv_obj_t *child : root->children) {
+        if (child->text == text)
+            return child;
+    }
+    return nullptr;
+}
+
+/* REQ-IMGF-06/AC-IMGF-09 (contract C10): the surface can display a recoverable
+ * navigation error instead of a frame.  The old frame is repointed away and
+ * released exactly once, the surface (and therefore the arrow ownership) stays
+ * alive, the title/indicator follow the entry that failed, and a new frame
+ * clears the message.  ASan/LSan turn any double free or leak into a failure. */
+void test_recoverable_error_chrome() {
+    lv_obj_t *root = lv_obj_create(nullptr);
+    lv_obj_set_size(root, 720, 1238);
+    const std::size_t baseline = root->children.size();
+    cyberdeck_image_view::view view;
+    CHECK(view.create(root));
+
+    auto image = make_image(800, 600, 0, 2, false, "a.bmp");
+    CHECK(view.set_image(image));
+    CHECK(view.image()->image_src != nullptr);
+    view.apply_chrome(cyberdeck_image::chrome_after_publish("a.bmp", 0, 2, false));
+    CHECK(!view.has_error());
+    CHECK(same(view.status(), "a.bmp"));
+    CHECK(same(view.position_text(), "1/2"));
+    lv_obj_t *surface = view.surface();
+    const void *installed_source = view.image()->image_src;
+
+    /* D9/NEG-IMGF-RNAV-34: an accepted arrow from a displayed frame keeps the
+     * frame and its index together until the result arrives; the chrome must
+     * never claim the new index over the old bitmap. */
+    view.apply_chrome(cyberdeck_image::chrome_after_accept(cyberdeck_image::chrome_after_publish("a.bmp", 0, 2, false),
+                                                           "next.png", 1, 2, true));
+    CHECK(view.has_image());
+    CHECK(view.image()->image_src == installed_source);
+    CHECK(same(view.status(), "a.bmp"));
+    CHECK(same(view.position_text(), "1/2"));
+
+    /* Navigation lands on an invalid file: frame gone, surface kept. */
+    view.apply_chrome(cyberdeck_image::chrome_after_error("broken.png", 1, 2, true, "image: invalid PNG signature"));
+    CHECK(!view.has_image());
+    CHECK(view.has_error());
+    CHECK(view.image()->image_src == nullptr);
+    CHECK(same(view.error_text(), "image: invalid PNG signature"));
+    CHECK(same(view.status(), "broken.png"));
+    CHECK(same(view.position_text(), "2/2+"));
+    /* AC-IMGF-09: the message must actually be visible, not only stored. */
+    lv_obj_t *error_label = find_label(view.surface(), "image: invalid PNG signature");
+    CHECK(error_label != nullptr);
+    CHECK(error_label != nullptr && !error_label->hidden);
+    CHECK(view.exists());
+    CHECK(view.surface() == surface);
+    CHECK_EQ(root->children.size(), static_cast<std::size_t>(baseline + 1));
+    CHECK(!view.placement().valid);
+    /* Re-applying the same error must stay a no-op for the ownership: the frame
+     * is already gone, so nothing can be freed twice. */
+    view.apply_chrome(cyberdeck_image::chrome_after_error("broken.png", 1, 2, true, "image: invalid PNG signature"));
+    CHECK(!view.has_image());
+    CHECK(view.has_error());
+
+    /* The next accepted arrow clears the message immediately (no frame yet). */
+    view.apply_chrome(cyberdeck_image::chrome_after_accept(
+        cyberdeck_image::chrome_after_error("broken.png", 1, 2, true, "image: invalid PNG signature"), "photo.jpg", 1,
+        2, true));
+    CHECK(!view.has_error());
+    CHECK(!view.has_image());
+    CHECK(same(view.error_text(), ""));
+    CHECK(same(view.status(), "photo.jpg"));
+
+    /* A valid result installs the new frame and leaves no residual error. */
+    auto next = make_image(64, 32, 1, 2, true, "photo.jpg");
+    CHECK(view.set_image(next));
+    CHECK(!view.has_error());
+    CHECK(view.has_image());
+    CHECK(same(view.error_text(), ""));
+    view.apply_chrome(cyberdeck_image::chrome_after_publish("photo.jpg", 1, 2, true));
+    CHECK(same(view.status(), "photo.jpg"));
+    CHECK(same(view.position_text(), "2/2+"));
+
+    /* Destroy after an error still releases whatever frame remained. */
+    view.apply_chrome(cyberdeck_image::chrome_after_error("last.png", 0, 1, false, "image: read failed"));
+    CHECK(!view.has_image());
+    view.destroy();
+    CHECK(!view.exists());
+    CHECK(!view.has_error());
+    CHECK_EQ(root->children.size(), baseline);
+    lv_obj_delete(root);
+}
+
 } // namespace
 
 int main() {
@@ -237,6 +339,7 @@ int main() {
     test_resize_recomputes_placement();
     test_refuses_without_surface();
     test_small_image_is_not_enlarged();
+    test_recoverable_error_chrome();
     std::printf("test_image_view: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

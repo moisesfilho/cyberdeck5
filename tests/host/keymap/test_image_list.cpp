@@ -1,5 +1,5 @@
 /*
- * Host test for the bounded BMP listing of the image viewer and for the
+ * Host test for the bounded image listing of the viewer (BMP/JPEG/PNG) and for the
  * keyboard ownership decision (REQ-IMG-01/03/04, AC-IMG-01/03/04).
  *
  * The scanner is driven through the real confined storage seam: the ops
@@ -12,11 +12,13 @@
  *   TEST-IMG-PATH-01..05 - virtual path accepted, `/sdcard` and relatives
  *       refused, traversal/`//`/overlong refused, symlink/directory/empty file
  *       refused, `..` refused.
- *   TEST-IMG-NAV-01..08 - sorted deterministic order, `.bmp` only, 64 entries,
+ *   TEST-IMG-NAV-01..08 - sorted deterministic order, recognized set only, 64 entries,
  *       truncation marker, clamped arrows, 1-based indicator, missing file.
  *   TEST-IMG-NAV-09 / TEST-IMG-LIFE-08 - key ownership predicate.
  *   TEST-IMG-LIMIT-01/04 - a 5 MiB+1 file is refused by the seam.
- *   TEST-IMG-PATH-06 / NAV-10 - the explicitly requested BMP beyond the
+ *   TEST-IMGF-LIST-01/03/09 - recognized extensions only, non-BMP pin promoted,
+ *       list -> format_from_name -> decode chain, empty files ineligible (D3).
+ *   TEST-IMG-PATH-06 / NAV-10 - the explicitly requested image beyond the
  *       ordinary window (rank cap+1, rank cap+14 and the reported
  *       `image /screenshots/<file>.bmp` argument) is promoted into the ordered
  *       page and still opens the real bytes.
@@ -41,6 +43,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -151,9 +154,9 @@ struct fixture {
         FILE *handle = std::fopen(path.c_str(), "wb");
         if (handle == nullptr)
             return {};
-        std::vector<char> payload(bytes == 0 ? 0 : 1, static_cast<char>('B'));
+        std::vector<char> payload;
         if (bytes != 0) {
-            payload.resize(bytes, 'B');
+            payload.assign(bytes, 'B');
             (void)std::fwrite(payload.data(), 1, payload.size(), handle);
         }
         (void)std::fclose(handle);
@@ -235,8 +238,13 @@ void test_listing_is_sorted_and_filtered() {
     (void)files.write("a.BMP", 128);
     (void)files.write("c.BmP", 128);
     (void)files.write("notes.txt", 128);
-    (void)files.write("photo.png", 128);
+    (void)files.write("d.jpg", 128);
+    (void)files.write("e.jpeg", 128);
+    (void)files.write("f.png", 128);
+    (void)files.write("g.gif", 128);
+    (void)files.write("h.webp", 128);
     (void)files.mkdir_at("subdir");
+    (void)files.mkdir_at("dir.png");        /* directory with a recognized name */
     (void)files.mkdir_at("notanimage.bmp"); /* directory with a BMP name */
     (void)files.write("empty.bmp", 0);
     (void)files.link_at("link.bmp", files.directory + "/a.BMP");
@@ -244,12 +252,16 @@ void test_listing_is_sorted_and_filtered() {
 
     image::image_directory listing{};
     CHECK(image::list_images("/", listing, test_ops()));
-    /* Byte order: upper case sorts before lower case, as `strcmp` does. */
-    CHECK_EQ(listing.count, 3u);
+    /* Byte order: upper case sorts before lower case, as `strcmp` does, and
+     * only the recognized extensions survive (TEST-IMGF-LIST-01). */
+    CHECK_EQ(listing.count, 6u);
     CHECK(!listing.truncated);
     CHECK_STR(listing.entries[0].name.data(), "a.BMP");
     CHECK_STR(listing.entries[1].name.data(), "b.bmp");
     CHECK_STR(listing.entries[2].name.data(), "c.BmP");
+    CHECK_STR(listing.entries[3].name.data(), "d.jpg");
+    CHECK_STR(listing.entries[4].name.data(), "e.jpeg");
+    CHECK_STR(listing.entries[5].name.data(), "f.png");
 
     /* Deterministic across repeated runs (readdir order is not sorted). */
     for (int run = 0; run < 3; ++run) {
@@ -265,6 +277,10 @@ void test_listing_is_sorted_and_filtered() {
     CHECK_EQ(index, 1u);
     CHECK(!image::find_image(listing, "missing.bmp", index));
     CHECK(!image::find_image(listing, "notes.txt", index));
+    CHECK(!image::find_image(listing, "g.gif", index));
+    CHECK(!image::find_image(listing, "dir.png", index));
+    CHECK(image::find_image(listing, "f.png", index));
+    CHECK_EQ(index, 5u);
     CHECK(!image::find_image(listing, "../a.BMP", index));
 
     /* A directory that does not exist is an explicit failure, never an empty
@@ -277,6 +293,156 @@ void test_listing_is_sorted_and_filtered() {
     CHECK_EQ(missing.count, 0u);
     CHECK(!missing.truncated);
     CHECK(!image::list_images("/sdcard", missing, test_ops()));
+}
+
+std::vector<std::uint8_t> make_bmp_bytes(std::uint32_t width, std::uint32_t height);
+
+/* TEST-IMGF-LIST-09: the chain the application runs - list a directory, resolve
+ * the format from each listed name and decode that format.  The fixtures are the
+ * committed ones (manifest with sha256 next to them); nothing is re-encoded. */
+std::string image_fixture_directory() {
+    const std::string source = __FILE__;
+    const auto slash = source.find_last_of('/');
+    const std::string prefix = slash == std::string::npos ? std::string{} : source.substr(0, slash + 1);
+    return prefix + "fixtures/image/";
+}
+
+std::vector<char> image_fixture_bytes(const char *name) {
+    std::vector<char> bytes;
+    FILE *handle = std::fopen((image_fixture_directory() + name).c_str(), "rb");
+    if (handle == nullptr)
+        return bytes;
+    char chunk[4096];
+    for (;;) {
+        const size_t count = std::fread(chunk, 1, sizeof(chunk), handle);
+        bytes.insert(bytes.end(), chunk, chunk + count);
+        if (count < sizeof(chunk))
+            break;
+    }
+    (void)std::fclose(handle);
+    return bytes;
+}
+
+void test_mixed_directory_resolves_and_decodes_each_format() {
+    fixture files;
+    struct case_t {
+        const char *name;
+        const char *fixture_name;
+        image::image_format expected;
+        std::uint32_t width;
+        std::uint32_t height;
+    };
+    const case_t cases[] = {
+        {"a.bmp", nullptr, image::image_format::bmp, 2, 2},
+        {"b.jpg", "jpeg_444_8x8.jpg", image::image_format::jpeg, 8, 8},
+        {"c.jpeg", "jpeg_420_16x16.jpg", image::image_format::jpeg, 16, 16},
+        {"d.png", "png_rgb_4x4.png", image::image_format::png, 4, 4},
+    };
+    for (const auto &item : cases) {
+        if (item.fixture_name == nullptr) {
+            /* A real BMP is built in memory by the BMP helper of this suite. */
+            const std::vector<std::uint8_t> bmp = make_bmp_bytes(2, 2);
+            (void)files.write_in(files.directory, item.name, bmp.data(), bmp.size());
+        } else {
+            const std::vector<char> payload = image_fixture_bytes(item.fixture_name);
+            CHECK(!payload.empty());
+            (void)files.write_in(files.directory, item.name, payload.data(), payload.size());
+        }
+    }
+
+    image::image_directory listing{};
+    CHECK(image::list_images("/", listing, test_ops()));
+    CHECK_EQ(listing.count, 4u);
+    for (const auto &item : cases) {
+        std::size_t index = 0;
+        CHECK(image::find_image(listing, item.name, index));
+        const image::image_format format = image::format_from_name(listing.entries[index].name.data());
+        CHECK_EQ(format, item.expected);
+        std::size_t size = 0;
+        const std::string path = image::join_image_path("/", item.name);
+        const int descriptor =
+            cyberdeck_local_shell_open_readonly(files.directory.c_str(), "/", path, image::k_max_file_bytes, size);
+        CHECK(descriptor >= 0);
+        if (descriptor < 0)
+            continue;
+        image::decoded_image decoded{};
+        const image::decode_result result =
+            image::decode_descriptor(image::default_decode_ops(), descriptor, size, format, decoded);
+        CHECK_EQ(result.state, image::decode_status::ok);
+        CHECK_EQ(decoded.width, item.width);
+        CHECK_EQ(decoded.height, item.height);
+        CHECK_EQ(decoded.pixel_bytes, static_cast<std::size_t>(item.width) * item.height * 2u);
+        image::release_decoded(decoded);
+        (void)close(descriptor);
+    }
+
+    /* A recognized extension whose bytes belong to another format still fails
+     * typed: the extension is authoritative, content is never sniffed. */
+    const std::vector<char> png = image_fixture_bytes("png_rgb_4x4.png");
+    (void)files.write_in(files.directory, "wrong.bmp", png.data(), png.size());
+    image::image_directory with_mismatch{};
+    CHECK(image::list_images("/", with_mismatch, test_ops()));
+    std::size_t wrong = 0;
+    CHECK(image::find_image(with_mismatch, "wrong.bmp", wrong));
+    const image::image_format declared = image::format_from_name("wrong.bmp");
+    CHECK_EQ(declared, image::image_format::bmp);
+    std::size_t wrong_size = 0;
+    const int wrong_descriptor = cyberdeck_local_shell_open_readonly(
+        files.directory.c_str(), "/", image::join_image_path("/", "wrong.bmp"), image::k_max_file_bytes, wrong_size);
+    CHECK(wrong_descriptor >= 0);
+    if (wrong_descriptor >= 0) {
+        image::decoded_image decoded{};
+        const image::decode_result result =
+            image::decode_descriptor(image::default_decode_ops(), wrong_descriptor, wrong_size, declared, decoded);
+        CHECK_EQ(result.state, image::decode_status::format);
+        CHECK(decoded.pixels == nullptr);
+        image::release_decoded(decoded);
+        (void)close(wrong_descriptor);
+    }
+}
+
+/* D3: an empty file is not a supported image.  The seam rejects `st_size <= 0`
+ * (`cyberdeck_local_shell_open_readonly`) and the listing uses the same gate for
+ * `is_regular_file`, so an empty `.bmp`/`.png` never enters the page and the pin
+ * cannot promote it.  This is the observable contract behind "image: not found
+ * in directory" / "image: no supported image in directory" in the application,
+ * which therefore has no reachable "empty file" message. */
+void test_empty_files_are_not_listed() {
+    fixture files;
+    (void)files.write("empty.bmp", 0);
+    (void)files.write("empty.png", 0);
+    (void)files.write("empty.jpg", 0);
+
+    image::image_directory only_empty{};
+    CHECK(image::list_images("/", only_empty, test_ops()));
+    CHECK_EQ(only_empty.count, 0u);
+    CHECK(!only_empty.truncated);
+
+    /* A pin cannot conjure the empty file into the page either. */
+    image::image_directory pinned{};
+    CHECK(image::list_images("/", pinned, test_ops(), "empty.png"));
+    CHECK_EQ(pinned.count, 0u);
+    std::size_t index = 0;
+    CHECK(!image::find_image(pinned, "empty.png", index));
+
+    /* Mixed directory: the empty ones are absent, the real image is present and
+     * the explicit open of an empty name resolves to "not in the listing". */
+    const std::vector<std::uint8_t> bmp = make_bmp_bytes(2, 2);
+    (void)files.write_in(files.directory, "real.bmp", bmp.data(), bmp.size());
+    image::image_directory mixed{};
+    CHECK(image::list_images("/", mixed, test_ops()));
+    CHECK_EQ(mixed.count, 1u);
+    CHECK_STR(mixed.entries[0].name.data(), "real.bmp");
+    CHECK(!image::find_image(mixed, "empty.bmp", index));
+    CHECK(!image::find_image(mixed, "empty.png", index));
+
+    /* The same file is refused by the storage seam the application uses, with
+     * the size error it reports for an unusable file. */
+    std::size_t size = 0;
+    errno = 0;
+    CHECK(cyberdeck_local_shell_open_readonly(files.directory.c_str(), "/", "/empty.png", image::k_max_file_bytes,
+                                              size) < 0);
+    CHECK_EQ(errno, EFBIG);
 }
 
 /* ---- heap staging witness (BUG-IMG-01) ---- */
@@ -859,8 +1025,10 @@ void test_pin_respects_eligibility_and_limits() {
     const std::size_t cap = image::k_max_directory_images;
     for (std::size_t rank = 1; rank <= cap + 1; ++rank)
         (void)files.write(rank_name(static_cast<int>(rank)).c_str(), 64);
-    (void)files.write("photo.png", 64);
+    (void)files.write("photo.gif", 64);
+    (void)files.write("photo.webp", 64);
     (void)files.mkdir_at("x.bmp");
+    (void)files.mkdir_at("x.png"); /* a directory named like a supported image */
     (void)files.write("empty.bmp", 0);
     (void)files.write("oversize.bmp", image::k_max_file_bytes + 1);
     (void)files.link_at("link.bmp", files.directory + "/" + rank_name(1));
@@ -871,8 +1039,9 @@ void test_pin_respects_eligibility_and_limits() {
     (void)files.write(exact_bmp.c_str(), 64);
 
     const image::image_directory baseline = list_with_pin({});
-    for (const std::string &pin : {std::string("photo.png"), std::string("x.bmp"), std::string("empty.bmp"),
-                                   std::string("oversize.bmp"), std::string("link.bmp"), long_name + ".bmp"}) {
+    for (const std::string &pin :
+         {std::string("photo.gif"), std::string("photo.webp"), std::string("x.bmp"), std::string("x.png"),
+          std::string("empty.bmp"), std::string("oversize.bmp"), std::string("link.bmp"), long_name + ".bmp"}) {
         const image::image_directory page = list_with_pin(pin);
         CHECK_EQ(page.count, baseline.count);
         for (std::size_t position = 0; position < baseline.count; ++position)
@@ -880,6 +1049,16 @@ void test_pin_respects_eligibility_and_limits() {
         std::size_t index = 0;
         CHECK(!image::find_image(page, pin, index));
     }
+
+    /* TEST-IMGF-LIST-03: a supported extension other than `.bmp` is promoted
+     * exactly like a BMP one; the extension does not change eligibility. */
+    const std::string late_png = "zzz-photo.png";
+    (void)files.write(late_png.c_str(), 64);
+    const image::image_directory promoted_png = list_with_pin(late_png);
+    std::size_t promoted_index = 0;
+    CHECK(image::find_image(promoted_png, late_png, promoted_index));
+    CHECK_EQ(promoted_index, image::k_max_directory_images - 1);
+    CHECK(promoted_png.truncated);
 
     /* A name of exactly k_max_name_bytes is eligible and is promoted. */
     const image::image_directory exact = list_with_pin(exact_bmp);
@@ -952,11 +1131,53 @@ void test_key_ownership() {
         CHECK_EQ(classify_image_key(false, false, key), key_action::pass_through);
 }
 
+/* REQ-IMGF-06/AC-IMGF-07, TEST-IMGF-RNAV-14 and NEG-IMGF-RNAV-15: a recoverable
+ * navigation error keeps the LVGL surface alive but has no frame.  The UI must
+ * keep handing `exists()` to the ownership predicate instead of `has_image()`,
+ * otherwise the error screen would leak every key to the shell.  This fixes the
+ * distinction the UI relies on: consumption follows the surface, not the
+ * bitmap. */
+void test_recoverable_error_keeps_key_ownership() {
+    using image::classify_image_key;
+    using image::image_key;
+    using image::key_action;
+    struct presence {
+        bool foreground;
+        bool surface;
+        bool frame;
+    };
+    const presence published{true, true, true};
+    const presence recoverable_error{true, true, false};
+    const presence rejected_initial_load{true, false, false};
+    const presence shell{false, false, false};
+    for (const presence &state : {published, recoverable_error}) {
+        CHECK_EQ(classify_image_key(state.foreground, state.surface, image_key::previous), key_action::previous);
+        CHECK_EQ(classify_image_key(state.foreground, state.surface, image_key::next), key_action::next);
+        CHECK_EQ(classify_image_key(state.foreground, state.surface, image_key::escape), key_action::exit);
+        CHECK_EQ(classify_image_key(state.foreground, state.surface, image_key::other), key_action::pass_through);
+    }
+    /* A frame is not what grants ownership: only an existing surface does. */
+    CHECK_EQ(recoverable_error.frame, false);
+    /* Without a surface (initial rejection) the shell keeps the keyboard; Esc is
+     * still the documented way out of the app.  Outside the foreground nothing
+     * is consumed, including Esc. */
+    CHECK_EQ(classify_image_key(rejected_initial_load.foreground, rejected_initial_load.surface, image_key::previous),
+             key_action::pass_through);
+    CHECK_EQ(classify_image_key(rejected_initial_load.foreground, rejected_initial_load.surface, image_key::next),
+             key_action::pass_through);
+    CHECK_EQ(classify_image_key(rejected_initial_load.foreground, rejected_initial_load.surface, image_key::escape),
+             key_action::exit);
+    for (const image_key key : {image_key::previous, image_key::next, image_key::escape, image_key::other})
+        CHECK_EQ(classify_image_key(shell.foreground, shell.surface, key), key_action::pass_through);
+}
+
 } // namespace
 
 int main() {
     test_path_validation();
     test_listing_is_sorted_and_filtered();
+    test_mixed_directory_resolves_and_decodes_each_format();
+    test_empty_files_are_not_listed();
     test_directory_workspace_is_heap_backed();
     test_scan_is_cooperatively_cancellable();
     test_promotion_of_requested_file();
@@ -969,6 +1190,7 @@ int main() {
     test_navigation_capacity_and_truncation();
     test_clamped_steps_and_indicator();
     test_key_ownership();
+    test_recoverable_error_keeps_key_ownership();
     std::printf("test_image_list: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

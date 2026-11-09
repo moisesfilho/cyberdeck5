@@ -178,8 +178,10 @@ void witness_deallocate(void *, void *memory) {
 
 /* ---- read witness ---- */
 int g_fail_row = -1;
+std::size_t g_reads = 0;
 bool witness_read_at(void *context, int descriptor, std::uint8_t *buffer, std::size_t bytes, std::uint64_t offset) {
     (void)context;
+    ++g_reads;
     if (g_fail_row >= 0 && offset >= static_cast<std::uint64_t>(g_fail_row))
         return false;
     return image::default_decode_ops().read_at(nullptr, descriptor, buffer, bytes, offset);
@@ -205,6 +207,7 @@ void reset_witness() {
     g_last_allocation = 0;
     g_refuse_allocation = false;
     g_fail_row = -1;
+    g_reads = 0;
     g_cancelled = false;
 }
 
@@ -328,9 +331,17 @@ void test_cancellation_publishes_nothing() {
     g_cancelled = true;
     image::decoded_image decoded{};
     const image::decode_result result = image::decode_descriptor(witness_ops(), descriptor, size, decoded);
+    /* NEG-IMGF-CANCEL-01: cancelled before the start means cancelled with the
+     * typed reason and *no* envelope read, allocation, publication or frame. */
     CHECK_EQ(result.state, image::decode_status::cancelled);
+    CHECK(result.reason != nullptr);
+    if (result.reason != nullptr)
+        CHECK_EQ(std::strcmp(result.reason, image::decode_status_reason(image::decode_status::cancelled)), 0);
     CHECK(decoded.pixels == nullptr);
-    CHECK_EQ(g_freed, g_allocations);
+    CHECK_EQ(decoded.pixel_bytes, 0u);
+    CHECK_EQ(g_reads, 0u);
+    CHECK_EQ(g_allocations, 0u);
+    CHECK_EQ(g_freed, 0u);
     (void)close(descriptor);
 }
 

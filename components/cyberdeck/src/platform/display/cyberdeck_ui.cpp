@@ -124,6 +124,10 @@ bool s_music_ui_active = false;
 cyberdeck_music_command_input::controller s_music_command_input;
 cyberdeck_music_view::view s_music_view;
 cyberdeck_image_view::view s_image_view;
+/* Chrome applied to `s_image_view`; it is the `current` of
+ * `chrome_after_accept()`, so the pure model decides whether an accepted arrow
+ * clears the displayed error or keeps the frame/index pair until the result. */
+cyberdeck_image::viewer_chrome s_image_chrome;
 cyberdeck_music_manager::manager s_music_manager;
 /* All browser snapshots are copied atomically into this BSS buffer and consumed
  * synchronously on the LVGL context. Never keep references across callbacks. */
@@ -1121,7 +1125,21 @@ void leave_image_viewer() {
      * bitmap is still displayed instead of leaving an empty screen. */
     if (cyberdeck_apps::global_runtime().switch_foreground("cyberdeck.shell"))
         s_image_view.destroy();
+    s_image_chrome = cyberdeck_image::viewer_chrome{};
     render_terminal();
+}
+
+bool image_navigate(int direction) {
+    cyberdeck_image::navigation_target target{};
+    if (!cyberdeck_image::global_application().navigate(direction, &target))
+        return true; /* consumed: clamped at the edge or no worker to accept it */
+    /* D11/C9: an accepted request moves the indicator at once.  From a displayed
+     * error the message is cleared here (no bitmap); from a displayed frame the
+     * old frame and its index stay together until the result arrives. */
+    s_image_chrome = cyberdeck_image::chrome_after_accept(s_image_chrome, target.name.data(), target.index,
+                                                          target.count, target.truncated);
+    s_image_view.apply_chrome(s_image_chrome);
+    return true;
 }
 
 bool image_local_key(uint32_t key) {
@@ -1131,16 +1149,16 @@ bool image_local_key(uint32_t key) {
                                               : key == LV_KEY_RIGHT ? cyberdeck_image::image_key::next
                                               : key == LV_KEY_ESC   ? cyberdeck_image::image_key::escape
                                                                     : cyberdeck_image::image_key::other;
+    /* `exists()` (not `has_image()`): a recoverable error keeps the surface, so
+     * the arrows must keep browsing toward a valid image. */
     switch (cyberdeck_image::classify_image_key(true, s_image_view.exists(), mapped)) {
     case cyberdeck_image::key_action::exit:
         leave_image_viewer();
         return true;
     case cyberdeck_image::key_action::previous:
-        (void)cyberdeck_image::global_application().navigate(-1);
-        return true;
+        return image_navigate(-1);
     case cyberdeck_image::key_action::next:
-        (void)cyberdeck_image::global_application().navigate(1);
-        return true;
+        return image_navigate(1);
     case cyberdeck_image::key_action::pass_through:
         break;
     }
@@ -1152,6 +1170,7 @@ void abandon_image_view(const char *message) {
         append_output(message, std::strlen(message));
     }
     s_image_view.destroy();
+    s_image_chrome = cyberdeck_image::viewer_chrome{};
     (void)cyberdeck_apps::global_runtime().switch_foreground("cyberdeck.shell");
     render_terminal();
 }
@@ -1160,8 +1179,6 @@ void process_image_status(lv_timer_t *) {
     auto &app = cyberdeck_image::global_application();
     cyberdeck_image::published_image delivered{};
     if (app.take_published(delivered)) {
-        const std::string position =
-            cyberdeck_image::format_position(delivered.index, delivered.count, delivered.truncated);
         if (!s_image_view.exists() && !s_image_view.create(s_menu)) {
             app.release(delivered);
             abandon_image_view("image: display unavailable\n");
@@ -1172,7 +1189,25 @@ void process_image_status(lv_timer_t *) {
             abandon_image_view("image: display unavailable\n");
             return;
         }
-        s_image_view.set_status(delivered.name.data(), position);
+        s_image_chrome = cyberdeck_image::chrome_after_publish(delivered.name.data(), delivered.index,
+                                                               delivered.count, delivered.truncated);
+        s_image_view.apply_chrome(s_image_chrome);
+    }
+    cyberdeck_image::viewer_chrome recovered{};
+    if (app.take_recoverable_error(recovered)) {
+        /* AC-IMGF-07/D10: a recoverable navigation failure is chrome of the
+         * viewer - the app stays in the foreground and the message never reaches
+         * the terminal.  Only a display that cannot host the surface falls back
+         * to the baseline abandon (TEST-IMGF-RNAV-13). */
+        if (image_viewer_foreground()) {
+            if (!s_image_view.exists() && !s_image_view.create(s_menu)) {
+                abandon_image_view("image: display unavailable\n");
+                return;
+            }
+            s_image_chrome = recovered;
+            s_image_view.apply_chrome(s_image_chrome);
+        }
+        return;
     }
     std::string notice;
     if (app.take_notice(notice)) {
@@ -1182,6 +1217,8 @@ void process_image_status(lv_timer_t *) {
     const bool foreground = image_viewer_foreground();
     if (!foreground && s_image_view.exists())
         s_image_view.destroy();
+    if (!foreground)
+        s_image_chrome = cyberdeck_image::viewer_chrome{};
     if (!foreground && app.running() && app.state() == cyberdeck_image::viewer_state::error) {
         /* A rejected load already reported its message through the shell, but
          * the supervisor made this application the foreground before

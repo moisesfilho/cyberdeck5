@@ -109,7 +109,8 @@ MUSIC_USAGE = (
 )
 IMAGE_USAGE = (
     ("image <path>",
-     "path: absolute BMP file inside the SD namespace; left/right browses the same directory; Esc closes\n"),
+     "path: absolute .bmp/.jpg/.jpeg/.png inside the SD namespace; left/right browses the same "
+     "directory; Esc closes\n"),
 )
 WIFI_CONSOLE_USAGE = (
     ("wifi [search|saved|audit|survey]",
@@ -194,7 +195,7 @@ EXPECTED_APPS = (
      "owns_console": False, "commands_require_active_foreground": True},
     {"symbol": "&cyberdeck_image::global_application()", "source": "image_viewer",
      "id": "cyberdeck.image_viewer", "name": "Image viewer",
-     "description": "Foreground BMP image viewer",
+     "description": "Foreground image viewer (BMP, JPEG, PNG)",
      "type": "foreground", "commands": ("image",), "command": "", "usage": IMAGE_USAGE,
      "owns_console": False, "commands_require_active_foreground": False},
     {"symbol": "&cyberdeck_wifi_console_app::global_application()", "source": "wifi_console",

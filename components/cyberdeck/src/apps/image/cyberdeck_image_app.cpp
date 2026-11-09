@@ -30,12 +30,13 @@ constexpr std::uint32_t k_worker_join_budget_ms = 200;
  * an argument and opens the foreground by itself, so
  * `commands_require_active_foreground` must stay false: the supervisor decides
  * "open" from a missing argument only, which would reject `image /fotos/a.bmp`
- * before the application ever runs. */
+ * before the application ever runs.  The extension selects the decoder; the
+ * content is never sniffed, so a `.png` full of JPEG bytes fails typed. */
 constexpr cyberdeck_apps::manifest k_manifest{
     "cyberdeck.image_viewer",
     "Image viewer",
-    "1.0.1",
-    "Foreground BMP image viewer",
+    "1.0.3",
+    "Foreground image viewer (BMP, JPEG, PNG)",
     "",
     {},
     0,
@@ -51,8 +52,8 @@ constexpr cyberdeck_apps::manifest k_manifest{
     {"image"},
     1,
     false,
-    {{{"image <path>", "path: absolute BMP file inside the SD namespace; left/right browses "
-                       "the same directory; Esc closes\n"}}},
+    {{{"image <path>", "path: absolute .bmp/.jpg/.jpeg/.png inside the SD namespace; left/right "
+                       "browses the same directory; Esc closes\n"}}},
     false};
 
 std::string_view trim(std::string_view value) {
@@ -142,6 +143,8 @@ bool application::start() {
         directory_.clear();
         current_index_ = 0;
         notice_.clear();
+        recoverable_error_ = viewer_chrome{};
+        has_recoverable_error_ = false;
     }
     state_.store(viewer_state::idle);
     running_ = true;
@@ -177,6 +180,8 @@ bool application::stop() {
         current_index_ = 0;
         directory_path_.fill('\0');
         notice_.clear();
+        recoverable_error_ = viewer_chrome{};
+        has_recoverable_error_ = false;
     }
     release(discarded);
     if (wake_ != nullptr) {
@@ -207,12 +212,12 @@ cyberdeck_apps::result application::execute(std::string_view command, std::strin
     }
     std::string_view directory{};
     std::string_view name{};
-    if (!split_image_path(path, directory, name) || !is_bmp_name(name)) {
+    if (!split_image_path(path, directory, name) || format_from_name(name) == image_format::none) {
         /* Fail closed before touching the card: the supervisor already made
          * this app the foreground, and the UI returns to the shell because the
          * state is `error` and no image was published. */
         state_.store(viewer_state::error);
-        return {cyberdeck_apps::result_status::rejected, std::string("image: invalid path (absolute .bmp only)\n")};
+        return {cyberdeck_apps::result_status::rejected, std::string("image: invalid path\n")};
     }
     job value{};
     copy_bounded(value.directory, directory);
@@ -239,8 +244,21 @@ bool application::request(const job &value) {
      * exists, and the wake-up is handed over inside the same critical section,
      * so a request can never be queued without waking its consumer. */
     if (worker_.enqueue()) {
+        /* Rejected by the handoff: no worker can run this request, so the
+         * previously published recoverable error must stay on its channel - the
+         * surface keeps the old chrome instead of losing the error it displays. */
         state_.store(viewer_state::error, std::memory_order_release);
         return false;
+    }
+    {
+        /* An accepted request supersedes a recoverable error that has not been
+         * painted yet: the surface must never show the previous failure over the
+         * new target (C9).  Only a real enqueue acceptance reaches this point;
+         * the order request -> publication is the only nested one; no path takes
+         * them the other way round. */
+        std::lock_guard<std::mutex> publication(publication_mutex_);
+        recoverable_error_ = viewer_chrome{};
+        has_recoverable_error_ = false;
     }
     xSemaphoreGive(wake_);
     return true;
@@ -285,8 +303,10 @@ void application::run_job(const job &value) {
     ops.cancelled = [](void *context) {
         return static_cast<application *>(context)->cancel_.load(std::memory_order_acquire);
     };
-    if (cancel_.load(std::memory_order_acquire) ||
-        value.generation != pending_generation_.load(std::memory_order_acquire))
+    /* C8: the pure model decides whether this result may still be applied.  A
+     * cancelled or superseded request is a discard, never a partial publication
+     * and never a diagnostic. */
+    if (disposition(value, completion_outcome::ok) == completion_disposition::discard)
         return;
 
     /* BUG-IMG-01: the directory page is ~8 KiB and this runs on the 6144-byte
@@ -296,7 +316,7 @@ void application::run_job(const job &value) {
     const decode_ops allocation = default_decode_ops();
     if (!workspace.acquire({allocation.context, allocation.allocate, allocation.deallocate}) ||
         workspace.get() == nullptr) {
-        fail(value.generation, "image: out of memory\n");
+        fail(value, "image: out of memory");
         return;
     }
     image_directory &listing = *workspace.get();
@@ -316,7 +336,7 @@ void application::run_job(const job &value) {
             }
         }
         if (listing.count == 0 || index >= listing.count) {
-            fail(value.generation, "image: no image selected\n");
+            fail(value, "image: no image selected");
             return;
         }
         std::memcpy(name.data(), listing.entries[index].name.data(), k_max_name_bytes + 1);
@@ -327,69 +347,56 @@ void application::run_job(const job &value) {
             return static_cast<application *>(context)->cancel_.load(std::memory_order_acquire);
         };
         /* The requested file is offered even when it sorts beyond the ordinary
-         * window; the scan itself proves it is an eligible BMP of this
-         * directory, so the pin cannot bypass path/BMP/regular-size filters. */
+         * window; the scan itself proves it is an eligible image of this
+         * directory, so the pin cannot bypass the path/extension/size filters. */
         if (!list_images(value.directory.data(), listing, scan, value.name.data())) {
             /* Cancellation is not a diagnostic: stop() already owns the state. */
             if (cancel_.load(std::memory_order_acquire))
                 return;
-            fail(value.generation, "image: directory unavailable\n");
+            fail(value, "image: directory unavailable");
             return;
         }
         if (listing.count == 0) {
-            fail(value.generation, "image: no BMP in directory\n");
+            /* A zero-byte file never reaches here: the listing/pin seam rejects
+             * `st_size <= 0`, and `open_readonly_stream` repeats the gate, so an
+             * empty `.bmp`/`.png` is simply not a supported image. */
+            fail(value, "image: no supported image in directory");
             return;
         }
         if (!find_image(listing, value.name.data(), index)) {
-            fail(value.generation, "image: not found in directory\n");
+            fail(value, "image: not found in directory");
             return;
         }
         directory_path = value.directory;
         std::memcpy(name.data(), value.name.data(), k_max_name_bytes + 1);
     }
-    if (cancel_.load(std::memory_order_acquire) ||
-        value.generation != pending_generation_.load(std::memory_order_acquire))
+    if (disposition(value, completion_outcome::ok) == completion_disposition::discard)
         return;
 
     const std::string path = join_image_path(directory_path.data(), name.data());
+    const image_format format = format_from_name(name.data());
+    if (format == image_format::none) {
+        fail(value, "image: invalid path");
+        return;
+    }
     cyberdeck_apps::storage_facade storage(app_grant());
     std::size_t file_bytes = 0;
     const int descriptor = storage.open_readonly_stream(path, k_max_file_bytes, file_bytes);
     if (descriptor < 0) {
         const int error = errno;
-        fail(value.generation, error == EFBIG ? "image: file larger than 5 MiB\n" : "image: cannot open file\n");
+        fail(value, error == EFBIG ? "image: file larger than 5 MiB" : "image: cannot open file");
         return;
     }
     decoded_image decoded{};
-    const decode_result result = decode_descriptor(ops, descriptor, file_bytes, decoded);
+    const decode_result result = decode_descriptor(ops, descriptor, file_bytes, format, decoded);
     (void)close(descriptor);
     if (result.state == decode_status::cancelled)
         return;
     if (result.state != decode_status::ok) {
-        switch (result.state) {
-        case decode_status::too_large:
-            fail(value.generation, "image: file larger than 5 MiB\n");
-            return;
-        case decode_status::read_failed:
-            fail(value.generation, "image: read failed\n");
-            return;
-        case decode_status::allocation_failed:
-            fail(value.generation, "image: out of memory\n");
-            return;
-        case decode_status::invalid_argument:
-            fail(value.generation, "image: invalid request\n");
-            return;
-        case decode_status::format: {
-            std::string message("image: ");
-            message += bmp_status_reason(result.format);
-            message.push_back('\n');
-            fail(value.generation, message.c_str());
-            return;
-        }
-        case decode_status::cancelled:
-        case decode_status::ok:
-            break;
-        }
+        /* One source of text: the reason table of whichever format failed. */
+        std::string message("image: ");
+        message += result.reason != nullptr ? result.reason : bmp_status_reason(result.format);
+        fail(value, message.c_str());
         return;
     }
 
@@ -402,16 +409,22 @@ void application::run_job(const job &value) {
     image.count = listing.count;
     image.truncated = listing.truncated;
     std::memcpy(image.name.data(), name.data(), k_max_name_bytes + 1);
-    publish(value.generation, image, listing, directory_path, index);
+    publish(value, image, listing, directory_path, index);
 }
 
-void application::publish(std::uint64_t generation, published_image &image, const image_directory &listing,
+completion_disposition application::disposition(const job &value, completion_outcome outcome) const {
+    const bool current = !cancel_.load(std::memory_order_acquire) &&
+                         value.generation == pending_generation_.load(std::memory_order_acquire);
+    return completion_disposition_for(value.by_index ? completion_origin::navigation : completion_origin::initial,
+                                      outcome, current);
+}
+
+void application::publish(const job &value, published_image &image, const image_directory &listing,
                           const std::array<char, k_max_path_bytes + 1> &directory_path, std::size_t index) {
     published_image replaced{};
     {
         std::lock_guard<std::mutex> lock(publication_mutex_);
-        if (cancel_.load(std::memory_order_acquire) ||
-            generation != pending_generation_.load(std::memory_order_acquire)) {
+        if (disposition(value, completion_outcome::ok) != completion_disposition::publish) {
             replaced = image;
         } else {
             replaced = published_;
@@ -421,29 +434,80 @@ void application::publish(std::uint64_t generation, published_image &image, cons
             directory_path_ = directory_path;
             current_index_ = index;
             has_directory_ = true;
-            published_generation_.store(generation, std::memory_order_release);
+            published_generation_.store(value.generation, std::memory_order_release);
             notice_.clear();
+            /* A frame supersedes any recoverable error still waiting to be
+             * painted (C11/NEG-IMGF-RNAV-31). */
+            recoverable_error_ = viewer_chrome{};
+            has_recoverable_error_ = false;
             state_.store(viewer_state::ready, std::memory_order_release);
         }
     }
     release(replaced);
 }
 
-void application::fail(std::uint64_t generation, const char *reason) {
+void application::fail(const job &value, const char *reason) {
+    switch (disposition(value, completion_outcome::failed)) {
+    case completion_disposition::recoverable_error:
+        fail_recoverable(value, reason);
+        return;
+    case completion_disposition::initial_error:
+        fail_initial(value.generation, reason);
+        return;
+    case completion_disposition::publish:
+    case completion_disposition::discard:
+        return;
+    }
+}
+
+void application::fail_initial(std::uint64_t generation, const char *reason) {
     published_image replaced{};
     {
         std::lock_guard<std::mutex> lock(publication_mutex_);
         if (cancel_.load(std::memory_order_acquire) ||
             generation != pending_generation_.load(std::memory_order_acquire))
             return;
-        /* A failure never leaves a partial frame or an obsolete position: the
-         * pending slot is dropped and the UI returns to the shell. */
+        /* The initial open (`image <path>`) keeps the baseline: no frame, no
+         * page and a terminal message, so the UI returns to the shell. */
         replaced = published_;
         published_ = published_image{};
         has_published_ = false;
         has_directory_ = false;
         directory_.clear();
-        notice_ = reason != nullptr ? reason : "image: load failed\n";
+        current_index_ = 0;
+        recoverable_error_ = viewer_chrome{};
+        has_recoverable_error_ = false;
+        notice_.assign(reason != nullptr ? reason : "image: load failed");
+        /* The terminal channel owns its line break; the viewer chrome does not
+         * (NEG-IMGF-RNAV-29). */
+        notice_.push_back('\n');
+        state_.store(viewer_state::error, std::memory_order_release);
+    }
+    release(replaced);
+}
+
+void application::fail_recoverable(const job &value, const char *reason) {
+    published_image replaced{};
+    {
+        std::lock_guard<std::mutex> lock(publication_mutex_);
+        if (disposition(value, completion_outcome::failed) != completion_disposition::recoverable_error)
+            return;
+        /* The page, its path and the accepted index survive: the next arrow
+         * starts from the entry that failed (C12/D11). */
+        replaced = published_;
+        published_ = published_image{};
+        has_published_ = false;
+        std::size_t index = 0;
+        std::string_view name{};
+        if (has_directory_ && directory_.count > 0) {
+            index = value.index < directory_.count ? value.index : directory_.count - 1;
+            name = directory_.entries[index].name.data();
+            current_index_ = index;
+        }
+        recoverable_error_ = chrome_after_error(name, index, directory_.count, directory_.truncated,
+                                                reason != nullptr ? reason : "image: load failed");
+        has_recoverable_error_ = true;
+        notice_.clear();
         state_.store(viewer_state::error, std::memory_order_release);
     }
     release(replaced);
@@ -456,6 +520,16 @@ bool application::take_published(published_image &out) {
     out = published_;
     published_ = published_image{};
     has_published_ = false;
+    return true;
+}
+
+bool application::take_recoverable_error(viewer_chrome &out) {
+    std::lock_guard<std::mutex> lock(publication_mutex_);
+    if (!has_recoverable_error_)
+        return false;
+    out = std::move(recoverable_error_);
+    recoverable_error_ = viewer_chrome{};
+    has_recoverable_error_ = false;
     return true;
 }
 
@@ -482,22 +556,39 @@ void application::release(published_image &image) const {
     release_decoded(owned);
 }
 
-bool application::navigate(int direction) {
+bool application::navigate(int direction, navigation_target *accepted) {
     if (direction == 0)
         return false;
     job value{};
+    std::size_t next = 0;
     {
         std::lock_guard<std::mutex> lock(publication_mutex_);
         if (!has_directory_ || directory_.count == 0)
             return false;
-        const std::size_t next = step_image_index(current_index_, directory_.count, direction);
+        next = step_image_index(current_index_, directory_.count, direction);
         if (next == current_index_)
             return false;
         value.by_index = true;
         value.index = next;
         copy_bounded(value.directory, directory_path_.data());
     }
-    return request(value);
+    if (!request(value))
+        return false;
+    {
+        std::lock_guard<std::mutex> lock(publication_mutex_);
+        if (has_directory_ && next < directory_.count) {
+            /* D11: the accepted request moves the index, not only the result, so
+             * rapid arrows are deterministic and a failure still advances. */
+            current_index_ = next;
+            if (accepted != nullptr) {
+                copy_bounded(accepted->name, directory_.entries[next].name.data());
+                accepted->index = next;
+                accepted->count = directory_.count;
+                accepted->truncated = directory_.truncated;
+            }
+        }
+    }
+    return true;
 }
 
 application &global_application() {

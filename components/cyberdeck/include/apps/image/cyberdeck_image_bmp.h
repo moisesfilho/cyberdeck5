@@ -1,5 +1,7 @@
 #pragma once
 
+#include "apps/image/cyberdeck_image_formats.h"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -13,8 +15,6 @@
  * alpha BMP variants are rejected with a typed reason instead of guessed. */
 namespace cyberdeck_image {
 
-inline constexpr std::size_t k_max_file_bytes = 5u * 1024u * 1024u;
-inline constexpr std::uint32_t k_max_dimension = 1280;
 /* BMPFILEHEADER (14) + the 40 common bytes of every supported DIB header
  * (BITMAPINFOHEADER/V4/V5 all start with the same fields), so one fixed
  * prefix is enough to validate the envelope before any row is read. */

@@ -69,9 +69,15 @@ idf_component_register(
          "src/apps/image/cyberdeck_image_bmp.cpp"
          "src/apps/image/cyberdeck_image_fit.cpp"
          "src/apps/image/cyberdeck_image_decode.cpp"
+         "src/apps/image/cyberdeck_image_formats.cpp"
+         "src/apps/image/cyberdeck_image_jpeg.cpp"
+         "src/apps/image/cyberdeck_image_png.cpp"
          "src/apps/image/cyberdeck_image_list.cpp"
          "src/apps/image/cyberdeck_image_app.cpp"
+         "src/apps/image/cyberdeck_image_navigation.cpp"
          "src/apps/image/cyberdeck_image_worker_state.cpp"
+         "third_party/tjpgd/tjpgd.c"
+         "third_party/miniz/miniz_cyberdeck.c"
          "src/platform/audio/cyberdeck_audio_output.cpp"
          "src/platform/audio/cyberdeck_audio_presence.cpp"
          "src/platform/usb/cyberdeck_usb_audio_host.cpp"
@@ -185,6 +191,15 @@ if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
     )
     target_compile_definitions(${libssh_target} PRIVATE HAVE_TERMIOS_H=1)
 endif()
+
+# The vendored miniz only contributes the inflater and the CRC-32 table the PNG
+# decoder needs; the deflate, archive, stdio and zlib-compatible wrapper paths
+# stay out of the binary (the wrapper is also what trips -Werror=type-limits on
+# the 32-bit target, where mz_ulong cannot exceed 0xFFFFFFFF).
+set_source_files_properties(
+    "third_party/miniz/miniz_cyberdeck.c"
+    PROPERTIES COMPILE_DEFINITIONS
+               "MINIZ_NO_STDIO;MINIZ_NO_ARCHIVE_APIS;MINIZ_NO_DEFLATE_APIS;MINIZ_NO_ZLIB_APIS")
 
 # Observe public FatFS disk-I/O errors even where upstream masks FSInfo status.
 target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=ff_disk_write" "-Wl,--wrap=ff_disk_ioctl")

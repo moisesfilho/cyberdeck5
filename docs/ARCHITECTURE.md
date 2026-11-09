@@ -635,39 +635,60 @@ for both portrait and landscape orientation.
 
 
 The `cyberdeck.image_viewer` application (`image <path>`) is an isolated
-foreground app: the approved scope is one uncompressed 24-bit `BI_RGB` BMP of at
-most 5 MiB and 1..1280 pixels per axis, with the directory listing bounded to 64
-`.bmp` names ordered by bytes. An explicit `image <path>` also works when the
-requested file sorts beyond those 64 names: the scan keeps the ordinary page but
-promotes the request into the last slot (63 smallest + requested), preserving the
-cap, the ordering, uniqueness and every path/format/size filter, and only after
-the scan itself proved the file is an eligible BMP of that directory. The
-indicator and its `+` describe the window, not the whole directory; a navigation
-scan never promotes. PNG/JPEG, RLE compression, alpha, zoom and recursive
-traversal are rejected instead of guessed.
+foreground app: the approved scope is one image of at most 5 MiB and 1..1280
+pixels per axis, with the directory listing bounded to 64 recognized names
+(`.bmp`, `.jpg`, `.jpeg`, `.png`) ordered by bytes. The extension selects the
+decoder and is authoritative - the content is never sniffed - and a mismatch
+fails closed with a typed reason. Supported variants are BMP 24-bit `BI_RGB`
+(unchanged), JPEG baseline `SOF0` 8-bit grayscale/YCbCr with 4:4:4, 4:2:2 or
+4:2:0 sampling, and PNG 8-bit non-interlaced color type 0/2/3. Progressive,
+arithmetic, lossless, 12-bit, CMYK and 4:1:1 JPEG, PNG alpha (`tRNS`, types 4/6)
+and 16-bit/interlaced PNG are rejected instead of guessed; EXIF orientation and
+ICC profiles are ignored; bytes after PNG `IEND` are ignored and never
+interpreted. An explicit `image <path>` also works when the requested file sorts
+beyond those 64 names: the scan keeps the ordinary page but promotes the request
+into the last slot (63 smallest + requested), preserving the cap, the ordering,
+uniqueness and every path/format/size filter, and only after the scan itself
+proved the file is an eligible image of that directory. The indicator and its `+`
+describe the window, not the whole directory; a navigation scan never promotes.
+Zoom, recursive traversal and JPEG/PNG upload are out of scope.
 
-Layering follows the same rule as the editor. `cyberdeck_image_bmp` owns the
+Layering follows the same rule as the editor. `cyberdeck_image_formats` owns the
+single extension table and the shared limits, `cyberdeck_image_bmp` owns the BMP
 envelope (signature, `biSize`, planes, depth, compression, dimensions,
-`((w*3)+3) & ~3` stride and 64-bit bounds), `cyberdeck_image_fit` owns the
-integer placement (`min(area/image)`, clamped to no upscale, plus the LVGL zoom
-and the object position whose centre matches the fitted rectangle) and
-`cyberdeck_image_decode` streams one padded BGR row per `pread` into the final
-RGB565 frame, so no 5 MiB staging buffer exists: the only large allocation is
-`w*h*2` (at most 3,276,800 B) plus one row scratch inside the same block.
-`cyberdeck_image_list` enumerates through the confined local-shell seam, so path
-traversal, `/sdcard` aliases, symlinks, directories, empty files and files above
-the cap fail closed.
+`((w*3)+3) & ~3` stride and 64-bit bounds), `cyberdeck_image_jpeg` and
+`cyberdeck_image_png` own their bounded inspection and streaming decode (the
+vendored TJpgDec and miniz inflater, provenance in `components/cyberdeck/THIRD_PARTY.md`),
+`cyberdeck_image_fit` owns the integer placement (`min(area/image)`, clamped to no
+upscale, plus the LVGL zoom and the object position whose centre matches the
+fitted rectangle) and `cyberdeck_image_decode` dispatches by declared format and
+streams one padded BMP row, one JPEG MCU or one PNG scanline at a time into the
+final RGB565 frame, so no 5 MiB staging buffer exists: the only large allocation
+is `w*h*2` (at most 3,276,800 B) plus the format working pool inside the same
+block. `cyberdeck_image_list` enumerates through the confined local-shell seam, so
+path traversal, `/sdcard` aliases, symlinks, directories, empty files and files
+above the cap fail closed. `cyberdeck_image_navigation` decides the completion
+disposition and builds the complete chrome (name, indicator, error message and
+frame flag), so neither the worker nor the LVGL surface restates that rule.
 
 Decoding runs on a dedicated worker task with a monotonic generation; a result
 that is superseded by a newer request, or that completes after `Esc`, is
 discarded instead of published. The application never calls LVGL and the UI
-never touches the filesystem. Only one frame is published at a time and its
-ownership moves to `cyberdeck_image_view`, which frees the previous frame when
-the widget is repointed and the last one when it is destroyed; the UI destroys
-the view before the supervisor stops the application. Key ownership is a pure
-predicate: arrows are consumed only while the viewer is the foreground *and* an
-image is published, so a rejected load leaves the shell keyboard intact, while
-`Esc` always returns to `cyberdeck.shell`.
+never touches the filesystem. `cyberdeck_image_navigation` owns the pure
+completion/chrome model (C8/C9): a failed **navigation** requests a recoverable
+error that keeps the viewer open - the previous frame is dropped before release,
+the page and the accepted index survive, and the surface shows the failed name,
+its `i/N` position and the typed `image: <reason>` message on its own channel
+(one-shot, never parsed from text) until a valid frame clears it. A failed
+**initial** `image <path>` keeps the baseline: terminal message, no surface and
+back to the shell. Only one frame is published at a time and its ownership moves
+to `cyberdeck_image_view`, which frees the previous frame when the widget is
+repointed and the last one when it is destroyed; the UI destroys the view before
+the supervisor stops the application. Key ownership is a pure predicate: arrows
+are consumed while the viewer is the foreground *and* its surface exists (a
+displayed frame **or** a recoverable error), so the error keeps the arrows while
+a rejected initial load leaves the shell keyboard intact; `Esc` always returns
+to `cyberdeck.shell`.
 
 ## SSH
 

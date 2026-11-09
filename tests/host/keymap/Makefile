@@ -18,8 +18,11 @@
 #                 -> contratos host para tensao real/estados neutros/UI e
 #                    rastreabilidade; devem falhar ate a correcao do coder
 CXX      ?= g++
+CC       ?= gcc
 PYTHON   ?= python3
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O2
+# Vendored C code (image decoders) is compiled without gcov instrumentation.
+CFLAGS   ?= -std=c11 -Wall -Wextra -Werror -O2
 # Build remains serial unless the caller supplies -jN; do not override its
 # jobserver because the aggregate runs coverage-producing scenarios in order.
 
@@ -266,6 +269,32 @@ IMAGE_DECODE_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image
 IMAGE_DECODE_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_decode.h
 IMAGE_LIST_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_list.cpp
 IMAGE_LIST_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_list.h
+IMAGE_FORMATS_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_formats.cpp
+IMAGE_FORMATS_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_formats.h
+IMAGE_JPEG_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_jpeg.cpp
+IMAGE_JPEG_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_jpeg.h
+IMAGE_PNG_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_png.cpp
+IMAGE_PNG_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_png.h
+IMAGE_SOURCE_HDR := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_source.h
+# Vendored standalone decoders (see components/cyberdeck/THIRD_PARTY.md).  They
+# are plain C, so they get the C compiler and no gcov instrumentation: coverage
+# metrics describe our own translation units, and the scope guard only tracks
+# `*.cpp` under the component source root.  The miniz trims drop every API the
+# PNG decoder does not use (deflate, archive, stdio, zlib-compatible wrapper).
+IMAGE_THIRD_PARTY := ../../../components/cyberdeck/third_party
+IMAGE_TJPEGD_SRC := $(IMAGE_THIRD_PARTY)/tjpgd/tjpgd.c
+IMAGE_TJPEGD_HDR := $(IMAGE_THIRD_PARTY)/tjpgd/tjpgd.h $(IMAGE_THIRD_PARTY)/tjpgd/tjpgdcnf.h
+IMAGE_MINIZ_SRC := $(IMAGE_THIRD_PARTY)/miniz/miniz_cyberdeck.c
+IMAGE_MINIZ_HDR := $(IMAGE_THIRD_PARTY)/miniz/miniz.h \
+	$(IMAGE_THIRD_PARTY)/miniz/cyberdeck_miniz_names.h \
+	$(IMAGE_THIRD_PARTY)/miniz/miniz.c
+IMAGE_VENDOR_DIR := test_image_vendor
+IMAGE_TJPEGD_OBJ := $(IMAGE_VENDOR_DIR)/tjpgd.o
+IMAGE_MINIZ_OBJ := $(IMAGE_VENDOR_DIR)/miniz.o
+IMAGE_VENDOR_OBJS := $(IMAGE_TJPEGD_OBJ) $(IMAGE_MINIZ_OBJ)
+MINIZ_TRIM_DEFINES := -DMINIZ_NO_STDIO -DMINIZ_NO_ARCHIVE_APIS -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ZLIB_APIS
+# The decoder TUs include the vendored headers as `third_party/...`.
+IMAGE_DECODER_INCLUDES := $(INCLUDES) -I../../../components/cyberdeck
 IMAGE_APP_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_app.cpp
 IMAGE_APP_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_app.h
 IMAGE_VIEW_SRC := ../../../components/cyberdeck/src/platform/display/cyberdeck_image_view.cpp
@@ -273,14 +302,23 @@ IMAGE_VIEW_HDR := ../../../components/cyberdeck/include/platform/display/cyberde
 IMAGE_BMP_BIN := test_image_bmp_bin
 IMAGE_FIT_BIN := test_image_fit_bin
 IMAGE_DECODE_BIN := test_image_decode_bin
+IMAGE_FORMATS_BIN := test_image_formats_bin
+IMAGE_JPEG_BIN := test_image_jpeg_bin
+IMAGE_PNG_BIN := test_image_png_bin
 IMAGE_LIST_BIN := test_image_list_bin
 IMAGE_VIEW_BIN := test_image_view_bin
 IMAGE_WORKER_STATE_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_worker_state.cpp
 IMAGE_WORKER_STATE_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_worker_state.h
 IMAGE_WORKER_BIN := test_image_worker_state_bin
+IMAGE_NAVIGATION_SRC := ../../../components/cyberdeck/src/apps/image/cyberdeck_image_navigation.cpp
+IMAGE_NAVIGATION_HDR := ../../../components/cyberdeck/include/apps/image/cyberdeck_image_navigation.h
+IMAGE_NAVIGATION_BIN := test_image_navigation_bin
+IMAGE_CAPTURE_BIN := test_image_capture_orientation_bin
 IMAGE_CONTRACT := test_image_viewer_contract.py
+IMAGE_DECODER_CONTRACT := test_image_decoders_contract.py
 IMAGE_STACK_CONTRACT := test_image_stack_frame_contract.py
 BINS += $(IMAGE_BMP_BIN) $(IMAGE_FIT_BIN) $(IMAGE_DECODE_BIN) $(IMAGE_LIST_BIN) $(IMAGE_VIEW_BIN) $(IMAGE_WORKER_BIN)
+BINS += $(IMAGE_FORMATS_BIN) $(IMAGE_JPEG_BIN) $(IMAGE_PNG_BIN) $(IMAGE_CAPTURE_BIN) $(IMAGE_NAVIGATION_BIN)
 
 MUSIC_AUDIO_SHIMS := music_runtime_shim/bsp/m5stack_tab5.h \
 	music_runtime_shim/esp_codec_dev.h \
@@ -3004,25 +3042,52 @@ test_wake_key_contract: test_wake_key_contract.py ../../../components/cyberdeck/
 # Isolated image viewer (REQ/AC-IMG-01..05).  Focused targets only: the pure
 # modules are plain C++ and the view runs against shim/full.
 # ---------------------------------------------------------------------------
-$(IMAGE_BMP_BIN): test_image_bmp.cpp $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) Makefile
+$(IMAGE_BMP_BIN): test_image_bmp.cpp $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_FORMATS_HDR) Makefile
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_bmp.cpp $(IMAGE_BMP_SRC) -o $@
 
 $(IMAGE_FIT_BIN): test_image_fit.cpp $(IMAGE_FIT_SRC) $(IMAGE_FIT_HDR) Makefile
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_fit.cpp $(IMAGE_FIT_SRC) -o $@
 
-$(IMAGE_DECODE_BIN): test_image_decode.cpp $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) Makefile
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_decode.cpp $(IMAGE_DECODE_SRC) $(IMAGE_BMP_SRC) -o $@
+$(IMAGE_FORMATS_BIN): test_image_formats.cpp $(IMAGE_FORMATS_SRC) $(IMAGE_FORMATS_HDR) Makefile
+	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_formats.cpp $(IMAGE_FORMATS_SRC) -o $@
+
+$(IMAGE_DECODE_BIN): test_image_decode.cpp $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_FORMATS_SRC) $(IMAGE_FORMATS_HDR) $(IMAGE_JPEG_SRC) $(IMAGE_PNG_SRC) $(IMAGE_SOURCE_HDR) $(IMAGE_VENDOR_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(IMAGE_DECODER_INCLUDES) test_image_decode.cpp $(IMAGE_DECODE_SRC) $(IMAGE_BMP_SRC) $(IMAGE_FORMATS_SRC) $(IMAGE_JPEG_SRC) $(IMAGE_PNG_SRC) $(IMAGE_VENDOR_OBJS) -o $@
 
 $(IMAGE_WORKER_BIN): test_image_worker_state.cpp $(IMAGE_WORKER_STATE_SRC) $(IMAGE_WORKER_STATE_HDR) Makefile
 	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_worker_state.cpp $(IMAGE_WORKER_STATE_SRC) -o $@
 
-$(IMAGE_LIST_BIN): test_image_list.cpp $(IMAGE_LIST_SRC) $(IMAGE_LIST_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR) $(SD_IO_COORDINATOR_SRC) Makefile
-	$(CXX) $(CXXFLAGS) $(INCLUDES) test_image_list.cpp $(IMAGE_LIST_SRC) $(IMAGE_BMP_SRC) $(IMAGE_DECODE_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -o $@
+# C8/C9/C12: the pure completion/chrome decision model shared with production.
+# It links the real listing TU because `viewer_chrome::position()` is derived
+# from `format_position()`; the assertions there are the same ones the firmware
+# applies, never a reimplementation.
+$(IMAGE_NAVIGATION_BIN): test_image_navigation.cpp $(IMAGE_NAVIGATION_SRC) $(IMAGE_NAVIGATION_HDR) $(IMAGE_LIST_SRC) $(IMAGE_LIST_HDR) $(IMAGE_FORMATS_SRC) $(IMAGE_FORMATS_HDR) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR) $(SD_IO_COORDINATOR_SRC) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g --coverage -fsanitize=address,undefined -Ishim -I../../../components/cyberdeck/include -I../../../components/cyberdeck test_image_navigation.cpp $(IMAGE_NAVIGATION_SRC) $(IMAGE_LIST_SRC) $(IMAGE_FORMATS_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) -o $@
+
+$(IMAGE_LIST_BIN): test_image_list.cpp $(IMAGE_LIST_SRC) $(IMAGE_LIST_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_FORMATS_SRC) $(IMAGE_FORMATS_HDR) $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_JPEG_SRC) $(IMAGE_PNG_SRC) $(IMAGE_SOURCE_HDR) $(LOCAL_SHELL_SRC) $(LOCAL_SHELL_HDR) $(VFS_NAMESPACE_HDR) $(SD_IO_COORDINATOR_SRC) $(IMAGE_VENDOR_OBJS) Makefile
+	$(CXX) $(CXXFLAGS) $(IMAGE_DECODER_INCLUDES) test_image_list.cpp $(IMAGE_LIST_SRC) $(IMAGE_BMP_SRC) $(IMAGE_FORMATS_SRC) $(IMAGE_DECODE_SRC) $(IMAGE_JPEG_SRC) $(IMAGE_PNG_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) $(IMAGE_VENDOR_OBJS) -o $@
+
+# Vendored third-party objects: plain C, no gcov instrumentation.
+$(IMAGE_TJPEGD_OBJ): $(IMAGE_TJPEGD_SRC) $(IMAGE_TJPEGD_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -MMD -MP -MF $@.d -c $< -o $@
+
+$(IMAGE_MINIZ_OBJ): $(IMAGE_MINIZ_SRC) $(IMAGE_MINIZ_HDR) Makefile
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(MINIZ_TRIM_DEFINES) -MMD -MP -MF $@.d -c $< -o $@
+
+# The entropy decoders parse untrusted media, so these two run under ASan/UBSan
+# (the same contract GATE-02 asks for the decode targets).
+$(IMAGE_JPEG_BIN): test_image_jpeg.cpp $(IMAGE_JPEG_SRC) $(IMAGE_JPEG_HDR) $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_PNG_SRC) $(IMAGE_PNG_HDR) $(IMAGE_FORMATS_SRC) $(IMAGE_FORMATS_HDR) $(IMAGE_SOURCE_HDR) $(IMAGE_VENDOR_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g --coverage -fsanitize=address,undefined -Ishim -I../../../components/cyberdeck/include -I../../../components/cyberdeck test_image_jpeg.cpp $(IMAGE_JPEG_SRC) $(IMAGE_DECODE_SRC) $(IMAGE_BMP_SRC) $(IMAGE_PNG_SRC) $(IMAGE_FORMATS_SRC) $(IMAGE_VENDOR_OBJS) -o $@
+
+$(IMAGE_PNG_BIN): test_image_png.cpp $(IMAGE_PNG_SRC) $(IMAGE_PNG_HDR) $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_JPEG_SRC) $(IMAGE_JPEG_HDR) $(IMAGE_FORMATS_SRC) $(IMAGE_FORMATS_HDR) $(IMAGE_SOURCE_HDR) $(IMAGE_VENDOR_OBJS) Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g --coverage -fsanitize=address,undefined -Ishim -I../../../components/cyberdeck/include -I../../../components/cyberdeck test_image_png.cpp $(IMAGE_PNG_SRC) $(IMAGE_DECODE_SRC) $(IMAGE_BMP_SRC) $(IMAGE_JPEG_SRC) $(IMAGE_FORMATS_SRC) $(IMAGE_VENDOR_OBJS) -o $@
 
 # The view owns the decoded frame, so this target runs under ASan/UBSan: a leak,
 # a double free or a use-after-free of the bitmap buffer fails here.
-$(IMAGE_VIEW_BIN): test_image_view.cpp $(IMAGE_VIEW_SRC) $(IMAGE_VIEW_HDR) $(IMAGE_FIT_SRC) $(IMAGE_FIT_HDR) $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_APP_HDR) $(IMAGE_LIST_HDR) shim/full/lvgl.h Makefile
-	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g --coverage -fsanitize=address,undefined -pthread -Ishim/full -I../../../components/cyberdeck/include test_image_view.cpp $(IMAGE_VIEW_SRC) $(IMAGE_FIT_SRC) $(IMAGE_DECODE_SRC) $(IMAGE_BMP_SRC) -o $@
+$(IMAGE_VIEW_BIN): test_image_view.cpp $(IMAGE_VIEW_SRC) $(IMAGE_VIEW_HDR) $(IMAGE_FIT_SRC) $(IMAGE_FIT_HDR) $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_FORMATS_SRC) $(IMAGE_FORMATS_HDR) $(IMAGE_JPEG_SRC) $(IMAGE_PNG_SRC) $(IMAGE_SOURCE_HDR) $(IMAGE_APP_HDR) $(IMAGE_LIST_HDR) $(IMAGE_NAVIGATION_SRC) $(IMAGE_NAVIGATION_HDR) $(IMAGE_LIST_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) $(IMAGE_VENDOR_OBJS) shim/full/lvgl.h Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g --coverage -fsanitize=address,undefined -pthread -Ishim/full -I../../../components/cyberdeck/include -I../../../components/cyberdeck test_image_view.cpp $(IMAGE_VIEW_SRC) $(IMAGE_NAVIGATION_SRC) $(IMAGE_LIST_SRC) $(LOCAL_SHELL_SRC) $(SD_IO_COORDINATOR_SRC) $(IMAGE_FIT_SRC) $(IMAGE_DECODE_SRC) $(IMAGE_BMP_SRC) $(IMAGE_FORMATS_SRC) $(IMAGE_JPEG_SRC) $(IMAGE_PNG_SRC) $(IMAGE_VENDOR_OBJS) -o $@
 
 .PHONY: test_image_bmp
 test_image_bmp: $(IMAGE_BMP_BIN)
@@ -3032,9 +3097,32 @@ test_image_bmp: $(IMAGE_BMP_BIN)
 test_image_fit: $(IMAGE_FIT_BIN)
 	@./$(IMAGE_FIT_BIN)
 
+.PHONY: test_image_formats
+test_image_formats: $(IMAGE_FORMATS_BIN)
+	@./$(IMAGE_FORMATS_BIN)
+
+.PHONY: test_image_jpeg
+test_image_jpeg: $(IMAGE_JPEG_BIN)
+	@./$(IMAGE_JPEG_BIN)
+
+.PHONY: test_image_png
+test_image_png: $(IMAGE_PNG_BIN)
+	@./$(IMAGE_PNG_BIN)
+
 .PHONY: test_image_decode
 test_image_decode: $(IMAGE_DECODE_BIN)
 	@./$(IMAGE_DECODE_BIN)
+
+$(IMAGE_CAPTURE_BIN): test_image_capture_orientation.cpp $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_BMP_SRC) $(IMAGE_BMP_HDR) $(IMAGE_FORMATS_SRC) $(IMAGE_FORMATS_HDR) $(IMAGE_JPEG_SRC) $(IMAGE_PNG_SRC) $(IMAGE_SOURCE_HDR) $(IMAGE_VENDOR_OBJS) ../../../components/cyberdeck/src/apps/screenshot/screenshot_bmp.cpp ../../../components/cyberdeck/include/apps/screenshot/screenshot_bmp.h Makefile
+	$(CXX) -std=c++17 -Wall -Wextra -Werror -O1 -g --coverage -fsanitize=address,undefined -Ishim -I../../../components/cyberdeck/include -I../../../components/cyberdeck test_image_capture_orientation.cpp ../../../components/cyberdeck/src/apps/screenshot/screenshot_bmp.cpp $(IMAGE_DECODE_SRC) $(IMAGE_BMP_SRC) $(IMAGE_FORMATS_SRC) $(IMAGE_JPEG_SRC) $(IMAGE_PNG_SRC) $(IMAGE_VENDOR_OBJS) -o $@
+
+.PHONY: test_image_capture_orientation
+test_image_capture_orientation: $(IMAGE_CAPTURE_BIN)
+	@./$(IMAGE_CAPTURE_BIN)
+
+.PHONY: test_image_decoders_contract
+test_image_decoders_contract: $(IMAGE_DECODER_CONTRACT) $(IMAGE_FORMATS_SRC) $(IMAGE_FORMATS_HDR) $(IMAGE_JPEG_SRC) $(IMAGE_JPEG_HDR) $(IMAGE_PNG_SRC) $(IMAGE_PNG_HDR) $(IMAGE_DECODE_SRC) $(IMAGE_DECODE_HDR) $(IMAGE_SOURCE_HDR) ../../../components/cyberdeck/THIRD_PARTY.md ../../../components/cyberdeck/CMakeLists.txt Makefile
+	$(PYTHON) $(IMAGE_DECODER_CONTRACT)
 
 .PHONY: test_image_list
 test_image_list: $(IMAGE_LIST_BIN)
@@ -3048,16 +3136,20 @@ test_image_view: $(IMAGE_VIEW_BIN)
 test_image_worker_state: $(IMAGE_WORKER_BIN)
 	@./$(IMAGE_WORKER_BIN)
 
+.PHONY: test_image_navigation
+test_image_navigation: $(IMAGE_NAVIGATION_BIN)
+	@./$(IMAGE_NAVIGATION_BIN)
+
 # Stack budget (BUG-IMG-01/02): real `-fstack-usage` frames for the production
 # list TU plus ELF-disassembly frames for the application functions, both
 # compared against k_worker_stack_bytes.  The ELF is required when present; the
 # script prints SKIP with the reason when the build/toolchain are missing.
 .PHONY: test_image_stack_frame_contract
-test_image_stack_frame_contract: $(IMAGE_STACK_CONTRACT) $(IMAGE_LIST_SRC) $(IMAGE_LIST_HDR) $(IMAGE_APP_SRC) ../../../components/cyberdeck/include/apps/image/cyberdeck_image_types.h Makefile
+test_image_stack_frame_contract: $(IMAGE_STACK_CONTRACT) $(IMAGE_LIST_SRC) $(IMAGE_LIST_HDR) $(IMAGE_APP_SRC) $(IMAGE_NAVIGATION_SRC) ../../../components/cyberdeck/include/apps/image/cyberdeck_image_types.h Makefile
 	$(PYTHON) $(IMAGE_STACK_CONTRACT)
 
 .PHONY: test_image_viewer_contract
-test_image_viewer_contract: $(IMAGE_CONTRACT) $(IMAGE_APP_SRC) $(IMAGE_APP_HDR) $(IMAGE_VIEW_SRC) $(IMAGE_VIEW_HDR) ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_quota.h ../../../version.txt ../../../code-map.md Makefile
+test_image_viewer_contract: $(IMAGE_CONTRACT) $(IMAGE_APP_SRC) $(IMAGE_APP_HDR) $(IMAGE_VIEW_SRC) $(IMAGE_VIEW_HDR) $(IMAGE_NAVIGATION_SRC) $(IMAGE_NAVIGATION_HDR) ../../../components/cyberdeck/src/apps/system/cyberdeck_system_apps.cpp ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_runtime.h ../../../components/cyberdeck/include/apps/runtime/cyberdeck_app_quota.h ../../../version.txt ../../../code-map.md Makefile
 	$(PYTHON) $(IMAGE_CONTRACT)
 
 .PHONY: test-build
@@ -3236,11 +3328,17 @@ test_music_command_controller_bin: test_music_command_controller.cpp $(MUSIC_COM
 test: test-build
 	@$(MAKE) --no-print-directory test_image_bmp
 	@$(MAKE) --no-print-directory test_image_fit
+	@$(MAKE) --no-print-directory test_image_formats
+	@$(MAKE) --no-print-directory test_image_jpeg
+	@$(MAKE) --no-print-directory test_image_png
 	@$(MAKE) --no-print-directory test_image_decode
 	@$(MAKE) --no-print-directory test_image_list
 	@$(MAKE) --no-print-directory test_image_view
 	@$(MAKE) --no-print-directory test_image_worker_state
+	@$(MAKE) --no-print-directory test_image_navigation
+	@$(MAKE) --no-print-directory test_image_capture_orientation
 	@$(MAKE) --no-print-directory test_image_stack_frame_contract
+	@$(MAKE) --no-print-directory test_image_decoders_contract
 	@$(MAKE) --no-print-directory test_image_viewer_contract
 	@$(MAKE) --no-print-directory test_lvgl_dispatch_state
 	@$(MAKE) --no-print-directory test_esp_hosted_cpu_staging
@@ -3698,6 +3796,7 @@ clean:
 	rm -f $(MUSIC_CODEC_I2S_BIN)
 	rm -rf test_console_dispatch test_editor_model test_time_sync test_shell_utils test_sd_package test_resource_catalog test_netdiag_dns_adapter test_netdiag_https_adapter test_netdiag_app test_shell_session test_shell_help test_app_runtime test_runtime_sdk test_storage_facade test_phase9_capabilities test_demo_app test_shell_app test_window_manager test_local_shell test_cat_multiline test_help_unification test_battery_protection test_cat_worker test_ble_background test_keyboard_dispatch test_display_views test_known_hosts_file test_poweroff test_expander_broker
 	rm -f $(BINS) test_app_runtime_tsan test_screen_off_active_tsan $(CAT_RUNTIME_OBJS) ./*.gcda ./*.gcno ./*.gcov
+	rm -rf $(IMAGE_VENDOR_DIR)
 	rm -rf test_keymap test_screenshot_bmp test_orientation test_control_protocol test_control_upload
 	rm -rf test_screen_protection test_wifi_audit test_wifi_audit_persistence test_wifi_audit_save test_serial_ndjson_dispatch test_serial_screen_guard test_serial_screen_dump test_serial_cli_tolerance test_serial_sysinfo_wifi test_serial_term_dump test_fs_write_dispatch test_save_sidecar_recovery test_wifi_survey_export_controller test_netdiag_controller test_netdiag_tcp_adapter test_netdiag_dns_adapter test_netdiag_app test_event_log_runtime test_sd_io_coordinator test_battery_contract test_battery_soc test_battery_view test_battery_json test_ble_types test_ble_state_machine test_ble_event_dispatch test_ble_store test_ble_command_parse test_terminal_scrollback test_wifi_survey test_recovery_policy test_wifi_event_dispatch test_wifi_persistence_queue test_wifi_persistence_coordination test_clock_formatter test_terminal_filter test_edit_line test_wifi_indicator_state test_wifi_icon_layout test_wifi_menu test_history test_keyboard_event test_event_log_recent test_wifi_state_machine test_net_coordinator test_ssh_line_composer .objects
 	rm -f $(LEGACY_TEST_ARTIFACTS)

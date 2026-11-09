@@ -110,7 +110,9 @@ jobs:
           # The authenticated upload transport and the image viewer are new
           # code; their production headers/sources and test TUs stay inside
           # the format gate so the omission that shipped unformatted files
-          # cannot happen again.
+          # cannot happen again.  Vendored third_party sources (miniz/TJpgDec)
+          # are upstream copies and are deliberately not reformatted here;
+          # their provenance is checked by test_image_decoders_contract.
           clang-format --dry-run --Werror \
             components/cyberdeck/include/apps/control/cyberdeck_control_upload.h \
             components/cyberdeck/src/apps/control/cyberdeck_control_upload.cpp \
@@ -118,22 +120,36 @@ jobs:
             components/cyberdeck/include/apps/image/cyberdeck_image_bmp.h \
             components/cyberdeck/include/apps/image/cyberdeck_image_decode.h \
             components/cyberdeck/include/apps/image/cyberdeck_image_fit.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_formats.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_jpeg.h \
             components/cyberdeck/include/apps/image/cyberdeck_image_list.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_navigation.h \
+            components/cyberdeck/include/apps/image/cyberdeck_image_png.h \
             components/cyberdeck/include/apps/image/cyberdeck_image_types.h \
             components/cyberdeck/include/apps/image/cyberdeck_image_worker_state.h \
             components/cyberdeck/src/apps/image/cyberdeck_image_app.cpp \
             components/cyberdeck/src/apps/image/cyberdeck_image_bmp.cpp \
             components/cyberdeck/src/apps/image/cyberdeck_image_decode.cpp \
             components/cyberdeck/src/apps/image/cyberdeck_image_fit.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_formats.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_jpeg.cpp \
             components/cyberdeck/src/apps/image/cyberdeck_image_list.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_navigation.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_png.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_source.h \
             components/cyberdeck/src/apps/image/cyberdeck_image_worker_state.cpp \
             components/cyberdeck/include/platform/display/cyberdeck_image_view.h \
             components/cyberdeck/src/platform/display/cyberdeck_image_view.cpp \
             tests/host/keymap/test_control_upload_protocol.cpp \
             tests/host/keymap/test_image_bmp.cpp \
+            tests/host/keymap/test_image_capture_orientation.cpp \
             tests/host/keymap/test_image_decode.cpp \
             tests/host/keymap/test_image_fit.cpp \
+            tests/host/keymap/test_image_formats.cpp \
+            tests/host/keymap/test_image_jpeg.cpp \
             tests/host/keymap/test_image_list.cpp \
+            tests/host/keymap/test_image_navigation.cpp \
+            tests/host/keymap/test_image_png.cpp \
             tests/host/keymap/test_image_view.cpp \
             tests/host/keymap/test_image_worker_state.cpp
           # F is the repository's deterministic Python syntax/import-format
@@ -146,35 +162,22 @@ jobs:
             --error-exitcode=1 --suppress=missingIncludeSystem \
             components/cyberdeck/src/apps/bluetooth/cyberdeck_ble_*.cpp \
             components/cyberdeck/src/apps/system/cyberdeck_time_sync.cpp
+          # The image decoders/navigation model are new first-party C++ and stay
+          # under the same warning/performance/portability bar.  The suppression
+          # only covers cppcheck's aggregate false positive
+          # (uninitMemberVarNoCtor) for structs whose members are initialized at
+          # every aggregate construction (`extension_entry`, `chunk_walk`).
+          # Vendored third_party sources (miniz/TJpgDec) stay out on purpose:
+          # they are unmodified upstream copies and their provenance is checked
+          # by test_image_decoders_contract, not by project lint.
+          cppcheck --enable=warning,performance,portability \
+            --error-exitcode=1 --suppress=missingIncludeSystem \
+            --suppress=uninitMemberVarNoCtor \
+            components/cyberdeck/src/apps/image/cyberdeck_image_formats.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_jpeg.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_png.cpp \
+            components/cyberdeck/src/apps/image/cyberdeck_image_navigation.cpp
           bandit -r tools -ll
-      - name: Host aggregate and coverage
-        id: host-coverage
-        working-directory: tests/host/keymap
-        run: |
-          set -o pipefail
-          make clean
-          # The aggregate is the executable host scope. Remove every coverage
-          # sidecar in this worktree before compiling and running it.
-          rm -f -- ./*.gcda ./*.gcno
-          make CXXFLAGS='-std=c++17 -Wall -Wextra -Werror -O0 --coverage' \
-            test
-          echo '### Global host coverage (compiled/tested production C++)' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Coverage gates: >=80% lines, >=90% functions, >=50% branches.' >> "$GITHUB_STEP_SUMMARY"
-          GCOVR_ARGS=(
-            --root ../../..
-            --filter '../../../components/cyberdeck/src/.*\.cpp'
-            --txt-metric branch
-            --json "$RUNNER_TEMP/cyberdeck-coverage.json"
-            --fail-under-line 80
-            --fail-under-function 90
-            --fail-under-branch 50
-            --print-summary
-          )
-          gcovr "${GCOVR_ARGS[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
-          python3 ../../../tools/coverage_scope_guard.py \
-            --root ../../.. \
-            --source-root ../../../components/cyberdeck/src \
-            --gcovr-json "$RUNNER_TEMP/cyberdeck-coverage.json"
       - name: App grant concurrency test (ThreadSanitizer)
         id: app-grant-tsan
         working-directory: tests/host/keymap
@@ -214,19 +217,60 @@ jobs:
         id: lv-symbol-drift
         working-directory: tests/host/keymap
         run: |
-          # The aggregate host run happens before the ESP-IDF warm-up, so the
-          # contract resolves `LV_SYMBOL_*` from the versioned
-          # lv_symbol_codepoints.json. Here managed_components/ exists, so the
-          # map is re-parsed against the pinned lv_symbol_def.h and any drift
-          # fails the gate. The strict variant fails when the header is absent,
-          # so a warm-up that did not materialize managed_components/ cannot
-          # leave this step green without actually checking drift.
+          # The strict variant re-parses the map against the pinned
+          # lv_symbol_def.h in managed_components and fails when the header is
+          # absent, so a warm-up that did not materialize managed_components/
+          # cannot leave this step green without actually checking drift.
           make verify_lv_symbol_codepoints_strict
       - name: Build firmware
         id: firmware-build
         run: |
           idf.py build
           python3 tools/poweroff_link_guard.py --map build/cyberdeck5.map
+      - name: Host aggregate and coverage
+        id: host-coverage
+        working-directory: tests/host/keymap
+        run: |
+          set -o pipefail
+          # This step runs after the ESP-IDF setup on purpose: the aggregate
+          # includes test_image_stack_frame_contract, which is fail-closed on a
+          # current build/cyberdeck5.elf and on the RISC-V nm/objdump.  The ESP
+          # toolchain must not shadow the host binutils (its `as` rejects the
+          # host flags), so only the ESP-IDF entries are removed from PATH; the
+          # stack contract locates nm/objdump in ~/.espressif and the ELF by
+          # path, both independently of PATH.
+          HOST_PATH=""
+          IFS=':' read -r -a path_entries <<< "$PATH"
+          for entry in "${path_entries[@]}"; do
+            case "$entry" in
+              */.espressif/*|*/esp/esp-idf/*|*riscv32-esp-elf*) continue ;;
+            esac
+            HOST_PATH="${HOST_PATH:+$HOST_PATH:}$entry"
+          done
+          export PATH="$HOST_PATH"
+          make clean
+          # The aggregate is the executable host scope. Remove every coverage
+          # sidecar in this worktree before compiling and running it.
+          rm -f -- ./*.gcda ./*.gcno
+          make CXXFLAGS='-std=c++17 -Wall -Wextra -Werror -O0 --coverage' \
+            test
+          echo '### Global host coverage (compiled/tested production C++)' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Coverage gates: >=80% lines, >=90% functions, >=50% branches.' >> "$GITHUB_STEP_SUMMARY"
+          GCOVR_ARGS=(
+            --root ../../..
+            --filter '../../../components/cyberdeck/src/.*\.cpp'
+            --txt-metric branch
+            --json "$RUNNER_TEMP/cyberdeck-coverage.json"
+            --fail-under-line 80
+            --fail-under-function 90
+            --fail-under-branch 50
+            --print-summary
+          )
+          gcovr "${GCOVR_ARGS[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 ../../../tools/coverage_scope_guard.py \
+            --root ../../.. \
+            --source-root ../../../components/cyberdeck/src \
+            --gcovr-json "$RUNNER_TEMP/cyberdeck-coverage.json"
       - name: Job summary
         if: always()
         run: |

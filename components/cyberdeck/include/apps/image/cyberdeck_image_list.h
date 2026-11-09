@@ -1,5 +1,7 @@
 #pragma once
 
+#include "apps/image/cyberdeck_image_formats.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -7,8 +9,8 @@
 #include <string>
 #include <string_view>
 
-/* Deterministic, bounded listing of the BMP files of one directory plus the
- * navigation helpers the viewer needs.
+/* Deterministic, bounded listing of the recognized image files of one
+ * directory plus the navigation helpers the viewer needs.
  *
  * The scanner never recurses and never sorts by locale: names are ordered by
  * bytes so the same SD card yields the same list on every open.  Enumeration
@@ -19,7 +21,6 @@
 namespace cyberdeck_image {
 
 inline constexpr std::size_t k_max_directory_images = 64;
-inline constexpr std::size_t k_max_name_bytes = 128;
 inline constexpr std::size_t k_max_path_bytes = 256;
 
 struct image_entry {
@@ -60,8 +61,14 @@ struct listing_ops {
 
 const listing_ops &default_listing_ops();
 
-/** Case-insensitive `.bmp` extension, bounded to the name field. */
+/** Case-insensitive `.bmp` extension, bounded to the name field.  Convenience
+ * predicate derived from the same table as `format_from_name`; the HTTP upload
+ * keeps its own BMP-only validator (`validate_upload_name`) in the control
+ * module, so this is not the upload gate. */
 bool is_bmp_name(std::string_view name);
+/** Extension the viewer can decode (`.bmp`, `.jpg`, `.jpeg`, `.png`).  The table
+ * itself lives in `cyberdeck_image_formats.h`. */
+bool is_viewer_name(std::string_view name);
 /** Absolute virtual path inside the confined namespace, no traversal. */
 bool valid_directory_path(std::string_view path);
 /** Splits `/fotos/a.bmp` into `/fotos` and `a.bmp`. */
@@ -76,13 +83,13 @@ std::string join_image_path(std::string_view directory, std::string_view name);
  * atomicity (the image worker) consumes `out` exclusively after a `true`
  * return.  Keeping the page off the stack is what makes the decode worker fit
  * its 6144-byte task stack (BUG-IMG-01). */
-/* `requested` is the file the user asked to open.  When it is an eligible BMP of
- * this directory but its name sorts after the ordinary window, it replaces the
+/* `requested` is the file the user asked to open.  When it is an eligible image
+ * of this directory but its name sorts after the ordinary window, it replaces the
  * last (largest) entry of the page and `truncated` is set, so an explicit open
  * beyond the first `k_max_directory_images` names still works without raising
  * the cap.  A name that is already in the window, or that is not an eligible
- * BMP (extension, length, regular file, empty, size cap, symlink), never adds an
- * entry: the pin cannot bypass the filters.  The page stays ordered, unique and
+ * image (extension, length, regular file, empty, size cap, symlink), never adds
+ * an entry: the pin cannot bypass the filters.  The page stays ordered, unique and
  * independent of `readdir` order; cancellation and errors clear it. */
 bool list_images(std::string_view directory, image_directory &out, const listing_ops &ops = default_listing_ops(),
                  std::string_view requested = {});
@@ -135,10 +142,12 @@ std::string format_position(std::size_t index, std::size_t count, bool truncated
 std::size_t step_image_index(std::size_t index, std::size_t count, int direction);
 
 /* Keyboard ownership of the viewer.  It consumes a key only while it is the
- * active foreground *and* an image is published: a rejected load must leave the
- * shell keyboard untouched instead of leaving a zombie foreground that eats
- * every character.  Escape is the exception, because it is the documented way
- * back to the shell even when the load failed. */
+ * active foreground *and* its surface exists: a published image or the
+ * recoverable-error chrome of a failed navigation, which keeps the surface (and
+ * therefore the arrows) alive without a bitmap.  Without a surface - typically a
+ * rejected initial load - the shell keyboard stays untouched instead of being
+ * eaten by a zombie foreground; Escape is still consumed as the documented way
+ * back to the shell. */
 enum class image_key : std::uint8_t { previous, next, escape, other };
 enum class key_action : std::uint8_t { pass_through, previous, next, exit };
 

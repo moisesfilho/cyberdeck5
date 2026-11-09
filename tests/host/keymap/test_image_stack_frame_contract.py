@@ -38,7 +38,29 @@ TYPES_HEADER = ROOT / "components/cyberdeck/include/apps/image/cyberdeck_image_t
 LIST_SOURCE = ROOT / "components/cyberdeck/src/apps/image/cyberdeck_image_list.cpp"
 LIST_HEADER = ROOT / "components/cyberdeck/include/apps/image/cyberdeck_image_list.h"
 APP_SOURCE = ROOT / "components/cyberdeck/src/apps/image/cyberdeck_image_app.cpp"
+IMAGE_SRC = ROOT / "components/cyberdeck/src/apps/image"
+IMAGE_INCLUDE = ROOT / "components/cyberdeck/include/apps/image"
+VENDOR = ROOT / "components/cyberdeck/third_party"
 ELF = ROOT / "build/cyberdeck5.elf"
+
+# The pure decode chain of the multi-format viewer.  Measuring only the list TU
+# left the 8 KiB inflater state and the JPEG pool unobserved, which is exactly
+# the kind of local that blew the worker stack in BUG-IMG-01/02.
+DECODE_TUS = (
+    IMAGE_SRC / "cyberdeck_image_decode.cpp",
+    IMAGE_SRC / "cyberdeck_image_formats.cpp",
+    IMAGE_SRC / "cyberdeck_image_bmp.cpp",
+    IMAGE_SRC / "cyberdeck_image_jpeg.cpp",
+    IMAGE_SRC / "cyberdeck_image_png.cpp",
+    # The recoverable-navigation model runs inside the worker path
+    # (`disposition()`); a large local there would hit the same 6144-byte task.
+    IMAGE_SRC / "cyberdeck_image_navigation.cpp",
+)
+DECODE_ENTRY_SYMBOLS = (
+    "cyberdeck_image::decode_descriptor",
+    "cyberdeck_image::decode_jpeg",
+    "cyberdeck_image::decode_png",
+)
 
 # Reserve kept free inside the worker stack after the measured frames: the VFS
 # (opendir/readdir/pread) and logging run *below* the checked functions, so the
@@ -54,6 +76,9 @@ CHECKED_APP_SYMBOLS = (
     "cyberdeck_image::application::worker_entry",
     "cyberdeck_image::application::publish",
     "cyberdeck_image::application::fail",
+    "cyberdeck_image::application::fail_initial",
+    "cyberdeck_image::application::fail_recoverable",
+    "cyberdeck_image::application::navigate",
     "cyberdeck_image::application::start",
     "cyberdeck_image::application::stop",
 )
@@ -67,24 +92,25 @@ def stack_budget():
     return int(match.group(1))
 
 
-def measured_list_frames():
-    """Compiles the production list TU with -fstack-usage and returns frames."""
+def measured_frames(source: Path):
+    """Compiles one production TU with -fstack-usage and returns its frames."""
     compiler = shutil.which("g++")
     if compiler is None:
         return None
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         command = [
-            compiler, "-std=c++17", "-O2", "-fstack-usage", "-c", str(LIST_SOURCE),
+            compiler, "-std=c++17", "-O2", "-fstack-usage", "-c", str(source),
             "-I" + str(ROOT / "components/cyberdeck/include"),
-            "-o", str(work / "list.o"),
+            "-I" + str(ROOT / "components/cyberdeck"),
+            "-o", str(work / "tu.o"),
         ]
         result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
         if result.returncode != 0:
-            raise SystemExit(f"host compile failed: {result.stderr.strip()[:400]}")
-        usage = work / "list.su"
+            raise SystemExit(f"host compile of {source.name} failed: {result.stderr.strip()[:400]}")
+        usage = work / "tu.su"
         if not usage.exists():
-            raise SystemExit("-fstack-usage produced no .su file")
+            raise SystemExit(f"-fstack-usage produced no .su file for {source.name}")
         frames = {}
         for line in usage.read_text(encoding="utf-8").splitlines():
             parts = line.split("\t")
@@ -97,6 +123,11 @@ def measured_list_frames():
                 continue
             frames[location[3]] = int(parts[1])
         return frames
+
+
+def measured_list_frames():
+    """Compiles the production list TU with -fstack-usage and returns frames."""
+    return measured_frames(LIST_SOURCE)
 
 
 def find_installed_objdump():
@@ -159,12 +190,63 @@ def elf_frames(budget):
                 symbols[current] += 0x100000000 - (value << 12)
     frames = {}
     for name, size in symbols.items():
-        for checked in CHECKED_APP_SYMBOLS:
+        for checked in (*CHECKED_APP_SYMBOLS, *DECODE_ENTRY_SYMBOLS):
             # Lambda outlines share the enclosing name prefix; they are separate
             # functions and must not shadow the real frame measurement.
             if name.startswith(checked + "(") and "::{lambda" not in name:
                 frames[checked] = max(frames.get(checked, 0), size)
     return frames, None
+
+
+
+def find_installed_nm():
+    """Locates the RISC-V nm of an installed ESP-IDF toolchain."""
+    direct = shutil.which("riscv32-esp-elf-nm")
+    if direct:
+        return direct
+    for candidate in sorted(Path.home().glob(".espressif/tools/riscv32-esp-elf/*/riscv32-esp-elf/bin/"
+                                             "riscv32-esp-elf-nm")):
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+# Symbols the ESP32-P4 ROM linker script assigns to absolute addresses.  If one
+# of them is bound in place of the vendored miniz, the firmware runs the ROM's
+# older inflater with our 3.0.2 state and fails stream-dependently (the device
+# `image: PNG decode failed` for a valid palette PNG).
+ROM_ASSIGNED = ("tinfl_decompress", "tinfl_decompress_mem_to_callback",
+                "tinfl_decompress_mem_to_heap", "tinfl_decompress_mem_to_mem",
+                "mz_adler32", "mz_free")
+PREFIXED = {"tinfl_decompress": "cyberdeck_tinfl_decompress",
+            "mz_crc32": "cyberdeck_mz_crc32", "mz_adler32": "cyberdeck_mz_adler32",
+            "mz_free": "cyberdeck_mz_free",
+            "tinfl_decompress_mem_to_callback": "cyberdeck_tinfl_decompress_mem_to_callback",
+            "tinfl_decompress_mem_to_heap": "cyberdeck_tinfl_decompress_mem_to_heap",
+            "tinfl_decompress_mem_to_mem": "cyberdeck_tinfl_decompress_mem_to_mem"}
+ROM_RANGE = (0x4FC00000, 0x4FC10000)
+
+
+def elf_miniz_binding():
+    """Returns {symbol: (type, address)} from the built firmware symbol table."""
+    nm = find_installed_nm()
+    if nm is None or not ELF.exists():
+        return None, "build/cyberdeck5.elf or riscv32-esp-elf-nm not available"
+    result = subprocess.run([nm, "-C", str(ELF)], capture_output=True, text=True)
+    if result.returncode != 0:
+        return None, "nm failed on build/cyberdeck5.elf"
+    symbols = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        address, kind, name = parts
+        try:
+            value = int(address, 16)
+        except ValueError:
+            continue
+        symbols[name] = (kind, value)
+    return symbols, "ok"
 
 
 def main():
@@ -202,6 +284,18 @@ def main():
         print(f"host -fstack-usage: chain={chain} B ({'offer inlined' if inlined_offer else 'offer out-of-line'}), "
               f"budget={budget} B")
 
+    # 1b. Host-measured frames of every pure decoder TU: no local may approach
+    # the 8 KiB inflater state or hold a pool/scratch block on the stack.
+    for source in DECODE_TUS:
+        tu_frames = measured_frames(source)
+        if tu_frames is None:
+            print("SKIP: g++ not available for -fstack-usage")
+            break
+        largest_name, largest = max(tu_frames.items(), key=lambda item: item[1])
+        require(largest <= SINGLE_FRAME_CEILING,
+                f"{source.name}: frame of {largest_name} is {largest} B, above {SINGLE_FRAME_CEILING} B")
+        print(f"host -fstack-usage: {source.name} largest={largest} B ({largest_name})")
+
     # 2. ELF-measured frames of the application functions.
     #
     # The ELF is the only authoritative measurement of the target frame, but it
@@ -209,18 +303,51 @@ def main():
     # rebuild would silently measure the previous binary and pass — exactly the
     # false confidence that let BUG-IMG-02 through textual review.  Fail closed
     # instead of trusting a stale build.
-    elf_dependencies = (APP_SOURCE, LIST_SOURCE, LIST_HEADER, TYPES_HEADER)
+    elf_dependencies = (APP_SOURCE, LIST_SOURCE, LIST_HEADER, TYPES_HEADER,
+                        IMAGE_SRC / "cyberdeck_image_jpeg.cpp", IMAGE_SRC / "cyberdeck_image_png.cpp",
+                        IMAGE_SRC / "cyberdeck_image_decode.cpp",
+                        IMAGE_SRC / "cyberdeck_image_navigation.cpp",
+                        IMAGE_INCLUDE / "cyberdeck_image_jpeg.h", IMAGE_INCLUDE / "cyberdeck_image_png.h",
+                        IMAGE_INCLUDE / "cyberdeck_image_decode.h", IMAGE_INCLUDE / "cyberdeck_image_formats.h",
+                        IMAGE_INCLUDE / "cyberdeck_image_navigation.h",
+                        VENDOR / "tjpgd" / "tjpgd.h", VENDOR / "tjpgd" / "tjpgdcnf.h", VENDOR / "miniz" / "miniz.h")
     stale = ([path.name for path in elf_dependencies if path.stat().st_mtime > ELF.stat().st_mtime]
              if ELF.exists() else [])
     if stale:
         failures.append(
             "stale build/cyberdeck5.elf: newer sources " + ", ".join(sorted(stale)) +
             "; run `idf.py build` before trusting the ELF frame measurements")
+    symbols, reason = elf_miniz_binding()
+    if symbols is None:
+        print(f"FAIL: {reason}")
+        return 1
+    # Only the entry points the PNG decoder calls must survive --gc-sections; the
+    # remaining helpers are dead code and may be dropped (they are also ROM
+    # absolutes, so an unprefixed *code* definition would be the defect).
+    for original in ("tinfl_decompress", "mz_crc32", "mz_adler32", "mz_free"):
+        own = PREFIXED[original]
+        entry = symbols.get(own)
+        if entry is None:
+            if original in ("tinfl_decompress", "mz_crc32"):
+                print(f"FAIL: vendored miniz symbol {own} is missing from the firmware ELF")
+                return 1
+            continue
+        kind, value = entry
+        if kind not in ("T", "t") or ROM_RANGE[0] <= value < ROM_RANGE[1]:
+            print(f"FAIL: {own} is not linked from our object (type={kind} address=0x{value:08x})")
+            return 1
+    for original in ROM_ASSIGNED:
+        hijacked = symbols.get(original)
+        if hijacked is not None and hijacked[0] in ("T", "t"):
+            print(f"FAIL: {original} is still defined as code; the ROM copy must not be used")
+            return 1
+    print("elf miniz binding: vendored inflater linked, no ROM tinfl_decompress")
+
     app_frames, reason = elf_frames(budget)
     if app_frames is None:
         print(f"SKIP: ELF frame validation ({reason})")
     else:
-        for symbol in CHECKED_APP_SYMBOLS:
+        for symbol in (*CHECKED_APP_SYMBOLS, *DECODE_ENTRY_SYMBOLS):
             frame = app_frames.get(symbol)
             require(frame is not None, f"{symbol} missing from the ELF disassembly")
             if frame is not None:
@@ -255,6 +382,16 @@ def main():
             "directory_workspace::release must end the page lifetime explicitly")
     require("std::memset(memory, 0, sizeof(image_directory))" not in list_code,
             "zeroing raw storage does not start a C++ lifetime; use placement default-init")
+
+    # NEG-IMGF-STACK-05: the inflater state is 8 KiB; it must stay in the heap
+    # scratch block.  A local object (not a pointer) would be caught here.
+    png_code = re.sub(r"/\*.*?\*/", "", (IMAGE_SRC / "cyberdeck_image_png.cpp").read_text(encoding="utf-8"), flags=re.S)
+    png_code = re.sub(r"//[^\n]*", "", png_code)
+    inline_inflator = re.search(r"\btinfl_decompressor\s+[A-Za-z_]\w*\s*[;{=]", png_code)
+    require(inline_inflator is None,
+            f"png decoder keeps the inflater state off the stack (found {inline_inflator.group(0) if inline_inflator else ''})")
+    require("k_png_inflate_state_bytes" in png_code,
+            "png decoder must size its heap scratch with the declared inflater state")
     header = LIST_HEADER.read_text(encoding="utf-8")
     require("void clear() noexcept" in header,
             "image_directory must expose the in-place clear() reset")

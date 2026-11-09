@@ -192,33 +192,53 @@ of direct service starts.
 
 ### Image viewer (`image`)
 
-`image <path>` opens one uncompressed 24-bit BMP from the SD card in an isolated
-foreground app (`cyberdeck.image_viewer`):
+`image <path>` opens one image from the SD card in an isolated foreground app
+(`cyberdeck.image_viewer`):
 
 - the path is absolute inside the virtual SD namespace (`/fotos/a.bmp`);
   `/sdcard/...`, relative paths and traversal are refused;
-- only `.bmp` files with a `BI_RGB` 24-bit header are accepted, up to 5 MiB and
-  1..1280 pixels per axis; PNG/JPEG, RLE compression, alpha and oversized files
-  fail closed with an explicit message;
+- the extension selects the decoder and is authoritative - the content is never
+  sniffed - so `.bmp`, `.jpg`, `.jpeg` and `.png` (case-insensitive) are
+  accepted and a mismatch fails closed with a typed message;
+- supported variants are up to 5 MiB and 1..1280 pixels per axis:
+  - BMP: uncompressed 24-bit `BI_RGB` (bottom-up or top-down), unchanged;
+  - JPEG: baseline `SOF0`, 8-bit, one component (grayscale, replicated to
+    R=G=B) or three components YCbCr with 4:4:4, 4:2:2 or 4:2:0 sampling;
+    progressive, arithmetic, lossless, 12-bit, CMYK and 4:1:1 are refused;
+    EXIF orientation and ICC profiles are ignored (no rotation, no color
+    management) and restart markers are supported;
+  - PNG: 8-bit non-interlaced, color type 0 (grayscale), 2 (truecolor) or 3
+    (palette), compression/filter method 0, all five row filters; alpha
+    (color types 4/6 and any `tRNS`) is refused with a typed message;
 - the directory listing is bounded to 64 images, ordered by name, and
   left/right browse it with a one-based `i/N` (or `i/N+`) indicator; the index
   and the `+` describe the **window**, not the position inside the whole
   directory;
-- opening a BMP that sorts beyond those first 64 names still works: the
+- opening an image that sorts beyond those first 64 names still works: the
   requested file replaces the last entry of the ordered window (63 smallest +
   the requested one), without raising the cap, duplicating entries or bypassing
   the path/format/size filters; a navigation scan keeps the ordinary window;
+- pressing an arrow onto a listed file whose content, format or limits fail
+  keeps the viewer open with a **recoverable** error: the previous frame is
+  cleared, the typed `image: <reason>` message is shown with the failed file
+  name and its `i/N` position, and the arrows keep browsing from that entry
+  until a valid image clears the error; `Esc` still closes. A failed initial
+  `image <path>` keeps the baseline: the message goes to the terminal and the
+  shell comes back;
 - the image is scaled with `min(area/image)` and never enlarged, so the whole
-  bitmap stays visible with its aspect ratio; `Esc` returns to the shell.
+  picture stays visible with its aspect ratio; `Esc` returns to the shell.
 
-Decoding runs on a dedicated worker task through the confined storage seam; the
-LVGL surface only receives a finished RGB565 frame and owns it until the next
-image or until the app is closed. Zoom and recursive directory traversal are out
-of scope. Manual validation is documented in
-`tests/manual/image-viewer-validation.pt-BR.md`; the host suites
-(`test_image_bmp`, `test_image_fit`, `test_image_decode`, `test_image_list`,
-`test_image_view`, `test_image_viewer_contract`) cover the pure layers and the
-LVGL surface under the shim.
+Decoding runs on a dedicated worker task through the confined storage seam and
+in bounded memory (one RGB565 frame plus the format working pool, never the
+whole file); the LVGL surface only receives a finished frame and owns it until
+the next image or until the app is closed. Zoom and recursive directory traversal
+are out of scope, and `POST /control/upload` stays BMP-only. Manual validation is
+documented in `tests/manual/image-viewer-validation.pt-BR.md`; the host suites
+(`test_image_bmp`, `test_image_fit`, `test_image_formats`, `test_image_jpeg`,
+`test_image_png`, `test_image_decode`, `test_image_list`, `test_image_navigation`,
+`test_image_view`, `test_image_capture_orientation`, `test_image_decoders_contract`,
+`test_image_stack_frame_contract`, `test_image_viewer_contract`) cover the pure
+layers and the LVGL surface under the shim.
 
 ### Screen Protection
 

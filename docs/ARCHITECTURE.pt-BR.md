@@ -608,39 +608,60 @@ scroll e visibilidade do cursor em retrato e paisagem.
 
 
 O aplicativo `cyberdeck.image_viewer` (`image <caminho>`) é um app foreground
-isolado: o recorte aprovado é um BMP 24-bit `BI_RGB` sem compressão de no máximo
-5 MiB e 1..1280 px por eixo, com listagem do diretório limitada a 64 nomes
-`.bmp` ordenados por bytes. Um `image <caminho>` explícito também funciona
-quando o arquivo pedido ordena depois desses 64 nomes: o scan mantém a página
-ordinária mas promove o pedido para a última posição (63 menores + pedido),
-preservando o cap, a ordenação, a unicidade e todos os filtros de caminho,
-formato e tamanho, e só depois de o próprio scan provar que o arquivo é um BMP
-elegível daquele diretório. O indicador e o `+` descrevem a janela, não o
-diretório inteiro; um scan de navegação nunca promove. PNG/JPEG, compressão RLE,
-transparência, zoom e varredura recursiva são recusados em vez de adivinhados.
+isolado: o recorte aprovado é uma imagem de no máximo 5 MiB e 1..1280 px por eixo,
+com listagem do diretório limitada a 64 nomes reconhecidos (`.bmp`, `.jpg`,
+`.jpeg`, `.png`) ordenados por bytes. A extensão escolhe o decoder e é
+autoritativa — o conteúdo nunca é adivinhado — e uma divergência falha fechado com
+motivo tipado. Variantes suportadas: BMP 24-bit `BI_RGB` (inalterado), JPEG
+baseline `SOF0` 8-bit grayscale/YCbCr com amostragem 4:4:4, 4:2:2 ou 4:2:0, e PNG
+8-bit sem interlace tipo de cor 0/2/3. JPEG progressivo, aritmético, lossless,
+12-bit, CMYK e 4:1:1, PNG com alfa (`tRNS`, tipos 4/6) e PNG 16-bit/entrelaçado
+são recusados em vez de adivinhados; orientação EXIF e perfil ICC são ignorados;
+bytes após `IEND` no PNG são ignorados e nunca interpretados. Um
+`image <caminho>` explícito também funciona quando o arquivo pedido ordena depois
+desses 64 nomes: o scan mantém a página ordinária mas promove o pedido para a
+última posição (63 menores + pedido), preservando o cap, a ordenação, a
+unicidade e todos os filtros de caminho/formato/tamanho, e só depois de o próprio
+scan provar que o arquivo é uma imagem elegível daquele diretório. O indicador e
+o `+` descrevem a janela, não o diretório inteiro; um scan de navegação nunca
+promove. Zoom, varredura recursiva e upload de JPEG/PNG ficam fora do escopo.
 
-A divisão de camadas segue a regra do editor. `cyberdeck_image_bmp` é dono do
-envelope (assinatura, `biSize`, planos, profundidade, compressão, dimensões,
-`((w*3)+3) & ~3` e limites em 64 bits), `cyberdeck_image_fit` é dono da
-colocação inteira (`min(área/imagem)` com clamp para nunca ampliar, mais o zoom
-LVGL e a posição do objeto cujo centro coincide com o retângulo encaixado) e
-`cyberdeck_image_decode` lê uma linha BGR (com padding) por `pread` direto no
-frame RGB565 final, então não existe buffer de 5 MiB: a única alocação grande é
-`w*h*2` (no máximo 3.276.800 B) mais uma linha de scratch no mesmo bloco.
+A divisão de camadas segue a regra do editor. `cyberdeck_image_formats` é dono da
+tabela única de extensões e dos limites compartilhados, `cyberdeck_image_bmp` é
+dono do envelope BMP (assinatura, `biSize`, planos, profundidade, compressão,
+dimensões, `((w*3)+3) & ~3` e limites em 64 bits), `cyberdeck_image_jpeg` e
+`cyberdeck_image_png` são donos da inspeção limitada e do decode em streaming
+(TJpgDec e inflater miniz vendorizados, proveniência em
+`components/cyberdeck/THIRD_PARTY.md`), `cyberdeck_image_fit` é dono da colocação
+inteira (`min(área/imagem)` com clamp para nunca ampliar, mais o zoom LVGL e a
+posição do objeto cujo centro coincide com o retângulo encaixado) e
+`cyberdeck_image_decode` despacha pelo formato declarado e lê uma linha BGR (com
+padding), um MCU JPEG ou uma scanline PNG por vez direto no frame RGB565 final,
+então não existe buffer de 5 MiB: a única alocação grande é `w*h*2` (no máximo
+3.276.800 B) mais o pool de trabalho do formato no mesmo bloco.
 `cyberdeck_image_list` enumera pelo seam confinado do shell local, portanto
 traversal, alias `/sdcard`, symlink, diretório, arquivo vazio e arquivo acima do
-teto falham fechado.
+teto falham fechado. `cyberdeck_image_navigation` decide a disposição da conclusão
+e monta o cromo completo (nome, indicador, mensagem de erro e flag de frame), de
+modo que nem o worker nem a superfície LVGL repetem essa regra.
 
 A decodificação roda em task worker dedicada com geração monotônica; resultado
 superado por um pedido mais novo, ou que termina depois de `Esc`, é descartado
 em vez de publicado. O aplicativo nunca chama LVGL e a UI nunca toca o
-filesystem. Apenas um frame é publicado por vez e sua posse é transferida para
+filesystem. `cyberdeck_image_navigation` é dono do modelo puro de conclusão/cromo
+(C8/C9): uma falha de **navegação** pede erro recuperável e mantém o viewer
+aberto — o frame anterior é removido antes de ser liberado, a página e o índice
+aceito sobrevivem, e a superfície mostra o nome que falhou, sua posição `i/N` e a
+mensagem tipada `image: <motivo>` no canal próprio (one-shot, nunca por parse de
+texto) até um frame válido limpá-la. Uma falha na abertura **inicial**
+`image <caminho>` mantém o baseline: mensagem no terminal, sem superfície e volta
+ao shell. Apenas um frame é publicado por vez e sua posse é transferida para
 `cyberdeck_image_view`, que libera o frame anterior ao repointar o widget e o
 último no `destroy()`; a UI destrói a view antes do supervisor parar o
 aplicativo. A posse de teclado é um predicado puro: as setas só são consumidas
-enquanto o visualizador é o foreground **e** há imagem publicada, então uma
-carga recusada mantém o teclado do shell, e `Esc` sempre volta para
-`cyberdeck.shell`.
+enquanto o visualizador é o foreground **e** a superfície existe (frame exibido
+**ou** erro recuperável), então o erro mantém as setas e uma carga inicial
+recusada mantém o teclado do shell; `Esc` sempre volta para `cyberdeck.shell`.
 
 ## SSH
 
