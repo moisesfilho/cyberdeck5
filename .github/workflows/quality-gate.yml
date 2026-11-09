@@ -236,9 +236,29 @@ jobs:
           # includes test_image_stack_frame_contract, which is fail-closed on a
           # current build/cyberdeck5.elf and on the RISC-V nm/objdump.  The ESP
           # toolchain must not shadow the host binutils (its `as` rejects the
-          # host flags), so only the ESP-IDF entries are removed from PATH; the
-          # stack contract locates nm/objdump in ~/.espressif and the ELF by
-          # path, both independently of PATH.
+          # host flags), so the host PATH is built first and the toolchain bin
+          # dirs discovered by idf_tools.py are appended *after* the host bins.
+          # The runner's toolchain may live outside ~/.espressif, so the dirs are
+          # resolved from `idf_tools.py export` (the same install the build
+          # used) instead of a fixed glob.  Both requirements are fail-closed:
+          # /usr/bin/as must win and riscv32-esp-elf-nm must still resolve.
+          IDF_TOOLS_PY="${IDF_PATH:-}/tools/idf_tools.py"
+          if [ ! -f "$IDF_TOOLS_PY" ] && command -v idf.py >/dev/null 2>&1; then
+            IDF_TOOLS_PY="$(dirname "$(command -v idf.py)")/idf_tools.py"
+          fi
+          if [ ! -f "$IDF_TOOLS_PY" ]; then
+            echo "IDF tool exporter not found (IDF_PATH=${IDF_PATH:-unset})" >&2
+            exit 1
+          fi
+          CROSS_BIN_DIRS=""
+          IDF_EXPORT_PATH=$(python3 "$IDF_TOOLS_PY" export --format key-value 2>/dev/null \
+            | sed -n 's/^PATH=//p')
+          IFS=':' read -r -a idf_path_entries <<< "$IDF_EXPORT_PATH"
+          for entry in "${idf_path_entries[@]}"; do
+            case "$entry" in
+              *riscv32-esp-elf*/riscv32-esp-elf/bin) CROSS_BIN_DIRS="${CROSS_BIN_DIRS:+$CROSS_BIN_DIRS:}$entry" ;;
+            esac
+          done
           HOST_PATH=""
           IFS=':' read -r -a path_entries <<< "$PATH"
           for entry in "${path_entries[@]}"; do
@@ -247,7 +267,27 @@ jobs:
             esac
             HOST_PATH="${HOST_PATH:+$HOST_PATH:}$entry"
           done
-          export PATH="$HOST_PATH"
+          if [ -z "$CROSS_BIN_DIRS" ]; then
+            # Last resort for an install layout idf_tools.py does not report:
+            # keep the directory of the nm/objdump already visible on PATH.
+            for tool in riscv32-esp-elf-nm riscv32-esp-elf-objdump; do
+              if resolved=$(command -v "$tool" 2>/dev/null); then
+                CROSS_BIN_DIRS="${CROSS_BIN_DIRS:+$CROSS_BIN_DIRS:}$(dirname "$resolved")"
+              fi
+            done
+          fi
+          export PATH="${HOST_PATH}${CROSS_BIN_DIRS:+:$CROSS_BIN_DIRS}"
+          HOST_AS=$(command -v as || true)
+          CROSS_NM=$(command -v riscv32-esp-elf-nm || true)
+          case "$HOST_AS" in
+            /usr/bin/as|/bin/as) ;;
+            *) echo "host assembler is not first in PATH: ${HOST_AS:-missing}" >&2; exit 1 ;;
+          esac
+          if [ -z "$CROSS_NM" ]; then
+            echo "riscv32-esp-elf-nm not found after PATH setup" >&2
+            exit 1
+          fi
+          echo "host as=$HOST_AS cross nm=$CROSS_NM"
           make clean
           # The aggregate is the executable host scope. Remove every coverage
           # sidecar in this worktree before compiling and running it.
