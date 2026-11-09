@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -50,6 +51,30 @@ int checks = 0;
                         static_cast<long>(actual), static_cast<long>(expected));                                       \
         }                                                                                                              \
     } while (false)
+
+/* Writes the whole buffer, retrying short writes and EINTR.  `write()` is
+ * `warn_unused_result` and the CI build treats warnings as errors; a partial
+ * file would also invalidate the decode assertion, so an error fails the
+ * scenario after the caller cleans up. */
+bool write_all(int descriptor, const std::uint8_t *bytes, std::size_t length) {
+    std::size_t written = 0;
+    while (written < length) {
+        const ssize_t result = ::write(descriptor, bytes + written, length - written);
+        if (result < 0) {
+            if (errno == EINTR)
+                continue;
+            std::printf("FAIL %s:%d: write(%zu bytes) failed: %s\n", __FILE__, __LINE__, length - written,
+                        std::strerror(errno));
+            return false;
+        }
+        if (result == 0) {
+            std::printf("FAIL %s:%d: write(%zu bytes) made no progress\n", __FILE__, __LINE__, length - written);
+            return false;
+        }
+        written += static_cast<std::size_t>(result);
+    }
+    return true;
+}
 
 /* Source frame: 4 columns x 3 rows, one unique colour per row, so a row flip or a
  * channel swap cannot hide.  Values are the exact RGB565 encoding of the frame
@@ -204,7 +229,13 @@ void test_decoded_frame_matches_capture() {
     CHECK(descriptor >= 0);
     if (descriptor < 0)
         return;
-    (void)::write(descriptor, bmp_bytes.data(), bmp_bytes.size());
+    const bool wrote_all = write_all(descriptor, bmp_bytes.data(), bmp_bytes.size());
+    CHECK(wrote_all);
+    if (!wrote_all) {
+        (void)::close(descriptor);
+        (void)::unlink(pattern);
+        return;
+    }
     (void)::lseek(descriptor, 0, SEEK_SET);
 
     cyberdeck_image::decoded_image decoded{};
