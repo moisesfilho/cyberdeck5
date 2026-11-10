@@ -2,6 +2,7 @@
 
 #include "apps/shell/cyberdeck_shell_console.h"
 #include "apps/shell/cyberdeck_shell_help.h"
+#include "apps/shell/cyberdeck_vfs_namespace.h"
 
 #include <array>
 #include <cstdio>
@@ -59,6 +60,104 @@ bool is_cat_help_request(const std::string &line)
     const std::string argument = end == std::string::npos ? line.substr(option) : line.substr(option, end - option);
     if (argument != "-h" && argument != "--help") return false;
     return end == std::string::npos || line.find_first_not_of(" \t", end) == std::string::npos;
+}
+
+/* --- Operando de arquivo de comandos de app -------------------------------
+ *
+ * O shell entrega ao supervisor a linha digitada; os aplicativos que abrem
+ * arquivo (`image` e `edit`) exigem caminho absoluto dentro do namespace
+ * virtual.  Um operando relativo unico e resolvido aqui, contra o cwd virtual
+ * da sessao, imediatamente antes de `runtime.execute_line`.  A linha digitada
+ * permanece intacta para echo, log, historico, comandos locais, SSH e para o
+ * parser legado; apenas a execucao no runtime recebe a linha expandida.
+ *
+ * A resolucao e lexical (`cyberdeck_vfs_namespace::resolve`, sem stat/readlink),
+ * entao symlink nunca e seguido aqui: o confinamento continua com o VFS e com
+ * os validadores dos apps.  Toda falha -- namespace invalido, backend de
+ * metadados, `.`/`..`, componente longo demais, orcamento de linha estourado --
+ * e pass-through: a linha vai como digitada e vale a rejeicao atual do app. */
+
+/* Espelha o `k_max_line_bytes` privado de cyberdeck_app_runtime.cpp.  Uma
+ * expansao acima desse limite cairia no ramo "linha longa" do runtime, que
+ * devolve nada e degrada o comando para `unknown command; type help`.  As
+ * fixtures exatas de 256/257 bytes em test_shell_session fixam a fronteira. */
+constexpr std::size_t k_runtime_max_line_bytes = 256;
+
+/* Cwd em que o editor resolve o operando (cyberdeck_app_storage.cpp); em
+ * qualquer outro cwd a politica fixa `/data` do editor permanece. */
+constexpr std::string_view k_editor_cwd = "/data";
+
+bool is_separator(char value) { return value == ' ' || value == '\t'; }
+
+/* Whitelist explicita: `image` sempre; `edit` somente com cwd exatamente
+ * `/data`.  Reescrever `edit` de um subdiretorio mudaria em silencio a
+ * politica de armazenamento do editor. */
+bool allows_relative_file_operand(std::string_view command, std::string_view cwd)
+{
+    if (command == "image") return true;
+    return command == "edit" && cwd == k_editor_cwd;
+}
+
+/* Operando relativo "simples": sem componente vazio (barra inicial, `//`,
+ * barra final) e sem `.`/`..`.  Assim a navegacao com `.`/`..` continua sendo
+ * rejeitada pelo app e nenhuma semantica nova de traversal nasce aqui. */
+bool is_plain_relative_operand(std::string_view value)
+{
+    if (value.empty() || value.front() == '/') return false;
+    std::size_t begin = 0;
+    while (begin <= value.size()) {
+        const std::size_t end = value.find('/', begin);
+        const std::string_view component =
+            end == std::string_view::npos ? value.substr(begin) : value.substr(begin, end - begin);
+        if (component.empty() || component == "." || component == "..") return false;
+        if (end == std::string_view::npos) break;
+        begin = end + 1;
+    }
+    return true;
+}
+
+/* Reescreve a linha em `expanded` quando -- e somente quando -- ela e um
+ * comando de app com um unico operando de arquivo relativo resolvivel para um
+ * backend de filesystem do namespace virtual.  Retorna false em todos os
+ * demais casos, deixando a linha original em vigor. */
+bool expand_app_file_operand(std::string_view line, std::string_view cwd, std::string &expanded)
+{
+    const std::size_t command_start = line.find_first_not_of(" \t");
+    if (command_start == std::string_view::npos) return false;
+    std::size_t command_end = command_start;
+    while (command_end < line.size() && !is_separator(line[command_end])) ++command_end;
+    const std::string_view command = line.substr(command_start, command_end - command_start);
+    if (!allows_relative_file_operand(command, cwd)) return false;
+
+    const std::size_t operand_start = line.find_first_not_of(" \t", command_end);
+    if (operand_start == std::string_view::npos) return false;
+    std::size_t operand_end = operand_start;
+    while (operand_end < line.size() && !is_separator(line[operand_end])) ++operand_end;
+    /* Um segundo argumento muda a semantica do comando: sem reescrita. */
+    if (line.find_first_not_of(" \t", operand_end) != std::string_view::npos) return false;
+
+    const std::string_view operand = line.substr(operand_start, operand_end - operand_start);
+    if (!is_plain_relative_operand(operand)) return false;
+    /* `edit save` e subcomando reservado do editor, nao um arquivo. */
+    if (command == "edit" && operand == "save") return false;
+
+    const std::string cwd_text(cwd);
+    const std::string operand_text(operand);
+    cyberdeck_vfs_namespace::resolved_path resolved{};
+    if (!cyberdeck_vfs_namespace::resolve(cwd_text.c_str(), operand_text.c_str(), resolved)) return false;
+    if (resolved.kind != cyberdeck_vfs_namespace::path_kind::namespace_path ||
+        !cyberdeck_vfs_namespace::is_filesystem_backend(resolved))
+        return false;
+
+    const std::size_t resolved_length = std::strlen(resolved.path);
+    if (operand_start + resolved_length > k_runtime_max_line_bytes) return false;
+
+    std::string rewritten;
+    rewritten.reserve(operand_start + resolved_length);
+    rewritten.append(line.data(), operand_start);
+    rewritten.append(resolved.path, resolved_length);
+    expanded.swap(rewritten);
+    return true;
 }
 
 bool is_help_request(const std::string &line)
@@ -611,7 +710,15 @@ void session::execute_line(bool line_already_sent)
     cyberdeck_apps::runtime &runtime = host_.app_runtime();
     const cyberdeck_shell_console::dispatcher dispatcher(&runtime);
     if (dispatcher.resolve(line) == cyberdeck_shell_console::dispatch_target::supervisor) {
-        const cyberdeck_apps::result app = runtime.execute_line(line);
+        /* Um operando de arquivo relativo e resolvido contra o cwd virtual
+         * antes do runtime.  `dispatched` existe apenas para esta chamada: a
+         * linha digitada continua sendo a fonte de echo, log, historico e do
+         * parser abaixo. */
+        std::string dispatched;
+        const std::string_view execution_line =
+            expand_app_file_operand(line, command_cwd, dispatched) ? std::string_view(dispatched)
+                                                                  : std::string_view(line);
+        const cyberdeck_apps::result app = runtime.execute_line(execution_line);
         if (app.status == cyberdeck_apps::result_status::handled ||
             app.status == cyberdeck_apps::result_status::rejected) {
             if (!app.output.empty()) host_.append_output_line(app.output);

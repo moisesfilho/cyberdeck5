@@ -194,6 +194,13 @@ window. Arrow keys, physical/virtual keyboard, touch gestures, `Ctrl+S`,
 `Ctrl+Q`, `Esc`, `Ctrl+F`/Enter/Esc search, and bounded undo/redo are routed
 through the app; dirty close offers Save/Discard/Cancel.
 
+The editor resolves the operand inside the fixed virtual `/data` directory. From
+that exact directory (`/$ cd data`) a single relative operand is also resolved by
+the shell (`edit a.txt` opens `/data/a.txt`); in any other directory the fixed
+`/data` policy is unchanged, so `edit a.txt` from `/data/fotos` still opens
+`/data/a.txt`. `edit save` and `edit save as ...` are subcommands and are never
+treated as file operands.
+
 The Tab5 system services are also registered applications: `cyberdeck.shell`,
 `cyberdeck.wifi`, `cyberdeck.serial`, `cyberdeck.ssh`, `cyberdeck.screenshot`
 and `cyberdeck.bluetooth`. They are started by the application supervisor in
@@ -205,8 +212,9 @@ of direct service starts.
 `image <path>` opens one image from the SD card in an isolated foreground app
 (`cyberdeck.image_viewer`):
 
-- the path is absolute inside the virtual SD namespace (`/fotos/a.bmp`);
-  `/sdcard/...`, relative paths and traversal are refused;
+- the path is inside the virtual namespace (`/fotos/a.bmp`); a single relative
+  operand (`image a.bmp`) is resolved from the shell current directory before the
+  app runs, while `/sdcard/...` and traversal (`.`, `..`) are refused;
 - the extension selects the decoder and is authoritative - the content is never
   sniffed - so `.bmp`, `.jpg`, `.jpeg` and `.png` (case-insensitive) are
   accepted and a mismatch fails closed with a typed message;

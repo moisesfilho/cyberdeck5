@@ -52,8 +52,9 @@ constexpr cyberdeck_apps::manifest k_manifest{
     {"image"},
     1,
     false,
-    {{{"image <path>", "path: absolute .bmp/.jpg/.jpeg/.png inside the SD namespace; left/right "
-                       "browses the same directory; Esc closes\n"}}},
+    {{{"image <path>", "path: absolute .bmp/.jpg/.jpeg/.png inside the virtual namespace; a single "
+                       "relative operand resolves from the shell cwd (only /data or /system); "
+                       "left/right browses the same directory; Esc closes\n"}}},
     false};
 
 std::string_view trim(std::string_view value) {

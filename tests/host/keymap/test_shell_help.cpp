@@ -438,7 +438,7 @@ cyberdeck_apps::manifest image_usage_manifest()
     item.command_count = 1;
     item.command_help_entries[0] = {
         "image <path>",
-        "path: absolute .bmp/.jpg/.jpeg/.png inside the SD namespace; left/right browses the same directory; Esc closes\n"};
+        "path: absolute .bmp/.jpg/.jpeg/.png inside the virtual namespace; a single relative operand resolves from the shell cwd (only /data or /system); left/right browses the same directory; Esc closes\n"};
     return item;
 }
 
@@ -1026,7 +1026,7 @@ int main()
             "  Image viewer (cyberdeck.image_viewer) version 1.0.3\n"
             "  Foreground image viewer (BMP, JPEG, PNG)\n"
             "  usage: image <path>\n"
-            "  path: absolute .bmp/.jpg/.jpeg/.png inside the SD namespace; left/right browses the same directory; Esc closes\n";
+            "  path: absolute .bmp/.jpg/.jpeg/.png inside the virtual namespace; a single relative operand resolves from the shell cwd (only /data or /system); left/right browses the same directory; Esc closes\n";
         check_eq(h.output, expected, "TEST-IMG-HELP-02: complete independent golden");
         check(image_viewer.executions == 0 &&
                   h.apps.state("cyberdeck.image_viewer") == cyberdeck_apps::app_state::registered,

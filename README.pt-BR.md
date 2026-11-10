@@ -178,13 +178,21 @@ alterações, Enter escolhe Salvar, `D` escolhe Descartar e Esc escolhe Cancelar
 `Ctrl+F`, texto, Enter e Esc executam a busca. Undo/redo são mantidos pelo
 modelo (`Ctrl+Z`/`Ctrl+Y` no teclado que fornece esses modificadores).
 
+O editor resolve o operando dentro do diretório virtual fixo `/data`. A partir
+desse diretório exato (`/$ cd data`) um único operando relativo também é
+resolvido pelo shell (`edit a.txt` abre `/data/a.txt`); em qualquer outro
+diretório a política fixa `/data` permanece, então `edit a.txt` de `/data/fotos`
+continua abrindo `/data/a.txt`. `edit save` e `edit save as ...` são
+subcomandos e nunca são tratados como operando de arquivo.
+
 ### Visualizador de imagens (`image`)
 
 `image <caminho>` abre uma imagem do cartão SD em um app foreground isolado
 (`cyberdeck.image_viewer`):
 
-- o caminho é absoluto no namespace virtual do SD (`/fotos/a.bmp`); `/sdcard/...`,
-  caminhos relativos e traversal são recusados;
+- o caminho pertence ao namespace virtual (`/fotos/a.bmp`); um único operando
+  relativo (`image a.bmp`) é resolvido a partir do diretório corrente do shell
+  antes do app rodar, enquanto `/sdcard/...` e traversal (`.`, `..`) são recusados;
 - a extensão escolhe o decoder e é autoritativa — o conteúdo nunca é adivinhado —
   então `.bmp`, `.jpg`, `.jpeg` e `.png` (case-insensitive) são aceitos e uma
   divergência falha fechado com mensagem tipada;

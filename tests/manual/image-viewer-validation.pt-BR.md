@@ -57,8 +57,10 @@ continua sendo a deste roteiro.
 | Passo | Ação | Resultado esperado |
 | --- | --- | --- |
 | A1 | `image /fotos/a.bmp` | imagem exibida inteira, barra de título com nome e `i/N`, sem sobrepor o header de 42 px |
+| A1c | `cd /fotos` e então `image a.bmp` | mesma imagem de A1: o operando relativo único é resolvido no shell contra o cwd virtual; o echo mostra `image a.bmp` (linha digitada), não o caminho expandido; ↑ recupera `image a.bmp` |
+| A1d | `cd /system/assets` e então `image logo.png` (fixture copiada para `/system/assets`) | abre pelo namespace de sistema; voltar a `/` e repetir `image logo.png` responde caminho inválido (cwd fora de namespace não é reescrito) |
 | A1b | `image /screenshots/print_20261020_172101.bmp` (BMP existente que ordena **depois** dos 64 primeiros nomes do diretório) | abre normalmente: a janela vira "63 menores + este arquivo", indicador `64/64+`, seta esquerda navega para o 63º; sem panic |
-| A2 | `image fotos/a.bmp` | mensagem de caminho inválido; nenhuma imagem; prompt do shell ativo |
+| A2 | com cwd `/`, `image fotos/a.bmp` | mensagem de caminho inválido; a resolução só vale dentro de namespace (`/data`, `/system`); nenhuma imagem; prompt do shell ativo |
 | A3 | `image /sdcard/fotos/a.bmp` | caminho inválido (namespace virtual não aceita `/sdcard`) |
 | A4 | `image /fotos/../fotos/a.bmp` | caminho inválido |
 | A5 | `image /fotos/d.bmp` | falha explícita por dimensão; volta ao shell |

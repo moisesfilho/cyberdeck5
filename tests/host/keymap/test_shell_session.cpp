@@ -66,6 +66,43 @@ private:
     bool running_ = false;
 };
 
+/* Sonda de despacho: registra exatamente o comando e o operando (trim) que o
+ * runtime entregou ao aplicativo.  Usada para provar que a sessao reescreve
+ * apenas a linha executada e preserva a linha digitada em todo o resto. */
+class file_operand_probe final : public cyberdeck_apps::application {
+public:
+    file_operand_probe(std::string_view id, std::string_view command)
+    {
+        manifest_.id = id;
+        manifest_.name = "probe";
+        manifest_.version = "1.0.0";
+        manifest_.description = "dispatch probe";
+        manifest_.command = command;
+    }
+
+    const cyberdeck_apps::manifest &get_manifest() const override { return manifest_; }
+    bool start() override { return true; }
+    bool stop() override { return true; }
+    bool running() const override { return true; }
+
+    cyberdeck_apps::result execute(std::string_view command, std::string_view args) override
+    {
+        ++executions;
+        last_command.assign(command.data(), command.size());
+        while (!args.empty() && (args.front() == ' ' || args.front() == '\t')) args.remove_prefix(1);
+        while (!args.empty() && (args.back() == ' ' || args.back() == '\t')) args.remove_suffix(1);
+        last_operand.assign(args.data(), args.size());
+        return {cyberdeck_apps::result_status::handled, std::string{}};
+    }
+
+    int executions = 0;
+    std::string last_command;
+    std::string last_operand;
+
+private:
+    cyberdeck_apps::manifest manifest_{};
+};
+
 struct fake_host final : cyberdeck_shell_session::host {
     /* Output. */
     std::string output;
@@ -578,6 +615,344 @@ int main()
         submit(s, "definitely-not-a-command");
         check(h.output.find("unknown command") != std::string::npos,
               "an unknown command reports the parser error");
+    }
+
+    /* TEST-REL-* (REQ-REL-01..09): o operando relativo de um comando de app e
+     * resolvido contra o cwd virtual antes do runtime.  A sonda registra o
+     * comando/operando executados; echo, historico e event log continuam
+     * carregando a linha digitada. */
+    {
+        const std::string root = "/tmp/opencode/session-harness";
+        std::filesystem::create_directories(root + "/data/fotos/sub");
+        std::filesystem::create_directories(root + "/system/assets");
+        std::filesystem::create_directories(root + "/tmp");
+        std::filesystem::create_directories(root + "/apps");
+        std::filesystem::create_directories(root + "/dev");
+
+        fake_host h;
+        file_operand_probe image("cyberdeck.image_viewer", "image");
+        file_operand_probe editor("cyberdeck.editor", "edit");
+        file_operand_probe music("cyberdeck.music", "music");
+        check(h.apps.register_application(image), "image probe registers");
+        check(h.apps.register_application(editor), "editor probe registers");
+        check(h.apps.register_application(music), "music probe registers");
+        session s(h);
+
+        /* POS-REL-03: relativo resolvido contra o cwd do shell. */
+        submit(s, "cd /data/fotos/sub");
+        check_eq(h.shell.cwd(), "/data/fotos/sub", "probe cwd enters the data subdirectory");
+        h.output.clear();
+        submit(s, "image a.bmp");
+        check_eq(image.last_operand, "/data/fotos/sub/a.bmp",
+                 "POS-REL-03: a relative operand resolves against the session cwd");
+        check_eq(h.output, "/data/fotos/sub$ image a.bmp\n",
+                 "NEG-REL-34: the echo keeps the typed line, never the expanded one");
+
+        /* NEG-REL-35/36: historico e event log preservam a linha digitada. */
+        s.handle_key(key::up);
+        check_eq(s.line(), "image a.bmp", "NEG-REL-35: history keeps the typed line");
+        s.clear_editor();
+        check(!h.events.empty() && h.events.back() == "I shell image a.bmp",
+              "NEG-REL-36: the event log keeps the typed line");
+
+        /* POS-REL-04: subcaminho relativo. */
+        image.executions = 0;
+        submit(s, "image sub/a.bmp");
+        check_eq(image.last_operand, "/data/fotos/sub/sub/a.bmp",
+                 "POS-REL-04: a relative subdirectory operand is joined to the cwd");
+
+        /* POS-REL-01/02: separadores tabs/multiplos espacos nao mudam o operando. */
+        submit(s, "image\ta.bmp");
+        check_eq(image.last_operand, "/data/fotos/sub/a.bmp",
+                 "POS-REL-01: a tab separator still resolves the operand");
+        submit(s, "image   a.bmp");
+        check_eq(image.last_operand, "/data/fotos/sub/a.bmp",
+                 "POS-REL-02: repeated spaces still resolve the operand");
+
+        /* NEG-REL-07: caminho absoluto e entregue como digitado. */
+        submit(s, "image /data/b.bmp");
+        check_eq(image.last_operand, "/data/b.bmp",
+                 "NEG-REL-07: an absolute operand is never rebased");
+
+        /* POS-REL-05: namespace de sistema tambem e filesystem. */
+        submit(s, "cd /system/assets");
+        submit(s, "image logo.png");
+        check_eq(image.last_operand, "/system/assets/logo.png",
+                 "POS-REL-05: a relative operand resolves inside /system");
+
+        /* NEG-REL-08..14: nenhum destino fora de data/system e reescrito. */
+        submit(s, "cd /data");
+        submit(s, "image /sdcard/a.bmp");
+        check_eq(image.last_operand, "/sdcard/a.bmp",
+                 "NEG-REL-08: /sdcard stays literal (no virtual rebase)");
+        submit(s, "image ../a.bmp");
+        check_eq(image.last_operand, "../a.bmp",
+                 "NEG-REL-09: traversal is not expanded");
+        submit(s, "image ./a.bmp");
+        check_eq(image.last_operand, "./a.bmp",
+                 "NEG-REL-10: a dot component is not expanded");
+        /* Under a subdirectory cwd the resolver would clamp `..`/`.` into a
+         * valid sibling target, so the local guard is the only thing that keeps
+         * the traversal semantics unchanged there. */
+        submit(s, "cd /data/fotos");
+        submit(s, "image ../a.bmp");
+        check_eq(image.last_operand, "../a.bmp",
+                 "NEG-REL-09b: traversal is refused under a subdirectory cwd");
+        submit(s, "image ./a.bmp");
+        check_eq(image.last_operand, "./a.bmp",
+                 "NEG-REL-10b: a dot component is refused under a subdirectory cwd");
+        submit(s, "cd /data");
+        submit(s, "cd /");
+        submit(s, "image a.bmp");
+        check_eq(image.last_operand, "a.bmp",
+                 "NEG-REL-11: a cwd outside any namespace does not resolve");
+        submit(s, "cd /tmp");
+        submit(s, "image a.bmp");
+        check_eq(image.last_operand, "a.bmp",
+                 "NEG-REL-12: the tmp metadata backend never maps to the card");
+        submit(s, "cd /apps");
+        submit(s, "image a.bmp");
+        check_eq(image.last_operand, "a.bmp",
+                 "NEG-REL-13: the apps metadata backend does not resolve");
+        submit(s, "cd /dev");
+        submit(s, "image null");
+        check_eq(image.last_operand, "null",
+                 "NEG-REL-14: /dev is never rewritten (no physical /dev/null)");
+
+        /* NEG-REL-18/19: a resolucao e lexical, portanto um symlink nunca e
+         * seguido aqui; o que chega ao app e o caminho digitado sob o cwd. */
+        std::error_code link_error;
+        const std::string file_link = root + "/data/link.bmp";
+        std::filesystem::remove(file_link, link_error);
+        link_error.clear();
+        std::filesystem::create_symlink("/system/assets/logo.png", file_link, link_error);
+        check(!link_error, "fixture installs a file symlink inside /data");
+        submit(s, "cd /data");
+        submit(s, "image link.bmp");
+        check_eq(image.last_operand, "/data/link.bmp",
+                 "NEG-REL-18: the rewrite keeps the lexical path and never the symlink target");
+        const std::string dir_link = root + "/data/linkdir";
+        std::filesystem::remove(dir_link, link_error);
+        link_error.clear();
+        std::filesystem::create_directory_symlink(root + "/system/assets", dir_link, link_error);
+        check(!link_error, "fixture installs a directory symlink inside /data");
+        h.output.clear();
+        submit(s, "cd /data/linkdir");
+        /* Deterministic on the host: the local shell refuses a path whose
+         * components include a symlink, so a cwd that is itself a symlink is
+         * unreachable through the session and no rewrite can be observed for
+         * it.  Assert the refusal instead of accepting both worlds. */
+        check(h.output.find("cd:") != std::string::npos,
+              "NEG-REL-19: cd through a symlink is refused by the local shell");
+        check_eq(h.shell.cwd(), "/data",
+                 "NEG-REL-19: the refused cd leaves the session cwd unchanged");
+
+        /* NEG-REL-15..17: sem operando unico nao ha reescrita. */
+        submit(s, "cd /data");
+        image.executions = 0;
+        submit(s, "image");
+        check(image.executions == 1 && image.last_operand.empty(),
+              "NEG-REL-15: a missing operand reaches the app unchanged");
+        submit(s, "image   ");
+        check(image.executions == 2 && image.last_operand.empty(),
+              "NEG-REL-16: a separators-only operand reaches the app unchanged");
+        submit(s, "image a.bmp b.bmp");
+        check_eq(image.last_operand, "a.bmp b.bmp",
+                 "NEG-REL-17: a second argument disables the rewrite");
+        /* Quotes are not shell syntax: the operand stays literal (whatever the
+         * prefixing decision), so no quote stripping can appear here. */
+        submit(s, "image \"a.bmp\"");
+        check(image.last_operand.size() >= 7 &&
+                  image.last_operand.compare(image.last_operand.size() - 7, 7, "\"a.bmp\"") == 0,
+              "NEG-REL-05: the operand keeps its literal quote characters");
+
+        /* NEG-REL-22: o limite de 8 tokens do runtime permanece. */
+        h.output.clear();
+        submit(s, "image a b c d e f g h");
+        check(h.output.find("unknown command; type help") != std::string::npos,
+              "NEG-REL-22: more than eight tokens keeps the runtime rejection");
+
+        /* POS-REL-07 / NEG-REL-23: componente de 64 bytes e limite inclusivo. */
+        const std::string component64(64, 'a');
+        submit(s, "image " + component64);
+        check_eq(image.last_operand, "/data/" + component64,
+                 "POS-REL-07: a 64-byte component still resolves");
+        const std::string component65(65, 'b');
+        submit(s, "image " + component65);
+        check_eq(image.last_operand, component65,
+                 "NEG-REL-23: a 65-byte component fails closed as pass-through");
+
+        /* POS-REL-08 / NEG-REL-24: 16 componentes inclusivo, 17 rejeitado. */
+        std::string fifteen_components;
+        for (int part = 0; part < 15; ++part) {
+            if (!fifteen_components.empty()) fifteen_components += '/';
+            fifteen_components += "d";
+        }
+        submit(s, "image " + fifteen_components);
+        check_eq(image.last_operand, "/data/" + fifteen_components,
+                 "POS-REL-08: a resolved path with exactly 16 components resolves");
+        submit(s, "image " + fifteen_components + "/e");
+        check_eq(image.last_operand, fifteen_components + "/e",
+                 "NEG-REL-24: a resolved path with 17 components is not rewritten");
+
+        /* POS-REL-06 / NEG-REL-20 / NEG-REL-21: orcamento de linha do runtime
+         * (256 bytes).  A linha executada e "image " + "/data/" + operando. */
+        const auto budget_operand = [](std::size_t last_component) {
+            std::string value;
+            for (int part = 0; part < 3; ++part) {
+                value += std::string(64, 'x');
+                value += '/';
+            }
+            value += std::string(last_component, 'y');
+            return value;
+        };
+        const std::string budget_prefix = "image ";
+        const std::string budget_cwd = "/data/";
+        const std::string at_budget = budget_operand(49);
+        check(budget_prefix.size() + budget_cwd.size() + at_budget.size() == 256,
+              "fixture expands to exactly 256 bytes");
+        submit(s, budget_prefix + at_budget);
+        check_eq(image.last_operand, budget_cwd + at_budget,
+                 "POS-REL-06: an expansion of exactly 256 bytes is dispatched");
+        const std::string over_budget = budget_operand(50);
+        check(budget_prefix.size() + budget_cwd.size() + over_budget.size() == 257,
+              "fixture expands to exactly 257 bytes");
+        submit(s, budget_prefix + over_budget);
+        check_eq(image.last_operand, over_budget,
+                 "NEG-REL-20: a 257-byte expansion is passed through, not truncated");
+        std::string long_typed = "image ";
+        for (int part = 0; part < 126; ++part) long_typed += "z/";
+        long_typed += "z";
+        check(long_typed.size() > 256, "fixture typed line exceeds the runtime budget");
+        h.output.clear();
+        submit(s, long_typed);
+        check(h.output.find("unknown command; type help") != std::string::npos,
+              "NEG-REL-21: a typed line above 256 bytes keeps the baseline rejection");
+
+        /* NEG-REL-20b: o orcamento usa o prefixo REAL da linha, nao um literal
+         * de 6 bytes.  O mesmo resolvedor de 250 bytes e despachado com um
+         * separador e recusado com dois, porque o prefixo cresce. */
+        const std::string deep_cwd = "/data/" + std::string(64, 'p') + "/" + std::string(64, 'q') + "/" +
+                                     std::string(64, 'r');
+        const std::string deep_operand(49, 'w');
+        check(deep_cwd.size() + 1 + deep_operand.size() == 250,
+              "fixture resolves to exactly 250 bytes under a deep cwd");
+        check(deep_cwd.size() + 1 + deep_operand.size() + std::string("image ").size() == 256,
+              "fixture reaches exactly the runtime budget with one separator");
+        check(deep_cwd.size() + 1 + deep_operand.size() + std::string("  image ").size() == 258,
+              "fixture exceeds the runtime budget with two leading separators");
+        std::error_code deep_error;
+        std::filesystem::create_directories(root + deep_cwd, deep_error);
+        check(!deep_error, "fixture creates the deep cwd directories");
+        submit(s, "cd " + deep_cwd);
+        check_eq(h.shell.cwd(), deep_cwd, "fixture enters the deep cwd");
+        submit(s, "image " + deep_operand);
+        check_eq(image.last_operand, deep_cwd + "/" + deep_operand,
+                 "NEG-REL-20b: one separator keeps the expansion at the budget");
+        submit(s, "  image " + deep_operand);
+        check_eq(image.last_operand, deep_operand,
+                 "NEG-REL-20b: the leading-space prefix counts against the budget");
+
+        /* POS-REL-09 / NEG-REL-26..33: politica do editor em /data. */
+        submit(s, "cd /data");
+        submit(s, "edit a.txt");
+        check_eq(editor.last_operand, "/data/a.txt",
+                 "POS-REL-09: edit resolves a relative operand at /data");
+        submit(s, "edit sub/a.txt");
+        check_eq(editor.last_operand, "/data/sub/a.txt",
+                 "POS-REL-11: edit joins a relative subpath under /data");
+        submit(s, "cd /data/fotos");
+        submit(s, "edit a.txt");
+        check_eq(editor.last_operand, "a.txt",
+                 "NEG-REL-26: edit keeps the fixed /data policy in a subdirectory");
+        submit(s, "cd /");
+        submit(s, "edit a.txt");
+        check_eq(editor.last_operand, "a.txt",
+                 "NEG-REL-27: edit keeps the fixed /data policy outside /data");
+        submit(s, "cd /data");
+        submit(s, "edit save");
+        check_eq(editor.last_operand, "save",
+                 "NEG-REL-28: the reserved save subcommand is never a path");
+        submit(s, "edit save as x.txt");
+        check_eq(editor.last_operand, "save as x.txt",
+                 "NEG-REL-29: save as keeps its literal arguments");
+        submit(s, "edit save as confirm");
+        check_eq(editor.last_operand, "save as confirm",
+                 "NEG-REL-33: the save-as confirmation keeps its literal arguments");
+        submit(s, "edit /data/a.txt");
+        check_eq(editor.last_operand, "/data/a.txt",
+                 "NEG-REL-30: an absolute edit operand is unchanged");
+        submit(s, "edit ../a.txt");
+        check_eq(editor.last_operand, "../a.txt",
+                 "NEG-REL-31: edit traversal is not expanded");
+        editor.executions = 0;
+        submit(s, "edit");
+        check(editor.executions == 1 && editor.last_operand.empty(),
+              "NEG-REL-32: edit without an operand reaches the app unrewritten");
+
+        /* NEG-REL-38: o help detalhado e resolvido pela sessao, nunca pelo app. */
+        image.executions = 0;
+        h.output.clear();
+        submit(s, "image help");
+        check(image.executions == 0 && h.output.find("image [app]") != std::string::npos,
+              "NEG-REL-38: the detail help path never reaches the application");
+
+        /* NEG-REL-01..04 / 41 / REQ-REL-09: fora da whitelist nada muda. */
+        h.output.clear();
+        submit(s, "Image a.bmp");
+        check(h.output.find("unknown command; type help") != std::string::npos,
+              "NEG-REL-01: the whitelist is case sensitive");
+        h.output.clear();
+        submit(s, "app image a.bmp");
+        check(h.output.find("usage: app") != std::string::npos,
+              "NEG-REL-02: app never rewrites its operand");
+        h.output.clear();
+        submit(s, "image2 a.bmp");
+        check(h.output.find("unknown command; type help") != std::string::npos,
+              "NEG-REL-03: only the declared command is rewritten");
+        submit(s, "music queue musica");
+        check_eq(music.last_operand, "queue musica",
+                 "NEG-REL-41: music queue is not treated as a file operand");
+        h.cat_line.clear();
+        submit(s, "cat a.txt");
+        check_eq(h.cat_line, "cat a.txt",
+                 "NEG-REL-40: the local cat command keeps its typed line");
+
+        /* POS-REL-10: sem estado residual entre execucoes. */
+        image.executions = 0;
+        submit(s, "image a.bmp");
+        const std::string first_operand = image.last_operand;
+        submit(s, "image a.bmp");
+        check(image.executions == 2 && image.last_operand == first_operand &&
+                  first_operand == "/data/a.bmp",
+              "POS-REL-10: repeated invocations resolve identically");
+
+        /* NEG-REL-39: poweroff (prompt e help) permanece intocado.  Fica por
+         * ultimo porque arma a confirmacao da sessao. */
+        h.output.clear();
+        submit(s, "poweroff -h");
+        check(h.output.find(cyberdeck_shell_help::command_text("poweroff")) != std::string::npos,
+              "NEG-REL-39: poweroff -h keeps the pinned help block");
+        h.output.clear();
+        submit(s, "poweroff");
+        check(h.output.find("Type exactly y") != std::string::npos,
+              "NEG-REL-39: poweroff keeps its exact-y confirmation prompt");
+    }
+
+    /* NEG-REL-04 / NEG-REL-37: sem app registrado nao ha reescrita, e o modo
+     * SSH continua enviando a linha digitada verbatim. */
+    {
+        fake_host h;
+        session s(h);
+        h.output.clear();
+        submit(s, "image a.bmp");
+        check(h.output.find("unknown command; type help") != std::string::npos,
+              "NEG-REL-04: an unregistered app command is not rewritten");
+        h.ssh_visible = true;
+        h.phase = cyberdeck_session_state::CONNECTED;
+        submit(s, "image a.bmp");
+        check_eq(h.ssh_sent, "image a.bmp\n",
+                 "NEG-REL-37: SSH sends the typed line verbatim");
     }
 
     /* TEST-ECHO-01/02: the local echo names the directory from before the

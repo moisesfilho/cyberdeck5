@@ -87,6 +87,19 @@ apenas as portas declaradas em `host`. Isso permite linká-la no host contra um
 comportamento de `handle_key`, `execute_line` e da inserção de texto dessa
 forma.
 
+O operando de arquivo de comando de app é resolvido pela sessão, não pelo app.
+Depois de echo, log e histórico e antes de `runtime.execute_line`, a sessão
+reescreve em uma variável separada (`dispatched`) o operando relativo único de
+`image` (sempre) e `edit` (somente com cwd exatamente `/data`, que é o diretório
+onde o editor resolve o caminho). A linha digitada continua sendo a única fonte
+de echo, log, histórico, help, `cat`, shell local, `poweroff`, SSH e parser
+legado. A resolução é lexical por `cyberdeck_vfs_namespace::resolve` (sem
+`stat`/`readlink`) e exige backend de filesystem (`/data` ou `/system`); qualquer
+falha — namespace inválido, backend de metadados, componente `.`/`..`, componente
+acima de 64 bytes, caminho acima de 256 bytes, segundo argumento, `edit save` ou
+expansão que estoure o orçamento de 256 bytes do runtime — é pass-through, então
+o app mantém a mensagem e a rejeição atuais.
+
 O agendamento da reconexão BLE em background fica isolado em
 `cyberdeck_ble_background.cpp` (`scheduler`): restauração de bonds no boot,
 janela periódica de 10 s, matching por endereço+`addr_type`, teto de 3
