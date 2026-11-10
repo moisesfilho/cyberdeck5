@@ -1590,3 +1590,29 @@ mutação de sensibilidade; nenhum cenário antigo foi removido ou enfraquecido.
   secundários continuam pendentes.
 - Próximo passo: `reviewer` em modo final (revisão ampla), mantendo os cenários secundários
   registrados como não executados.
+
+### 2026-11-09 16:25 -03:00 - encerramento solicitado pelo usuário: setas e Esc relatados (`evidence_kind: relato`)
+
+- `evidence_kind: relato` — **não medido**. Hora local estimada; sem comando de relógio nesta
+  entrada ("sem comandos"). Origem: mensagem de encerramento do usuário recebida agora.
+- Relato do usuário: ele informou **"Eu fiz a validação da setas e do esc. Pode considerar
+  finalizado a tarefa"**. Registro apenas isso: ele relata ter validado as **setas físicas** e o
+  **Esc físico** e **solicita o encerramento da tarefa**.
+- Não atribuo firmware, versão, SHA, comandos ou execução a este relato; ele não os reportou. O
+  relato anterior (navegação por imagens inválidas + mensagem de retorno + "Está tudo correto")
+  permanece **separado** e não é reescrito nem ampliado por esta entrada.
+- Cenários adicionais que **não foram medidos** por mim e **não estão cobertos** por este relato
+  ficam registrados como **`evidence_kind: deferido`**, por decisão explícita do usuário de
+  finalizar: captura do cromo de erro e mensagem exata por arquivo, setas rápidas/coalescência,
+  clamps em `1/N` e `N/N+`, imagens máximas (1280×1280) e tempo de decode, ciclos de
+  heap/uptime/PSRAM, monitor serial durante todo o roteiro e verificação de frame stale por
+  captura após erro. **Deferido não significa aprovado nem testado**; nenhum deles é declarado
+  como validado.
+- A decisão de encerrar é do usuário; esta entrada registra o pedido e mantém a distinção entre
+  relato, medição e cenários deferidos. Não converto cenários deferidos em aceite.
+- Supersedes or discards: substitui a pendência de `Esc` físico e a expectativa de fechamento do
+  roteiro **apenas no que o relato do usuário cobre** (setas e Esc relatados + pedido de
+  encerramento); não revoga as medições anteriores, a matriz host nem o relato de navegação por
+  inválidas. Cenários deferidos permanecem não executados.
+- Próximo passo: `developer` consolidar o encerramento conforme a decisão do usuário, mantendo os
+  itens `deferido` registrados como não medidos/não aprovados.

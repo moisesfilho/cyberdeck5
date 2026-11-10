@@ -78,31 +78,58 @@ bool is_help_request(const std::string &line)
 }
 
 
-std::string help_text(cyberdeck_apps::runtime &runtime)
+/* Inventario de comandos do console: catalogo de help primeiro, depois os
+ * comandos declarados pelos manifests registrados, sem duplicatas.  Mesma
+ * fonte e mesma regra de deduplicacao do `help`, agora compartilhada com a
+ * completacao por Tab (REQ-TAB-01). */
+std::vector<std::string> shell_commands(cyberdeck_apps::runtime &runtime)
 {
-    std::string output = cyberdeck_shell_help::text();
-    std::array<std::string_view, cyberdeck_apps::k_max_applications *
-                                      (cyberdeck_apps::k_max_commands + 1)> listed{};
-    std::size_t listed_count = 0;
+    constexpr std::size_t k_inventory_capacity =
+        cyberdeck_shell_help::kCatalog.size() +
+        cyberdeck_apps::k_max_applications * (cyberdeck_apps::k_max_commands + 1);
+    std::vector<std::string> commands;
+    commands.reserve(k_inventory_capacity);
+    for (const cyberdeck_shell_help::entry &entry : cyberdeck_shell_help::kCatalog)
+        commands.emplace_back(entry.command);
+    const auto append = [&commands](std::string_view command) {
+        if (command.empty() || command.size() > cyberdeck_shell_completion::k_max_name_bytes) return;
+        for (const std::string &existing : commands)
+            if (existing == command) return;
+        if (commands.size() == k_inventory_capacity) return;
+        commands.emplace_back(command.data(), command.size());
+    };
     for (std::size_t index = 0; index < runtime.size(); ++index) {
         const cyberdeck_apps::application *app = runtime.at(index);
         if (app == nullptr) continue;
         const cyberdeck_apps::manifest &manifest = app->get_manifest();
-        const auto append_command = [&](std::string_view command) {
-            if (command.empty()) return;
-            for (const auto &legacy : cyberdeck_shell_help::kCatalog)
-                if (legacy.command == command) return;
-            for (std::size_t i = 0; i < listed_count; ++i)
-                if (listed[i] == command) return;
-            if (listed_count == listed.size()) return;
-            listed[listed_count++] = command;
-            output += cyberdeck_shell_help::format_app_entry(command);
-        };
-        append_command(manifest.command);
+        append(manifest.command);
         for (std::size_t command = 0; command < manifest.command_count; ++command)
-            append_command(manifest.commands[command]);
+            append(manifest.commands[command]);
+    }
+    return commands;
+}
+
+std::string help_text(cyberdeck_apps::runtime &runtime)
+{
+    std::string output = cyberdeck_shell_help::text();
+    for (const std::string &command : shell_commands(runtime)) {
+        bool legacy = false;
+        for (const cyberdeck_shell_help::entry &entry : cyberdeck_shell_help::kCatalog)
+            legacy = legacy || entry.command == command;
+        if (legacy) continue;
+        output += cyberdeck_shell_help::format_app_entry(command);
     }
     return output;
+}
+
+/* Token monotônico do pedido de completacao.  Vive fora da sessao para que um
+ * resultado de uma sessao ja destruida nunca case com a proxima. */
+std::uint64_t next_completion_token()
+{
+    static std::uint64_t sequence = 0;
+    ++sequence;
+    if (sequence == 0) ++sequence;
+    return sequence;
 }
 
 bool parse_detail_help_request(const std::string &line, std::string_view &command)
@@ -216,6 +243,139 @@ void session::clear_editor()
     wipe_string(line_);
     editor_.clear();
     cursor_ = 0;
+    clear_completion_state();
+}
+
+void session::clear_completion_state()
+{
+    completion_target_ = {};
+    completion_candidates_.clear();
+    completion_line_.clear();
+    completion_cursor_ = 0;
+    completion_cache_valid_ = false;
+    completion_truncated_ = false;
+    completion_pending_token_ = 0;
+    completion_pending_target_ = {};
+    completion_pending_line_.clear();
+    completion_pending_cursor_ = 0;
+}
+
+bool session::completion_allowed() const
+{
+    if (poweroff_requested_ || poweroff_confirmation_) return false;
+    if (host_.ssh_phase() != cyberdeck_session_state::MENU) return false;
+    if (host_.wifi_state() != wifi_ui_state_t::IDLE) return false;
+    if (host_.ble_model().owns_input()) return false;
+    return true;
+}
+
+void session::apply_candidates(const cyberdeck_shell_completion::target &target,
+                               const cyberdeck_shell_completion::candidate_list &candidates,
+                               bool truncated, bool list_requested)
+{
+    if (candidates.empty()) {
+        /* Zero candidatos: nada muda, e a linha continua editavel. */
+        completion_cache_valid_ = false;
+        return;
+    }
+    const cyberdeck_shell_completion::application applied = cyberdeck_shell_completion::apply(
+        line_, cursor_, target, candidates, list_requested, truncated);
+    if (applied.list) {
+        const std::string text = cyberdeck_shell_completion::format_candidates(candidates, truncated);
+        if (!text.empty()) host_.append_output_line(text);
+        /* Um terceiro Tab volta a enumerar em vez de repetir a lista. */
+        completion_cache_valid_ = false;
+        host_.render();
+        return;
+    }
+    if (applied.changed) {
+        if (!editor_.set_line(applied.line.data(), applied.line.size(), applied.cursor)) return;
+        sync_line();
+        if (candidates.size() == 1) {
+            /* O token esta completo: nada a listar. */
+            completion_cache_valid_ = false;
+            completion_target_ = {};
+            completion_candidates_.clear();
+            completion_truncated_ = false;
+            host_.render();
+            return;
+        }
+    }
+    /* Guarda a lista para o segundo Tab (linha/cursor exatos). */
+    completion_target_ = target;
+    completion_candidates_ = candidates;
+    completion_truncated_ = truncated;
+    completion_line_ = line_;
+    completion_cursor_ = cursor_;
+    completion_cache_valid_ = true;
+    if (applied.changed) host_.render();
+}
+
+void session::begin_completion()
+{
+    if (!completion_allowed()) return;
+    sync_editor();
+    if (completion_cache_valid_ && completion_line_ == line_ && completion_cursor_ == cursor_) {
+        /* Segundo Tab sem edicao: so lista o conjunto ja obtido. */
+        apply_candidates(completion_target_, completion_candidates_, completion_truncated_, true);
+        return;
+    }
+    if (completion_pending_token_ != 0) return; /* um pedido por vez */
+    cyberdeck_shell_completion::target target;
+    if (!cyberdeck_shell_completion::classify(line_, cursor_, host_.local_shell().cwd(), target))
+        return;
+    if (target.command) {
+        const std::vector<std::string> commands = shell_commands(host_.app_runtime());
+        cyberdeck_shell_completion::candidate_list candidates;
+        bool truncated = false;
+        cyberdeck_shell_completion::match_commands(commands, target.name_prefix, candidates,
+                                                   truncated);
+        apply_candidates(target, candidates, truncated, false);
+        return;
+    }
+    const std::uint64_t token = next_completion_token();
+    completion_pending_target_ = target;
+    completion_pending_line_ = line_;
+    completion_pending_cursor_ = cursor_;
+    /* O token precisa estar publicado ANTES da chamada: a porta pode entregar o
+     * resultado de forma sincrona (worker rapido ou seam de teste). */
+    completion_pending_token_ = token;
+    if (!host_.completion_scan_async(target.scan, token)) {
+        /* Sem worker: falha fechada, a linha fica intacta. */
+        completion_pending_token_ = 0;
+        completion_pending_target_ = {};
+        completion_pending_line_.clear();
+        completion_pending_cursor_ = 0;
+        return;
+    }
+}
+
+void session::apply_completion_result(std::uint64_t token,
+                                      const cyberdeck_shell_completion::candidate *items,
+                                      std::size_t count, bool truncated)
+{
+    if (token == 0 || token != completion_pending_token_) return;
+    completion_pending_token_ = 0;
+    const cyberdeck_shell_completion::target target = completion_pending_target_;
+    completion_pending_target_ = {};
+    sync_editor();
+    if (line_ != completion_pending_line_ || cursor_ != completion_pending_cursor_) {
+        /* Linha/cursor mudaram durante a enumeracao: resultado obsoleto. */
+        completion_pending_line_.clear();
+        completion_pending_cursor_ = 0;
+        completion_cache_valid_ = false;
+        return;
+    }
+    completion_pending_line_.clear();
+    completion_pending_cursor_ = 0;
+    cyberdeck_shell_completion::candidate_list candidates;
+    if (items != nullptr) {
+        const std::size_t bounded = count > cyberdeck_shell_completion::k_max_candidates
+                                        ? cyberdeck_shell_completion::k_max_candidates
+                                        : count;
+        candidates.assign(items, items + bounded);
+    }
+    apply_candidates(target, candidates, truncated, false);
 }
 
 void session::clear_ble_auth_input()
@@ -683,7 +843,12 @@ not_ble_key:
     else if (pressed == key::right) editor_.cursor_right();
     else if (pressed == key::home) editor_.cursor_home();
     else if (pressed == key::end) editor_.cursor_end();
-    else if (pressed == key::next_tab) editor_.insert("\t", 1);
+    else if (pressed == key::next_tab) {
+        /* Tab completa apenas no MENU normal; em SSH/senha/host key o byte
+         * literal continua pertencendo ao destino (PTY remoto). */
+        if (completion_allowed()) begin_completion();
+        else editor_.insert("\t", 1);
+    }
     else if (pressed == key::up) move_history(-1);
     else if (pressed == key::down) move_history(1);
     sync_line();
@@ -702,6 +867,14 @@ bool session::insert_physical_text(const char *text, std::size_t length)
         for (std::size_t i = 0; i < length; ++i) append_ble_auth_digit(text[i]);
         host_.render();
         return false;
+    }
+    /* O teclado fisico entrega Tab como TEXTO ('\t'), nao como tecla.  Um
+     * unico byte de Tab no MENU dispara a completacao; nos modos SSH/senha o
+     * byte continua literal, porque pertence ao PTY remoto. */
+    if (length == 1 && text[0] == '\t' && completion_allowed()) {
+        begin_completion();
+        host_.render();
+        return true;
     }
     sync_editor();
     if (!editor_.insert_physical(text, length)) return false;

@@ -1673,6 +1673,111 @@ destrói recursos potencialmente usados.
 
 ### UI e terminal
 
+### Completacao por Tab do shell local (fw 1.18.2)
+
+Requisitos `REQ-TAB-01..05` / `AC-*` correspondentes, implementados em quatro
+pecas:
+
+- `components/cyberdeck/include/apps/shell/cyberdeck_shell_completion.h`
+  (header-only, puro): `token_at` (token sob o cursor), `classify` (verbo x
+  caminho), `command_accepts_path`/`kPathCommands` (cd/ls/cat/touch/mkdir/rm/
+  rmdir; `cd` com `path_mode::directory_only`), `resolve_virtual_directory`
+  (cwd virtual, `.`/`..` com clamp na raiz, `/sdcard` recusado),
+  `match_commands`, `common_prefix`, `apply` e `format_candidates`. Regras:
+  zero candidatos preservam a linha, 1 completa (diretorio ganha `/`), varios
+  inserem o prefixo comum, o segundo Tab (`list_requested`) apenas lista e um
+  conjunto truncado nunca estreita o token (exceção deliberada: um único
+  candidato real completa mesmo com varredura truncada, sem ambiguidade).
+  Limites: 64 candidatos, 128 B por
+  nome, 256 B por token/diretorio, 512 entradas varridas, linha de lista 64 B.
+  Header-only de proposito: `SHELL_SESSION_MIG_OBJS`/`SHELL_APP_MIG_OBJS` sao
+  fixados por `tests/host/keymap/incremental_final_baseline.json` e nao podem
+  ganhar TUs (mesmo motivo de `cyberdeck_shell_help.h`).
+- `components/cyberdeck/src/apps/shell/cyberdeck_shell_completion_scan.cpp`:
+  unica parte com I/O. Enumera um diretorio virtual com
+  `cyberdeck_local_shell_opendir` (confinamento, `O_NOFOLLOW`), acrescenta as
+  entradas estaticas da raiz virtual (`apps/data/dev/tmp/system`, `null` em
+  `/dev`), exclui nomes com espaco/controle (o tokenizador nao tem aspas),
+  ocultos apenas com prefixo `.`, symlinks e especiais, ordena, deduplica e
+  trunca.
+- `components/cyberdeck/include/apps/shell/cyberdeck_completion_worker.h` +
+  `src/apps/shell/cyberdeck_completion_worker.cpp`: worker FreeRTOS com fila
+  bounded de 4, stack 8192, lease READ do `cyberdeck_sd_io` por varredura e
+  entrega agendada pela porta de plataforma
+  `platform/display/cyberdeck_ui_post::post` (o TU de app nao inclui LVGL nem
+  `esp_lvgl_port`, requisito de TEST-WM-05). Teardown invalida callbacks ja
+  enfileirados e faz join; o lease e o que mantem a varredura segura durante o
+  fechamento do SD (nenhum stage novo no poweroff).
+- `components/cyberdeck/include/platform/display/cyberdeck_ui_post.h` +
+  `src/platform/display/cyberdeck_ui_post.cpp`: porta estreita de despacho para a
+  task do display. A interface nao expoe tipo LVGL (`callback` + payload opaco) e
+  a implementacao e a unica superficie com `lv_async_call` +
+  `lvgl_port_task_wake` para entrega assincrona: agenda primeiro, acorda depois;
+  recusa reporta falha antes de qualquer wake e mantem a posse do payload com o
+  chamador. O objeto e compilado no host com `tests/host/keymap/shim/full`, logo
+  a TU nova fica coberta pelo `tools/coverage_scope_guard.py` sem allowlist.
+- `cyberdeck_shell_session.{h,cpp}`: porta `host::completion_scan_async`
+  (default false), `begin_completion`/`apply_completion_result`, cache por
+  (linha, cursor) para o segundo Tab, token monotônico global que descarta
+  resultado de outra sessao, replay e linha editada; `key::next_tab` completa
+  apenas no `MENU` e insere `\t` literal em SSH/senha/host key; o Tab fisico
+  (`insert_physical_text` com `'\t'` unico) segue a mesma regra;
+  `completion_allowed()` exige MENU, Wi-Fi `IDLE`, sem posse BLE e sem
+  confirmacao de poweroff. `shell_commands()` virou a fonte unica do inventario
+  (catalogo de help + manifests, sem duplicatas) consumida tambem por
+  `help_text()`.
+- `cyberdeck_edit_line.{h,cpp}`: nova `set_line(text,len,cursor)` tudo-ou-nada
+  para reescrever o token no lugar.
+- `cyberdeck_ui.cpp`: `on_completion_result`, override
+  `completion_scan_async`, `s_completion_worker_ready`, bind do coordenador SD,
+  start no init junto do `cat_worker` e teardown em
+  `destroy_ui_resource_handles`.
+
+Testes: `tests/host/keymap/test_shell_completion.cpp` (alvo
+`test_shell_completion`) cobre a parte pura (inclusive cursor no meio do token,
+posicao de verbo com espaco a esquerda, caminho absoluto apos opcao, limites
+token/nome/diretorio nos dois lados da borda e a fronteira do truncamento), a
+varredura real em fixture (files/dirs/ocultos/nome com espaco/symlink/namespaces/
+`cd`/truncamento), `set_line`, a metade host do worker (recusa fail-closed) e a
+porta `cyberdeck_ui_post` executada contra o shim completo de LVGL (call
+enfileirado com o payload opaco intacto, wake somente apos agendamento aceito,
+recusa sem entrada na fila, sem wake e sem execucao inline, callback nulo
+recusado); os TUs do worker e da porta sao compilados por este alvo, o que os
+mantem no escopo do `tools/coverage_scope_guard.py`, mesmo criterio do
+`cyberdeck_cat_worker.cpp`;
+`test_shell_session.cpp` cobre sequencia de Tab, segundo Tab, zero candidatos,
+caminho pela porta assincrona com `directory_only`, token stale/replay/linha
+editada, porta recusando, resultado truncado, cache/reenumeracao, cursor no
+meio e isolamento SSH/senha/Wi-Fi/BLE (Tab fisico e virtual);
+`test_shell_completion_worker_contract.py` pina o corpo ESP_PLATFORM do worker
+(lease READ antes da varredura, recusa sem lease, fila nao bloqueante com
+token/bounds, entrega gated por ciclo de vida agendada pela porta, join bounded
+antes de liberar a fila, wiring de start/teardown/bind da UI) e a fronteira da
+porta (ordem agendamento -> wake, recusa sem wake, payload nunca liberado pela
+porta, header sem tipos de plataforma, worker sem `lv_*`/`esp_lvgl_port`), com
+mutacoes que precisam falhar;
+a paridade do inventario com o help e garantida por `test_shell_help` e pelo
+`kLegacyHelpPinned` de `test_shell_session`. Roteiro fisico (Tab real e widget
+virtual) permanece manual.
+
+Seam do token fisico da tecla Tab (defeito medido no Tab5 1.18.1): o firmware
+do teclado M5Stack A164 envia o NOME `"tab"` (3 bytes), nao o byte de controle
+`0x09`, e `emit_event()` descartava qualquer string nao mapeada com mais de um
+byte. Correcao: `tab5_keyboard_keys.cpp` ganhou a variante nomeada
+`{"tab", 0, '\t', TAB5_KEY_CHAR}` (paridade com `{"\t"}`), e `emit_event()`
+converte SOMENTE o token exato `"tab"` (`copy == 3 && strcmp(buf, "tab") == 0`)
+no byte `'\t'` antes do callback; qualquer outro token `TAB5_KEY_CHAR` --
+inclusive `"space"` -- segue entregue com os bytes crus e o mesmo `entry->ch`,
+sem normalizacao de caractere, preservando o comportamento anterior. Assim a UI
+recebe um unico `'\t'` e a rota ja testada `insert_physical_text("\t",1)`
+dispara a completacao (em SSH/senha o mesmo byte continua literal). Cobertura:
+`test_keymap.cpp` (alias `tab` -> tab char, paridade com `"\t"` e prova negativa
+de que `"space"` mantem o mapeamento anterior) e
+`test_keyboard_input_contract.py` (entrada `"tab"` na tabela, literal unico
+`strcmp(buf, "tab")` e ausencia de normalizacao generica ou caso especial
+`"space"`).
+
+
 ### Diagnóstico de rede (controller, adapters e app)
 
 - `components/cyberdeck/include/apps/network/cyberdeck_netdiag_controller.h` e
@@ -2349,6 +2454,7 @@ destrói recursos potencialmente usados.
 | `components/cyberdeck/src/platform/display/cyberdeck_header_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_header_view.h` | `cyberdeck_header_view::view` | Componente visual do header: cria a grade 30/40/30 e os widgets Bluetooth, Wi-Fi e bateria; recebe a versão canônica de `esp_app_desc_t::version`, valida três segmentos decimais sem zero-padding, bounded pelo descriptor e pelo buffer do título e mostra `CYBERDECK5 <version>` com clipping controlado no slot de 30%; aplica exatamente `cyberdeck_font` monoespaciada aos labels de título, relógio, Bluetooth e bateria, mantendo a métrica/line-height compartilhada. A bateria possui três labels — ícone, percentual base e overlay do percentual — e o overlay usa a mesma fonte, é ignorado pelo flex layout e deslocado 1 px para emulação real de negrito; acompanha texto/visibilidade sem alterar fonte, estados, ordem semântica ou geometria; usa `lv_obj_set_hidden` para ocultação e desativa rolagem; recebe somente estado/presentation já resolvidos e não conhece serviços, NVS, I2C ou modelos BLE/Wi-Fi. O botão de música (26x36, transparente, callback `dispatch_music_action`) mantém a centralização e o mesmo `cyberdeck_font`, mas desenha o glifo ASCII `>` porque `LV_SYMBOL_PLAY` (U+F04B) está fora da cobertura e aparecia como caixa; como o tema default é light, ele zera `radius`, `outline_width`, `shadow_width` e `shadow_opa` para não pintar a cápsula cinza em volta do glifo. Rastreia `REQ-HEADER-FONT-01..03`/`AC-HEADER-FONT-01`. |
   | `components/cyberdeck/src/platform/display/cyberdeck_terminal_view.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_terminal_view.h` | `cyberdeck_terminal_view::view`, `cyberdeck_terminal_view::callbacks`, `view::render`, `view::toggle_cursor`, `view::deinit`, `view::begin_touch`, `view::scroll_from_touch`, `view::viewport_capacity` | Componente visual do terminal e teclado virtual: cria uma superfície contínua com labels reutilizáveis, calcula reflow UTF-8 bounded, quebra palavras longas somente em fronteiras de codepoint e mantém cada label dentro da largura disponível, além de manter offset de scroll por linhas com clamp ao viewport. `render(text,cursor_byte)` posiciona um overlay de bloco piscante pelo avanço da fonte `cyberdeck_font`, seguindo as mesmas métricas de reflow e fronteiras UTF-8; sobre glyph inverte as cores e no fim ocupa o espaço seguinte. O cursor só pisca quando sua posição está dentro da janela visível; ao navegar scrollback é ocultado e o repaint preserva seu byte para reposicioná-lo ao voltar ao bottom. `deinit` encerra o timer de blink antes da destruição da view. Gesto vertical de pointer/touch na superfície navega o offset; o estado inicia e permanece ancorado no fim quando já estava no fim, e nova saída afastada preserva a posição até o clamp seguro. O textarea fica oculto e serve apenas como alvo LVGL do teclado virtual; toque no terminal não escreve nem altera o foco de edição. `term.dump` não passa por esta janela visual. `test_display_views.cpp` identifica o overlay por estilo e a linha editável por texto explícito (sem auto-comparação do cursor), cobrindo scroll/blink, fonte `cyberdeck_font`, retorno à posição correta, UTF-8/reflow e remoção do timer; `TEST-CURSOR-05` rastreia `REQ-LAT-04` (`TEST-LAT04-08/09`). `test_lat03_contract.py` e `test_lat04_contract.py` mantêm os contratos estruturais da superfície e do cursor. |
 | `components/cyberdeck/src/platform/display/cyberdeck_terminal_scrollback.cpp`, `components/cyberdeck/include/platform/display/cyberdeck_terminal_scrollback.h` | `cyberdeck_terminal_scrollback::model` | Modelo puro de scrollback bounded em 12288 bytes, com poda em fronteira UTF-8. Mantém a saída completa para `term.dump`; a view navega esse snapshot por touch em uma janela de labels reutilizáveis, sem alterar prompt/editor/cursor. |
+| `components/cyberdeck/include/platform/display/cyberdeck_ui_post.h`, `components/cyberdeck/src/platform/display/cyberdeck_ui_post.cpp` | `cyberdeck_ui_post::post`, `cyberdeck_ui_post::callback` | Porta estreita de despacho para a task do display: interface sem tipos LVGL (callback + payload opaco) que agenda por `lv_async_call` e so entao acorda a task (`lvgl_port_task_wake`); a recusa reporta falha antes de qualquer wake e nunca assume a posse do payload. E a fronteira que mantem o worker de completacao (camada de app) sem `lv_*`/`esp_lvgl_port` (TEST-WM-05). |
 | `tests/host/keymap/test_terminal_scrollback.cpp` + `tests/host/keymap/test_lat03_contract.py` | TEST-LAT03-01..11 | Teste host do modelo real para limites 12287/12288/12289, clear, append fragmentado/corte UTF-8 e viewport 4096 com ASan/UBSan; contrato estrutural fixa textarea somente para prompt/editor, menus/ANSI/SSH, `term.dump`, cursor/senha/Enter e a regressão FIFO/wake. Os harnesses LAT04 de prompt e gap SSH também extraem a UI contra o modelo `cyberdeck_terminal_scrollback::model`, cobrindo append, `text()` completo e `viewport()` sem perda. |
 | `tests/host/keymap/test_ssh_output_gap.py` | TEST-SSH-01..05 | Fixture host que extrai a costura SSH da UI e a compila com os TUs reais de filtro/compositor/console/scrollback e todas as dependências SDK do runtime: catálogo, pacote SD, quota, storage e logger. |
 | `tests/host/keymap/test_display_views.cpp` + `tests/host/keymap/shim/full/lvgl.h` + `tests/host/keymap/shim/full/esp_app_desc.h` | `test_display_views` | Harness host compartilhado para `cyberdeck_header_view`, `cyberdeck_terminal_view` e `cyberdeck_editor_view`, com shim LVGL completo. O shim de app descriptor fornece versão controlável em teste; o cenário confirma `1.0.0`, aceita `100.0.0`, rejeita formato incompleto e zero-padding, valida o maior título representável e rejeita overflow no slot de 216 px a 720 px com clipping LVGL; o shim espelha o campo version de 32 bytes do ESP-IDF. O TU real do editor é compilado com cobertura e permanece elegível no scope guard; o cenário verifica criação, render bounded/UTF-8, cursor, gesto e teardown. `TEST-CURSOR-01..04` cobre bloco visível/invertido, blink manual/timer e restauração de visibilidade após ocultação por blink, offsets início/meio/fim, UTF-8 com posição após codepoint, newline, wrap de margem e posição inválida/ausente; shim expõe cores e timers determinísticos sem reimplementar o algoritmo de produção. Rastreabilidade de `REQ-HEADER-FONT-01..03`/`AC-HEADER-FONT-01`: verifica `cyberdeck_font` compartilhada e line-height relacional, modo clip do relógio, os três labels da bateria (ícone, percentual base e overlay), overlay de negrito do percentual em 1 px ignorado pelo layout e registro de `outline_width` no shim (sem renderização de outline). Também verifica texto, visibilidade, ordem e geometria exercitados pelo cenário do header, e que o botão de música (26x36, clique preservado) e todas as linhas da biblioteca zeram `radius`, `outline_width`, `shadow_width` e `shadow_opa` no shim. Cobre `REQ-LAYOUT-01/AC-LAYOUT-01/02` com `border_width=0` somente na superfície visível e preservação do cromo do textarea oculto. Simula ponteiro LVGL para `TEST-TERM-SCROLL-01..06`: gesto vertical invertido (baixo -> linhas antigas, cima -> bottom anchor), clamp nos extremos, UTF-8, input prompt/editor oculto e nova saída/resize. |
@@ -3182,9 +3288,9 @@ e coberta pelos testes host: validar com `idf.py build` e o roteiro
 
 | Arquivo | Simbolos/contrato | Papel |
 | --- | --- | --- |
-| `components/cyberdeck/src/platform/input/tab5_keyboard.cpp` | `tab5_keyboard_init`, callback e task | Driver I2C Character do Tab5; entrega eventos fora da stack da task. |
+| `components/cyberdeck/src/platform/input/tab5_keyboard.cpp` | `tab5_keyboard_init`, `emit_event`, callback e task | Driver I2C Character do Tab5; entrega eventos fora da stack da task. Alias restrito: apenas o token exato `"tab"` e convertido no byte Tab antes do callback; `"space"` e demais tokens `TAB5_KEY_CHAR` continuam entregues crus como antes. |
 | `components/cyberdeck/src/platform/input/tab5_keyboard_event.cpp` | `tab5_char_event_parse` | Parser puro; `REG_CHAR_EVENT_LEN` inclui modificador. |
-| `components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp` | mapeamento de teclas | Conversao dos codigos LVGL/Tab5 para eventos da UI. |
+| `components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp` | `tab5_keymap_lookup`, `s_keymap` | Conversao dos codigos LVGL/Tab5 para eventos da UI; inclui bytes de controle e variantes nomeadas do firmware (entre elas `"tab"` -> `'\t'`). |
 | `components/cyberdeck/Kconfig`, `components/cyberdeck/src/platform/logging/event_log.cpp`, `components/cyberdeck/include/platform/logging/event_log_recent.h` | `CYBERDECK_LOG_LINES`, `event_log_init`, `event_log_write`, `event_log_latest`, `rebuild_state`, `insert_recent`, `write_record` | Configura em build-time 1..64 linhas do comando `log` (default 20); o override da sessão pode solicitar até 64. O anel recente mantém capacidade máxima fixa de 64, sem copiar registros para a stack, e a saída seleciona somente a janela solicitada em ordem cronológica. A reconstrução preserva sequência, próximo slot e janela persistida a partir dos registros válidos; cada slot é persistido com `fflush` + `fsync` antes de avançar o estado. A saída converte o epoch UTC para o GMT-3 fixo do header sem depender de `TZ` e usa uptime quando o relógio é inválido; I/O permanece na task do log. |
 | `tests/host/keymap/test_event_log_contract.py`, `tests/host/keymap/test_event_log_config_contract.py` | contratos estruturais do event log | Testes host focados (sem link ESP-IDF) para layout/checksum de 256 B, recuperação bounded de slots válidos, janela recente de 20 registros com sequência/slot wrap, capacidade máxima estrutural de 64, ordem `fflush`/`fsync` antes do avanço, formatação UTC em GMT-3, Kconfig default 20/faixa 1..64 e solicitação configurável pelo comando `log`. Executados isoladamente pelos alvos `test_event_log_contract` e `test_event_log_config_contract`, e também pelo agregado `make -C tests/host/keymap test`. |
 | `components/cyberdeck/src/platform/logging/event_log_recent.cpp` | `event_log_recent_indices` | Selecao pura dos indices recentes sem copiar todos os registros na stack. |
@@ -3367,7 +3473,8 @@ próprio de 2 s para chamadas SD/VFS.
 
 | Producao | Testes principais |
 | --- | --- |
-| `tab5_keyboard_keys.cpp` | `test_keymap.cpp` |
+| `tab5_keyboard_keys.cpp` | `test_keymap.cpp` (alias nomeados, inclusive `"tab"` -> tab char, com prova negativa de que `"space"` mantem o mapeamento anterior) |
+| `tab5_keyboard.cpp` (`emit_event`) | `test_keyboard_input_contract.py` (alias restrito ao token exato `"tab"` -> 1 byte Tab; `"space"`/demais tokens crus preservados) |
 | `tab5_keyboard_event.cpp` | `test_keyboard_event.cpp` |
 | `components/cyberdeck/include/apps/shell/cyberdeck_shell_help.h` + `cyberdeck_shell_utils.cpp` | `test_shell_utils.cpp` (inclui parsers audit/survey, duração, export/confirm masked e unmasked, `screen on|off|timeout <0-1440>`; catálogo legado mantém 12 blocos (38 linhas = 12 tags + 26 indentadas) com header de tag, usage-indentado e linhas de parâmetros, igualdade com fixture tagged e determinismo) |
 | `tests/host/keymap/test_{wifi,ssh,bluetooth,battery,screen,event_log}_console.cpp` + `test_console_dispatch.cpp` + `tests/host/keymap/Makefile` | `test_console_apps`, `test_console_dispatch` (`test_event_log_console`, `test_screen_console`, `test_battery_console`, `test_bluetooth_console`, `test_ssh_console`, `test_wifi_console`) | `test_console_dispatch.cpp` cobre o seam completo: runtime real + manifestos reais + `execute_line` + porta, inclusive com o app parado (comando continua respondendo). Oráculos comportamentais das seis aplicações de comando: cada alvo liga a camada pura real contra uma porta falsa e fixa as mensagens exatas herdadas do switch (status, erros, `usage:`, blocos de `battery protection status`), o efeito na porta (uma chamada por verbo, nunca em forma desconhecida), o reset de estado por sessão (`log lines`, `wifi survey duration`) e a forma do manifesto (id, comando, `owns_console`, dependências, usage de help). `test_ble_command_parse.cpp` passou a exercitar o console Bluetooth em vez do parser antigo. |
@@ -3377,6 +3484,8 @@ próprio de 2 s para chamadas SD/VFS.
 | `cyberdeck_history.cpp` | `test_history.cpp` |
 | `cyberdeck_edit_line.cpp` | `test_edit_line.cpp`, `test_prompt_behavior.py` |
 | `cyberdeck_local_shell.cpp`, `cyberdeck_cat_worker.cpp` | `test_local_shell.cpp` (raiz virtual `/`, caminhos relativos/absolutos, rejeição do alias `/sdcard`, confinamento, operações e regressões de segurança; inclui secure-open/opendir para arquivo, diretório, symlink, traversal e tamanho; focado atual: 1122 checks), `test_cat_multiline.cpp` (API dedicada com cwd `/` e alias físico rejeitado, LF/CRLF/tabs/UTF-8, marcador final, bytes inválidos, limite exato de 12288, NUL embutido e sufixo após newline preservados para sanitização), `cat_contract.py`, `test_cat_multiline_contract.py` (contrato estrutural de ponteiro+tamanho explícito, textarea multiline/max-length, limite UTF-8 e payload completo até append), `test_cat_lifecycle_sanitization_contract.py` (ramos sem task vs. com task, drain/join/ack, reset sincronizado, callback/generation e sanitizacao), `test_cat_start_teardown_start_contract.py` (restart e invalidacao stale), `test_cat_stack_footprint_contract.py` (regressao do stack minimo do worker), `test_cat_worker_path_safety_contract.py` (proibe o caminho worker->shell/resolve/path/vector e exige API cat-specific heap/bounded), `local_shell_security_contract.py`, `local_shell_tokenizer_contract.py` (tokenização e contrato estrutural do root `/`), `test_prompt_behavior.py`, `test_local_prompt_contract.py` |
+| `cyberdeck_shell_completion.h` + `cyberdeck_shell_completion_scan.cpp` (REQ-TAB-01/02/03/05) | `test_shell_completion.cpp` (token sob o cursor, posicao de verbo x caminho, `cd` somente diretorios, cwd virtual com `.`/`..` e `/sdcard` recusado, prefixo comum, zero candidatos, lista truncada, formatacao bounded, `set_line`, consistencia `kPathCommands` x `cyberdeck_shell_help::kCatalog`, varredura real em fixture com ocultos/nome com espaco/symlink/namespaces/limite de candidatos; 242 checks, incluindo a porta de display `cyberdeck_ui_post` contra o shim completo) |
+| `cyberdeck_shell_session.cpp` + `cyberdeck_completion_worker.cpp` + `cyberdeck_ui.cpp` (REQ-TAB-03/04/05) | `test_shell_session.cpp` (sequencia de Tab, segundo Tab lista, zero candidatos, porta assincrona com `directory_only`, token stale/replay/linha editada, porta recusando, Tab literal em SSH/senha/Wi-Fi (fisico e virtual), resultado truncado, cache/reenumeracao, cursor no meio do token, ausencia com BLE dono da entrada; 249 checks), `test_shell_completion.cpp` (metade host do worker: recusa fail-closed de `start`/`enqueue`, `quiesce` e `teardown` idempotentes) e `test_shell_completion_worker_contract.py` (contrato estrutural do corpo ESP_PLATFORM e da porta: lease READ antes da varredura, recusa sem lease, fila nao bloqueante com token/bounds, entrega gated por lifecycle agendada por `cyberdeck_ui_post::post`, join bounded antes de liberar a fila, ordem agendamento->wake e recusa sem wake na porta, worker sem `lv_*`/`esp_lvgl_port`, wiring de start/teardown/bind da UI, com 21 mutacoes rejeitadas) e `test_shell_help`/`kLegacyHelpPinned` para a paridade do inventario de comandos |
 | `event_log_recent.cpp` + Kconfig/log shell | `test_event_log_recent.cpp` (default 20 preservado, capacidade 64, faixa 1..64, wrap/clamp/ordem e canário), `test_event_log_contract.py`, `test_event_log_config_contract.py` (contrato estrutural do anel e binding Kconfig), `test_shell_session.cpp` (parser/sessão e `log lines 40` com 40 eventos) |
 | `cyberdeck_clock.cpp` | `test_clock_formatter.cpp` |
 | `cyberdeck_wifi_indicator.cpp` | `test_wifi_indicator_state.cpp` |

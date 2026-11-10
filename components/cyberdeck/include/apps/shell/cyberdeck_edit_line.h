@@ -153,6 +153,13 @@ public:
     cyberdeck_enter_result enter(bool line_already_sent = false,
                                  std::string_view cwd = {});
 
+    /* Substitui a linha inteira (tudo-ou-nada): aplica `len` bytes e coloca o
+     * cursor em `cursor_bytes`, com clamp no fim da linha.  Usado pela
+     * completacao do Tab, que precisa reescrever o token no lugar sem editar
+     * byte a byte.  Nao zera os bytes antigos (higiene de senha continua sendo
+     * responsabilidade do chamador). */
+    bool set_line(const char *text, size_t len, size_t cursor_bytes = 0);
+
     /* Limpa a linha e o cursor (sem semantica de zeroing de memoria:
      * higiene de senha do buffer e responsabilidade do chamador). */
     void clear();

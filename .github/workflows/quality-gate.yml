@@ -87,6 +87,26 @@ jobs:
           clang-format --dry-run --Werror \
             components/cyberdeck/include/platform/storage/cyberdeck_sd_io_coordinator.h \
             components/cyberdeck/src/platform/storage/cyberdeck_sd_io_coordinator.cpp
+          # Tab completion is new code: the whole shell-completion module, its
+          # display-task post port and the focused test stay inside this gate so
+          # a future unformatted change cannot ship unnoticed.
+          clang-format --dry-run --Werror \
+            components/cyberdeck/include/apps/shell/cyberdeck_shell_completion.h \
+            components/cyberdeck/src/apps/shell/cyberdeck_shell_completion_scan.cpp \
+            components/cyberdeck/include/apps/shell/cyberdeck_completion_worker.h \
+            components/cyberdeck/src/apps/shell/cyberdeck_completion_worker.cpp \
+            components/cyberdeck/include/platform/display/cyberdeck_ui_post.h \
+            components/cyberdeck/src/platform/display/cyberdeck_ui_post.cpp \
+            tests/host/keymap/test_shell_completion.cpp
+          # The M5Stack keyboard TUs predate this gate and intentionally retain
+          # their existing layout; only the ranges touched by the physical Tab
+          # token fix are checked (same delimiting rule used for ble_mgr.cpp).
+          clang-format --dry-run --Werror \
+            --lines=126:143 \
+            components/cyberdeck/src/platform/input/tab5_keyboard.cpp
+          clang-format --dry-run --Werror \
+            --lines=33:34 \
+            components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp
           clang-format --dry-run --Werror \
             components/cyberdeck/include/apps/wifi/cyberdeck_wifi_survey_export_controller.h \
             components/cyberdeck/src/apps/wifi/cyberdeck_wifi_survey_export_controller.cpp \
@@ -177,6 +197,13 @@ jobs:
             components/cyberdeck/src/apps/image/cyberdeck_image_jpeg.cpp \
             components/cyberdeck/src/apps/image/cyberdeck_image_png.cpp \
             components/cyberdeck/src/apps/image/cyberdeck_image_navigation.cpp
+          cppcheck --enable=warning,performance,portability \
+            --error-exitcode=1 --suppress=missingIncludeSystem \
+            components/cyberdeck/src/apps/shell/cyberdeck_shell_completion_scan.cpp \
+            components/cyberdeck/src/apps/shell/cyberdeck_completion_worker.cpp \
+            components/cyberdeck/src/platform/display/cyberdeck_ui_post.cpp \
+            components/cyberdeck/src/platform/input/tab5_keyboard.cpp \
+            components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp
           bandit -r tools -ll
       - name: App grant concurrency test (ThreadSanitizer)
         id: app-grant-tsan

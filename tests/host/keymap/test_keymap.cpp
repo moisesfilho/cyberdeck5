@@ -101,6 +101,22 @@ void test_name_variant_entries()
     check_special("right", LV_KEY_RIGHT);
     check_char("space", ' ');
     check_char(" ", ' ');
+    /* O firmware do M5Stack A164 envia o nome "tab" para a tecla Tab; o
+     * resultado tem de ser o mesmo do byte de controle "\t" (completacao). */
+    check_char("tab", '\t');
+
+    /* Prova negativa: so o token exato "tab" e alias de Tab. "space" e os
+     * demais nomes mantem o mapeamento anterior (nada e reinterpretado). */
+    const tab5_key_entry_t *tab_named = tab5_keymap_lookup("tab");
+    const tab5_key_entry_t *space_named = tab5_keymap_lookup("space");
+    CHECK(tab_named != nullptr);
+    CHECK(space_named != nullptr);
+    if (tab_named != nullptr && space_named != nullptr) {
+        CHECK(tab_named != space_named);
+        CHECK(space_named->type == TAB5_KEY_CHAR);
+        CHECK(space_named->ch == ' ');
+        CHECK(space_named->lvgl_key == 0);
+    }
 }
 
 void test_printable_chars()
@@ -157,7 +173,7 @@ void test_known_surface()
      * quebrar este teste (rede de regressao do parser do shell). */
     const char *known[] = {
         "\t", "\n", "\b", "\x7F", "\x1B", "\x11", "\x12", "\x13", "\x14",
-        "esc", "enter", "backspace", "del", "up", "down", "left", "right", "space", " ",
+        "esc", "enter", "backspace", "del", "up", "down", "left", "right", "space", " ", "tab",
         "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
         "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
         "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
@@ -185,6 +201,7 @@ void test_known_surface()
         {"left", "\x14"},
         {"right", "\x13"},
         {"space", " "},
+        {"tab", "\t"},
     };
     for (const auto &pair : alias_pairs) {
         const tab5_key_entry_t *e_named = tab5_keymap_lookup(pair.named);

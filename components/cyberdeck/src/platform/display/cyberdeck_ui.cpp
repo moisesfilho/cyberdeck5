@@ -17,6 +17,7 @@
 #include "apps/ssh/cyberdeck_ssh_console_app.h"
 #include "apps/wifi/cyberdeck_wifi_console_app.h"
 #include "apps/shell/cyberdeck_cat_worker.h"
+#include "apps/shell/cyberdeck_completion_worker.h"
 #include "apps/shell/cyberdeck_edit_line.h"
 #include "apps/shell/cyberdeck_history.h"
 #include "apps/shell/cyberdeck_local_shell.h"
@@ -142,6 +143,7 @@ cyberdeck_editor_view::view s_editor_view;
 cyberdeck_window_manager::view_context s_shell_view_context;
 cyberdeck_window_manager::view_context s_editor_view_context;
 bool s_cat_worker_ready = false;
+bool s_completion_worker_ready = false;
 bool s_ui_ready = false;
 bool s_editor_search_mode = false;
 std::string s_editor_search;
@@ -298,6 +300,8 @@ struct shell_session_host final : public cyberdeck_shell_session::host {
     void log_event(char level, const char *tag, const char *message) override;
     std::string recent_events(std::size_t count) override;
     bool cat_enqueue(const char *cwd, const char *line) override;
+    bool completion_scan_async(const cyberdeck_shell_completion::request &request,
+                               std::uint64_t token) override;
     cyberdeck_local_shell &local_shell() override;
     cyberdeck_apps::runtime &app_runtime() override;
 };
@@ -590,6 +594,7 @@ void destroy_ui_resource_handles() {
     /* Quiesce producers before deleting their LVGL callback targets. */
     s_keyboard_dispatch.stop();
     cyberdeck_cat_worker_teardown();
+    cyberdeck_completion_worker::teardown();
     s_wifi_survey.clear();
     wifi_survey_export_controller().cancel_confirmation();
     const bool survey_scan_quiet = cancel_wifi_survey_scan(true);
@@ -730,6 +735,13 @@ void destroy_ui_resource_handles() {
 void hidden(lv_obj_t *obj, bool value);
 void local_key(uint32_t key);
 void music_indicator_action(void *context);
+
+void on_completion_result(cyberdeck_completion_worker::result &completed, void *) {
+    /* Callback entregue no contexto LVGL; a sessao valida token e linha. */
+    s_shell_app.apply_completion_result(completed.token, completed.items, completed.count,
+                                        completed.truncated);
+    render_terminal();
+}
 
 void on_cat_result(const char *output, size_t output_length, bool accepted, void *) {
     auto sanitize_for_lvgl = [](const char *input, size_t input_length) {
@@ -2395,6 +2407,7 @@ void terminal_key(lv_event_t *event) {
 void cyberdeck_ui_bind_sd_io(cyberdeck_sd_io::coordinator &coordinator) {
     s_local_shell.bind_sd_io(coordinator);
     cyberdeck_cat_worker_bind_sd_io(coordinator);
+    cyberdeck_completion_worker::bind_sd_io(coordinator);
 }
 
 namespace {
@@ -2705,6 +2718,11 @@ std::string shell_session_host::recent_events(std::size_t count) {
 }
 bool shell_session_host::cat_enqueue(const char *cwd, const char *line) {
     return s_cat_worker_ready && cyberdeck_cat_worker_enqueue(cwd, line);
+}
+bool shell_session_host::completion_scan_async(const cyberdeck_shell_completion::request &request,
+                                               std::uint64_t token) {
+    /* Enumeracao fora da task LVGL: a sessao so enfileira e espera o callback. */
+    return s_completion_worker_ready && cyberdeck_completion_worker::enqueue(request, token);
 }
 cyberdeck_local_shell &shell_session_host::local_shell() {
     return s_local_shell;
@@ -3126,6 +3144,8 @@ extern "C" esp_err_t cyberdeck_ui_init(void) {
     }
     s_ble_observer = cyberdeck_apps::service_ports::ble_register_observer(on_ble_event, nullptr);
     s_cat_worker_ready = cyberdeck_cat_worker_start("/sdcard", on_cat_result, nullptr);
+    s_completion_worker_ready =
+        cyberdeck_completion_worker::start("/sdcard", on_completion_result, nullptr);
     auto &window_manager = cyberdeck_window_manager_adapter::global();
     if (!window_manager.init()) {
         destroy_ui_resource_handles();
@@ -3218,6 +3238,7 @@ extern "C" void cyberdeck_ui_deinit(void) {
     s_ota_confirm_buttons[1] = nullptr;
     s_ota_visible = false;
     s_cat_worker_ready = false;
+    s_completion_worker_ready = false;
     destroy_ui_resource_handles();
 }
 

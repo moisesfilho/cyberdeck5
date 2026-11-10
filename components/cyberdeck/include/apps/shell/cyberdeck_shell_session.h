@@ -11,6 +11,7 @@
 #include "apps/shell/cyberdeck_edit_line.h"
 #include "apps/shell/cyberdeck_history.h"
 #include "apps/shell/cyberdeck_local_shell.h"
+#include "apps/shell/cyberdeck_shell_completion.h"
 #include "apps/runtime/cyberdeck_app_runtime.h"
 #include "apps/shell/cyberdeck_ssh_line_composer.h"
 #include "apps/wifi/cyberdeck_wifi_menu.h"
@@ -145,6 +146,15 @@ struct host {
     /* Async cat worker owned by the UI lifecycle. */
     virtual bool cat_enqueue(const char *cwd, const char *line) = 0;
 
+    /* Completion port (REQ-TAB-05): asynchronous, bounded enumeration of one
+     * virtual directory.  Implemented by the UI on top of the completion
+     * worker, so the SD is never touched from the LVGL task.  Return false
+     * when the request cannot be accepted; the session then keeps the line. */
+    virtual bool completion_scan_async(const cyberdeck_shell_completion::request &,
+                                       std::uint64_t) {
+        return false;
+    }
+
     /* Local shell owned by the UI composition. */
     virtual cyberdeck_local_shell &local_shell() = 0;
 
@@ -185,6 +195,18 @@ public:
      * newline, so the UI can suppress the textarea's duplicate Enter. */
     bool insert_virtual_text(const char *text, bool *virtual_enter_handled);
 
+    /* Completacao por Tab do shell local (REQ-TAB-01..05).  So roda no MENU
+     * normal, com a linha livre (sem BLE/Wi-Fi/poweroff/SSH).  O primeiro Tab
+     * completa o unico candidato ou insere o prefixo comum; o segundo Tab sem
+     * edicao lista os candidatos bounded; zero candidatos preservam a linha. */
+    void begin_completion();
+    /* Resultado assincrono do worker, entregue no contexto LVGL.  Resultados
+     * de um token superado, de outra linha/cursor ou de outra sessao sao
+     * descartados. */
+    void apply_completion_result(std::uint64_t token,
+                                 const cyberdeck_shell_completion::candidate *items,
+                                 std::size_t count, bool truncated);
+
     const std::string &line() const { return line_; }
     std::size_t cursor() const { return cursor_; }
     cyberdeck_edit_line &editor() { return editor_; }
@@ -205,6 +227,12 @@ public:
 private:
     void move_history(int direction);
     bool begin_wifi_connection(const char *ssid, const char *password);
+    /* Completion helpers. */
+    bool completion_allowed() const;
+    void apply_candidates(const cyberdeck_shell_completion::target &target,
+                          const cyberdeck_shell_completion::candidate_list &candidates,
+                          bool truncated, bool list_requested);
+    void clear_completion_state();
 
     host &host_;
     cyberdeck_edit_line editor_;
@@ -217,6 +245,18 @@ private:
     std::uint64_t wifi_model_connection_token_ = 0;
     bool poweroff_confirmation_ = false;
     bool poweroff_requested_ = false;
+    /* Completion: cached list for the exact (line, cursor) and the single
+     * request in flight. */
+    cyberdeck_shell_completion::target completion_target_;
+    cyberdeck_shell_completion::candidate_list completion_candidates_;
+    std::string completion_line_;
+    std::size_t completion_cursor_ = 0;
+    bool completion_cache_valid_ = false;
+    bool completion_truncated_ = false;
+    std::uint64_t completion_pending_token_ = 0;
+    cyberdeck_shell_completion::target completion_pending_target_;
+    std::string completion_pending_line_;
+    std::size_t completion_pending_cursor_ = 0;
 };
 
 } // namespace cyberdeck_shell_session

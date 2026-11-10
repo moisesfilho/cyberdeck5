@@ -753,6 +753,232 @@ e pode revelar erros de compilação/interação com o TJpgDec.
   local já registrado pelo reviewer nem a exigência de CI aplicável e validação
   física antes do aceite final.
 
+### 2026-11-09 17:57 -03:00 - commit+push autorizados do snapshot revisado (CI remoto)
+
+- Decisão/override humano: o usuário autorizou explicitamente commit e push para
+  executar o CI remoto do snapshot revisado. Escopo não reaberto: nenhum arquivo
+  de produção/teste/versão foi alterado nesta etapa; apenas o commit do working
+  tree já revisado e o push.
+- Snapshot confirmado **antes** de publicar (nenhuma alteração posterior ao
+  revisado): HEAD `0f4ab3a3dd43`; `git diff | sha256sum` =
+  `aa815af2b80166a5a12e78fdc34c29ab68840a7f949de19f72804ad5fddea15c`;
+  `git status --porcelain | sha256sum` =
+  `fd7a6c2344dfea738121c6336c85b51cc7b7421736fc7bc234e1e2b881ee5d6a`;
+  `git status --porcelain -z | sha256sum` =
+  `1eb8fb4da459dce2b2070809283decb9da1fcc3d93a5f6f6f2ad69b781d8045f` (idêntico
+  ao status medido pelo reviewer). `version.txt` 1.18.0; manifesto 1.0.3.
+  Inventário preservado: 48 entradas / 92 arquivos staged (fontes, testes,
+  fixtures, third_party vendorizado, docs, notas de agente, workflow); nenhum
+  artefato de build/cobertura/vendor-objeto staged.
+- Commit: `cf56d9005444e4893254232ac8c3f8b1844933a1` (short `cf56d90`), branch
+  `develop`, mensagem
+  `feat(image): add JPEG/PNG decoding and recoverable navigation` com corpo
+  listando decoders/vendor, navegação recuperável, testes/contratos, gate e bump
+  1.18.0/1.0.3. Push sem tag.
+- Push: `git fetch origin develop` mostrou `origin/develop` em `0f4ab3a` e
+  fast-forward (`git merge-base --is-ancestor` OK); `git push origin develop`
+  | exit 0 | `0f4ab3a..cf56d90  develop -> develop`. Verificação posterior:
+  `git ls-remote origin refs/heads/develop` = `cf56d9005444e4893254232ac8c3f8b1844933a1`
+  (= HEAD local); `git status -sb` limpo e sem ahead/behind; `git tag --points-at
+  HEAD` = 0. Nenhum force push.
+- Estado após evidência: o worktree voltou limpo no commit; a **única** alteração
+  local posterior é este próprio append em `docs/agent-state/image-formats/coder.md`
+  (não commitado/não enviado nesta autorização).
+- Não executado: acompanhamento/polling do GitHub Actions (sem credenciais/CLI CI;
+  o run é disparado pelo push e deve ser verificado pelo reviewer/developer), novo
+  build/flash, suíte/gates locais, commit/push adicional.
+- Supersedes or discards: substitui o estado "sem commit/push" das entradas
+  anteriores desta nota e registra o override humano. A validação física
+  F21..F27 e o aceite final continuam pendentes; o CI remoto passa a ser a
+  evidência a conferir para o commit `cf56d90`.
+
+### 2026-11-09 18:20 -03:00 - CI run 42697867174: correção do write no teste de orientação
+
+- Fact: o usuário obteve os logs com `gh` para o run **42697867174** (`Quality
+  Gate`, event push, `head_sha` = `cf56d9005444e4893254232ac8c3f8b1844933a1`). A
+  etapa `Host aggregate and coverage` falhou (exit 2) porque
+  `tests/host/keymap/test_image_capture_orientation.cpp:207` fazia
+  `(void)::write(descriptor, bmp_bytes.data(), bmp_bytes.size())`; com
+  `-Werror=unused-result` o GCC do runner rejeita
+  `ignoring return value of 'ssize_t write(...)' declared with attribute 'warn_unused_result'`.
+  Não era defeito de produção: o mesmo teste passava no host local (GCC sem o
+  mesmo diagnóstico) e o gate remoto só revelou a diferença.
+- Correção (somente teste, sem produção/versão): novo helper `write_all()` no
+  próprio TU grava o buffer inteiro em loop, retentando escrita curta e `EINTR`;
+  erro real ou `write() == 0` imprime o motivo, o cenário registra `CHECK(false)`,
+  fecha/remove o temporário e retorna sem decodificar um arquivo parcial. Nenhum
+  cast para `void`, nenhum suppression/pragma e nenhum afrouxamento de asserção.
+  O teste passou de 50 para 51 checks (o `CHECK(wrote_all)` novo).
+- Commands | exit | result (focados, sem suíte/build/flash):
+  - `make -C tests/host/keymap test_image_capture_orientation` | 0 | `51 checks,
+    0 failures` (compila com `-Wall -Wextra -Werror` e ASan/UBSan)
+  - `... test_image_viewer_contract` | 0 | `0 failures`
+  - `... test_image_decoders_contract` | 0 | `212 checks, 0 failures`
+  - `clang-format --dry-run --Werror tests/host/keymap/test_image_capture_orientation.cpp`
+    | 0 | sem violações
+  - `git diff --check` | 0 | limpo
+- Commit/push da correção (autorização de commit+push já dada para obter CI;
+  sem force): `7aa1187057614599244c302e5f4e94e258ca607a` (short `7aa1187`),
+  `fix(test): handle partial writes in capture orientation test`, pai
+  `cf56d900…`, branch `develop`. `git fetch origin develop` mostrou
+  `origin/develop` em `cf56d90` e fast-forward; `git push origin develop` | exit
+  0 | `cf56d90..7aa1187  develop -> develop`; `git ls-remote origin
+  refs/heads/develop` = `7aa1187057614599244c302e5f4e94e258ca607a` (= HEAD
+  local); `git tag --points-at HEAD` = 0. Nenhum force push.
+- Preservação de alterações do usuário: as notas pós-commit
+  `docs/agent-state/image-formats/{coder,reviewer}.md` (incluindo o registro do
+  run 42697867174 feito pelo reviewer) permanecem **não commitadas** e não foram
+  alteradas por esta correção; nenhum arquivo de produção/versão foi tocado.
+- Snapshot (medido imediatamente antes deste append): HEAD
+  `7aa1187057614599244c302e5f4e94e258ca607a`; `version.txt` 1.18.0;
+  `git diff | sha256sum` =
+  `a6af95f4f03acc656845da9e9468b74cb014a4ac5ea1e438b9b20e815972f45f`;
+  `git status --porcelain | sha256sum` =
+  `c414d7e93c3037ec845c6f9fd065fd51dd0974f9c2fe86c6d99a9b7fe1963cad`;
+  `git status --porcelain -z | sha256sum` =
+  `7426c35ec50154acf4078bcf1c95d6ec29bd225d9107e095aefe1caf68c0c452`. Depois
+  deste append, a única diferença adicional é esta própria nota.
+- Não executado: suíte completa, gates de cobertura, TSan, build/flash; o novo
+  run remoto do commit `7aa1187` ainda precisa ser observado pelo
+  reviewer/developer antes de qualquer conclusão de CI.
+- Supersedes or discards: substitui o estado "correção do CI pendente" implícito
+  na entrada anterior e registra o commit/push da correção; **não** declara o
+  gate remoto verde nem resolve o blocker do run `42697867174` até novo run no
+  commit `7aa1187`.
+
+### 2026-11-09 18:32 -03:00 - CI run 42701467880: PATH do toolchain para o stack contract
+
+- Causa (log via `gh`): run **42701467880**, workflow `Quality Gate`, `head_sha`
+  exatamente `7aa1187057614599244c302e5f4e94e258ca607a`. Todos os testes de
+  imagem passaram; a etapa `Host aggregate and coverage` falhou em
+  `test_image_stack_frame_contract` porque o passo removia **todas** as entradas
+  `*/.espressif/*` do PATH e o runner não tinha o toolchain em `~/.espressif`
+  (instalação em outro root), então `shutil.which('riscv32-esp-elf-nm')` e o
+  fallback por glob falhavam com `build/cyberdeck5.elf or riscv32-esp-elf-nm not
+  available`. O contrato estava correto (fail-closed); o wiring do workflow era
+  incompleto.
+- Correção (somente pipeline/docs; nenhum código/teste/versão): a etapa host
+  monta o PATH do host primeiro (sem ESP-IDF/`riscv32-esp-elf`), resolve os bin
+  dirs do toolchain com `python3 "$IDF_PATH/tools/idf_tools.py" export --format
+  key-value` (com fallback via `idf.py` e, por último, `command -v
+  riscv32-esp-elf-nm/objdump`) e acrescenta esses dirs **depois** dos bins do
+  host. Dois guards fail-closed no próprio passo: `command -v as` precisa ser
+  `/usr/bin/as` (senão aborta com `host assembler is not first in PATH`) e
+  `riscv32-esp-elf-nm` precisa resolver (senão `riscv32-esp-elf-nm not found
+  after PATH setup`). O teste/stack contract e seus critérios não mudaram.
+- `code-map.md`: linha do workflow/CI e seção do viewer atualizadas para a nova
+  descoberta via `idf_tools.py`, ordem host→cross bins e guards fail-closed.
+- Commands | exit | result (validação delimitada, sem suíte/build/flash):
+  - parse YAML (PyYAML do venv ESP-IDF) | 0 | `Quality Gate`, 11 steps
+  - `bash -n` nos 9 blocos `run:` extraídos + prefixo da etapa host | 0 | OK
+  - prefixo real da etapa + `test_image_stack_frame_contract` (IDF_PATH real) |
+    0 | `host as=/usr/bin/as`, `cross nm=/home/moises/.espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/riscv32-esp-elf-nm`,
+    contrato `0 failures`
+  - mesmo teste com `HOME` falso (sem `~/.espressif`) e `IDF_TOOLS_PATH` real |
+    0 | reproduz o cenário do runner (toolchain fora do HOME): mesmos guards e
+    contrato `0 failures`
+  - controle negativo: `HOME` falso, sem `IDF_TOOLS_PATH` e sem cross no PATH |
+    1 | `riscv32-esp-elf-nm not found after PATH setup` (fail-closed)
+  - prefixo real + compilação de probe C++ com `g++` no PATH resultante (HOME
+    falso, `IDF_TOOLS_PATH` real) | 0 | `host g++ compile OK (as=/usr/bin/as, nm
+    resolved)` — prova que o `as` cruzado não sombreia o binutils do host
+  - `git diff --check` | 0 | limpo
+- Commit/push (autorização humana de commit+push continua válida; sem force):
+  `5d2630e7cd4f39fa53e1f9fb47242f0c99185ebb` (short `5d2630e`),
+  `fix(ci): keep the riscv toolchain discoverable for the stack contract`, pai
+  `7aa1187`, branch `develop`. `git fetch origin develop` → `origin/develop` em
+  `7aa1187`, fast-forward; `git push origin develop` | exit 0 |
+  `7aa1187..5d2630e  develop -> develop`; `git ls-remote origin
+  refs/heads/develop` = `5d2630e7cd4f39fa53e1f9fb47242f0c99185ebb` (= HEAD local);
+  `git tag --points-at HEAD` = 0. Nenhum force push.
+- Preservação: as notas `docs/agent-state/image-formats/{coder,reviewer}.md`
+  continuam não commitadas, incluindo o registro do reviewer para o run
+  `42697867174`; não foram editadas nesta correção.
+- Snapshot (medido imediatamente antes deste append): HEAD
+  `5d2630e7cd4f39fa53e1f9fb47242f0c99185ebb`; `version.txt` 1.18.0;
+  `git diff | sha256sum` =
+  `6d0650a789e56976f22fc88f3beb171a50c572eb2f06539e955907cc5a9ac1dc`;
+  `git status --porcelain | sha256sum` =
+  `c414d7e93c3037ec845c6f9fd065fd51dd0974f9c2fe86c6d99a9b7fe1963cad`;
+  `git status --porcelain -z | sha256sum` =
+  `7426c35ec50154acf4078bcf1c95d6ec29bd225d9107e095aefe1caf68c0c452`. Depois
+  deste append, a única diferença adicional é esta própria nota.
+- Não executado: suíte completa, cobertura/scope guard, TSan, build/flash e
+  polling do novo run; o CI remoto do commit `5d2630e` precisa ser observado
+  pelo reviewer/developer antes de qualquer conclusão.
+- Supersedes or discards: substitui o estado "wiring do PATH pendente" e estende
+  a entrada 18:20; **não** declara o gate remoto verde nem fecha o blocker do run
+  `42701467880` até novo run no commit `5d2630e`.
+
+### 2026-11-09 18:45 -03:00 - CI run 42703506289: exporter vira sondagem tolerante
+
+- Causa (log via `gh`, salvo em `/tmp/opencode/image-ci-42703506289-failed.log`;
+  reviewer `reviewer.md:165-173`): run **42703506289** no commit
+  `5d2630e7cd4f39fa53e1f9fb47242f0c99185ebb`. A etapa `Host aggregate and
+  coverage` saiu 1 imediatamente após o bloco `env`, antes do `echo host as=`,
+  `make clean` e do agregado. O último comando registrado é a atribuição
+  `IDF_EXPORT_PATH=$(python3 .../idf_tools.py export --format key-value ... |
+  sed ...)`; com `bash -e` + `set -o pipefail`, o status não-zero do exporter
+  (stderr suprimido em `/dev/null`) abortou o step antes dos fallbacks/guards.
+  Ambiente do runner no log: `IDF_PATH=/tmp/esp/idf/v6.1/esp-idf`,
+  `IDF_TOOLS_PATH=/tmp/esp`, `IDF_PYTHON_ENV_PATH=/tmp/esp/python/v6.1/venv`,
+  `SYSTEM_PATH` sem bin dir do toolchain — logo o fallback por `command -v`
+  sozinho também não bastaria.
+- Correção (só workflow/docs): (1) o exporter virou **sondagem tolerante**,
+  executado com `$IDF_PYTHON_ENV_PATH/bin/python` quando presente (senão
+  `python3`), com `2>` para arquivo temporário e `|| IDF_EXPORT_STATUS=$?`; em
+  falha imprime status e as primeiras linhas do stderr e zera a saída, sem
+  abortar; (2) fallback de dirs passa a procurar
+  `$IDF_TOOLS_PATH/tools/riscv32-esp-elf/*/riscv32-esp-elf/bin` e
+  `~/.espressif/tools/...`, antes do fallback final por `command -v`; (3) guards
+  fail-closed inalterados: `/usr/bin/as` precisa vencer e `riscv32-esp-elf-nm`
+  precisa resolver. Nenhum teste/produção/versão alterado.
+- `code-map.md`: linha do workflow/CI e seção do viewer atualizadas para a
+  sondagem tolerante + fallbacks + guards.
+- Commands | exit | result (focados, sem suíte/build/flash; prefixo extraído do
+  YAML e executado com o contrato):
+  - parse YAML | 0 | `Quality Gate`, 11 steps; `bash -n` em todos os blocos
+    `run:` | 0 | OK
+  - caso 1, exporter real (`IDF_PATH` local) + contrato | 0 |
+    `host as=/usr/bin/as`, cross nm resolvido, `test_image_stack_frame_contract:
+    0 failures`
+  - caso 2, tipo runner: `IDF_PATH` fake com exporter saindo 7, `HOME` fake,
+    `IDF_TOOLS_PATH` fake contendo nm/objdump linkados | 0 |
+    `idf_tools.py export failed (status=7); using installed tool dirs` + stderr
+    diagnóstico, fallback de dirs, contrato `0 failures`
+  - caso 3, exporter falha e cross só via PATH | 0 | fallback `command -v`,
+    contrato `0 failures`
+  - caso 4, sem nm (exporter falha, tools root vazio, HOME fake) | 1 |
+    `riscv32-esp-elf-nm not found after PATH setup`
+  - caso 5, `as` não-host primeiro | 1 |
+    `host assembler is not first in PATH: /tmp/opencode/qg-fake-as/as`
+  - `git diff --check` | 0 | limpo
+- Commit/push (autorização vigente; sem force): `89ac382e8cf4dfb33e5bd1b908033185af4d6737`
+  (short `89ac382`), `fix(ci): make the idf_tools export probe non-fatal`, pai
+  `5d2630e`, branch `develop`. `git fetch origin develop` → `origin/develop` em
+  `5d2630e`, fast-forward; `git push origin develop` | exit 0 |
+  `5d2630e..89ac382  develop -> develop`; `git ls-remote origin
+  refs/heads/develop` = `89ac382e8cf4dfb33e5bd1b908033185af4d6737` (= HEAD local);
+  `git tag --points-at HEAD` = 0. Nenhum force push.
+- Preservação: as notas `docs/agent-state/image-formats/{coder,reviewer}.md`
+  continuam não commitadas (incluindo o registro do reviewer para
+  `42703506289`), sem edição nesta correção.
+- Snapshot (medido imediatamente antes deste append): HEAD
+  `89ac382e8cf4dfb33e5bd1b908033185af4d6737`; `version.txt` 1.18.0;
+  `git diff | sha256sum` =
+  `763328bb93c97e0e0479fcc80a090b457531d874b84cd579e89c6729034816a9`;
+  `git status --porcelain | sha256sum` =
+  `c414d7e93c3037ec845c6f9fd065fd51dd0974f9c2fe86c6d99a9b7fe1963cad`;
+  `git status --porcelain -z | sha256sum` =
+  `7426c35ec50154acf4078bcf1c95d6ec29bd225d9107e095aefe1caf68c0c452`. Depois
+  deste append, a única diferença adicional é esta própria nota.
+- Não executado: suíte completa, cobertura/scope guard, TSan, build/flash e
+  polling do novo run; o CI remoto do commit `89ac382` precisa ser observado
+  pelo reviewer/developer antes de qualquer conclusão.
+- Supersedes or discards: substitui o estado "exporter aborta o step" e estende
+  as entradas 18:20/18:32; **não** declara o gate remoto verde nem fecha o
+  blocker do run `42703506289` até novo run no commit `89ac382`.
+
 ### 2026-11-09 15:50 -03:00 - segundo reset (limite de passos) + checkpoint medido da navegação
 
 - Fact (reset 2): a sessão anterior deste papel foi interrompida de novo por

@@ -126,6 +126,16 @@ Run `help` (or `help -h` / `help --help`) for the general command list. The
 local file commands also accept `-h` and `--help` (for example, `ls --help`) to
 show their usage.
 
+Press Tab to complete commands and paths (local menu only). A single candidate
+completes the token right away; several candidates insert their longest common
+prefix, and pressing Tab again without editing lists up to 64 candidates.
+`cd` offers directories only, a completed directory always ends with `/`, and a
+prefix with no match leaves the line untouched. Names that contain spaces are
+not offered because the tokenizer has no quoting/escaping. Paths resolve against
+the current virtual directory, and the SD is enumerated off the LVGL task, so
+the UI stays responsive. Tab stays literal inside SSH, password prompts and the
+Wi-Fi password flow.
+
 The file shell is sandboxed: `/` is the only exposed root, `cd ..` cannot
 escape it, and symbolic links are not allowed. Other commands reject `..` path
 components. `rm -r` cannot remove

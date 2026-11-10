@@ -125,6 +125,16 @@ Execute `help` (ou `help -h` / `help --help`) para ver a lista geral de
 comandos. Os comandos do shell local também aceitam `-h` e `--help` (por
 exemplo, `ls --help`) para exibir seu uso.
 
+Use Tab para completar comandos e caminhos (apenas no menu local). Um único
+candidato completa o token; vários candidatos inserem o maior prefixo comum, e
+um segundo Tab sem edição lista até 64 candidatos. `cd` oferece apenas
+diretórios, um diretório completado sempre termina em `/` e um prefixo sem
+correspondência deixa a linha intacta. Nomes com espaço não são oferecidos
+porque o tokenizador não tem aspas/escape. Os caminhos são resolvidos a partir
+do diretório virtual atual e o SD é enumerado fora da task LVGL, então a
+interface não bloqueia. O Tab continua literal dentro do SSH, nos prompts de
+senha e no fluxo de senha do Wi-Fi.
+
 O shell de arquivos é isolado em sandbox: `/` é a única raiz virtual exposta
 e corresponde ao cartão SD físico montado em `/sdcard`. `cd ..` não pode
 escapar dela e links simbólicos não são permitidos. O caminho físico

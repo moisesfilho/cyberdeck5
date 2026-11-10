@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[3]
 UI = ROOT / "components/cyberdeck/src/platform/display/cyberdeck_ui.cpp"
 SESSION = ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp"
 DISPATCH = ROOT / "components/cyberdeck/src/platform/input/cyberdeck_keyboard_dispatch.cpp"
+KEYMAP = ROOT / "components/cyberdeck/src/platform/input/tab5_keyboard_keys.cpp"
+KEYBOARD = ROOT / "components/cyberdeck/src/platform/input/tab5_keyboard.cpp"
 
 
 def function_body(source: str, signature: str) -> str:
@@ -113,6 +115,21 @@ def main() -> int:
             "physical text must be routed through the session, which owns the decision")
     require("s_shell_app.insert_modified_key(" in consumer,
             "a modified physical key must be routed through the session")
+    # O evento fisico do Tab do A164 carrega AMBOS: texto ("\t", 1 byte) e
+    # special_key ('\t'). A prioridade do ramo de texto sobre o fallback de
+    # tecla especial e o que faz o Tab chegar a sessao (completacao); se a
+    # ordem inverter, `local_key` consome a tecla e nada completa.
+    tab_guard = "if (text != nullptr && text[0] != '\\0' && length != 0)"
+    require(tab_guard in consumer, "the shell text branch must exist")
+    text_branch = consumer.rindex(tab_guard)
+    fallback = consumer.rindex("local_key(special_key)")
+    require(fallback > text_branch,
+            "physical text must win over the special-key fallback for the Tab alias")
+    between = consumer[text_branch:fallback]
+    require("s_shell_app.insert_physical_text(text, length)" in between,
+            "the text branch must insert the 1-byte Tab before any special-key handling")
+    require("else if (special_key)" in between,
+            "the special-key fallback must be an else-if of the text branch")
     require("insert_physical(" not in consumer and "insert_virtual(" not in consumer,
             "the UI facade must not decide how text or a modified key is interpreted")
     session_source = (ROOT / "components/cyberdeck/src/apps/shell/cyberdeck_shell_session.cpp").read_text(encoding="utf-8")
@@ -135,6 +152,33 @@ def main() -> int:
     # UI keeps only the SSH host seam.
     require("local_shell().execute(line)" in session and "cat_enqueue(" in session,
             "existing shell/local input path missing from the extracted session")
+
+    # Seam do token fisico: o M5Stack A164 envia o NOME "tab", nao o byte 0x09.
+    # O alias e estritamente o token exato "tab" -> 1 byte Tab; qualquer outro
+    # token CHAR (inclusive "space") conserva o comportamento anterior (bytes
+    # crus reconhecidos pelo keymap, sem normalizacao de caractere).
+    keymap = KEYMAP.read_text(encoding="utf-8")
+    tab_entry = next((line for line in keymap.splitlines()
+                      if '"tab"' in line and "TAB5_KEY_CHAR" in line), "")
+    require(tab_entry != "", "the M5Stack name variant 'tab' must exist in the keymap")
+    require("'\\t'" in tab_entry,
+            "the 'tab' name must map to the Tab character as a CHAR entry")
+    keyboard = KEYBOARD.read_text(encoding="utf-8")
+    emit = function_body(keyboard, "static void emit_event(")
+    require('copy == 3 && strcmp(buf, "tab") == 0' in emit,
+            "the physical alias must be limited to the exact 'tab' token")
+    require("const char *text = buf" in emit and "size_t text_len = copy" in emit,
+            "every other CHAR token must keep the raw token as callback text")
+    require(emit.count("text = &") == 1 and emit.count("strcmp(") == 1,
+            "there must be exactly one normalization site, keyed on the 'tab' token")
+    require(re.findall(r'strcmp\(\s*buf\s*,\s*"([^"]*)"\s*\)', emit) == ["tab"],
+            "the only normalized token must be the exact 'tab' literal")
+    code_only = re.sub(r"/\*.*?\*/", "", emit, flags=re.S)
+    require("char mapped" not in code_only and '"space"' not in code_only and
+            '"\\t"' not in code_only,
+            "no generic named-token normalization and no 'space' special case")
+    require("s_event_callback(text, text_len, modifier, entry->ch)" in emit,
+            "the callback must receive the normalized text for 'tab' and raw bytes otherwise")
 
     print("PASS: keyboard async-dispatch contract")
     return 0

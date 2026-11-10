@@ -30,6 +30,8 @@ static const tab5_key_entry_t s_keymap[] = {
     {"left",      LV_KEY_LEFT,     0, TAB5_KEY_SPECIAL},
     {"right",     LV_KEY_RIGHT,    0, TAB5_KEY_SPECIAL},
     {"space",     0,               ' ', TAB5_KEY_CHAR},
+    /* O teclado M5Stack A164 envia o NOME "tab" (3 bytes), nao o byte 0x09. */
+    {"tab",       0,               '\t', TAB5_KEY_CHAR},
 
     /* Espaco */
     {" ",    0,                   ' ',  TAB5_KEY_CHAR},

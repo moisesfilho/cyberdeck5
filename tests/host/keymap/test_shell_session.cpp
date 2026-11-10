@@ -344,6 +344,38 @@ struct fake_host final : cyberdeck_shell_session::host {
         cat_line = line != nullptr ? line : "";
         return cat_accepted;
     }
+
+    /* Completacao: registra o pedido e entrega candidatos CANNED (a varredura
+     * real do SD e coberta por test_shell_completion, que linka o scanner). */
+    cyberdeck_shell_completion::candidate_list completion_candidates;
+    cyberdeck_shell_completion::request last_completion_request;
+    std::uint64_t last_completion_token = 0;
+    int completion_requests = 0;
+    bool completion_async = false;
+    bool completion_accept = true;
+    bool completion_truncated = false;
+    session *completion_owner = nullptr;
+
+    bool completion_scan_async(const cyberdeck_shell_completion::request &request,
+                               std::uint64_t token) override
+    {
+        ++completion_requests;
+        last_completion_request = request;
+        last_completion_token = token;
+        if (!completion_accept) return false;
+        if (completion_async) return true;
+        deliver_completion(token);
+        return true;
+    }
+
+    void deliver_completion(std::uint64_t token)
+    {
+        if (completion_owner == nullptr) return;
+        completion_owner->apply_completion_result(token, completion_candidates.data(),
+                                                 completion_candidates.size(),
+                                                 completion_truncated);
+    }
+
     cyberdeck_local_shell &local_shell() override { return shell; }
     cyberdeck_apps::runtime &app_runtime() override { return apps; }
 };
@@ -1022,6 +1054,252 @@ int main()
         submit(s, "pwd");
         submit(s, "clear");
         check(h.clear_count == 1, "clear empties the terminal through the host");
+    }
+
+    /* --- completacao por Tab (REQ-TAB-01..05) --------------------------- */
+    /* Teclado virtual/tecla dedicada: primeiro Tab insere o prefixo comum. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        type(s, "r");
+        s.handle_key(key::next_tab);
+        check_eq(s.line(), "rm", "Tab inserts the common prefix of the catalog commands");
+        check(h.completion_requests == 0,
+                      "command completion needs no SD scan");
+        /* Segundo Tab sem edicao lista os candidatos bounded. */
+        s.handle_key(key::next_tab);
+        check(h.output.find("rmdir") != std::string::npos,
+              "the second Tab lists the command candidates");
+        check_eq(s.line(), "rm", "listing does not edit the line");
+    }
+
+    /* Teclado fisico entrega Tab como texto ('\t'). */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        type(s, "rmd");
+        check(s.insert_physical_text("\t", 1), "a single Tab byte is consumed by the shell");
+        check_eq(s.line(), "rmdir", "the physical Tab completes the command");
+    }
+
+    /* Zero candidatos preservam a linha. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        type(s, "zzz");
+        const std::string before = h.output;
+        s.handle_key(key::next_tab);
+        check_eq(s.line(), "zzz", "an unknown command prefix is not rewritten");
+        check_eq(h.output, before, "zero command candidates add no terminal output");
+    }
+
+    /* Caminho: `cd` pede somente diretorios e completa com '/' final. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.completion_candidates.push_back(cyberdeck_shell_completion::candidate{"albuns", true});
+        type(s, "cd al");
+        s.handle_key(key::next_tab);
+        check(h.completion_requests == 1,
+                      "a path completion is dispatched to the async port");
+        check_eq(h.last_completion_request.directory, "/",
+                 "the relative path resolves against the virtual cwd");
+        check(h.last_completion_request.directory_only, "cd requests directories only");
+        check_eq(s.line(), "cd albuns/", "the directory completion keeps the trailing slash");
+    }
+
+    /* Resultado obsoleto (token superado) e descartado. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.completion_async = true;
+        h.completion_candidates.push_back(cyberdeck_shell_completion::candidate{"albuns", true});
+        type(s, "cd al");
+        s.handle_key(key::next_tab);
+        const std::uint64_t token = h.last_completion_token;
+        check(token != 0, "the pending request carries a token");
+        check_eq(s.line(), "cd al", "an asynchronous Tab leaves the line untouched");
+        h.deliver_completion(token + 1);
+        check_eq(s.line(), "cd al", "a stale token is discarded");
+        h.deliver_completion(token);
+        check_eq(s.line(), "cd albuns/", "the matching token completes the token");
+        h.deliver_completion(token);
+        check_eq(s.line(), "cd albuns/", "a replayed delivery is discarded");
+    }
+
+    /* Resultado cuja linha mudou durante a enumeracao e descartado. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.completion_async = true;
+        h.completion_candidates.push_back(cyberdeck_shell_completion::candidate{"albuns", true});
+        type(s, "cd al");
+        s.handle_key(key::next_tab);
+        const std::uint64_t token = h.last_completion_token;
+        type(s, "b");
+        h.deliver_completion(token);
+        check_eq(s.line(), "cd alb", "a result for an edited line is discarded");
+    }
+
+    /* Sem worker (porta recusa): a linha fica intacta. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.completion_accept = false;
+        type(s, "cd al");
+        s.handle_key(key::next_tab);
+        check_eq(s.line(), "cd al", "a refused completion request preserves the line");
+    }
+
+    /* SSH/password mantem o Tab literal: o byte pertence ao PTY remoto. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.phase = cyberdeck_session_state::CONNECTED;
+        type(s, "cat ");
+        s.handle_key(key::next_tab);
+        check_eq(s.line(), "cat \t", "a connected session inserts a literal tab");
+        check(h.completion_requests == 0,
+                      "SSH never triggers the completion port");
+    }
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.phase = cyberdeck_session_state::PASSWORD;
+        s.handle_key(key::next_tab);
+        check_eq(std::string(s.editor().line()), "\t",
+                 "the password line keeps the tab literal");
+        check(h.completion_requests == 0,
+                      "the password prompt never triggers completion");
+    }
+
+    /* Wi-Fi pendente (senha de rede) tambem permanece literal. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.wifi = wifi_ui_state_t::SEARCH_PASSWORD;
+        s.handle_key(key::next_tab);
+        check_eq(std::string(s.editor().line()), "\t",
+                 "the Wi-Fi password prompt keeps the tab literal");
+        check(h.completion_requests == 0,
+                      "the Wi-Fi password flow never triggers completion");
+    }
+
+    /* Lista BLE com posse da entrada nao completa o menu. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.ble.begin_search();
+        s.handle_key(key::next_tab);
+        check(h.completion_requests == 0,
+                      "no completion while the BLE list owns the input");
+    }
+
+    /* Tab fisico em SSH tambem permanece literal (o byte vai para o PTY). */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.phase = cyberdeck_session_state::CONNECTED;
+        type(s, "cat ");
+        check(s.insert_physical_text("\t", 1), "the literal Tab byte is accepted by the line");
+        check_eq(s.line(), "cat \t", "the physical Tab is inserted literally over SSH");
+        check(h.completion_requests == 0,
+                      "the physical Tab never reaches the completion port over SSH");
+    }
+
+    /* Texto fisico com Tab embutido nunca dispara completacao (so um byte). */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        check(s.insert_physical_text("a\tb", 3), "multi-byte physical text is accepted");
+        check_eq(s.line(), "a\tb", "only a single Tab byte triggers completion");
+        check(h.completion_requests == 0,
+                      "embedded Tab bytes are inserted literally");
+    }
+
+    /* Cursor no meio do token: completa o token inteiro e mantem o resto. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.completion_candidates.push_back(cyberdeck_shell_completion::candidate{"albuns", true});
+        type(s, "cd al");
+        s.handle_key(key::left);
+        check(s.cursor() == 4, "the cursor moves inside the token");
+        s.handle_key(key::next_tab);
+        check_eq(s.line(), "cd albuns/", "an interior cursor completes the whole token");
+        check(s.cursor() == 10, "the cursor lands after the inserted name");
+    }
+
+    /* Lista truncada: o primeiro Tab nunca estreita; o segundo apenas lista. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.completion_truncated = true;
+        h.completion_candidates.push_back(cyberdeck_shell_completion::candidate{"albuns", true});
+        h.completion_candidates.push_back(cyberdeck_shell_completion::candidate{"album-canvas", true});
+        type(s, "cd al");
+        s.handle_key(key::next_tab);
+        check_eq(s.line(), "cd al", "a truncated multi-candidate set never narrows the token");
+        s.handle_key(key::next_tab);
+        check_eq(s.line(), "cd al", "listing keeps the truncated token untouched");
+        check(h.output.find("album-canvas") != std::string::npos,
+              "the truncated set is listed");
+        check(h.output.find(cyberdeck_shell_completion::k_truncated_note.data()) != std::string::npos,
+              "the truncated listing is announced");
+    }
+
+    /* Cache do segundo Tab e invalidado por edicao e por uma lista ja exibida. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.completion_candidates.push_back(cyberdeck_shell_completion::candidate{"albuns", true});
+        h.completion_candidates.push_back(cyberdeck_shell_completion::candidate{"album-canvas", true});
+        type(s, "cd al");
+        s.handle_key(key::next_tab);
+        check_eq(s.line(), "cd albu", "the common prefix is inserted on the first Tab");
+        check(h.completion_requests == 1, "the first Tab enumerated once");
+        s.handle_key(key::next_tab);
+        check(h.completion_requests == 1, "the second Tab reuses the cached set");
+        check(h.output.find("albuns/") != std::string::npos, "the second Tab lists the cached set");
+        s.handle_key(key::next_tab);
+        check(h.completion_requests == 2,
+                      "a third Tab re-enumerates instead of repeating the list");
+        /* Edicao invalida o cache: o proximo Tab volta a enumerar. */
+        s.handle_key(key::backspace);
+        s.handle_key(key::next_tab);
+        check(h.completion_requests == 3, "editing the line invalidates the cached set");
+    }
+
+    /* Lista de um unico candidato nao deixa cache para listar depois. */
+    {
+        fake_host h;
+        session s(h);
+        h.completion_owner = &s;
+        h.completion_candidates.push_back(cyberdeck_shell_completion::candidate{"albuns", true});
+        type(s, "cd al");
+        s.handle_key(key::next_tab);
+        check_eq(s.line(), "cd albuns/", "a single path candidate completes the token");
+        const std::string before = h.output;
+        s.handle_key(key::next_tab);
+        check_eq(h.output, before, "a completed single candidate adds no listing");
+        check(h.completion_requests == 2,
+                      "the next Tab re-enumerates the completed path");
     }
 
     std::printf("shell session: %d checks, %d failures\n", g_checks, g_failures);

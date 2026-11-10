@@ -64,6 +64,11 @@ public:
     bool insert_physical_text(const char *text, std::size_t length);
     bool insert_modified_key(char character, std::uint8_t modifier);
     bool insert_virtual_text(const char *text, bool *virtual_enter_handled);
+    /* Completacao por Tab: pedido local e resultado assincrono do worker. */
+    void begin_completion();
+    void apply_completion_result(std::uint64_t token,
+                                 const cyberdeck_shell_completion::candidate *items,
+                                 std::size_t count, bool truncated);
     std::uint64_t wifi_connection_token() const;
     std::uint64_t wifi_model_connection_token() const;
     void invalidate_wifi_connection();

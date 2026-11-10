@@ -5,6 +5,9 @@ idf_component_register(
         "src/platform/display/cyberdeck_display_port.cpp"
         "src/platform/display/cyberdeck_lvgl_dispatch.cpp"
         "src/platform/display/cyberdeck_lvgl_dispatch_state.cpp"
+        # Narrow display-task post port: applications hand an opaque payload to
+        # the LVGL task without depending on LVGL themselves.
+        "src/platform/display/cyberdeck_ui_post.cpp"
         "src/platform/display/cyberdeck_terminal_view.cpp"
         "src/platform/display/cyberdeck_terminal_scrollback.cpp"
         "src/apps/shell/cyberdeck_edit_line.cpp"
@@ -38,6 +41,10 @@ idf_component_register(
         "src/apps/shell/cyberdeck_local_shell.cpp"
         "src/apps/shell/cyberdeck_vfs_namespace.cpp"
         "src/apps/shell/cyberdeck_cat_worker.cpp"
+        # Completacao por Tab: logica pura (header) + varredura bounded do SD
+        # fora da task LVGL, no worker assincrono.
+        "src/apps/shell/cyberdeck_shell_completion_scan.cpp"
+        "src/apps/shell/cyberdeck_completion_worker.cpp"
         # Console command applications: pure parsing/formatting per command,
         # host-testable, with the platform side behind a narrow port.
         "src/apps/event_log/cyberdeck_event_log_console.cpp"

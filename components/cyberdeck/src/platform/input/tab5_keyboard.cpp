@@ -123,19 +123,24 @@ static void emit_event(const char *str, uint8_t str_len, uint8_t modifier)
     }
 
     switch (entry->type) {
-    case TAB5_KEY_CHAR:
-        if (modifier != 0) {
-            /* Com modificador (Ctrl/Alt): entrega como LV_EVENT_KEY com o
-             * codigo do char para que apps/widger respondam a atalhos. */
-            if (s_event_callback != NULL) {
-                s_event_callback(buf, copy, modifier, entry->ch);
-            }
-        } else {
-            if (s_event_callback != NULL) {
-                s_event_callback(buf, copy, 0, entry->ch);
-            }
+    case TAB5_KEY_CHAR: {
+        /* Unico alias normalizado: o teclado M5Stack A164 emite o NOME "tab"
+         * (3 bytes) e a sessao espera o byte '\t' para completar. Demais
+         * tokens CHAR (inclusive "space") seguem crus como antes. */
+        const char *text = buf;
+        size_t text_len = copy;
+        char tab_byte = '\t';
+        if (copy == 3 && strcmp(buf, "tab") == 0) {
+            text = &tab_byte;
+            text_len = 1;
+        }
+        /* O char tambem vai como LV_EVENT_KEY para que apps/widgets respondam
+         * a atalhos quando houver modificador (Ctrl/Alt). */
+        if (s_event_callback != NULL) {
+            s_event_callback(text, text_len, modifier, entry->ch);
         }
         break;
+    }
     case TAB5_KEY_SPECIAL:
         if (s_event_callback != NULL) {
             s_event_callback(NULL, 0, modifier, entry->lvgl_key);

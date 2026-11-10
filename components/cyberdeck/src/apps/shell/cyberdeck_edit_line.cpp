@@ -49,6 +49,15 @@ bool cyberdeck_edit_line::insert_virtual(const char *text, size_t len)
     return insert(text, len);
 }
 
+bool cyberdeck_edit_line::set_line(const char *text, size_t len, size_t cursor_bytes)
+{
+    if (text == nullptr && len != 0) return false;
+    if (len > limit) return false;
+    m_line.assign(text != nullptr ? text : "", len);
+    m_cursor = std::min(cursor_bytes, len);
+    return true;
+}
+
 void cyberdeck_edit_line::backspace()
 {
     if (m_cursor == 0) return;

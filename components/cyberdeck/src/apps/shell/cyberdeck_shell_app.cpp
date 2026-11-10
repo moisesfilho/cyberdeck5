@@ -6,7 +6,7 @@ namespace cyberdeck_shell_app {
 namespace {
 
 constexpr cyberdeck_apps::manifest k_manifest{
-    "cyberdeck.shell", "Terminal shell", "1.0.0", "Primary foreground terminal application",
+    "cyberdeck.shell", "Terminal shell", "1.0.1", "Primary foreground terminal application",
     {},                                                            /* command */
     {"cyberdeck.event_log"}, 1,                                   /* dependencies */
     {"display", "input", "storage"}, 3,                           /* resources */
@@ -141,6 +141,20 @@ bool application::insert_virtual_text(const char *text, bool *virtual_enter_hand
 {
     if (virtual_enter_handled != nullptr) *virtual_enter_handled = false;
     return console_ ? console_->insert_virtual_text(text, virtual_enter_handled) : false;
+}
+
+void application::begin_completion()
+{
+    if (!console_) return;
+    console_->begin_completion();
+}
+
+void application::apply_completion_result(std::uint64_t token,
+                                          const cyberdeck_shell_completion::candidate *items,
+                                          std::size_t count, bool truncated)
+{
+    if (!console_) return;
+    console_->apply_completion_result(token, items, count, truncated);
 }
 
 std::uint64_t application::wifi_connection_token() const
