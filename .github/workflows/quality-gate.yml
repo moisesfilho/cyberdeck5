@@ -176,6 +176,13 @@ jobs:
           # check; the existing CLI intentionally retains its broader legacy
           # whitespace style outside this gate.
           ruff check --select F tools
+          # The shell-session structural contract is new Python code, so it is
+          # checked here instead of relying on the host aggregate to execute it
+          # later: the formatter pins its layout and the same F selector catches
+          # syntax/undefined-name regressions.  Legacy Python tests keep their
+          # broader whitespace style outside this gate.
+          ruff format --check tests/host/keymap/test_shell_session_contract.py
+          ruff check --select F tests/host/keymap/test_shell_session_contract.py
       - name: Lint, smells, and security
         run: |
           cppcheck --enable=warning,performance,portability \

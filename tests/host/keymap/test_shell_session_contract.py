@@ -58,7 +58,8 @@ FORBIDDEN_TOKENS = (
 # this TU, so the call shape is matched separately.  The lookbehind keeps
 # identifiers such as ``shell_open_readonly`` from matching ``open(``.
 FORBIDDEN_CALLS = re.compile(
-    r"(?<![A-Za-z0-9_])(?:stat|statvfs|lstat|readlink|opendir|realpath|access|fopen|open)\s*\(")
+    r"(?<![A-Za-z0-9_])(?:stat|statvfs|lstat|readlink|opendir|realpath|access|fopen|open)\s*\("
+)
 
 # Structural anchors of the two-branch resolver.
 REQUIRED_FRAGMENTS = (
@@ -92,22 +93,27 @@ def check_forbidden_free(text, failures):
     calls = find_forbidden_calls(text)
     if calls:
         failures.append(
-            f"session translation unit calls a filesystem probe: {sorted(set(calls))}")
+            f"session translation unit calls a filesystem probe: {sorted(set(calls))}"
+        )
 
 
 def check_mutations(session_text):
     """The detector must reject every forbidden token injected into a copy."""
-    mutations = [session_text + "\n// mutation: " + token + "\n" for token in FORBIDDEN_TOKENS]
+    mutations = [
+        session_text + "\n// mutation: " + token + "\n" for token in FORBIDDEN_TOKENS
+    ]
     # Unqualified call shape: the substring list alone let ``stat(...)`` through.
     mutations.append(
-        session_text + "\nvoid probe() { struct stat info{}; stat(\"/\", &info); }\n")
+        session_text + '\nvoid probe() { struct stat info{}; stat("/", &info); }\n'
+    )
     rejected = 0
     for mutated in mutations:
         if find_forbidden(mutated) or find_forbidden_calls(mutated):
             rejected += 1
     if rejected != len(mutations):
         raise AssertionError(
-            f"only {rejected}/{len(mutations)} injected I/O mutations were detected")
+            f"only {rejected}/{len(mutations)} injected I/O mutations were detected"
+        )
     return rejected
 
 
@@ -138,13 +144,15 @@ def check_wiring(makefile, failures):
     if phony is None:
         failures.append(f"{TARGET} is missing from .PHONY")
     aggregate_calls = [
-        line for line in makefile.splitlines()
+        line
+        for line in makefile.splitlines()
         if line.strip().startswith("@$(MAKE)") and line.split()[-1] == TARGET
     ]
     if len(aggregate_calls) != 1:
         failures.append(
             f"the aggregate `test` target must invoke {TARGET} exactly once "
-            f"(found {len(aggregate_calls)})")
+            f"(found {len(aggregate_calls)})"
+        )
 
 
 def main():
