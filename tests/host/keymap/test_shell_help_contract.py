@@ -110,8 +110,8 @@ MUSIC_USAGE = (
 IMAGE_USAGE = (
     ("image <path>",
      "path: absolute .bmp/.jpg/.jpeg/.png inside the virtual namespace; a single relative operand "
-     "resolves from the shell cwd (only /data or /system); left/right browses the same directory; "
-     "Esc closes\n"),
+     "resolves from the shell cwd, including / and any real SD directory; left/right browses the "
+     "same directory; Esc closes\n"),
 )
 WIFI_CONSOLE_USAGE = (
     ("wifi [search|saved|audit|survey]",

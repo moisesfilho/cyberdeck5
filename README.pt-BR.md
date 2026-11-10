@@ -192,7 +192,9 @@ subcomandos e nunca são tratados como operando de arquivo.
 
 - o caminho pertence ao namespace virtual (`/fotos/a.bmp`); um único operando
   relativo (`image a.bmp`) é resolvido a partir do diretório corrente do shell
-  antes do app rodar, enquanto `/sdcard/...` e traversal (`.`, `..`) são recusados;
+  antes do app rodar — qualquer diretório real do cartão serve, inclusive `/` e
+  `/imagens` —, enquanto `/sdcard/...`, os namespaces de metadados
+  `apps`/`tmp`/`dev` e traversal (`.`, `..`) são recusados;
 - a extensão escolhe o decoder e é autoritativa — o conteúdo nunca é adivinhado —
   então `.bmp`, `.jpg`, `.jpeg` e `.png` (case-insensitive) são aceitos e uma
   divergência falha fechado com mensagem tipada;

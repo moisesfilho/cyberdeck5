@@ -93,10 +93,16 @@ reescreve em uma variável separada (`dispatched`) o operando relativo único de
 `image` (sempre) e `edit` (somente com cwd exatamente `/data`, que é o diretório
 onde o editor resolve o caminho). A linha digitada continua sendo a única fonte
 de echo, log, histórico, help, `cat`, shell local, `poweroff`, SSH e parser
-legado. A resolução é lexical por `cyberdeck_vfs_namespace::resolve` (sem
-`stat`/`readlink`) e exige backend de filesystem (`/data` ou `/system`); qualquer
+legado. A resolução é lexical (sem `stat`/`readlink`), então symlink, existência
+e tipo regular continuam com o backend. Há dois ramos, escolhidos pelo primeiro
+componente do cwd: `data`/`system` continuam passando por
+`cyberdeck_vfs_namespace::resolve` e exigem backend de filesystem (tetos de 16
+componentes e 64 bytes preservados); qualquer outro diretório real do cartão —
+`/imagens`, `/fotos`, `/data2` e a própria raiz `/` — compõe cwd + operando e
+aplica a regra de componente do shell (1..255 bytes, sem `\`), recusando
+`apps`/`tmp`/`dev` e o alias físico `sdcard` como primeiro componente. Qualquer
 falha — namespace inválido, backend de metadados, componente `.`/`..`, componente
-acima de 64 bytes, caminho acima de 256 bytes, segundo argumento, `edit save` ou
+acima de 255 bytes, caminho acima de 256 bytes, segundo argumento, `edit save` ou
 expansão que estoure o orçamento de 256 bytes do runtime — é pass-through, então
 o app mantém a mensagem e a rejeição atuais.
 

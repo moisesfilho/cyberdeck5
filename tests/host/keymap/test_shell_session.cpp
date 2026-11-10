@@ -628,6 +628,13 @@ int main()
         std::filesystem::create_directories(root + "/tmp");
         std::filesystem::create_directories(root + "/apps");
         std::filesystem::create_directories(root + "/dev");
+        /* Diretorios reais fora dos cinco namespaces: o ramo root-SD do
+         * operando relativo (`/`, `/imagens`, `/fotos`, `/data2`, `/dev2`). */
+        std::filesystem::create_directories(root + "/imagens/sub");
+        std::filesystem::create_directories(root + "/imagens/dev");
+        std::filesystem::create_directories(root + "/fotos");
+        std::filesystem::create_directories(root + "/data2");
+        std::filesystem::create_directories(root + "/dev2");
 
         fake_host h;
         file_operand_probe image("cyberdeck.image_viewer", "image");
@@ -702,22 +709,25 @@ int main()
         check_eq(image.last_operand, "./a.bmp",
                  "NEG-REL-10b: a dot component is refused under a subdirectory cwd");
         submit(s, "cd /data");
+        /* POS-REL2-01: a raiz virtual e um diretorio real do cartao e resolve o
+         * operando relativo.  A versao v1 (NEG-REL-11: cwd `/` sem reescrita)
+         * foi substituida por este requisito. */
         submit(s, "cd /");
-        submit(s, "image a.bmp");
-        check_eq(image.last_operand, "a.bmp",
-                 "NEG-REL-11: a cwd outside any namespace does not resolve");
+        submit(s, "image a.jpg");
+        check_eq(image.last_operand, "/a.jpg",
+                 "POS-REL2-01: the root cwd resolves the relative operand");
         submit(s, "cd /tmp");
         submit(s, "image a.bmp");
         check_eq(image.last_operand, "a.bmp",
-                 "NEG-REL-12: the tmp metadata backend never maps to the card");
+                 "NEG-REL2-01 (NEG-REL-12 v1): the tmp metadata backend never maps to the card");
         submit(s, "cd /apps");
         submit(s, "image a.bmp");
         check_eq(image.last_operand, "a.bmp",
-                 "NEG-REL-13: the apps metadata backend does not resolve");
+                 "NEG-REL2-02 (NEG-REL-13 v1): the apps metadata backend does not resolve");
         submit(s, "cd /dev");
         submit(s, "image null");
         check_eq(image.last_operand, "null",
-                 "NEG-REL-14: /dev is never rewritten (no physical /dev/null)");
+                 "NEG-REL2-03 (NEG-REL-14 v1): /dev is never rewritten (no physical /dev/null)");
 
         /* NEG-REL-18/19: a resolucao e lexical, portanto um symlink nunca e
          * seguido aqui; o que chega ao app e o caminho digitado sob o cwd. */
@@ -890,35 +900,216 @@ int main()
         check(editor.executions == 1 && editor.last_operand.empty(),
               "NEG-REL-32: edit without an operand reaches the app unrewritten");
 
-        /* NEG-REL-38: o help detalhado e resolvido pela sessao, nunca pelo app. */
+        /* POS-REL2-02..09 / NEG-REL2-01..08: ramo root-SD.  O cwd `/imagens`
+         * (caso reportado), outros diretorios reais e a raiz virtual compoem o
+         * operando; metadata (`apps`/`tmp`/`dev`) e o alias `sdcard` nunca sao
+         * alvo de reescrita, nem como cwd nem como primeiro componente. */
+        h.output.clear();
+        submit(s, "cd /imagens");
+        check_eq(h.shell.cwd(), "/imagens", "probe cwd enters the SD image directory");
+        h.output.clear();
+        submit(s, "image a.jpg");
+        check_eq(image.last_operand, "/imagens/a.jpg",
+                 "POS-REL2-02: /imagens resolves the reported case");
+        check_eq(h.output, "/imagens$ image a.jpg\n",
+                 "NEG-REL2-37: the echo keeps the typed line in the root-SD branch");
+        submit(s, "image sub/a.jpg");
+        check_eq(image.last_operand, "/imagens/sub/a.jpg",
+                 "POS-REL2-03: a nested relative operand is joined under /imagens");
+        submit(s, "cd /fotos");
+        submit(s, "image a.bmp");
+        check_eq(image.last_operand, "/fotos/a.bmp",
+                 "POS-REL2-04: another real SD directory resolves as well");
+        submit(s, "cd /imagens/dev");
+        submit(s, "image a.jpg");
+        check_eq(image.last_operand, "/imagens/dev/a.jpg",
+                 "POS-REL2-07: only the first component is filtered (subdir named dev is physical)");
+        submit(s, "cd /data2");
+        submit(s, "image a.jpg");
+        check_eq(image.last_operand, "/data2/a.jpg",
+                 "POS-REL2-08: /data2 is not a namespace (exact name, never a prefix)");
+        submit(s, "cd /dev2");
+        submit(s, "image a.jpg");
+        check_eq(image.last_operand, "/dev2/a.jpg",
+                 "POS-REL2-09: /dev2 is not the dev namespace (no prefix match)");
+        submit(s, "cd /");
+        submit(s, "image tmp/a.bmp");
+        check_eq(image.last_operand, "tmp/a.bmp",
+                 "NEG-REL2-04: a metadata first component is refused in the composed path");
+        submit(s, "image apps/x.bmp");
+        check_eq(image.last_operand, "apps/x.bmp",
+                 "NEG-REL2-05: the apps namespace is refused in the composed path");
+        submit(s, "image dev/null");
+        check_eq(image.last_operand, "dev/null",
+                 "NEG-REL2-06: /dev/null is never reachable from the root cwd");
+        submit(s, "image sdcard/a.bmp");
+        check_eq(image.last_operand, "sdcard/a.bmp",
+                 "NEG-REL2-07: the physical /sdcard alias is refused in the composed path");
+
+        /* NEG-REL2-09..21 / POS-REL2-10..12: forma do operando root-SD. */
+        submit(s, "cd /imagens");
+        submit(s, "image ../a.jpg");
+        check_eq(image.last_operand, "../a.jpg",
+                 "NEG-REL2-09: traversal is never expanded from /imagens");
+        submit(s, "image ./a.jpg");
+        check_eq(image.last_operand, "./a.jpg",
+                 "NEG-REL2-10: a dot component is not expanded");
+        submit(s, "image sub/../a.jpg");
+        check_eq(image.last_operand, "sub/../a.jpg",
+                 "NEG-REL2-11: internal traversal is kept literal");
+        submit(s, "image sub/");
+        check_eq(image.last_operand, "sub/",
+                 "NEG-REL2-12: a trailing empty component is kept literal");
+        submit(s, "image ../../etc/passwd");
+        check_eq(image.last_operand, "../../etc/passwd",
+                 "NEG-REL2-13: no relative path leaves the SD root");
+        submit(s, "image /imagens/a.jpg");
+        check_eq(image.last_operand, "/imagens/a.jpg",
+                 "NEG-REL2-14: an absolute operand is untouched");
+        submit(s, "image /sdcard/a.jpg");
+        check_eq(image.last_operand, "/sdcard/a.jpg",
+                 "NEG-REL2-15: an absolute /sdcard operand stays literal");
+        submit(s, "image /");
+        check_eq(image.last_operand, "/",
+                 "NEG-REL2-16: a bare root operand is untouched");
         image.executions = 0;
+        submit(s, "image");
+        check(image.executions == 1 && image.last_operand.empty(),
+              "NEG-REL2-18: a missing operand reaches the app unchanged");
+        submit(s, "image   ");
+        check(image.executions == 2 && image.last_operand.empty(),
+              "NEG-REL2-18: a separators-only operand reaches the app unchanged");
+        submit(s, "image a.jpg b.jpg");
+        check_eq(image.last_operand, "a.jpg b.jpg",
+                 "NEG-REL2-17: a second argument disables the rewrite");
+        submit(s, "image \"a.jpg\"");
+        check_eq(image.last_operand, "/imagens/\"a.jpg\"",
+                 "NEG-REL2-19: quotes are not shell syntax (literal bytes; the app rejects them)");
+        submit(s, "image a\\b.jpg");
+        check_eq(image.last_operand, "a\\b.jpg",
+                 "NEG-REL2-20: a backslash component is refused (shell path rule)");
         h.output.clear();
-        submit(s, "image help");
-        check(image.executions == 0 && h.output.find("image [app]") != std::string::npos,
-              "NEG-REL-38: the detail help path never reaches the application");
-
-        /* NEG-REL-01..04 / 41 / REQ-REL-09: fora da whitelist nada muda. */
-        h.output.clear();
-        submit(s, "Image a.bmp");
+        submit(s, "image a b c d e f g h");
         check(h.output.find("unknown command; type help") != std::string::npos,
-              "NEG-REL-01: the whitelist is case sensitive");
-        h.output.clear();
-        submit(s, "app image a.bmp");
-        check(h.output.find("usage: app") != std::string::npos,
-              "NEG-REL-02: app never rewrites its operand");
-        h.output.clear();
-        submit(s, "image2 a.bmp");
-        check(h.output.find("unknown command; type help") != std::string::npos,
-              "NEG-REL-03: only the declared command is rewritten");
-        submit(s, "music queue musica");
-        check_eq(music.last_operand, "queue musica",
-                 "NEG-REL-41: music queue is not treated as a file operand");
-        h.cat_line.clear();
-        submit(s, "cat a.txt");
-        check_eq(h.cat_line, "cat a.txt",
-                 "NEG-REL-40: the local cat command keeps its typed line");
+              "NEG-REL2-21: the eight-token runtime limit is preserved");
+        submit(s, "image ..a.jpg");
+        check_eq(image.last_operand, "/imagens/..a.jpg",
+                 "POS-REL2-10: a name starting with dots is not traversal");
+        submit(s, "image .a.jpg");
+        check_eq(image.last_operand, "/imagens/.a.jpg",
+                 "POS-REL2-11: a leading dot inside a name is preserved");
+        submit(s, "image\ta.jpg");
+        check_eq(image.last_operand, "/imagens/a.jpg",
+                 "POS-REL2-12: a tab separator resolves the operand");
+        submit(s, "image   a.jpg");
+        check_eq(image.last_operand, "/imagens/a.jpg",
+                 "POS-REL2-12: repeated spaces resolve the operand");
+        submit(s, "  image a.jpg");
+        check_eq(image.last_operand, "/imagens/a.jpg",
+                 "POS-REL2-12: a leading-space prefix preserves the operand");
+        submit(s, "image a.jpg   ");
+        check_eq(image.last_operand, "/imagens/a.jpg",
+                 "POS-REL2-12: trailing separators do not change the delivered operand");
 
-        /* POS-REL-10: sem estado residual entre execucoes. */
+        /* POS-REL2-13 / NEG-REL2-22: o orcamento de 256 bytes do runtime vale
+         * igualmente no ramo root-SD.  A linha executada e
+         * "image " + "/imagens/" + operando. */
+        const std::string sd_prefix = "/imagens/";
+        const std::string sd_at_budget(241, 'k');
+        check(std::string("image ").size() + sd_prefix.size() + sd_at_budget.size() == 256,
+              "fixture expands to exactly 256 bytes under /imagens");
+        submit(s, "image " + sd_at_budget);
+        check_eq(image.last_operand, sd_prefix + sd_at_budget,
+                 "POS-REL2-13: an expansion of exactly 256 bytes is dispatched");
+        const std::string sd_over_budget(242, 'm');
+        submit(s, "image " + sd_over_budget);
+        check_eq(image.last_operand, sd_over_budget,
+                 "NEG-REL2-22: a 257-byte expansion is passed through, not truncated");
+
+        /* POS-REL2-13b / NEG-REL2-22b: o orcamento conta o sufixo digitado que a
+         * expansao preserva.  Sem isso uma linha final de 257 bytes chegaria ao
+         * runtime e degradaria para `unknown command; type help`. */
+        const std::string suffix_at_budget(240, 's');
+        check(std::string("image ").size() + sd_prefix.size() + suffix_at_budget.size() + 1 == 256,
+              "fixture keeps a one-byte suffix inside the exact budget");
+        submit(s, "image " + suffix_at_budget + " ");
+        check_eq(image.last_operand, sd_prefix + suffix_at_budget,
+                 "POS-REL2-13b: the preserved suffix still fits the exact 256-byte budget");
+        const std::string suffix_over_budget(241, 't');
+        check(std::string("image ").size() + sd_prefix.size() + suffix_over_budget.size() + 1 == 257,
+              "fixture pushes the final line to 257 bytes with the preserved suffix");
+        h.output.clear();
+        submit(s, "image " + suffix_over_budget + " ");
+        check_eq(image.last_operand, suffix_over_budget,
+                 "NEG-REL2-22b: a final line of 257 bytes is passed through, never truncated");
+        check(h.output.find("unknown command") == std::string::npos,
+              "NEG-REL2-22b: the oversized expansion never degrades to unknown command");
+
+        /* POS-REL2-15..18 / NEG-REL2-27: o ramo root-SD nao aplica os tetos
+         * 16/64 do VFS; vale a regra do shell (1..255 por componente).  O nome
+         * do arquivo continua sendo decidido pelo app (5..128 com extensao). */
+        const std::string long_dir(65, 'g');
+        std::error_code long_error;
+        std::filesystem::create_directories(root + "/imagens/" + long_dir, long_error);
+        check(!long_error, "fixture creates a 65-byte directory under /imagens");
+        submit(s, "cd /imagens/" + long_dir);
+        check_eq(h.shell.cwd(), "/imagens/" + long_dir, "fixture enters the 65-byte directory");
+        submit(s, "image a.jpg");
+        check_eq(image.last_operand, "/imagens/" + long_dir + "/a.jpg",
+                 "POS-REL2-15: a 65-byte component resolves in the root-SD branch");
+        std::string sixteen_components;
+        for (int part = 0; part < 16; ++part) {
+            if (!sixteen_components.empty()) sixteen_components += '/';
+            sixteen_components += "e";
+        }
+        submit(s, "cd /imagens");
+        submit(s, "image " + sixteen_components);
+        check_eq(image.last_operand, "/imagens/" + sixteen_components,
+                 "POS-REL2-15: 17 components resolve (the VFS 16-component cap does not apply)");
+        const std::string name128 = std::string(124, 'n') + ".jpg";
+        check(name128.size() == 128, "fixture builds a 128-byte image name");
+        submit(s, "image " + name128);
+        check_eq(image.last_operand, "/imagens/" + name128,
+                 "POS-REL2-16: a 128-byte name is handed to the app unchanged");
+        const std::string name129 = std::string(125, 'o') + ".jpg";
+        check(name129.size() == 129, "fixture builds a 129-byte image name");
+        submit(s, "image " + name129);
+        check_eq(image.last_operand, "/imagens/" + name129,
+                 "NEG-REL2-27: a 129-byte name is not truncated (the app enforces 128)");
+        submit(s, "image a\u00e7\u00e3o.jpg");
+        check_eq(image.last_operand, "/imagens/a\u00e7\u00e3o.jpg",
+                 "POS-REL2-17: UTF-8 bytes are preserved without normalization");
+        submit(s, "image A.JPG");
+        check_eq(image.last_operand, "/imagens/A.JPG",
+                 "POS-REL2-18: case is preserved (no folding)");
+
+        /* NEG-REL2-28 / NEG-REL2-33 / NEG-REL2-36: o editor fora de `/data`
+         * mantem a politica fixa; a reescrita root-SD e lexical (symlink e cwd
+         * removido sao resolvidos depois pelo backend, nao aqui). */
+        submit(s, "edit a.txt");
+        check_eq(editor.last_operand, "a.txt",
+                 "NEG-REL2-28: edit is never rewritten outside /data");
+        std::error_code link_error_rel2;
+        std::filesystem::remove(root + "/imagens/link.jpg", link_error_rel2);
+        link_error_rel2.clear();
+        std::filesystem::create_symlink("/system/assets/logo.png", root + "/imagens/link.jpg",
+                                        link_error_rel2);
+        check(!link_error_rel2, "fixture installs a file symlink inside /imagens");
+        submit(s, "image link.jpg");
+        check_eq(image.last_operand, "/imagens/link.jpg",
+                 "NEG-REL2-33: the rewrite keeps the lexical path and never the symlink target");
+        std::filesystem::create_directories(root + "/imagens2");
+        submit(s, "cd /imagens2");
+        check_eq(h.shell.cwd(), "/imagens2", "fixture enters /imagens2");
+        std::error_code removed_error;
+        std::filesystem::remove(root + "/imagens2", removed_error);
+        check(!removed_error, "fixture removes the cwd directory after cd");
+        submit(s, "image a.jpg");
+        check_eq(image.last_operand, "/imagens2/a.jpg",
+                 "NEG-REL2-36: a removed cwd still composes; the backend fails closed");
+
+        /* POS-REL2-10: sem estado residual entre execucoes. */
+        submit(s, "cd /data");
         image.executions = 0;
         submit(s, "image a.bmp");
         const std::string first_operand = image.last_operand;
@@ -926,6 +1117,36 @@ int main()
         check(image.executions == 2 && image.last_operand == first_operand &&
                   first_operand == "/data/a.bmp",
               "POS-REL-10: repeated invocations resolve identically");
+
+        /* NEG-REL-38: o help detalhado e resolvido pela sessao, nunca pelo app. */
+        image.executions = 0;
+        h.output.clear();
+        submit(s, "image help");
+        check(image.executions == 0 && h.output.find("image [app]") != std::string::npos,
+              "NEG-REL-38: the detail help path never reaches the application");
+
+        /* NEG-REL2-39 / NEG-REL-01..04 / 41 / REQ-REL-09: fora da whitelist
+         * nada muda (o caso de `image` roda com cwd `/data`). */
+        h.output.clear();
+        submit(s, "Image a.bmp");
+        check(h.output.find("unknown command; type help") != std::string::npos,
+              "NEG-REL-01: the whitelist is case sensitive");
+        h.output.clear();
+        submit(s, "app image a.bmp");
+        check(h.output.find("usage: app") != std::string::npos,
+              "NEG-REL2-39: app never rewrites its operand");
+        h.output.clear();
+        submit(s, "image2 a.bmp");
+        check(h.output.find("unknown command; type help") != std::string::npos,
+              "NEG-REL-03: only the declared command is rewritten");
+        submit(s, "music queue musica");
+        check_eq(music.last_operand, "queue musica",
+                 "NEG-REL2-40: music queue is not treated as a file operand");
+        h.cat_line.clear();
+        submit(s, "cat a.txt");
+        check_eq(h.cat_line, "cat a.txt",
+                 "NEG-REL2-41: the local cat command keeps its typed line");
+
 
         /* NEG-REL-39: poweroff (prompt e help) permanece intocado.  Fica por
          * ultimo porque arma a confirmacao da sessao. */

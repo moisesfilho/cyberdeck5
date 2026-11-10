@@ -43,7 +43,8 @@ continua sendo a deste roteiro.
      da extensão → deve falhar com motivo tipado);
    - `p.png` RGBA e `q.jpg` progressivo (variantes recusadas → devem falhar);
    - um arquivo com 5 MiB exatos e geometria válida (limite inclusivo);
-   - `sub/` com um BMP dentro (não deve entrar na listagem).
+   - `sub/` com um BMP dentro (não deve entrar na listagem);
+   - `/imagens/` com `a.bmp` (fixture do cwd fora de namespace, usada em A1e).
    Use `fs.write` da ponte serial (≤2048 B), o cartão no PC ou
    `tools/cyberdeck_http_cli.py upload` (até 3 MiB, só basename `.bmp`) para
    `/screenshots/`; registre tamanho e SHA-256
@@ -58,9 +59,10 @@ continua sendo a deste roteiro.
 | --- | --- | --- |
 | A1 | `image /fotos/a.bmp` | imagem exibida inteira, barra de título com nome e `i/N`, sem sobrepor o header de 42 px |
 | A1c | `cd /fotos` e então `image a.bmp` | mesma imagem de A1: o operando relativo único é resolvido no shell contra o cwd virtual; o echo mostra `image a.bmp` (linha digitada), não o caminho expandido; ↑ recupera `image a.bmp` |
-| A1d | `cd /system/assets` e então `image logo.png` (fixture copiada para `/system/assets`) | abre pelo namespace de sistema; voltar a `/` e repetir `image logo.png` responde caminho inválido (cwd fora de namespace não é reescrito) |
+| A1d | `cd /system/assets` e então `image logo.png` (fixture copiada para `/system/assets`) | abre pelo namespace de sistema; voltar a `/` e repetir `image logo.png` resolve o caminho `/logo.png` (cwd `/` é um diretório real do cartão): abre se existir, senão mostra a mensagem tipada do app — nunca "caminho inválido por cwd fora de namespace" |
+| A1e | `cd /imagens` e então `image a.bmp` (fixture de `/imagens/a.bmp`) | abre a imagem: o operando relativo é resolvido contra o cwd real fora dos namespaces; echo literal `/imagens$ image a.bmp`; `Esc` volta ao prompt |
 | A1b | `image /screenshots/print_20261020_172101.bmp` (BMP existente que ordena **depois** dos 64 primeiros nomes do diretório) | abre normalmente: a janela vira "63 menores + este arquivo", indicador `64/64+`, seta esquerda navega para o 63º; sem panic |
-| A2 | com cwd `/`, `image fotos/a.bmp` | mensagem de caminho inválido; a resolução só vale dentro de namespace (`/data`, `/system`); nenhuma imagem; prompt do shell ativo |
+| A2 | com cwd `/`, `image fotos/a.bmp` | abre `/fotos/a.bmp`: a raiz virtual compõe o operando relativo como qualquer diretório real do cartão; nenhuma rebase para `/data`/`/system` |
 | A3 | `image /sdcard/fotos/a.bmp` | caminho inválido (namespace virtual não aceita `/sdcard`) |
 | A4 | `image /fotos/../fotos/a.bmp` | caminho inválido |
 | A5 | `image /fotos/d.bmp` | falha explícita por dimensão; volta ao shell |

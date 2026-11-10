@@ -65,16 +65,28 @@ bool is_cat_help_request(const std::string &line)
 /* --- Operando de arquivo de comandos de app -------------------------------
  *
  * O shell entrega ao supervisor a linha digitada; os aplicativos que abrem
- * arquivo (`image` e `edit`) exigem caminho absoluto dentro do namespace
- * virtual.  Um operando relativo unico e resolvido aqui, contra o cwd virtual
- * da sessao, imediatamente antes de `runtime.execute_line`.  A linha digitada
- * permanece intacta para echo, log, historico, comandos locais, SSH e para o
- * parser legado; apenas a execucao no runtime recebe a linha expandida.
+ * arquivo (`image` e `edit`) exigem caminho absoluto.  Um operando relativo
+ * unico e resolvido aqui, contra o cwd virtual da sessao, imediatamente antes
+ * de `runtime.execute_line`.  A linha digitada permanece intacta para echo,
+ * log, historico, comandos locais, SSH e para o parser legado; apenas a
+ * execucao no runtime recebe a linha expandida.
  *
- * A resolucao e lexical (`cyberdeck_vfs_namespace::resolve`, sem stat/readlink),
- * entao symlink nunca e seguido aqui: o confinamento continua com o VFS e com
- * os validadores dos apps.  Toda falha -- namespace invalido, backend de
- * metadados, `.`/`..`, componente longo demais, orcamento de linha estourado --
+ * A resolucao e lexical (sem stat/readlink), entao symlink nunca e seguido
+ * aqui: confinamento, tipo regular e abertura continuam com o VFS/backend e
+ * com os validadores dos apps.  Dois ramos:
+ *
+ *  - cwd cujo primeiro componente e `data` ou `system`: o alvo continua sendo
+ *    composto por `cyberdeck_vfs_namespace::resolve` e precisa ser backend de
+ *    filesystem, preservando os tetos do VFS (16 componentes/64 bytes);
+ *  - cwd em qualquer outro diretorio real do cartao (`/`, `/imagens`,
+ *    `/fotos`, `/data2`, ...): composicao lexical cwd + operando, recusando
+ *    metadata (`apps`/`tmp`/`dev`) e o alias fisico `sdcard` como primeiro
+ *    componente e aplicando a regra de componente do proprio shell
+ *    (1..255 bytes, sem `\`).  Nao ha teto de 16/64 do VFS neste ramo: o
+ *    proprio `cd`/`ls` ja aceitam esses diretorios.
+ *
+ * Toda falha -- namespace invalido, backend de metadados, `.`/`..`, componente
+ * vazio ou longo demais, componente reservado, orcamento de linha estourado --
  * e pass-through: a linha vai como digitada e vale a rejeicao atual do app. */
 
 /* Espelha o `k_max_line_bytes` privado de cyberdeck_app_runtime.cpp.  Uma
@@ -83,11 +95,39 @@ bool is_cat_help_request(const std::string &line)
  * fixtures exatas de 256/257 bytes em test_shell_session fixam a fronteira. */
 constexpr std::size_t k_runtime_max_line_bytes = 256;
 
+/* Mesmo teto de componente do backend do shell local (cat/ls): um caminho
+ * composto por nome de arquivo acima disso falharia fechado na abertura. */
+constexpr std::size_t k_shell_max_component_bytes = 255;
+
 /* Cwd em que o editor resolve o operando (cyberdeck_app_storage.cpp); em
  * qualquer outro cwd a politica fixa `/data` do editor permanece. */
 constexpr std::string_view k_editor_cwd = "/data";
 
 bool is_separator(char value) { return value == ' ' || value == '\t'; }
+
+/* Primeiro componente de um caminho absoluto normalizado, sem as barras
+ * iniciais.  Devolve vazio na raiz (`/`), no caminho vazio e em caminho
+ * relativo; esses casos sao tratados pelo ramo do cartao. */
+std::string_view first_path_component(std::string_view path)
+{
+    std::size_t begin = 0;
+    while (begin < path.size() && path[begin] == '/') ++begin;
+    if (begin == path.size()) return {};
+    const std::size_t end = path.find('/', begin);
+    return path.substr(begin, (end == std::string_view::npos ? path.size() : end) - begin);
+}
+
+/* Namespaces com backend de filesystem: o ramo antigo do VFS. */
+bool is_vfs_filesystem_root(std::string_view component)
+{
+    return component == "data" || component == "system";
+}
+
+/* Namespaces que sao apenas metadata (sem arquivo fisico). */
+bool is_metadata_namespace(std::string_view component)
+{
+    return component == "apps" || component == "dev" || component == "tmp";
+}
 
 /* Whitelist explicita: `image` sempre; `edit` somente com cwd exatamente
  * `/data`.  Reescrever `edit` de um subdiretorio mudaria em silencio a
@@ -116,10 +156,93 @@ bool is_plain_relative_operand(std::string_view value)
     return true;
 }
 
+/* Regra de componente do shell local (`cat_relative_safe`): 1..255 bytes, sem
+ * `\` e sem `.`/`..`.  Nao e um limite do VFS; vale para o ramo do cartao. */
+bool is_shell_path_component(std::string_view component)
+{
+    if (component.empty() || component.size() > k_shell_max_component_bytes) return false;
+    if (component == "." || component == "..") return false;
+    for (const char value : component)
+        if (value == '\\' || value == '\0') return false;
+    return true;
+}
+
+/* Alvo do ramo root-SD: caminho absoluto, metadata e alias fisico recusados no
+ * PRIMEIRO componente do caminho composto (nao apenas no cwd) e todos os
+ * componentes sob a regra do shell. */
+bool is_sd_card_target(std::string_view combined)
+{
+    if (combined.size() < 2 || combined.front() != '/') return false;
+    const std::string_view first = first_path_component(combined);
+    if (first.empty() || is_metadata_namespace(first) || first == "sdcard") return false;
+    std::size_t begin = 1;
+    while (begin < combined.size()) {
+        const std::size_t end = combined.find('/', begin);
+        const std::string_view component =
+            combined.substr(begin, (end == std::string_view::npos ? combined.size() : end) - begin);
+        if (!is_shell_path_component(component)) return false;
+        if (end == std::string_view::npos) break;
+        begin = end + 1;
+    }
+    return true;
+}
+
+/* Instala `resolved` no lugar do operando preservando o prefixo real da linha
+ * (separadores e o verbo) E o sufixo digitado.  O orcamento conta os tres: sem
+ * o sufixo, uma linha final de 257 bytes passaria e o runtime devolveria nada,
+ * degradando o comando para `unknown command; type help`.  Recusa a expansao em
+ * vez de truncar a linha digitada. */
+bool install_operand(std::string_view line, std::size_t operand_start, std::size_t operand_end,
+                     std::string_view resolved, std::string &expanded)
+{
+    const std::size_t suffix = line.size() - operand_end;
+    if (operand_start + resolved.size() + suffix > k_runtime_max_line_bytes) return false;
+    std::string rewritten;
+    rewritten.reserve(operand_start + resolved.size() + suffix);
+    rewritten.append(line.data(), operand_start);
+    rewritten.append(resolved.data(), resolved.size());
+    rewritten.append(line.data() + operand_end, suffix);
+    expanded.swap(rewritten);
+    return true;
+}
+
+/* Ramo `/data|/system`: resolucao pelo VFS virtual, que impoe seus proprios
+ * tetos (16 componentes, 64 bytes) e exige backend de filesystem. */
+bool expand_in_vfs_namespace(std::string_view line, std::string_view cwd, std::string_view operand,
+                             std::size_t operand_start, std::size_t operand_end,
+                             std::string &expanded)
+{
+    const std::string cwd_text(cwd);
+    const std::string operand_text(operand);
+    cyberdeck_vfs_namespace::resolved_path resolved{};
+    if (!cyberdeck_vfs_namespace::resolve(cwd_text.c_str(), operand_text.c_str(), resolved))
+        return false;
+    if (resolved.kind != cyberdeck_vfs_namespace::path_kind::namespace_path ||
+        !cyberdeck_vfs_namespace::is_filesystem_backend(resolved))
+        return false;
+    return install_operand(line, operand_start, operand_end, resolved.path, expanded);
+}
+
+/* Ramo root-SD: composicao lexical do cwd com o operando.  Sem I/O: o backend
+ * de imagem continua responsavel por confinamento, symlink, arquivo regular e
+ * abertura, e um cwd removido depois do `cd` falha fechado la. */
+bool expand_under_sd_root(std::string_view line, std::string_view cwd, std::string_view operand,
+                          std::size_t operand_start, std::size_t operand_end,
+                          std::string &expanded)
+{
+    if (cwd.empty() || cwd.front() != '/') return false;
+    std::string combined;
+    combined.reserve(cwd.size() + 1 + operand.size());
+    combined.append(cwd);
+    if (cwd != "/") combined.push_back('/');
+    combined.append(operand.data(), operand.size());
+    if (!is_sd_card_target(combined)) return false;
+    return install_operand(line, operand_start, operand_end, combined, expanded);
+}
+
 /* Reescreve a linha em `expanded` quando -- e somente quando -- ela e um
- * comando de app com um unico operando de arquivo relativo resolvivel para um
- * backend de filesystem do namespace virtual.  Retorna false em todos os
- * demais casos, deixando a linha original em vigor. */
+ * comando de app com um unico operando de arquivo relativo resolvivel.  Retorna
+ * false em todos os demais casos, deixando a linha original em vigor. */
 bool expand_app_file_operand(std::string_view line, std::string_view cwd, std::string &expanded)
 {
     const std::size_t command_start = line.find_first_not_of(" \t");
@@ -141,23 +264,13 @@ bool expand_app_file_operand(std::string_view line, std::string_view cwd, std::s
     /* `edit save` e subcomando reservado do editor, nao um arquivo. */
     if (command == "edit" && operand == "save") return false;
 
-    const std::string cwd_text(cwd);
-    const std::string operand_text(operand);
-    cyberdeck_vfs_namespace::resolved_path resolved{};
-    if (!cyberdeck_vfs_namespace::resolve(cwd_text.c_str(), operand_text.c_str(), resolved)) return false;
-    if (resolved.kind != cyberdeck_vfs_namespace::path_kind::namespace_path ||
-        !cyberdeck_vfs_namespace::is_filesystem_backend(resolved))
-        return false;
-
-    const std::size_t resolved_length = std::strlen(resolved.path);
-    if (operand_start + resolved_length > k_runtime_max_line_bytes) return false;
-
-    std::string rewritten;
-    rewritten.reserve(operand_start + resolved_length);
-    rewritten.append(line.data(), operand_start);
-    rewritten.append(resolved.path, resolved_length);
-    expanded.swap(rewritten);
-    return true;
+    const std::string_view cwd_root = first_path_component(cwd);
+    if (is_vfs_filesystem_root(cwd_root))
+        return expand_in_vfs_namespace(line, cwd, operand, operand_start, operand_end, expanded);
+    /* `/apps`, `/tmp` e `/dev` sao metadata: reescrever apontaria para um alvo
+     * que o shell nunca expoe, entao a linha segue literal. */
+    if (is_metadata_namespace(cwd_root)) return false;
+    return expand_under_sd_root(line, cwd, operand, operand_start, operand_end, expanded);
 }
 
 bool is_help_request(const std::string &line)
@@ -711,9 +824,10 @@ void session::execute_line(bool line_already_sent)
     const cyberdeck_shell_console::dispatcher dispatcher(&runtime);
     if (dispatcher.resolve(line) == cyberdeck_shell_console::dispatch_target::supervisor) {
         /* Um operando de arquivo relativo e resolvido contra o cwd virtual
-         * antes do runtime.  `dispatched` existe apenas para esta chamada: a
-         * linha digitada continua sendo a fonte de echo, log, historico e do
-         * parser abaixo. */
+         * antes do runtime (VFS em `/data|/system`, composicao lexical nos
+         * demais diretorios reais do cartao).  `dispatched` existe apenas para
+         * esta chamada: a linha digitada continua sendo a fonte de echo, log,
+         * historico e do parser abaixo. */
         std::string dispatched;
         const std::string_view execution_line =
             expand_app_file_operand(line, command_cwd, dispatched) ? std::string_view(dispatched)

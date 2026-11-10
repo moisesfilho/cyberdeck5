@@ -214,7 +214,9 @@ of direct service starts.
 
 - the path is inside the virtual namespace (`/fotos/a.bmp`); a single relative
   operand (`image a.bmp`) is resolved from the shell current directory before the
-  app runs, while `/sdcard/...` and traversal (`.`, `..`) are refused;
+  app runs - any real SD directory works, including `/` and `/imagens` - while
+  `/sdcard/...`, the `apps`/`tmp`/`dev` metadata namespaces and traversal
+  (`.`, `..`) are refused;
 - the extension selects the decoder and is authoritative - the content is never
   sniffed - so `.bmp`, `.jpg`, `.jpeg` and `.png` (case-insensitive) are
   accepted and a mismatch fails closed with a typed message;

@@ -741,6 +741,44 @@ void test_music_scan_secure_open_primitives(fixture &f) {
     CHECK(cyberdeck_local_shell_opendir(root.c_str(), "/", "/sdcard") == nullptr);
 }
 
+void test_top_level_image_targets(fixture &f) {
+    /* Ramo root-SD do operando relativo: a forma exata que a sessao entrega
+     * (`/imagens/<nome>`) tem de passar pelo backend confinado, e um diretorio
+     * de topo trocado por symlink depois do `cd` falha fechado.  FATFS nao tem
+     * symlink, portanto esta camada e host-only. */
+    const std::string root = f.root.string();
+    std::filesystem::create_directories(f.root / "imagens" / "sub");
+    std::ofstream(f.root / "imagens" / "a.bmp") << "image-bytes";
+
+    std::size_t file_size = 0;
+    int descriptor = cyberdeck_local_shell_open_readonly(root.c_str(), "/", "/imagens/a.bmp", 64, file_size);
+    CHECK(descriptor >= 0);
+    CHECK(file_size == 11);
+    if (descriptor >= 0) CHECK(::close(descriptor) == 0);
+
+    DIR *directory = cyberdeck_local_shell_opendir(root.c_str(), "/", "/imagens");
+    CHECK(directory != nullptr);
+    if (directory != nullptr) CHECK(::closedir(directory) == 0);
+
+    file_size = 0;
+    CHECK(cyberdeck_local_shell_open_readonly(root.c_str(), "/", "/imagens/../a.bmp", 64, file_size) < 0);
+    CHECK(cyberdeck_local_shell_open_readonly(root.c_str(), "/", "/imagens//a.bmp", 64, file_size) < 0);
+    const std::string long_path = "/imagens/" + std::string(248, 'x');
+    CHECK(long_path.size() == 257);
+    CHECK(cyberdeck_local_shell_open_readonly(root.c_str(), "/", long_path, 64, file_size) < 0);
+
+    /* cwd obsoleto: o diretorio de topo vira symlink depois do `cd`.  A
+     * composicao da sessao e lexical; a recusa acontece aqui. */
+    std::error_code error;
+    std::filesystem::rename(f.root / "imagens", f.root / "imagens-real", error);
+    CHECK(!error);
+    error.clear();
+    std::filesystem::create_directory_symlink(f.root / "imagens-real", f.root / "imagens", error);
+    CHECK(!error);
+    CHECK(cyberdeck_local_shell_open_readonly(root.c_str(), "/", "/imagens/a.bmp", 64, file_size) < 0);
+    CHECK(cyberdeck_local_shell_opendir(root.c_str(), "/", "/imagens") == nullptr);
+}
+
 void test_relevant_operation_errors(fixture &f) {
     cyberdeck_local_shell shell(f.root.string());
     const char *commands[] = {
@@ -970,6 +1008,7 @@ int main() {
         if (f.root.empty()) return 1;
         test_symlink_protection(f);
         test_music_scan_secure_open_primitives(f);
+        test_top_level_image_targets(f);
     }
     {
         fixture f;
